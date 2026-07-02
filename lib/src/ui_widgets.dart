@@ -322,6 +322,18 @@ class _ServiceCard extends StatelessWidget {
                 style: mono,
               ),
             ),
+          // Vitals (System card): temperature, disk, RAM, uptime. Emphasized in
+          // amber when it carries a warning (e.g. low disk before an update).
+          if (status.installed && status.health.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 30, bottom: 6),
+              child: Text(
+                status.health,
+                style: status.healthWarning
+                    ? mono?.copyWith(color: const Color(0xFFE0A030))
+                    : mono,
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.only(left: 30, right: 8, top: 2),
             child: Row(

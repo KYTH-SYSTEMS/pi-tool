@@ -4,7 +4,8 @@ Services:
 * evcc – update (apt or Docker, auto-detected), install, live status, dry-run, restart service, open web UI
 * Pi-hole – update (pihole -up), rebuild blocklists, restart DNS, install (experimental), open /admin
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
-* System (whole Pi) – update all packages (apt full-upgrade), reboot
+* Grafana & InfluxDB – auto-detected, update via apt, open the web UI
+* System (whole Pi) – update all packages (apt full-upgrade), reboot, health readout (temperature, disk, RAM, uptime) with a low-disk warning
 
 Features:
 * Auto-detects all services in one SSH session

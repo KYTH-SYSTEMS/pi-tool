@@ -32,6 +32,20 @@ class ServiceStatus {
   /// Short human status line (mono), e.g. "Dienst aktiv" or "3 Updates".
   final String detail;
 
+  /// Optional vitals line (System card): temperature, free disk/RAM, uptime.
+  final String health;
+
+  /// True when [health] carries a warning (e.g. low disk) — shown emphasized.
+  final bool healthWarning;
+
+  /// Web-UI port for generic (apt) services, e.g. Grafana 3000. The bespoke
+  /// services (evcc/Pi-hole/HA) keep their own open-web handlers.
+  final int? webPort;
+
+  /// The concrete apt package behind a generic service card (e.g. `influxdb2`
+  /// for the InfluxDB card) — what an update actually upgrades.
+  final String? aptPackage;
+
   const ServiceStatus({
     required this.id,
     required this.name,
@@ -41,6 +55,10 @@ class ServiceStatus {
     this.updateAvailable = false,
     this.updateKnown = false,
     this.detail = '',
+    this.health = '',
+    this.healthWarning = false,
+    this.webPort,
+    this.aptPackage,
   });
 
   /// A "not installed" status for a service the app knows about but didn't find.

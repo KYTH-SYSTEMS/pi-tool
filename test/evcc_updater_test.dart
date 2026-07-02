@@ -6,6 +6,8 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/parsing.dart';
+import 'package:evcc_updater/src/services/apt_services.dart';
+import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/pihole_service.dart';
 import 'package:evcc_updater/src/services/system_service.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
@@ -789,6 +791,101 @@ void main() {
       final list =
           await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
       expect(list.firstWhere((s) => s.id == 'evcc').updateAvailable, isTrue);
+    });
+
+    test('System card carries vitals (temp, disk, RAM) with low-disk warning',
+        () async {
+      final runner = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n')],
+        _svc: [_r('active\n')],
+        piholeVersionCommand: [_r('')],
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+        systemPendingCommand: [_r('0 upgraded, 0 newly installed.')],
+        systemTempCommand: [_r("temp=51.2'C\n")],
+        systemDiskCommand: [
+          _r('Filesystem 1048576-blocks Used Available Capacity Mounted on\n'
+              '/dev/root 29000M 27500M 900M 95% /\n')
+        ],
+        systemMemCommand: [
+          _r('      total used free shared buff/cache available\n'
+              'Mem:   430  180   50      9        200       240\n')
+        ],
+        systemUptimeCommand: [_r('up 5 days\n')],
+      });
+
+      final list =
+          await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      final sys = list.firstWhere((s) => s.id == 'system');
+      expect(sys.health, contains('51.2°C'));
+      expect(sys.health, contains('900 MB frei'));
+      expect(sys.health, contains('up 5 days'));
+      expect(sys.healthWarning, isTrue); // 95% used → low-disk warning
+      expect(sys.health, contains('Speicher fast voll'));
+    });
+
+    test('detects an installed Grafana (card only when installed)', () async {
+      final runner = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n')],
+        _svc: [_r('active\n')],
+        piholeVersionCommand: [_r('')],
+        aptServicesQuery: [_r('grafana installed 13.1.0\n')],
+        'systemctl is-active grafana-server': [_r('active\n')],
+        systemOsCommand: [_r('PRETTY_NAME="Debian"')],
+        systemPendingCommand: [
+          _r('Inst grafana [13.1.0] (13.2.0 grafana:arm64 [arm64])\n'
+              '1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.')
+        ],
+      });
+
+      final list =
+          await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      final g = list.firstWhere((s) => s.id == 'grafana');
+      expect(g.installed, isTrue);
+      expect(g.version, '13.1.0');
+      expect(g.active, isTrue);
+      expect(g.updateAvailable, isTrue);
+      expect(g.webPort, 3000);
+      expect(g.aptPackage, 'grafana');
+      // InfluxDB is NOT installed → no card at all.
+      expect(list.any((s) => s.id == 'influxdb'), isFalse);
+    });
+
+    test('InfluxDB v1 gets no web button, v2 does', () async {
+      Future<List<ServiceStatus>> detect(String pkgLine) {
+        final runner = FakeSshRunner({
+          _vQuery: [_r('installed 0.310.0\n')],
+          _svc: [_r('active\n')],
+          piholeVersionCommand: [_r('')],
+          aptServicesQuery: [_r(pkgLine)],
+          'systemctl is-active influxdb': [_r('active\n')],
+          systemOsCommand: [_r('PRETTY_NAME="Debian"')],
+          systemPendingCommand: [_r('0 upgraded, 0 newly installed.')],
+        });
+        return _updaterWith(runner)
+            .detectServices(config: _config, onLog: (_) {});
+      }
+
+      final v1 = await detect('influxdb installed 1.8.10-1\n');
+      expect(v1.firstWhere((s) => s.id == 'influxdb').webPort, isNull);
+
+      final v2 = await detect('influxdb2 installed 2.7.6\n');
+      final s2 = v2.firstWhere((s) => s.id == 'influxdb');
+      expect(s2.webPort, 8086);
+      expect(s2.aptPackage, 'influxdb2');
+    });
+
+    test('updateAptPackage refreshes tolerantly then only-upgrades the package',
+        () async {
+      const upd = 'LC_ALL=C sudo -S apt-get update -qq';
+      const upg = 'LC_ALL=C sudo -S apt-get install --only-upgrade -y grafana';
+      final runner = FakeSshRunner({
+        upd: [_r('', stderr: 'Failed to fetch', exitCode: 100)], // tolerated
+        upg: [_r('1 upgraded, 0 newly installed', exitCode: 0)],
+      });
+      await _updaterWith(runner).updateAptPackage(
+          config: _config, package: 'grafana', onLog: (_) {});
+      expect(runner.commandsRun, contains(upg));
+      expect(runner.stdinByCommand[upg], 'sekret\n');
     });
 
     test('a failed apt simulation leaves evcc + System updateKnown=false',

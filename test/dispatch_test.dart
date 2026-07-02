@@ -74,6 +74,16 @@ class FakeEvccUpdater extends EvccUpdater {
   @override
   Future<void> cancel() async => cancelCalls++;
 
+  final aptUpdates = <String>[]; // packages updated via updateAptPackage
+
+  @override
+  Future<void> updateAptPackage({
+    required SshConfig config,
+    required String package,
+    required void Function(String line) onLog,
+  }) async =>
+      aptUpdates.add(package);
+
   List<String> backups = const [];
   int restoreCalls = 0;
   String? restoredPath;
@@ -453,6 +463,34 @@ void main() {
 
     expect(ka.beginCount, 1);
     expect(ka.endCount, 1); // foreground service released despite the failure
+  });
+
+  testWidgets('Grafana card updates via the generic apt path', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'grafana',
+            name: 'Grafana',
+            installed: true,
+            version: '13.1.0',
+            active: true,
+            updateAvailable: true,
+            updateKnown: true,
+            detail: 'apt · grafana · Dienst aktiv',
+            webPort: 3000,
+            aptPackage: 'grafana'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.text('Grafana'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.aptUpdates, ['grafana']);
+    expect(find.text('Grafana aktualisiert.'), findsOneWidget);
   });
 
   testWidgets('a dry-run (Probelauf) does NOT start the keep-alive',

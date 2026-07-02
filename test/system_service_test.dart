@@ -34,6 +34,78 @@ void main() {
     });
   });
 
+  group('parseTemperatureC', () {
+    test("reads vcgencmd output (temp=48.3'C)", () {
+      expect(parseTemperatureC("temp=48.3'C\n"), 48.3);
+    });
+    test('reads sysfs millidegrees (thermal_zone0)', () {
+      expect(parseTemperatureC('48312\n'), closeTo(48.3, 0.1));
+    });
+    test('null on empty / garbage', () {
+      expect(parseTemperatureC(''), isNull);
+      expect(parseTemperatureC('command not found'), isNull);
+    });
+  });
+
+  group('parseDiskUsage', () {
+    test('reads total/available/percent from df -P -BM /', () {
+      const out = 'Filesystem     1048576-blocks  Used Available Capacity Mounted on\n'
+          '/dev/root              29000M 11000M    16500M      42% /\n';
+      final d = parseDiskUsage(out);
+      expect(d, isNotNull);
+      expect(d!.totalMb, 29000);
+      expect(d.availableMb, 16500);
+      expect(d.usedPercent, 42);
+    });
+    test('null when df failed', () {
+      expect(parseDiskUsage(''), isNull);
+      expect(parseDiskUsage('df: /: No such file'), isNull);
+    });
+  });
+
+  group('parseMemAvailableMb', () {
+    test('reads the available column from free -m', () {
+      const out =
+          '               total        used        free      shared  buff/cache   available\n'
+          'Mem:             430         180          50           9         200         240\n'
+          'Swap:             99           0          99\n';
+      expect(parseMemAvailableMb(out), 240);
+    });
+    test('null when free failed', () {
+      expect(parseMemAvailableMb(''), isNull);
+    });
+  });
+
+  group('SystemHealth', () {
+    test('summary joins the available readings', () {
+      final h = SystemHealth(
+        tempC: 48.3,
+        disk: const DiskUsage(totalMb: 29000, availableMb: 16500, usedPercent: 42),
+        memAvailableMb: 240,
+      );
+      expect(h.summary, contains('48.3°C'));
+      expect(h.summary, contains('16.1 GB frei'));
+      expect(h.summary, contains('RAM 240 MB'));
+      expect(h.lowDisk, isFalse);
+    });
+
+    test('lowDisk warns below 1 GB free or ≥90% used', () {
+      const lowAbs = SystemHealth(
+          disk: DiskUsage(totalMb: 29000, availableMb: 800, usedPercent: 60));
+      const lowPct = SystemHealth(
+          disk: DiskUsage(totalMb: 29000, availableMb: 2000, usedPercent: 93));
+      expect(lowAbs.lowDisk, isTrue);
+      expect(lowPct.lowDisk, isTrue);
+      expect(lowAbs.summary, contains('Speicher fast voll'));
+    });
+
+    test('missing readings are simply omitted', () {
+      const h = SystemHealth();
+      expect(h.summary, isEmpty);
+      expect(h.lowDisk, isFalse);
+    });
+  });
+
   group('parseAptUpgrades', () {
     test('lists the packages a full-upgrade simulation would upgrade', () {
       const out = 'Reading package lists...\n'

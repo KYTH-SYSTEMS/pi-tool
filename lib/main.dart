@@ -1527,9 +1527,53 @@ class _UpdaterPageState extends State<UpdaterPage>
               _CardAction('Pi neustarten', _reboot),
             ],
           ));
+        default:
+          // Generic apt service (Grafana, InfluxDB, …): update via apt,
+          // optional web UI. Only ever emitted when installed.
+          cards.add(_ServiceCard(
+            status: s,
+            icon: s.id == 'grafana' ? Icons.insights : Icons.storage,
+            enabled: !_busy,
+            primaryLabel: 'Aktualisieren',
+            onPrimary: () => _updateAptService(s),
+            onOpenWeb:
+                s.webPort != null ? () => _openServiceWeb(s.webPort!) : null,
+            actions: [
+              if (upToDate)
+                _CardAction(
+                    'Trotzdem aktualisieren', () => _updateAptService(s)),
+            ],
+          ));
       }
     }
     return cards;
+  }
+
+  /// Update a generic apt service card (Grafana, InfluxDB, …).
+  Future<void> _updateAptService(ServiceStatus s) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _updateAptService(s);
+    await _guard(() async {
+      await _updater.updateAptPackage(
+          config: config, package: s.aptPackage ?? s.id, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = '${s.name} aktualisiert.';
+        _statusOk = true;
+      });
+      _addHistory('${s.name} aktualisiert.');
+      await _refreshServices(config);
+    }, backgroundMessage: '${s.name} wird aktualisiert …');
+  }
+
+  void _openServiceWeb(int port) {
+    if (_host.text.trim().isEmpty) {
+      _snack('Bitte zuerst Host/IP eintragen.');
+      return;
+    }
+    _openUrl('http://${_host.text.trim()}:$port');
   }
 
   // ---- build ---------------------------------------------------------------

@@ -7,6 +7,7 @@ import 'commands.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
 import 'parsing.dart';
+import 'services/apt_services.dart';
 import 'services/homeassistant_service.dart';
 import 'services/pi_service.dart';
 import 'services/pihole_service.dart';
@@ -446,8 +447,47 @@ class EvccUpdater {
                 detail: 'Docker · ${ha.name}')
             : ServiceStatus.absent('homeassistant', 'Home Assistant'));
 
+        // ---- extra apt services (Grafana, InfluxDB, …) ----
+        // One dpkg query for all known packages; a card only when installed.
+        final extras = await runner.run(aptServicesQuery);
+        final extraVersions = parseAptServiceVersions(extras.stdout);
+        for (final svc in knownAptServices) {
+          final pkg = svc.packages
+              .firstWhere(extraVersions.containsKey, orElse: () => '');
+          if (pkg.isEmpty) continue;
+          final act = await runner.run('systemctl is-active ${svc.unit}');
+          final active = isServiceActive(act.stdout);
+          out.add(ServiceStatus(
+            id: svc.id,
+            name: svc.name,
+            installed: true,
+            version: extraVersions[pkg],
+            active: active,
+            updateAvailable: aptUpgrades.any(
+                (u) => svc.packages.any((p) => u == p || u.startsWith('$p:'))),
+            updateKnown: aptKnown,
+            detail: 'apt · $pkg · Dienst ${active ? 'aktiv' : 'inaktiv'}',
+            // InfluxDB v1 has no web UI — only v2 (package influxdb2) gets one.
+            webPort: (svc.id == 'influxdb' && pkg != 'influxdb2')
+                ? null
+                : svc.webPort,
+            aptPackage: pkg,
+          ));
+        }
+
         // ---- System (always present) ----
         final os = await runner.run(systemOsCommand);
+        // Vitals: all no-sudo, best-effort — a failed probe just omits itself.
+        final temp = await runner.run(systemTempCommand);
+        final disk = await runner.run(systemDiskCommand);
+        final mem = await runner.run(systemMemCommand);
+        final up = await runner.run(systemUptimeCommand);
+        final health = SystemHealth(
+          tempC: parseTemperatureC(temp.stdout),
+          disk: parseDiskUsage(disk.stdout),
+          memAvailableMb: parseMemAvailableMb(mem.stdout),
+          uptime: up.stdout.trim(),
+        );
         out.add(ServiceStatus(
           id: 'system',
           name: 'System (Pi)',
@@ -457,6 +497,8 @@ class EvccUpdater {
           updateAvailable: pendingCount > 0,
           updateKnown: aptKnown,
           detail: pendingCount > 0 ? '$pendingCount Updates verfügbar' : 'aktuell',
+          health: health.summary,
+          healthWarning: health.lowDisk,
         ));
 
         log('Erkannt: ${out.where((s) => s.installed).map((s) => s.name).join(', ')}.');
@@ -719,6 +761,32 @@ class EvccUpdater {
               'LC_ALL=C sudo -S apt-get full-upgrade -y',
               'System-Upgrade fehlgeschlagen');
           log('System aktualisiert.');
+        },
+      );
+
+  /// Updates a single apt [package] (Grafana, InfluxDB, …): tolerant list
+  /// refresh, then `--only-upgrade` so a not-installed package is never pulled
+  /// in. [package] comes from our own [knownAptServices] descriptors.
+  Future<void> updateAptPackage({
+    required SshConfig config,
+    required String package,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Aktualisiere $package …');
+          await _sudoCommand(runner, log, config,
+              'LC_ALL=C sudo -S apt-get update -qq', 'apt-get update',
+              checkExit: false);
+          await _sudoCommand(
+              runner,
+              log,
+              config,
+              'LC_ALL=C sudo -S apt-get install --only-upgrade -y $package',
+              '$package-Update fehlgeschlagen');
+          log('$package ist aktuell.');
         },
       );
 

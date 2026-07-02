@@ -28,7 +28,13 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
 - **Home Assistant** — als **Docker-Container** installieren (installiert bei
   Bedarf zuerst Docker, experimentell) und aktualisieren (Image-Pull + Neuanlage,
   Daten im `/config`-Volume bleiben erhalten), Web-UI auf Port 8123 öffnen.
+- **Grafana & InfluxDB** — werden automatisch erkannt, wenn per apt installiert:
+  eigene Karte mit Update (apt `--only-upgrade`) und Web-UI (Grafana :3000,
+  InfluxDB v2 :8086).
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
+- **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
+  und Uptime; bei knappem Speicher (<1 GB oder ≥90 % belegt) warnt sie, bevor
+  ein Update daran scheitert.
 - **Probelauf** (`--dry-run`) — zeigt gefahrlos, ob ein Update verfügbar ist.
 - **Backup vor Update** — sichert vor einem apt-Update automatisch `evcc.yaml` +
   die Datenbank als zeitgestempeltes Archiv auf dem Pi (abschaltbar); schlägt es
