@@ -874,6 +874,27 @@ void main() {
       expect(s2.aptPackage, 'influxdb2');
     });
 
+    test('apt-service update flag matches only the INSTALLED package', () async {
+      // v1 influxdb installed; the sim would install influxdb2 as something
+      // NEW — that is not an update for this card.
+      final runner = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n')],
+        _svc: [_r('active\n')],
+        piholeVersionCommand: [_r('')],
+        aptServicesQuery: [_r('influxdb installed 1.8.10-1\n')],
+        'systemctl is-active influxdb': [_r('active\n')],
+        systemOsCommand: [_r('PRETTY_NAME="Debian"')],
+        systemPendingCommand: [
+          _r('Inst influxdb2 (2.7.6 influxdata:arm64 [arm64])\n'
+              '0 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.')
+        ],
+      });
+      final list =
+          await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      expect(
+          list.firstWhere((s) => s.id == 'influxdb').updateAvailable, isFalse);
+    });
+
     test('updateAptPackage refreshes tolerantly then only-upgrades the package',
         () async {
       const upd = 'LC_ALL=C sudo -S apt-get update -qq';

@@ -22,8 +22,9 @@ const String systemTempCommand =
 /// Root filesystem usage in MB (POSIX format, no sudo).
 const String systemDiskCommand = 'df -P -BM /';
 
-/// Memory usage in MB (no sudo).
-const String systemMemCommand = 'free -m';
+/// Memory usage in MB (no sudo). LC_ALL=C pins the row label to "Mem:" —
+/// a German-locale Pi would otherwise print "Speicher:" and break the parser.
+const String systemMemCommand = 'LC_ALL=C free -m';
 
 final _vcgenTemp = RegExp(r"temp=([\d.]+)'?C");
 
@@ -32,10 +33,15 @@ final _vcgenTemp = RegExp(r"temp=([\d.]+)'?C");
 double? parseTemperatureC(String output) {
   final m = _vcgenTemp.firstMatch(output);
   if (m != null) return double.tryParse(m.group(1)!);
-  final raw = int.tryParse(output.trim());
+  // sysfs fallback: use the LAST non-empty line — a failing vcgencmd may print
+  // noise (e.g. "VCHI initialization failed") to stdout before the fallback.
+  final lines =
+      output.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty);
+  if (lines.isEmpty) return null;
+  final raw = int.tryParse(lines.last);
   if (raw == null) return null;
-  // sysfs reports millidegrees; a plain small number would be degrees already.
-  return raw > 1000 ? raw / 1000.0 : raw.toDouble();
+  // The sysfs thermal ABI is ALWAYS millidegrees — no unit heuristics.
+  return raw / 1000.0;
 }
 
 /// Root-filesystem usage from `df -P -BM /`.
@@ -67,12 +73,22 @@ DiskUsage? parseDiskUsage(String dfOutput) {
   return null;
 }
 
-/// Parses the `available` column of the `Mem:` row from `free -m`.
+/// Parses the `available` column of the `Mem:` row from `free -m`. The column
+/// is located via the HEADER line — old procps (< 3.3.10) has no `available`
+/// column and its last column is `cached`, which must yield null, not a wrong
+/// number.
 int? parseMemAvailableMb(String freeOutput) {
-  for (final line in freeOutput.split('\n')) {
+  final lines = freeOutput.split('\n');
+  var availCol = -1;
+  for (final line in lines) {
     final f = line.trim().split(RegExp(r'\s+'));
-    if (f.isNotEmpty && f.first.startsWith('Mem') && f.length >= 7) {
-      return int.tryParse(f.last);
+    if (availCol == -1) {
+      availCol = f.indexOf('available'); // header row (no "Mem:" label cell)
+      continue;
+    }
+    if (f.isNotEmpty && f.first.startsWith('Mem') && f.length > availCol + 1) {
+      // +1: the data row has the leading "Mem:" label the header lacks.
+      return int.tryParse(f[availCol + 1]);
     }
   }
   return null;
@@ -88,9 +104,13 @@ class SystemHealth {
 
   const SystemHealth({this.tempC, this.disk, this.memAvailableMb, this.uptime});
 
-  /// Low on disk: less than 1 GB free or ≥90% used — updates may fail.
+  /// Low on disk — updates may fail. "Will the update fit" is an absolute
+  /// question, so the percent test is gated on little absolute room too: a
+  /// 1-TB disk at 94% still has tens of GB free and must not warn.
   bool get lowDisk =>
-      disk != null && (disk!.availableMb < 1024 || disk!.usedPercent >= 90);
+      disk != null &&
+      (disk!.availableMb < 1024 ||
+          (disk!.usedPercent >= 90 && disk!.availableMb < 5120));
 
   /// Compact one-liner, e.g. "48.3°C · 16.1 GB frei · RAM 240 MB frei · up 5 days".
   String get summary {

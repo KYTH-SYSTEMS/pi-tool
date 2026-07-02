@@ -26,7 +26,9 @@ void main() {
   group('knownAptServices', () {
     test('grafana + influxdb descriptors carry unit and web port', () {
       final grafana = knownAptServices.firstWhere((s) => s.id == 'grafana');
-      expect(grafana.packages, contains('grafana'));
+      // Enterprise + the legacy Pi package run the same grafana-server unit.
+      expect(grafana.packages,
+          containsAll(['grafana', 'grafana-enterprise', 'grafana-rpi']));
       expect(grafana.unit, 'grafana-server');
       expect(grafana.webPort, 3000);
 

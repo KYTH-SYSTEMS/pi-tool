@@ -463,8 +463,10 @@ class EvccUpdater {
             installed: true,
             version: extraVersions[pkg],
             active: active,
-            updateAvailable: aptUpgrades.any(
-                (u) => svc.packages.any((p) => u == p || u.startsWith('$p:'))),
+            // Match only the INSTALLED package (an "Inst influxdb2" that would
+            // come in as something NEW is not an update for a v1 card).
+            updateAvailable: aptUpgrades
+                .any((u) => u == pkg || u.startsWith('$pkg:')),
             updateKnown: aptKnown,
             detail: 'apt · $pkg · Dienst ${active ? 'aktiv' : 'inaktiv'}',
             // InfluxDB v1 has no web UI — only v2 (package influxdb2) gets one.

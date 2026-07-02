@@ -41,6 +41,14 @@ void main() {
     test('reads sysfs millidegrees (thermal_zone0)', () {
       expect(parseTemperatureC('48312\n'), closeTo(48.3, 0.1));
     });
+    test('sysfs is ALWAYS millidegrees — small/negative values scale too', () {
+      expect(parseTemperatureC('900\n'), closeTo(0.9, 0.01)); // not 900°C
+      expect(parseTemperatureC('-3000\n'), closeTo(-3.0, 0.01)); // winter Pi
+    });
+    test('noise before the sysfs value (VCHI error on stdout) is skipped', () {
+      expect(parseTemperatureC('VCHI initialization failed\n48312\n'),
+          closeTo(48.3, 0.1));
+    });
     test('null on empty / garbage', () {
       expect(parseTemperatureC(''), isNull);
       expect(parseTemperatureC('command not found'), isNull);
@@ -74,6 +82,14 @@ void main() {
     test('null when free failed', () {
       expect(parseMemAvailableMb(''), isNull);
     });
+    test('old free layout (buffers/cached, no available column) yields null', () {
+      // procps < 3.3.10: last column is "cached" — returning it as available
+      // would be a WRONG value; null is the contract.
+      const out =
+          '             total       used       free     shared    buffers     cached\n'
+          'Mem:           430        180         50          9         40        200\n';
+      expect(parseMemAvailableMb(out), isNull);
+    });
   });
 
   group('SystemHealth', () {
@@ -89,7 +105,7 @@ void main() {
       expect(h.lowDisk, isFalse);
     });
 
-    test('lowDisk warns below 1 GB free or ≥90% used', () {
+    test('lowDisk warns below 1 GB free or ≥90% used with little room left', () {
       const lowAbs = SystemHealth(
           disk: DiskUsage(totalMb: 29000, availableMb: 800, usedPercent: 60));
       const lowPct = SystemHealth(
@@ -97,6 +113,16 @@ void main() {
       expect(lowAbs.lowDisk, isTrue);
       expect(lowPct.lowDisk, isTrue);
       expect(lowAbs.summary, contains('Speicher fast voll'));
+    });
+
+    test('no false alarm on a big disk that is 90%+ used but has plenty free',
+        () {
+      // 1-TB SSD at 94% still has ~60 GB free — an apt upgrade cannot fail on
+      // space, so the warning would be wrong.
+      const big = SystemHealth(
+          disk:
+              DiskUsage(totalMb: 980000, availableMb: 60000, usedPercent: 94));
+      expect(big.lowDisk, isFalse);
     });
 
     test('missing readings are simply omitted', () {

@@ -34,7 +34,8 @@ const List<AptService> knownAptServices = [
   AptService(
     id: 'grafana',
     name: 'Grafana',
-    packages: ['grafana'],
+    // OSS, Enterprise and the legacy Pi package all run grafana-server.
+    packages: ['grafana', 'grafana-enterprise', 'grafana-rpi'],
     unit: 'grafana-server',
     webPort: 3000,
   ),
