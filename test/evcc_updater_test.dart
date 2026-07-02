@@ -660,6 +660,54 @@ void main() {
     });
   });
 
+  group('EvccUpdater service backups', () {
+    test('backupPihole runs the teleporter as root and returns the path',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('BACKUP_OK /var/backups/pi-tool/pihole-backup-20260702-100000.tar.gz\n')
+        ],
+      });
+      final path =
+          await _updaterWith(runner).backupPihole(config: _config, onLog: (_) {});
+      expect(path, endsWith('pihole-backup-20260702-100000.tar.gz'));
+      expect(runner.stdinByCommand[installShellCommand], startsWith('sekret\n'));
+    });
+
+    test('backupPihole surfaces a Pi-hole-specific error on no marker',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('BACKUP_FAIL', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner).backupPihole(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.message, 'message', contains('Pi-hole-Backup'))),
+      );
+    });
+
+    test('backupHomeAssistant tars the /config dir found via inspect', () async {
+      final inspectCmd = dockerInspectJsonCommand('homeassistant');
+      final runner = FakeSshRunner({
+        dockerListCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+        inspectCmd: [
+          _r('[{"Name":"/homeassistant","Mounts":['
+              '{"Type":"bind","Source":"/opt/homeassistant/config","Destination":"/config"}]}]')
+        ],
+        installShellCommand: [
+          _r('BACKUP_OK /var/backups/pi-tool/homeassistant-backup-x.tar.gz\n')
+        ],
+      });
+      final path = await _updaterWith(runner)
+          .backupHomeAssistant(config: _config, onLog: (_) {});
+      expect(path, contains('homeassistant-backup'));
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, contains("-C '/opt/homeassistant/config'"));
+    });
+  });
+
   group('EvccUpdater.reboot', () {
     test('reports failure on a non-zero, non-password exit', () async {
       final runner = FakeSshRunner({

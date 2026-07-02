@@ -72,6 +72,30 @@ PiholeVersion? parsePiholeVersion(String output) {
   );
 }
 
+/// Root/bash script (run via the sudo shell) that exports a Pi-hole
+/// **Teleporter** backup — the official, importable format — into the backup
+/// dir. Tries the v5 CLI (`pihole -a -t`) and falls back to v6's
+/// `pihole-FTL --teleporter`, then moves the produced archive to a stable name.
+/// Prints `BACKUP_OK <path>` on success.
+String buildPiholeBackupScript() {
+  return r'''
+set -e
+mkdir -p /var/backups/pi-tool
+chmod 0755 /var/backups/pi-tool 2>/dev/null || true
+d=$(mktemp -d)
+cd "$d"
+pihole -a -t >/dev/null 2>&1 || pihole-FTL --teleporter >/dev/null 2>&1 || true
+f=$(ls -1t *.tar.gz *.zip 2>/dev/null | head -n1)
+if [ -z "$f" ]; then echo "BACKUP_FAIL"; cd /; rm -rf "$d"; exit 1; fi
+ext="${f##*.}"
+out="/var/backups/pi-tool/pihole-backup-$(date +%Y%m%d-%H%M%S).$ext"
+mv "$f" "$out"
+chmod 0644 "$out" 2>/dev/null || true
+cd /; rm -rf "$d"
+echo "BACKUP_OK $out"
+''';
+}
+
 /// Whether `pihole status` reports blocking as enabled.
 bool isPiholeBlocking(String statusOutput) =>
     statusOutput.toLowerCase().contains('blocking is enabled');

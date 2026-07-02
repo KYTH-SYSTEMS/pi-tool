@@ -499,6 +499,23 @@ if tar -czf "$out" $files; then chmod 0644 "$out" 2>/dev/null || true; echo "EVC
 /// Where pre-update evcc backups are written (see [buildBackupScript]).
 const String evccBackupDir = '/var/backups/evcc';
 
+/// Where on-demand Pi-hole / Home Assistant backups are written.
+const String serviceBackupDir = '/var/backups/pi-tool';
+
+/// Extracts the archive path from a service-backup success marker
+/// (`BACKUP_OK <path>`), or null when no backup was written.
+String? parseServiceBackupPath(String output) {
+  const marker = 'BACKUP_OK ';
+  for (final line in output.split('\n')) {
+    final t = line.trim();
+    if (t.startsWith(marker)) {
+      final path = t.substring(marker.length).trim();
+      if (path.isNotEmpty) return path;
+    }
+  }
+  return null;
+}
+
 /// Lists existing evcc backups, newest first. No sudo: the dir + archives are
 /// created by root with a standard umask, so they're world-readable.
 const String listBackupsCommand =

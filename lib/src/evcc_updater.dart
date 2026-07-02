@@ -590,6 +590,66 @@ class EvccUpdater {
         },
       );
 
+  /// Exports a Pi-hole Teleporter backup on the Pi. Returns the archive path.
+  Future<String> backupPihole({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<String>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Sichere Pi-hole (Teleporter) …');
+          final path = await _runRootScriptCapturing(runner, log, config,
+              script: buildPiholeBackupScript(),
+              failMsg: 'Pi-hole-Backup fehlgeschlagen');
+          log('Backup gespeichert: $path');
+          return path;
+        },
+      );
+
+  /// Backs up the Home Assistant config directory (tar). Returns the path.
+  Future<String> backupHomeAssistant({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<String>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        // Locate the container + its /config bind source (docker may need sudo).
+        var listing = await runner.run(dockerListCommand);
+        var sudo = false;
+        if (isDockerPermissionError('${listing.stdout}\n${listing.stderr}')) {
+          sudo = true;
+          listing = await runner.run(dockerListSudoCommand,
+              stdin: '${config.password}\n');
+        }
+        final ha = parseHomeAssistant(listing.stdout);
+        if (ha == null) {
+          throw const EvccUpdateException(
+              UpdateErrorKind.unknown, 'Kein Home-Assistant-Container gefunden.');
+        }
+        final inspectCmd = sudo
+            ? dockerInspectJsonSudoCommand(ha.name)
+            : dockerInspectJsonCommand(ha.name);
+        final inspect = await runner.run(inspectCmd,
+            stdin: sudo ? '${config.password}\n' : null);
+        final cfg = homeAssistantConfigPath(inspect.stdout);
+        if (cfg == null) {
+          throw const EvccUpdateException(UpdateErrorKind.unknown,
+              'Konnte das /config-Verzeichnis nicht ermitteln.');
+        }
+        log('Sichere Home Assistant (/config: $cfg) …');
+        final path = await _runRootScriptCapturing(runner, log, config,
+            script: buildHomeAssistantBackupScript(cfg),
+            failMsg: 'Home-Assistant-Backup fehlgeschlagen');
+        log('Backup gespeichert: $path');
+        return path;
+      },
+    );
+  }
+
   /// Installs Pi-hole unattended (experimental — see buildPiholeInstallScript).
   Future<void> installPihole({
     required SshConfig config,
@@ -920,6 +980,37 @@ class EvccUpdater {
         '$failMsg (Exit ${result.exitCode}). Details im Log.',
       );
     }
+  }
+
+  /// Runs a root [script] (always sudo) and returns the `BACKUP_OK <path>` it
+  /// printed. Throws [failMsg] on a rejected password / non-zero exit / no
+  /// marker. Used by the on-demand Pi-hole + Home Assistant backups.
+  Future<String> _runRootScriptCapturing(
+    SshRunner runner,
+    void Function(String) log,
+    SshConfig config, {
+    required String script,
+    required String failMsg,
+  }) async {
+    final result = await runner.run(
+      installShellCommand,
+      stdin: '${config.password}\n$script\n',
+      onOutput: (chunk) {
+        final t = chunk.trimRight();
+        if (t.isNotEmpty) log(t);
+      },
+    );
+    final combined = '${result.stdout}\n${result.stderr}';
+    if (isSudoPasswordFailure(combined)) {
+      throw const EvccUpdateException(UpdateErrorKind.sudo,
+          'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+    }
+    final path = parseServiceBackupPath(combined);
+    if (path == null || (result.exitCode != null && result.exitCode != 0)) {
+      throw EvccUpdateException(
+          UpdateErrorKind.unknown, '$failMsg (Details im Log).');
+    }
+    return path;
   }
 
   /// Snapshots the evcc config + database into a timestamped archive on the Pi

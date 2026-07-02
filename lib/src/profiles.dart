@@ -81,6 +81,9 @@ class AppConfig {
   /// Snapshot evcc config + DB on the Pi before each update.
   final bool backupBeforeUpdate;
 
+  /// Daily background check that notifies when a Pi has pending updates.
+  final bool notifyUpdates;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -91,6 +94,7 @@ class AppConfig {
     this.channel = 'stable',
     this.autoCheck = false,
     this.backupBeforeUpdate = true,
+    this.notifyUpdates = false,
   });
 
   static const initial =
@@ -112,6 +116,7 @@ class AppConfig {
     String? channel,
     bool? autoCheck,
     bool? backupBeforeUpdate,
+    bool? notifyUpdates,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -123,6 +128,7 @@ class AppConfig {
         channel: channel ?? this.channel,
         autoCheck: autoCheck ?? this.autoCheck,
         backupBeforeUpdate: backupBeforeUpdate ?? this.backupBeforeUpdate,
+        notifyUpdates: notifyUpdates ?? this.notifyUpdates,
       );
 
   Map<String, dynamic> toJson() => {
@@ -135,6 +141,7 @@ class AppConfig {
         'channel': channel,
         'autoCheck': autoCheck,
         'backupBeforeUpdate': backupBeforeUpdate,
+        'notifyUpdates': notifyUpdates,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -156,6 +163,7 @@ class AppConfig {
       autoCheck: j['autoCheck'] == true,
       // Default ON; only an explicit false disables it.
       backupBeforeUpdate: j['backupBeforeUpdate'] != false,
+      notifyUpdates: j['notifyUpdates'] == true,
     );
   }
 }

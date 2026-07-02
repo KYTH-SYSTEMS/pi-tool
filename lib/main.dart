@@ -6,6 +6,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'src/authenticator.dart';
+import 'src/background_check.dart';
 import 'src/commands.dart';
 import 'src/evcc_api.dart';
 import 'src/evcc_updater.dart';
@@ -21,7 +22,13 @@ import 'src/update_check.dart';
 
 part 'src/ui_widgets.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Register the workmanager dispatcher so the OS can run the daily update
+  // check (scheduling itself is toggled in settings). Best-effort.
+  try {
+    await initUpdateChecks();
+  } catch (_) {}
   runApp(const EvccPiToolApp());
 }
 
@@ -166,6 +173,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _channel = 'stable';
   bool _autoCheck = false;
   bool _backupBeforeUpdate = true;
+  bool _notifyUpdates = false;
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -245,6 +253,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _channel = cfg.channel;
       _autoCheck = cfg.autoCheck;
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
+      _notifyUpdates = cfg.notifyUpdates;
       _applyProfile(cfg.active);
       if (_lockEnabled) _locked = true;
       _booting = false; // settings + lock state resolved → reveal the UI
@@ -340,7 +349,19 @@ class _UpdaterPageState extends State<UpdaterPage>
       channel: _channel,
       autoCheck: _autoCheck,
       backupBeforeUpdate: _backupBeforeUpdate,
+      notifyUpdates: _notifyUpdates,
     );
+  }
+
+  /// Enable/disable the daily background update check. Best-effort — the plugin
+  /// may be unavailable in unusual environments, which must not break the app.
+  Future<void> _applyNotifyUpdates(bool enabled) async {
+    try {
+      if (enabled) await requestNotificationPermission();
+      await setUpdateChecksEnabled(enabled);
+    } catch (_) {
+      // ignore — the toggle stays visually on; nothing else is affected
+    }
   }
 
   // ---- profile management --------------------------------------------------
@@ -931,6 +952,40 @@ class _UpdaterPageState extends State<UpdaterPage>
     _openUrl('$_uiScheme://${_host.text.trim()}/admin');
   }
 
+  Future<void> _backupPihole() => _runServiceBackup(
+        label: 'Pi-hole',
+        backgroundMessage: 'Pi-hole wird gesichert …',
+        run: (config) =>
+            _updater.backupPihole(config: config, onLog: _appendLog),
+      );
+
+  Future<void> _backupHomeAssistant() => _runServiceBackup(
+        label: 'Home Assistant',
+        backgroundMessage: 'Home Assistant wird gesichert …',
+        run: (config) =>
+            _updater.backupHomeAssistant(config: config, onLog: _appendLog),
+      );
+
+  /// Shared flow for the on-demand Pi-hole / HA backups: run, show the path.
+  Future<void> _runServiceBackup({
+    required String label,
+    required String backgroundMessage,
+    required Future<String> Function(SshConfig config) run,
+  }) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    await _guard(() async {
+      final path = await run(config);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = '$label gesichert: $path';
+        _statusOk = true;
+      });
+      _addHistory('$label gesichert.');
+    }, backgroundMessage: backgroundMessage);
+  }
+
   // ---- Home Assistant service actions ----
 
   Future<void> _updateHomeAssistant() async {
@@ -1374,6 +1429,19 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
+                  title: const Text('Update-Benachrichtigungen'),
+                  subtitle: const Text(
+                      'Täglicher Hintergrund-Check, meldet verfügbare Updates'),
+                  value: _notifyUpdates,
+                  onChanged: (v) {
+                    setState(() => _notifyUpdates = v);
+                    setSheet(() {});
+                    _scheduleSave();
+                    _applyNotifyUpdates(v);
+                  },
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
                   title: const Text('evcc-Oberfläche über HTTPS'),
                   subtitle: Text(_uiScheme == 'https'
                       ? 'https://…'
@@ -1497,6 +1565,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ? [
                     if (upToDate)
                       _CardAction('Trotzdem aktualisieren', _updatePihole),
+                    _CardAction('Sichern (Teleporter)', _backupPihole),
                     _CardAction('Blocklisten aktualisieren', _piholeGravity),
                     _CardAction('DNS neustarten', _piholeRestartDns),
                   ]
@@ -1512,7 +1581,9 @@ class _UpdaterPageState extends State<UpdaterPage>
             onPrimary:
                 s.installed ? _updateHomeAssistant : _installHomeAssistant,
             onOpenWeb: s.installed ? _openHomeAssistant : null,
-            actions: const [],
+            actions: s.installed
+                ? [_CardAction('Sichern (/config)', _backupHomeAssistant)]
+                : const [],
           ));
         case 'system':
           cards.add(_ServiceCard(

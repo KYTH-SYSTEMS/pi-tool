@@ -9,7 +9,8 @@ Dienste:
 
 Funktionen:
 * Auto-Erkennung aller Dienste in einer SSH-Sitzung
-* Backup vor evcc-Update (Config + Datenbank), abschaltbar
+* Update-Benachrichtigungen: optionaler täglicher Hintergrund-Check meldet verfügbare Updates
+* Backup vor evcc-Update (Config + Datenbank), abschaltbar; Pi-hole- (Teleporter) und Home-Assistant-Backup (/config)
 * Mehrere Pi-Profile, schnell umschaltbar
 * Verbindung herstellen mit grün/rot-Status
 

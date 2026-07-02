@@ -18,10 +18,12 @@ void main() {
         channel: 'unstable',
         autoCheck: true,
         backupBeforeUpdate: false,
+        notifyUpdates: true,
       );
 
       final back = parseAppConfig(encodeAppConfig(cfg));
       expect(back.backupBeforeUpdate, isFalse);
+      expect(back.notifyUpdates, isTrue);
       expect(back.profiles.length, 2);
       expect(back.profiles[0].name, 'Zuhause');
       expect(back.profiles[0].authMode, AuthMode.key);
@@ -41,6 +43,11 @@ void main() {
       expect(parseAppConfig('').profiles.single.name, 'Standard');
       expect(parseAppConfig('not json').profiles.single.name, 'Standard');
       expect(parseAppConfig('[]').profiles.single.name, 'Standard');
+    });
+
+    test('notifyUpdates defaults OFF when the key is absent', () {
+      expect(parseAppConfig('{"profiles":[],"activeIndex":0}').notifyUpdates,
+          isFalse);
     });
 
     test('backupBeforeUpdate defaults ON when the key is absent', () {

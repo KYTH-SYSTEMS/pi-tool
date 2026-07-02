@@ -75,6 +75,7 @@ class FakeEvccUpdater extends EvccUpdater {
   Future<void> cancel() async => cancelCalls++;
 
   final aptUpdates = <String>[]; // packages updated via updateAptPackage
+  int piholeBackupCalls = 0, haBackupCalls = 0;
 
   @override
   Future<void> updateAptPackage({
@@ -83,6 +84,24 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       aptUpdates.add(package);
+
+  @override
+  Future<String> backupPihole({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async {
+    piholeBackupCalls++;
+    return '/var/backups/pi-tool/pihole-backup-x.tar.gz';
+  }
+
+  @override
+  Future<String> backupHomeAssistant({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async {
+    haBackupCalls++;
+    return '/var/backups/pi-tool/homeassistant-backup-x.tar.gz';
+  }
 
   List<String> backups = const [];
   int restoreCalls = 0;
@@ -491,6 +510,32 @@ void main() {
 
     expect(u.aptUpdates, ['grafana']);
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
+  });
+
+  testWidgets('Pi-hole ⋮ → Sichern runs the teleporter backup', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            version: 'v6.0.4',
+            active: true,
+            updateKnown: true,
+            detail: 'Blocking aktiv'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byType(PopupMenuButton<int>).first); // Pi-hole ⋮
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sichern (Teleporter)'));
+    await tester.pumpAndSettle();
+
+    expect(u.piholeBackupCalls, 1);
+    expect(find.textContaining('Pi-hole gesichert'), findsOneWidget);
   });
 
   testWidgets('a dry-run (Probelauf) does NOT start the keep-alive',

@@ -5,6 +5,10 @@
 /// design/2026-06-30-multi-service.md.
 library;
 
+import 'dart:convert';
+
+import '../commands.dart' show shSingleQuote;
+
 /// Official container image (rolling "stable" channel).
 const String homeAssistantImage =
     'ghcr.io/home-assistant/home-assistant:stable';
@@ -33,6 +37,44 @@ class HomeAssistantContainer {
 }
 
 final _haImage = RegExp(r'home[-_]?assistant', caseSensitive: false);
+
+/// The `/config` bind-mount source directory from a Home Assistant
+/// `docker inspect` (JSON array or bare object). Null when not found.
+String? homeAssistantConfigPath(String inspectJson) {
+  try {
+    final data = jsonDecode(inspectJson);
+    final obj = data is List ? (data.isEmpty ? null : data.first) : data;
+    if (obj is! Map) return null;
+    final mounts = obj['Mounts'];
+    if (mounts is List) {
+      for (final m in mounts) {
+        if (m is Map && m['Destination'] == '/config') {
+          final src = m['Source'];
+          if (src is String && src.isNotEmpty) return src;
+        }
+      }
+    }
+  } catch (_) {
+    // malformed inspect → treat as unknown
+  }
+  return null;
+}
+
+/// Root/bash script (sudo shell) that tars the HA config dir [configPath] into
+/// the backup dir. Prints `BACKUP_OK <path>` on success.
+String buildHomeAssistantBackupScript(String configPath) {
+  final src = shSingleQuote(configPath);
+  return '''
+set -e
+mkdir -p /var/backups/pi-tool
+chmod 0755 /var/backups/pi-tool 2>/dev/null || true
+if [ ! -d $src ]; then echo "BACKUP_FAIL"; exit 1; fi
+out="/var/backups/pi-tool/homeassistant-backup-\$(date +%Y%m%d-%H%M%S).tar.gz"
+tar -czf "\$out" -C $src .
+chmod 0644 "\$out" 2>/dev/null || true
+echo "BACKUP_OK \$out"
+''';
+}
 
 /// Finds the Home Assistant container in
 /// `docker ps --format '{{.Names}}|{{.Image}}'` output. Matches by image

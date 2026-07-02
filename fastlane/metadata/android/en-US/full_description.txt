@@ -9,6 +9,8 @@ Services:
 
 Features:
 * Auto-detects all services in one SSH session
+* Update notifications: optional daily background check reports available updates
+* Backups: evcc (config + DB), Pi-hole (Teleporter) and Home Assistant (/config)
 * Backup before the evcc update (config + database), optional
 * Multiple Pi profiles, quick switching
 * Connect with green/red status
