@@ -4,7 +4,8 @@ Dienste:
 * evcc – aktualisieren (apt oder Docker, automatisch erkannt), installieren, Live-Status, Probelauf, Dienst neustarten, Web-Oberfläche öffnen
 * Pi-hole – aktualisieren (pihole -up), Blocklisten erneuern, DNS neustarten, installieren (experimentell), /admin öffnen
 * Home Assistant – als Docker-Container installieren (experimentell) und aktualisieren, Web-UI (Port 8123) öffnen
-* Grafana & InfluxDB – automatisch erkannt, aktualisieren per apt, Web-UI öffnen
+* Grafana, InfluxDB & Mosquitto – installieren + aktualisieren per apt (offizielles Repo, experimentell), Web-UI öffnen (Grafana/InfluxDB)
+* „Dienst installieren" – weitere Dienste per Auswahl auf den Pi installieren, ohne die Übersicht zu überladen
 * System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), Pi neustarten, Gesundheits-Anzeige (Temperatur, Speicher, RAM, Uptime) mit Warnung bei knappem Speicher
 
 Funktionen:

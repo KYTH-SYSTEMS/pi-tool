@@ -708,6 +708,33 @@ void main() {
     });
   });
 
+  group('EvccUpdater.installAptService', () {
+    test('installs the service by running its script as root', () async {
+      final grafana = knownAptServices.firstWhere((s) => s.id == 'grafana');
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('...\nSetting up grafana ...\n')],
+      });
+      await _updaterWith(runner)
+          .installAptService(config: _config, service: grafana, onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, startsWith('sekret\n')); // sudo password piped first
+      expect(stdin, contains('apt.grafana.com')); // the service's script ran
+    });
+
+    test('a rejected sudo password is surfaced as a sudo error', () async {
+      final mosquitto = knownAptServices.firstWhere((s) => s.id == 'mosquitto');
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('sudo: 1 incorrect password attempt', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .installAptService(config: _config, service: mosquitto, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
+    });
+  });
+
   group('EvccUpdater.reboot', () {
     test('reports failure on a non-zero, non-password exit', () async {
       final runner = FakeSshRunner({

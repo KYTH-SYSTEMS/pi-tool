@@ -28,9 +28,13 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
 - **Home Assistant** — als **Docker-Container** installieren (installiert bei
   Bedarf zuerst Docker, experimentell) und aktualisieren (Image-Pull + Neuanlage,
   Daten im `/config`-Volume bleiben erhalten), Web-UI auf Port 8123 öffnen.
-- **Grafana & InfluxDB** — werden automatisch erkannt, wenn per apt installiert:
-  eigene Karte mit Update (apt `--only-upgrade`) und Web-UI (Grafana :3000,
-  InfluxDB v2 :8086).
+- **Grafana, InfluxDB & Mosquitto** — werden automatisch erkannt, wenn per apt
+  installiert: eigene Karte mit Update (apt `--only-upgrade`) und Web-UI
+  (Grafana :3000, InfluxDB v2 :8086; Mosquitto ist ein MQTT-Broker ohne Web-UI).
+- **Dienst installieren** — ein „+ Dienst installieren"-Knopf öffnet eine
+  Auswahl der noch nicht vorhandenen Dienste (Grafana, InfluxDB, Mosquitto) und
+  richtet das offizielle apt-Repo ein + installiert (experimentell). Der
+  Hauptbildschirm zeigt weiterhin nur, was wirklich läuft — bleibt also schlank.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB oder ≥90 % belegt) warnt sie, bevor

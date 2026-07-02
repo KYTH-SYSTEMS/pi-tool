@@ -861,6 +861,35 @@ class EvccUpdater {
         },
       );
 
+  /// Installs an on-demand apt service (Grafana, InfluxDB, Mosquitto, …) by
+  /// running its [AptService.installScript] as root: it sets up the official
+  /// apt repo, installs the package and enables the unit. Experimental — the
+  /// scripts follow each project's documented install but aren't validated
+  /// against every Pi OS release. Throws on failure.
+  Future<void> installAptService({
+    required SshConfig config,
+    required AptService service,
+    required void Function(String line) onLog,
+  }) {
+    final script = service.installScript;
+    if (script == null) {
+      throw EvccUpdateException(UpdateErrorKind.unknown,
+          '${service.name} kann nicht installiert werden.');
+    }
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Installiere ${service.name} … (kann ein paar Minuten dauern)');
+        await _runRootScript(runner, log, config,
+            sudo: true,
+            script: script,
+            failMsg: '${service.name}-Installation fehlgeschlagen');
+        log('${service.name} installiert.');
+      },
+    );
+  }
+
   /// Updates a Docker-deployed evcc. Inspects the container once: if it's
   /// compose-managed, it pulls + recreates the evcc service via `docker compose`
   /// (project/file pinned, v1 fallback); otherwise it reconstructs an equivalent

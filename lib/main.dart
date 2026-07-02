@@ -14,6 +14,7 @@ import 'src/keep_alive.dart';
 import 'src/network_scan.dart';
 import 'src/parsing.dart';
 import 'src/profiles.dart';
+import 'src/services/apt_services.dart';
 import 'src/services/pi_service.dart';
 import 'src/settings_store.dart';
 import 'src/ssh_runner.dart';
@@ -1569,7 +1570,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           // optional web UI. Only ever emitted when installed.
           cards.add(_ServiceCard(
             status: s,
-            icon: s.id == 'grafana' ? Icons.insights : Icons.storage,
+            icon: _serviceIcon(s.id),
             enabled: !_busy,
             primaryLabel: 'Aktualisieren',
             onPrimary: () => _updateAptService(s),
@@ -1583,7 +1584,99 @@ class _UpdaterPageState extends State<UpdaterPage>
           ));
       }
     }
+    // Keep the main view to what's actually running: installable services that
+    // aren't present live behind a single picker, not as extra cards.
+    final present = _services.map((s) => s.id).toSet();
+    final installable =
+        knownInstallableServices.where((s) => !present.contains(s.id)).toList();
+    if (installable.isNotEmpty) {
+      cards.add(Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: OutlinedButton.icon(
+          onPressed: _busy ? null : () => _showInstallServicePicker(installable),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Dienst installieren'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(44),
+          ),
+        ),
+      ));
+    }
     return cards;
+  }
+
+  /// Bottom-sheet picker of services that can be installed but aren't present.
+  void _showInstallServicePicker(List<AptService> installable) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kCard,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
+              child: Text('Dienst installieren',
+                  style:
+                      TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Experimentell — richtet das offizielle apt-Repo ein '
+                  'und installiert den Dienst.'),
+            ),
+            for (final s in installable)
+              ListTile(
+                leading: Icon(_serviceIcon(s.id)),
+                title: Text(s.name),
+                subtitle: s.webPort != null
+                    ? Text('Web-Oberfläche auf Port ${s.webPort}')
+                    : null,
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _installAptService(s);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Installs an on-demand apt service (Grafana, InfluxDB, Mosquitto), then
+  /// re-detects so the new card appears.
+  Future<void> _installAptService(AptService service) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _installAptService(service);
+    await _guard(() async {
+      await _updater.installAptService(
+          config: config, service: service, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = '${service.name} installiert.';
+        _statusOk = true;
+      });
+      _addHistory('${service.name} installiert.');
+      await _refreshServices(config);
+    }, backgroundMessage: '${service.name} wird installiert …');
+  }
+
+  /// Icon for an installable service (matches the card icons).
+  IconData _serviceIcon(String id) {
+    switch (id) {
+      case 'grafana':
+        return Icons.insights;
+      case 'influxdb':
+        return Icons.storage;
+      case 'mosquitto':
+        return Icons.sensors;
+      default:
+        return Icons.apps;
+    }
   }
 
   /// Update a generic apt service card (Grafana, InfluxDB, …).

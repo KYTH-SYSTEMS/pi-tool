@@ -1,6 +1,7 @@
 /// Additional apt-managed services the app can detect and update (Grafana,
-/// InfluxDB, …). Unlike evcc/Pi-hole these get a card only when actually
-/// installed — the app manages them but doesn't offer to install them.
+/// InfluxDB, Mosquitto, …). They get a card only when actually installed; the
+/// ones carrying an [AptService.installScript] can also be installed on demand
+/// via the "Dienst installieren" picker.
 library;
 
 /// Descriptor for one apt-managed service.
@@ -20,16 +21,26 @@ class AptService {
   /// Web-UI port, or null when the service has none.
   final int? webPort;
 
+  /// Root shell script that installs the service (official apt repo + package),
+  /// or null when the app only detects/updates it. Experimental — the scripts
+  /// follow each project's documented apt install but aren't validated against
+  /// every Pi OS release.
+  final String? installScript;
+
   const AptService({
     required this.id,
     required this.name,
     required this.packages,
     required this.unit,
     this.webPort,
+    this.installScript,
   });
+
+  /// Whether the app can install this service (not just detect/update it).
+  bool get installable => installScript != null;
 }
 
-/// The apt services the app knows how to detect/update.
+/// The apt services the app knows how to detect/update (and some to install).
 const List<AptService> knownAptServices = [
   AptService(
     id: 'grafana',
@@ -38,6 +49,7 @@ const List<AptService> knownAptServices = [
     packages: ['grafana', 'grafana-enterprise', 'grafana-rpi'],
     unit: 'grafana-server',
     webPort: 3000,
+    installScript: _grafanaInstall,
   ),
   AptService(
     id: 'influxdb',
@@ -47,8 +59,58 @@ const List<AptService> knownAptServices = [
     // v1 has no web UI; v2's runs on 8086 — the card only shows the web button
     // for the influxdb2 package (decided at detection time).
     webPort: 8086,
+    installScript: _influxdbInstall,
+  ),
+  AptService(
+    id: 'mosquitto',
+    name: 'Mosquitto',
+    packages: ['mosquitto'],
+    unit: 'mosquitto',
+    // MQTT broker — no web UI (pairs with Home Assistant / evcc over MQTT).
+    installScript: _mosquittoInstall,
   ),
 ];
+
+/// Services that can be installed on demand (carry an install script).
+List<AptService> get knownInstallableServices =>
+    knownAptServices.where((s) => s.installable).toList();
+
+// --- install scripts (run as root via sudo) --------------------------------
+// Each sets up the official apt source, installs the package and enables the
+// service. `set -e` aborts on the first failure so a partial install surfaces.
+
+const String _grafanaInstall = '''
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y apt-transport-https software-properties-common wget gnupg
+mkdir -p /etc/apt/keyrings
+wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
+echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" > /etc/apt/sources.list.d/grafana.list
+apt-get update
+apt-get install -y grafana
+systemctl daemon-reload
+systemctl enable --now grafana-server
+''';
+
+const String _influxdbInstall = '''
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y wget gnupg
+mkdir -p /etc/apt/keyrings
+wget -q -O - https://repos.influxdata.com/influxdata-archive_compat.key | gpg --dearmor -o /etc/apt/keyrings/influxdata.gpg
+echo "deb [signed-by=/etc/apt/keyrings/influxdata.gpg] https://repos.influxdata.com/debian stable main" > /etc/apt/sources.list.d/influxdata.list
+apt-get update
+apt-get install -y influxdb2
+systemctl enable --now influxdb
+''';
+
+const String _mosquittoInstall = '''
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y mosquitto mosquitto-clients
+systemctl enable --now mosquitto
+''';
 
 /// One dpkg query for every known extra package (missing ones only error to
 /// stderr, so stdout stays parseable). No sudo.

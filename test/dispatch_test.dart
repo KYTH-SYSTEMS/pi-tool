@@ -6,6 +6,7 @@ import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/profiles.dart';
+import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
@@ -75,6 +76,7 @@ class FakeEvccUpdater extends EvccUpdater {
   Future<void> cancel() async => cancelCalls++;
 
   final aptUpdates = <String>[]; // packages updated via updateAptPackage
+  final aptInstalls = <String>[]; // service ids installed via installAptService
   int piholeBackupCalls = 0, haBackupCalls = 0;
 
   @override
@@ -84,6 +86,14 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       aptUpdates.add(package);
+
+  @override
+  Future<void> installAptService({
+    required SshConfig config,
+    required AptService service,
+    required void Function(String line) onLog,
+  }) async =>
+      aptInstalls.add(service.id);
 
   @override
   Future<String> backupPihole({
@@ -510,6 +520,60 @@ void main() {
 
     expect(u.aptUpdates, ['grafana']);
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
+  });
+
+  testWidgets('„Dienst installieren" picker installs the chosen service',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater(); // default services: evcc + system only
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Not-yet-installed installable services live behind one button.
+    final installBtn = find.widgetWithText(OutlinedButton, 'Dienst installieren');
+    expect(installBtn, findsOneWidget);
+    await tester.ensureVisible(installBtn);
+    await tester.tap(installBtn);
+    await tester.pumpAndSettle();
+
+    // Picker lists Grafana, InfluxDB and Mosquitto (none present yet).
+    expect(find.text('Grafana'), findsOneWidget);
+    expect(find.text('InfluxDB'), findsOneWidget);
+    expect(find.text('Mosquitto'), findsOneWidget);
+
+    await tester.tap(find.text('Grafana'));
+    await tester.pumpAndSettle();
+
+    expect(u.aptInstalls, ['grafana']);
+    expect(find.textContaining('Grafana installiert'), findsOneWidget);
+  });
+
+  testWidgets('installed services are not offered in the install picker',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'grafana',
+            name: 'Grafana',
+            installed: true,
+            version: '11.0.0',
+            active: true,
+            webPort: 3000),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Dienst installieren'));
+    await tester.pumpAndSettle();
+
+    // Grafana already runs → only InfluxDB + Mosquitto remain installable.
+    expect(find.text('InfluxDB'), findsOneWidget);
+    expect(find.text('Mosquitto'), findsOneWidget);
+    // (Grafana appears once — as the existing card behind the sheet — not as a
+    // picker row; the picker excludes present services.)
   });
 
   testWidgets('Pi-hole ⋮ → Sichern runs the teleporter backup', (tester) async {
