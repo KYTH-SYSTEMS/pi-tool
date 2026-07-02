@@ -18,7 +18,7 @@ if (hasKeystore) {
 }
 
 android {
-    namespace = "de.grasse.evcc_updater"
+    namespace = "systems.kyth.pitool"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -28,8 +28,11 @@ android {
     }
 
     defaultConfig {
-        // Published application identity — do not change (would orphan updates).
-        applicationId = "de.grasse.evcc_updater"
+        // Published application identity under KYTH. Systems UG. Changed once,
+        // before any Play release, from the legacy de.grasse.evcc_updater — a new
+        // id orphans existing installs (reinstall needed) and is permanent once
+        // on Play, so it must not change again after publication.
+        applicationId = "systems.kyth.pitool"
         minSdk = flutter.minSdkVersion
         // Pinned explicitly: Play requires new apps/updates to target API 35.
         targetSdk = 35

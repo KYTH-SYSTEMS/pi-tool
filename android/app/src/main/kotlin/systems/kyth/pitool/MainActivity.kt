@@ -1,4 +1,4 @@
-package de.grasse.evcc_updater
+package systems.kyth.pitool
 
 import android.os.Bundle
 import android.view.WindowManager
