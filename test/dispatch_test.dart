@@ -340,7 +340,7 @@ void main() {
     expect(u.haUpdateCalls, 1);
   });
 
-  testWidgets('Home Assistant card installs when the service is absent',
+  testWidgets('an absent service is offered under „Dienst hinzufügen", not a card',
       (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
@@ -352,8 +352,12 @@ void main() {
     await tester.pumpAndSettle();
     await detect(tester);
 
-    await tester
-        .tap(find.widgetWithText(OutlinedButton, 'Home Assistant installieren'));
+    // Not installed → no update card, only the add button.
+    expect(find.widgetWithText(OutlinedButton, 'Aktualisieren'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Dienst hinzufügen'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Home Assistant')); // picker row
     await tester.pumpAndSettle();
     // Install is destructive-ish → confirm dialog.
     await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
@@ -522,19 +526,19 @@ void main() {
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
   });
 
-  testWidgets('„Dienst installieren" picker installs the chosen service',
+  testWidgets('„Dienst hinzufügen" picker installs the chosen apt service',
       (tester) async {
     useTallScreen(tester);
-    final u = FakeEvccUpdater(); // default services: evcc + system only
+    final u = FakeEvccUpdater(); // default services: evcc + system installed
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
     await detect(tester);
 
-    // Not-yet-installed installable services live behind one button.
-    final installBtn = find.widgetWithText(OutlinedButton, 'Dienst installieren');
-    expect(installBtn, findsOneWidget);
-    await tester.ensureVisible(installBtn);
-    await tester.tap(installBtn);
+    // Not-yet-installed services live behind one button.
+    final addBtn = find.widgetWithText(OutlinedButton, 'Dienst hinzufügen');
+    expect(addBtn, findsOneWidget);
+    await tester.ensureVisible(addBtn);
+    await tester.tap(addBtn);
     await tester.pumpAndSettle();
 
     // Picker lists Grafana, InfluxDB and Mosquitto (none present yet).
@@ -549,7 +553,29 @@ void main() {
     expect(find.textContaining('Grafana installiert'), findsOneWidget);
   });
 
-  testWidgets('installed services are not offered in the install picker',
+  testWidgets('a not-installed bespoke service (evcc) routes to its install',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(id: 'evcc', name: 'evcc', installed: false),
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Dienst hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('evcc')); // picker row
+    await tester.pumpAndSettle();
+
+    // Routes to the evcc install flow (its confirm dialog).
+    expect(find.text('evcc installieren?'), findsOneWidget);
+  });
+
+  testWidgets('installed services are not offered in the add picker',
       (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
@@ -566,14 +592,12 @@ void main() {
     await tester.pumpAndSettle();
     await detect(tester);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Dienst installieren'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Dienst hinzufügen'));
     await tester.pumpAndSettle();
 
     // Grafana already runs → only InfluxDB + Mosquitto remain installable.
     expect(find.text('InfluxDB'), findsOneWidget);
     expect(find.text('Mosquitto'), findsOneWidget);
-    // (Grafana appears once — as the existing card behind the sheet — not as a
-    // picker row; the picker excludes present services.)
   });
 
   testWidgets('Pi-hole ⋮ → Sichern runs the teleporter backup', (tester) async {

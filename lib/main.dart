@@ -1490,7 +1490,25 @@ class _UpdaterPageState extends State<UpdaterPage>
       ];
     }
     final cards = <Widget>[];
+    final addable = <_AddableService>[];
     for (final s in _services) {
+      // The overview shows only what's actually running: a not-installed
+      // evcc/Pi-hole/HA goes into the "Dienst hinzufügen" picker, not a card.
+      // (System is the Pi itself — always shown. apt services only ever appear
+      // here when installed.)
+      if (!s.installed && s.id != 'system') {
+        switch (s.id) {
+          case 'evcc':
+            addable.add(_AddableService('evcc', Icons.bolt, _install));
+          case 'pihole':
+            addable.add(
+                _AddableService('Pi-hole', Icons.shield_outlined, _installPihole));
+          case 'homeassistant':
+            addable.add(_AddableService(
+                'Home Assistant', Icons.cottage_outlined, _installHomeAssistant));
+        }
+        continue;
+      }
       // Known up to date → the primary becomes a disabled "Aktuell"; a forced
       // update is offered in the ⋮ menu instead.
       final upToDate = s.installed && s.updateKnown && !s.updateAvailable;
@@ -1500,9 +1518,9 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.bolt,
             enabled: !_busy,
-            primaryLabel: s.installed ? 'Aktualisieren' : 'evcc installieren',
-            onPrimary: s.installed ? () => _run(dryRun: false) : _install,
-            onOpenWeb: s.installed ? _openEvccUi : null,
+            primaryLabel: 'Aktualisieren',
+            onPrimary: () => _run(dryRun: false),
+            onOpenWeb: _openEvccUi,
             actions: s.installed
                 ? [
                     if (upToDate)
@@ -1525,32 +1543,25 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.shield_outlined,
             enabled: !_busy,
-            primaryLabel: s.installed ? 'Aktualisieren' : 'Pi-hole installieren',
-            onPrimary: s.installed ? _updatePihole : _installPihole,
-            onOpenWeb: s.installed ? _openPiholeAdmin : null,
-            actions: s.installed
-                ? [
-                    if (upToDate)
-                      _CardAction('Trotzdem aktualisieren', _updatePihole),
-                    _CardAction('Sichern (Teleporter)', _backupPihole),
-                    _CardAction('Blocklisten aktualisieren', _piholeGravity),
-                    _CardAction('DNS neustarten', _piholeRestartDns),
-                  ]
-                : const [],
+            primaryLabel: 'Aktualisieren',
+            onPrimary: _updatePihole,
+            onOpenWeb: _openPiholeAdmin,
+            actions: [
+              if (upToDate) _CardAction('Trotzdem aktualisieren', _updatePihole),
+              _CardAction('Sichern (Teleporter)', _backupPihole),
+              _CardAction('Blocklisten aktualisieren', _piholeGravity),
+              _CardAction('DNS neustarten', _piholeRestartDns),
+            ],
           ));
         case 'homeassistant':
           cards.add(_ServiceCard(
             status: s,
             icon: Icons.cottage_outlined,
             enabled: !_busy,
-            primaryLabel:
-                s.installed ? 'Aktualisieren' : 'Home Assistant installieren',
-            onPrimary:
-                s.installed ? _updateHomeAssistant : _installHomeAssistant,
-            onOpenWeb: s.installed ? _openHomeAssistant : null,
-            actions: s.installed
-                ? [_CardAction('Sichern (/config)', _backupHomeAssistant)]
-                : const [],
+            primaryLabel: 'Aktualisieren',
+            onPrimary: _updateHomeAssistant,
+            onOpenWeb: _openHomeAssistant,
+            actions: [_CardAction('Sichern (/config)', _backupHomeAssistant)],
           ));
         case 'system':
           cards.add(_ServiceCard(
@@ -1584,18 +1595,26 @@ class _UpdaterPageState extends State<UpdaterPage>
           ));
       }
     }
-    // Keep the main view to what's actually running: installable services that
-    // aren't present live behind a single picker, not as extra cards.
+    // apt services that aren't installed yet also join the "Dienst hinzufügen"
+    // list (they only appear in _services once installed).
     final present = _services.map((s) => s.id).toSet();
-    final installable =
-        knownInstallableServices.where((s) => !present.contains(s.id)).toList();
-    if (installable.isNotEmpty) {
+    for (final svc in knownInstallableServices) {
+      if (present.contains(svc.id)) continue;
+      addable.add(_AddableService(
+        svc.name,
+        _serviceIcon(svc.id),
+        () => _installAptService(svc),
+        subtitle:
+            svc.webPort != null ? 'Web-Oberfläche auf Port ${svc.webPort}' : null,
+      ));
+    }
+    if (addable.isNotEmpty) {
       cards.add(Padding(
         padding: const EdgeInsets.only(top: 4),
         child: OutlinedButton.icon(
-          onPressed: _busy ? null : () => _showInstallServicePicker(installable),
+          onPressed: _busy ? null : () => _showAddServicePicker(addable),
           icon: const Icon(Icons.add, size: 18),
-          label: const Text('Dienst installieren'),
+          label: const Text('Dienst hinzufügen'),
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(44),
           ),
@@ -1605,8 +1624,9 @@ class _UpdaterPageState extends State<UpdaterPage>
     return cards;
   }
 
-  /// Bottom-sheet picker of services that can be installed but aren't present.
-  void _showInstallServicePicker(List<AptService> installable) {
+  /// Bottom-sheet picker of every not-installed service (evcc, Pi-hole, Home
+  /// Assistant, Grafana, InfluxDB, Mosquitto). Each routes to its own install.
+  void _showAddServicePicker(List<_AddableService> items) {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: kCard,
@@ -1618,25 +1638,21 @@ class _UpdaterPageState extends State<UpdaterPage>
           children: [
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
-              child: Text('Dienst installieren',
-                  style:
-                      TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              child: Text('Dienst hinzufügen',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             ),
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Experimentell — richtet das offizielle apt-Repo ein '
-                  'und installiert den Dienst.'),
+              child: Text('Installiert den Dienst auf dem Pi (experimentell).'),
             ),
-            for (final s in installable)
+            for (final item in items)
               ListTile(
-                leading: Icon(_serviceIcon(s.id)),
-                title: Text(s.name),
-                subtitle: s.webPort != null
-                    ? Text('Web-Oberfläche auf Port ${s.webPort}')
-                    : null,
+                leading: Icon(item.icon),
+                title: Text(item.name),
+                subtitle: item.subtitle != null ? Text(item.subtitle!) : null,
                 onTap: () {
                   Navigator.of(sheetContext).pop();
-                  _installAptService(s);
+                  item.onAdd();
                 },
               ),
           ],

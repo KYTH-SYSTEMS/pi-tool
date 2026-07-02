@@ -5,7 +5,7 @@ Services:
 * Pi-hole – update (pihole -up), rebuild blocklists, restart DNS, install (experimental), open /admin
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
 * Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI (Grafana/InfluxDB)
-* "Install service" – add more services to the Pi from a picker, without cluttering the overview
+* "Add service" – every not-yet-installed service (evcc, Pi-hole, Home Assistant, Grafana, InfluxDB, Mosquitto) in one picker; the main screen shows only what's actually running
 * System (whole Pi) – update all packages (apt full-upgrade), reboot, health readout (temperature, disk, RAM, uptime) with a low-disk warning
 
 Features:

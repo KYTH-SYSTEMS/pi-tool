@@ -31,10 +31,11 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
 - **Grafana, InfluxDB & Mosquitto** — werden automatisch erkannt, wenn per apt
   installiert: eigene Karte mit Update (apt `--only-upgrade`) und Web-UI
   (Grafana :3000, InfluxDB v2 :8086; Mosquitto ist ein MQTT-Broker ohne Web-UI).
-- **Dienst installieren** — ein „+ Dienst installieren"-Knopf öffnet eine
-  Auswahl der noch nicht vorhandenen Dienste (Grafana, InfluxDB, Mosquitto) und
-  richtet das offizielle apt-Repo ein + installiert (experimentell). Der
-  Hauptbildschirm zeigt weiterhin nur, was wirklich läuft — bleibt also schlank.
+- **Dienst hinzufügen** — der Hauptbildschirm zeigt nur **installierte** Dienste
+  als Karte; ein „+ Dienst hinzufügen"-Knopf öffnet eine Auswahl **aller noch
+  nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,
+  InfluxDB, Mosquitto) und installiert den gewählten (experimentell). So bleibt
+  die Übersicht schlank, egal wie viele Dienste unterstützt werden.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB oder ≥90 % belegt) warnt sie, bevor

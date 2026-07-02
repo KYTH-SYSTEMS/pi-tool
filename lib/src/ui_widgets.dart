@@ -217,6 +217,16 @@ class _CardAction {
   final VoidCallback onTap;
 }
 
+/// One entry in the "Dienst hinzufügen" picker: a not-yet-installed service and
+/// how to install it (bespoke evcc/Pi-hole/HA flow, or a generic apt install).
+class _AddableService {
+  const _AddableService(this.name, this.icon, this.onAdd, {this.subtitle});
+  final String name;
+  final IconData icon;
+  final VoidCallback onAdd;
+  final String? subtitle;
+}
+
 /// A detected-service card (style B): name + status LED + version (mono) +
 /// primary Aktualisieren/Installieren, an optional "Oberfläche öffnen" link and
 /// a ⋮ menu of extra actions. Mirrors the connection card's shape.
