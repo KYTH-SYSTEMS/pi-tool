@@ -32,9 +32,15 @@ void main() {
     test('tars the config dir into the backup dir, shell-quoted', () {
       final s = buildHomeAssistantBackupScript('/opt/homeassistant/config');
       expect(s, contains('/var/backups/pi-tool'));
-      expect(s, contains("tar -czf"));
+      expect(s, contains('tar --warning=no-file-changed -czf'));
       expect(s, contains("-C '/opt/homeassistant/config'"));
       expect(s, contains('BACKUP_OK'));
+    });
+
+    test('a tar warning (exit 1) on a live HA is NOT a failure; only >1 is', () {
+      final s = buildHomeAssistantBackupScript('/opt/homeassistant/config');
+      expect(s, contains(r'rc=$?'));
+      expect(s, contains(r'if [ "$rc" -gt 1 ]')); // exit 1 = warning, still OK
     });
     test('single-quotes the config path so it cannot break out', () {
       final s = buildHomeAssistantBackupScript("/x';reboot;'");

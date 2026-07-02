@@ -10,6 +10,7 @@ import 'package:workmanager/workmanager.dart';
 import 'evcc_updater.dart';
 import 'notifications.dart';
 import 'profiles.dart';
+import 'settings_store.dart' show AuthMode;
 import 'ssh_runner.dart';
 
 const _taskName = 'pi-tool-update-check';
@@ -22,7 +23,11 @@ void updateCheckDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     WidgetsFlutterBinding.ensureInitialized();
     final store = AppConfigStore();
-    final updater = EvccUpdater.real();
+    // Background can't prompt for a first-use host key, so it must NEVER trust
+    // one silently (that would send the password to an unverified host). Decline
+    // first use → only already-trusted Pis are checked; trust is established via
+    // an explicit foreground connect (same shared secure host-key store).
+    final updater = EvccUpdater.real(confirmFirstUse: (_) async => false);
     final runner = UpdateCheckRunner(
       loadProfiles: () async {
         final cfg = await store.load();
@@ -96,12 +101,17 @@ Future<void> showUpdateNotification(NotificationContent c) async {
   );
 }
 
-SshConfig _configForProfile(Profile p) => SshConfig(
-      host: p.host,
-      port: int.tryParse(p.port) ?? 22,
-      username: p.username,
-      password: p.password,
-      privateKey: p.privateKey,
-      keyPassphrase: p.keyPassphrase,
-      timeout: const Duration(seconds: 15),
-    );
+SshConfig _configForProfile(Profile p) {
+  // Honour the profile's auth mode: only use the stored key when it's the
+  // selected method (SshConfig treats a non-empty privateKey as key-auth).
+  final useKey = p.authMode == AuthMode.key;
+  return SshConfig(
+    host: p.host,
+    port: int.tryParse(p.port) ?? 22,
+    username: p.username,
+    password: p.password,
+    privateKey: useKey ? p.privateKey : '',
+    keyPassphrase: useKey ? p.keyPassphrase : '',
+    timeout: const Duration(seconds: 15),
+  );
+}

@@ -64,13 +64,21 @@ String? homeAssistantConfigPath(String inspectJson) {
 /// the backup dir. Prints `BACKUP_OK <path>` on success.
 String buildHomeAssistantBackupScript(String configPath) {
   final src = shSingleQuote(configPath);
+  // HA keeps running during the backup, so its DB/.storage files change while
+  // tar reads them → GNU tar exits 1 ("file changed as we read it"). That is a
+  // WARNING, not a failure (the archive is still written), so exit 1 must not
+  // be treated as an error; only exit >1 is a real failure.
   return '''
 set -e
 mkdir -p /var/backups/pi-tool
 chmod 0755 /var/backups/pi-tool 2>/dev/null || true
 if [ ! -d $src ]; then echo "BACKUP_FAIL"; exit 1; fi
 out="/var/backups/pi-tool/homeassistant-backup-\$(date +%Y%m%d-%H%M%S).tar.gz"
-tar -czf "\$out" -C $src .
+set +e
+tar --warning=no-file-changed -czf "\$out" -C $src .
+rc=\$?
+set -e
+if [ "\$rc" -gt 1 ]; then echo "BACKUP_FAIL"; rm -f "\$out"; exit 1; fi
 chmod 0644 "\$out" 2>/dev/null || true
 echo "BACKUP_OK \$out"
 ''';

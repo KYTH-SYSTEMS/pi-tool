@@ -624,6 +624,10 @@ class EvccUpdater {
           sudo = true;
           listing = await runner.run(dockerListSudoCommand,
               stdin: '${config.password}\n');
+          if (isSudoPasswordFailure('${listing.stdout}\n${listing.stderr}')) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
         }
         final ha = parseHomeAssistant(listing.stdout);
         if (ha == null) {
@@ -635,6 +639,11 @@ class EvccUpdater {
             : dockerInspectJsonCommand(ha.name);
         final inspect = await runner.run(inspectCmd,
             stdin: sudo ? '${config.password}\n' : null);
+        if (sudo &&
+            isSudoPasswordFailure('${inspect.stdout}\n${inspect.stderr}')) {
+          throw const EvccUpdateException(UpdateErrorKind.sudo,
+              'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+        }
         final cfg = homeAssistantConfigPath(inspect.stdout);
         if (cfg == null) {
           throw const EvccUpdateException(UpdateErrorKind.unknown,
