@@ -44,9 +44,6 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
 - **Pi-hole- & Home-Assistant-Backup** — Pi-hole per Teleporter-Export (offizielles,
   importierbares Format), Home Assistant als Tar des `/config`-Verzeichnisses;
   landet unter `/var/backups/pi-tool/` auf dem Pi.
-- **Update-Benachrichtigungen** — optionaler täglicher Hintergrund-Check, der
-  meldet, wenn auf einem deiner Pis Updates verfügbar sind (opt-in in den
-  Einstellungen).
 - **„Aktuell"-Anzeige** — bei evcc/Pi-hole/System zeigt die Karte „Aktuell", wenn
   keine neue Version ansteht (statt „Aktualisieren"); erzwingen geht über das ⋮-Menü.
 - **Abbrechen** — eine laufende Aktion lässt sich abbrechen (schließt die

@@ -6,7 +6,6 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'src/authenticator.dart';
-import 'src/background_check.dart';
 import 'src/commands.dart';
 import 'src/evcc_api.dart';
 import 'src/evcc_updater.dart';
@@ -22,13 +21,7 @@ import 'src/update_check.dart';
 
 part 'src/ui_widgets.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // Register the workmanager dispatcher so the OS can run the daily update
-  // check (scheduling itself is toggled in settings). Best-effort.
-  try {
-    await initUpdateChecks();
-  } catch (_) {}
+void main() {
   runApp(const EvccPiToolApp());
 }
 
@@ -173,7 +166,6 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _channel = 'stable';
   bool _autoCheck = false;
   bool _backupBeforeUpdate = true;
-  bool _notifyUpdates = false;
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -253,7 +245,6 @@ class _UpdaterPageState extends State<UpdaterPage>
       _channel = cfg.channel;
       _autoCheck = cfg.autoCheck;
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
-      _notifyUpdates = cfg.notifyUpdates;
       _applyProfile(cfg.active);
       if (_lockEnabled) _locked = true;
       _booting = false; // settings + lock state resolved → reveal the UI
@@ -349,19 +340,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       channel: _channel,
       autoCheck: _autoCheck,
       backupBeforeUpdate: _backupBeforeUpdate,
-      notifyUpdates: _notifyUpdates,
     );
-  }
-
-  /// Enable/disable the daily background update check. Best-effort — the plugin
-  /// may be unavailable in unusual environments, which must not break the app.
-  Future<void> _applyNotifyUpdates(bool enabled) async {
-    try {
-      if (enabled) await requestNotificationPermission();
-      await setUpdateChecksEnabled(enabled);
-    } catch (_) {
-      // ignore — the toggle stays visually on; nothing else is affected
-    }
   }
 
   // ---- profile management --------------------------------------------------
@@ -1425,19 +1404,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                     setState(() => _backupBeforeUpdate = v);
                     setSheet(() {});
                     _scheduleSave();
-                  },
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Update-Benachrichtigungen'),
-                  subtitle: const Text(
-                      'Täglicher Hintergrund-Check, meldet verfügbare Updates'),
-                  value: _notifyUpdates,
-                  onChanged: (v) {
-                    setState(() => _notifyUpdates = v);
-                    setSheet(() {});
-                    _scheduleSave();
-                    _applyNotifyUpdates(v);
                   },
                 ),
                 SwitchListTile(

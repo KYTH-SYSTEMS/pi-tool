@@ -1,8 +1,8 @@
-/// Update-notification logic: a pure summariser + a seamed background runner.
+/// Update-notification logic: a pure summariser + a seamed check runner.
 ///
-/// The platform glue (workmanager scheduling + flutter_local_notifications) is
-/// thin adapter code elsewhere; everything decidable lives here so it can be
-/// unit-tested without a device.
+/// Kept plugin-free and fully unit-tested. The platform glue (a scheduler +
+/// a notification plugin) is intentionally NOT wired yet — it needs on-device
+/// validation before shipping. This decidable core is ready for that.
 library;
 
 import 'profiles.dart';
