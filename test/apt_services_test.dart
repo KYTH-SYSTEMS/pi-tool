@@ -56,16 +56,25 @@ void main() {
       }
     });
 
-    test('grafana install adds the official apt repo and enables the unit', () {
+    test('grafana install uses the current key + repo and enables the unit', () {
       final s = knownAptServices.firstWhere((s) => s.id == 'grafana');
       expect(s.installScript, contains('apt.grafana.com'));
+      // Current official key is the full keyring, stored armored (no dearmor).
+      expect(s.installScript, contains('gpg-full.key'));
+      expect(s.installScript, contains('grafana.asc'));
       expect(s.installScript, contains('apt-get install -y grafana'));
       expect(s.installScript, contains('grafana-server'));
     });
 
-    test('influxdb install adds the influxdata repo and installs v2', () {
+    test('influxdb install uses the current (non-compat) key + fingerprint', () {
       final s = knownAptServices.firstWhere((s) => s.id == 'influxdb');
       expect(s.installScript, contains('repos.influxdata.com'));
+      // The _compat key is legacy (old distros only); Pi OS Bookworm needs the
+      // regular key, verified by fingerprint before trusting it.
+      expect(s.installScript, contains('influxdata-archive.key'));
+      expect(s.installScript, isNot(contains('_compat')));
+      expect(s.installScript,
+          contains('24C975CBA61A024EE1B631787C3D57159FC2F927'));
       expect(s.installScript, contains('influxdb2'));
       expect(s.installScript, contains('systemctl enable --now influxdb'));
     });

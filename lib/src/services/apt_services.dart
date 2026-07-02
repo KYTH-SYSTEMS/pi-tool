@@ -79,26 +79,33 @@ List<AptService> get knownInstallableServices =>
 // Each sets up the official apt source, installs the package and enables the
 // service. `set -e` aborts on the first failure so a partial install surfaces.
 
+// Grafana: current official flow stores the armored full keyring directly
+// (no `gpg --dearmor`) — see grafana.com/docs .../installation/debian.
 const String _grafanaInstall = '''
 set -e
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y apt-transport-https software-properties-common wget gnupg
+apt-get install -y wget
 mkdir -p /etc/apt/keyrings
-wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
-echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" > /etc/apt/sources.list.d/grafana.list
+wget -q -O /etc/apt/keyrings/grafana.asc https://apt.grafana.com/gpg-full.key
+echo "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main" > /etc/apt/sources.list.d/grafana.list
 apt-get update
 apt-get install -y grafana
 systemctl daemon-reload
 systemctl enable --now grafana-server
 ''';
 
-const String _influxdbInstall = '''
+// InfluxDB v2: current official flow — the regular (non-_compat) key, verified
+// by fingerprint before it is trusted (raw string so the grep's `\\+` survives).
+const String _influxdbInstall = r'''
 set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y wget gnupg
 mkdir -p /etc/apt/keyrings
-wget -q -O - https://repos.influxdata.com/influxdata-archive_compat.key | gpg --dearmor -o /etc/apt/keyrings/influxdata.gpg
-echo "deb [signed-by=/etc/apt/keyrings/influxdata.gpg] https://repos.influxdata.com/debian stable main" > /etc/apt/sources.list.d/influxdata.list
+wget -q -O /tmp/influxdata-archive.key https://repos.influxdata.com/influxdata-archive.key
+gpg --show-keys --with-fingerprint --with-colons /tmp/influxdata-archive.key 2>&1 | grep -q '^fpr:\+24C975CBA61A024EE1B631787C3D57159FC2F927:$'
+gpg --dearmor < /tmp/influxdata-archive.key > /etc/apt/keyrings/influxdata-archive.gpg
+rm -f /tmp/influxdata-archive.key
+echo "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main" > /etc/apt/sources.list.d/influxdata.list
 apt-get update
 apt-get install -y influxdb2
 systemctl enable --now influxdb
