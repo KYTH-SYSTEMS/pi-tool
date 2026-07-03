@@ -1654,7 +1654,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _showAddServicePicker(List<_AddableService> items) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: kCard,
+      // Dark → the card tone; light → the theme default. Hardcoding kCard here
+      // made the sheet dark in light mode → dark-on-dark, invisible content.
+      backgroundColor:
+          Theme.of(context).brightness == Brightness.dark ? kCard : null,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: Column(
