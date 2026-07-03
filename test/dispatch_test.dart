@@ -442,7 +442,7 @@ void main() {
     expect(find.widgetWithText(OutlinedButton, 'Aktuell'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, 'Aktualisieren'), findsNothing);
 
-    await tester.tap(find.byType(PopupMenuButton<int>).first);
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Trotzdem aktualisieren'));
     await tester.pumpAndSettle();
@@ -461,7 +461,7 @@ void main() {
     await tester.pumpAndSettle();
     await detect(tester);
 
-    await tester.tap(find.byType(PopupMenuButton<int>).first); // evcc card ⋮
+    await tester.tap(find.byKey(const ValueKey('menu-evcc'))); // evcc card ⋮
     await tester.pumpAndSettle();
     await tester.tap(find.text('Backup wiederherstellen'));
     await tester.pumpAndSettle();
@@ -524,6 +524,22 @@ void main() {
 
     expect(u.aptUpdates, ['grafana']);
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
+  });
+
+  testWidgets('the System (Pi) card is rendered first', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater(); // default: evcc + system, in that order
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    final systemMenu = find.byKey(const ValueKey('menu-system'));
+    final evccMenu = find.byKey(const ValueKey('menu-evcc'));
+    expect(systemMenu, findsOneWidget);
+    expect(evccMenu, findsOneWidget);
+    // System sits above evcc even though it was detected second.
+    expect(tester.getTopLeft(systemMenu).dy,
+        lessThan(tester.getTopLeft(evccMenu).dy));
   });
 
   testWidgets('„Dienst hinzufügen" picker installs the chosen apt service',
@@ -617,7 +633,7 @@ void main() {
     await tester.pumpAndSettle();
     await detect(tester);
 
-    await tester.tap(find.byType(PopupMenuButton<int>).first); // Pi-hole ⋮
+    await tester.tap(find.byKey(const ValueKey('menu-pihole'))); // Pi-hole ⋮
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sichern (Teleporter)'));
     await tester.pumpAndSettle();
@@ -634,7 +650,7 @@ void main() {
     await tester.pumpAndSettle();
     await detect(tester);
 
-    await tester.tap(find.byType(PopupMenuButton<int>).first); // evcc card ⋮
+    await tester.tap(find.byKey(const ValueKey('menu-evcc'))); // evcc card ⋮
     await tester.pumpAndSettle();
     await tester.tap(find.text('Probelauf (ändert nichts)'));
     await tester.pumpAndSettle();
@@ -672,8 +688,8 @@ void main() {
     await tester.pumpAndSettle();
     await detect(tester);
 
-    // The evcc card is the first service card (PopupMenuButton<int>).
-    await tester.tap(find.byType(PopupMenuButton<int>).first);
+    // Target the evcc card's menu by its stable key (order-independent).
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Probelauf (ändert nichts)'));
     await tester.pumpAndSettle();

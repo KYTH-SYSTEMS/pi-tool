@@ -65,3 +65,10 @@ class ServiceStatus {
   factory ServiceStatus.absent(String id, String name) =>
       ServiceStatus(id: id, name: name, installed: false);
 }
+
+/// Orders services for the overview so the System (Pi) card is always first;
+/// the remaining services keep their detected order.
+List<ServiceStatus> orderServicesForDisplay(List<ServiceStatus> services) => [
+      ...services.where((s) => s.id == 'system'),
+      ...services.where((s) => s.id != 'system'),
+    ];

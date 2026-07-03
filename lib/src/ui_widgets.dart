@@ -309,6 +309,9 @@ class _ServiceCard extends StatelessWidget {
               ),
               if (actions.isNotEmpty)
                 PopupMenuButton<int>(
+                  // Stable per-service key so callers/tests can target a card's
+                  // menu regardless of card order.
+                  key: ValueKey('menu-${status.id}'),
                   enabled: enabled,
                   tooltip: '${status.name}-Aktionen',
                   icon: const Icon(Icons.more_vert),

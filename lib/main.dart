@@ -1515,7 +1515,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     }
     final cards = <Widget>[];
     final addable = <_AddableService>[];
-    for (final s in _services) {
+    // System (Pi) card always first; the rest keep their detected order.
+    for (final s in orderServicesForDisplay(_services)) {
       // The overview shows only what's actually running: a not-installed
       // evcc/Pi-hole/HA goes into the "Dienst hinzufügen" picker, not a card.
       // (System is the Pi itself — always shown. apt services only ever appear
