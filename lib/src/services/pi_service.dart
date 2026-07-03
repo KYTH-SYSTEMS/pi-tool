@@ -4,6 +4,8 @@
 /// System). UI-specific bits (icons, actions) live in the widget layer.
 library;
 
+import '../update_check.dart' show isNewerVersion;
+
 /// Health/status of one service as detected on the Pi.
 class ServiceStatus {
   /// Stable id: 'evcc' | 'pihole' | 'system'.
@@ -64,6 +66,44 @@ class ServiceStatus {
   /// A "not installed" status for a service the app knows about but didn't find.
   factory ServiceStatus.absent(String id, String name) =>
       ServiceStatus(id: id, name: name, installed: false);
+
+  ServiceStatus copyWith({bool? updateAvailable, bool? updateKnown}) =>
+      ServiceStatus(
+        id: id,
+        name: name,
+        installed: installed,
+        version: version,
+        active: active,
+        updateAvailable: updateAvailable ?? this.updateAvailable,
+        updateKnown: updateKnown ?? this.updateKnown,
+        detail: detail,
+        health: health,
+        healthWarning: healthWarning,
+        webPort: webPort,
+        aptPackage: aptPackage,
+      );
+}
+
+/// Cross-checks the apt-installed evcc against its latest GitHub release
+/// version. The apt update check reads the Pi's LOCAL package index, which can
+/// be stale (no recent `apt-get update`) and then wrongly reports "up to date";
+/// if [latestEvccVersion] is newer than the installed apt version, flag the
+/// update anyway. Only touches an apt evcc — a Docker evcc carries an image tag,
+/// not a comparable version. Fail-safe: null/empty latest → unchanged.
+List<ServiceStatus> applyLatestEvccVersion(
+    List<ServiceStatus> services, String? latestEvccVersion) {
+  if (latestEvccVersion == null || latestEvccVersion.isEmpty) return services;
+  return [
+    for (final s in services)
+      if (s.id == 'evcc' &&
+          s.installed &&
+          s.version != null &&
+          s.detail.startsWith('apt') &&
+          isNewerVersion(latestEvccVersion, s.version!))
+        s.copyWith(updateAvailable: true, updateKnown: true)
+      else
+        s,
+  ];
 }
 
 /// Orders services for the overview so the System (Pi) card is always first;

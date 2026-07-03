@@ -178,6 +178,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _statusOk = true;
   ReleaseInfo? _update;
   String _appVersion = ''; // this app's version, shown in the footer
+  EvccRelease? _evccLatest; // evcc's latest GitHub release, cached per session
   String? _setupUrl;
   Timer? _saveDebounce;
   bool _hostKeyIssue = false;
@@ -659,8 +660,9 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastAction = _testConnection;
     setState(() => _testing = true);
     await _guard(() async {
-      final services =
+      final detected =
           await _updater.detectServices(config: config, onLog: _appendLog);
+      final services = await _reconcileEvcc(detected);
       if (!mounted) return;
       setState(() {
         _services = services;
@@ -1189,10 +1191,11 @@ class _UpdaterPageState extends State<UpdaterPage>
         onLog: (_) {},
         allowSudoForDocker: false,
       );
+      final reconciled = await _reconcileEvcc(services);
       // Don't clobber an action started meanwhile, or a switch to another Pi.
       if (!mounted || _busy || gen != _detectGen) return;
       setState(() {
-        _services = services;
+        _services = reconciled;
         _connectionOk = true;
       });
     } catch (_) {
@@ -1208,14 +1211,29 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _refreshServices(SshConfig config) async {
     try {
       final s = await _updater.detectServices(config: config, onLog: (_) {});
+      final reconciled = await _reconcileEvcc(s);
       if (mounted) {
         setState(() {
-          _services = s;
+          _services = reconciled;
           _connectionOk = true; // a successful detect proves the Pi is reachable
         });
       }
     } catch (_) {
       // keep the last snapshot
+    }
+  }
+
+  /// Cross-checks the detected evcc against its latest GitHub release, so a stale
+  /// apt index on the Pi can't hide an available evcc update (see
+  /// applyLatestEvccVersion). The release is fetched once per session and reused;
+  /// fail-soft — any error just leaves the apt-based result as is.
+  Future<List<ServiceStatus>> _reconcileEvcc(
+      List<ServiceStatus> services) async {
+    try {
+      _evccLatest ??= await _fetchEvccRelease();
+      return applyLatestEvccVersion(services, _evccLatest?.version);
+    } catch (_) {
+      return services;
     }
   }
 
@@ -1846,40 +1864,6 @@ class _UpdaterPageState extends State<UpdaterPage>
               onDelete: _profiles.length > 1 ? _deleteActiveProfile : null,
             ),
             const SizedBox(height: 8),
-            _TestButton(
-              testing: _testing,
-              result: _connectionOk,
-              enabled: !_busy,
-              onTap: _testConnection,
-            ),
-            if (_busy) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _cancel,
-                  icon: const Icon(Icons.close, size: 18),
-                  label: const Text('Abbrechen'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
-                    side: BorderSide(
-                        color: theme.colorScheme.error.withValues(alpha: 0.55)),
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            if (_update != null) ...[
-              _UpdateBanner(
-                release: _update!,
-                onDownload: () => _openUrl(_update!.downloadUrl),
-                onDismiss: () => setState(() => _update = null),
-              ),
-              const SizedBox(height: 8),
-            ],
             _ConnectionCard(
               host: _host,
               port: _port,
@@ -1896,6 +1880,47 @@ class _UpdaterPageState extends State<UpdaterPage>
                 _scheduleSave();
               },
             ),
+            const SizedBox(height: 8),
+            // Connect + cancel side by side, directly under the settings.
+            Row(
+              children: [
+                Expanded(
+                  child: _TestButton(
+                    testing: _testing,
+                    result: _connectionOk,
+                    enabled: !_busy,
+                    onTap: _testConnection,
+                  ),
+                ),
+                if (_busy) ...[
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _cancel,
+                    icon: const Icon(Icons.close, size: 18),
+                    label: const Text('Abbrechen'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                      side: BorderSide(
+                          color:
+                              theme.colorScheme.error.withValues(alpha: 0.55)),
+                      // No Size.fromHeight here — that forces infinite width,
+                      // which is invalid for a non-flex child inside a Row.
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            if (_update != null) ...[
+              const SizedBox(height: 8),
+              _UpdateBanner(
+                release: _update!,
+                onDownload: () => _openUrl(_update!.downloadUrl),
+                onDismiss: () => setState(() => _update = null),
+              ),
+            ],
             // No host yet (first start, or a freshly added profile) → offer a
             // prominent network scan. Rebuilds live as the host field changes.
             ValueListenableBuilder<TextEditingValue>(
