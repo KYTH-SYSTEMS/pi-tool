@@ -24,6 +24,10 @@ class Dartssh2Runner implements SshRunner {
   final Future<bool> Function(String fingerprint)? confirmFirstUse;
 
   SSHClient? _client;
+  SSHSocket? _socket;
+  // Completed by close() to abort an in-flight connect() immediately (cancel),
+  // instead of blocking until the connect/auth timeout fires.
+  Completer<void>? _closeSignal;
   String? _changedFingerprint;
   String? _storedAtCheck;
   bool _firstUseDeclined = false;
@@ -90,11 +94,32 @@ class Dartssh2Runner implements SshRunner {
       }
     }
 
-    final socket = await SSHSocket.connect(
-      config.host,
-      config.port,
-      timeout: config.timeout,
-    );
+    // Make the whole handshake abortable: close()/cancel completes this signal,
+    // and each await below races against it so a cancel returns at once instead
+    // of blocking until the connect/auth timeout (the Tailscale "stalls mid-
+    // handshake" case). Whichever future settles first wins the race.
+    final closed = _closeSignal = Completer<void>();
+    Future<S> untilClosed<S>(Future<S> f) => Future.any<S>([
+          f,
+          closed.future.then<S>((_) => throw const _ConnectAborted()),
+        ]);
+
+    final socketFuture =
+        SSHSocket.connect(config.host, config.port, timeout: config.timeout);
+    // If the cancel won the race, the socket may still open a moment later —
+    // close it then so it isn't leaked.
+    unawaited(socketFuture.then((s) {
+      if (closed.isCompleted) s.close();
+    }, onError: (_) {}));
+
+    final SSHSocket socket;
+    try {
+      socket = await untilClosed(socketFuture);
+    } on _ConnectAborted {
+      return; // _withConnection sees the cancel flag → reports "Abgebrochen."
+    }
+    _socket = socket;
+
     final client = SSHClient(
       socket,
       username: config.username,
@@ -110,9 +135,14 @@ class Dartssh2Runner implements SshRunner {
       // any password is sent. Delegates to a testable method.
       onVerifyHostKey: (type, fingerprint) => checkAndRecordHostKey(fingerprint),
     );
+    // Store BEFORE awaiting auth so a cancel during the handshake can close it.
+    _client = client;
     try {
       // Force authentication now so wrong-password errors surface here.
-      await client.authenticated.timeout(config.timeout);
+      await untilClosed(client.authenticated.timeout(config.timeout));
+    } on _ConnectAborted {
+      client.close();
+      return; // cancelled during the handshake
     } catch (e) {
       client.close();
       // The user declined to trust a first-seen key — abort with a clear error.
@@ -131,7 +161,6 @@ class Dartssh2Runner implements SshRunner {
       }
       rethrow;
     }
-    _client = client;
   }
 
   @override
@@ -223,9 +252,21 @@ class Dartssh2Runner implements SshRunner {
 
   @override
   Future<void> close() async {
+    // Abort an in-flight connect() that's racing on this signal so a cancel
+    // takes effect immediately instead of waiting out the connect/auth timeout.
+    if (_closeSignal != null && !_closeSignal!.isCompleted) {
+      _closeSignal!.complete();
+    }
     _client?.close();
     _client = null;
+    await _socket?.close();
+    _socket = null;
   }
+}
+
+/// Thrown internally when close() (a user cancel) aborts an in-flight connect().
+class _ConnectAborted implements Exception {
+  const _ConnectAborted();
 }
 
 /// Buffers streamed output and emits only WHOLE lines to [onLine], holding any

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -142,6 +143,44 @@ void main() {
       // The key is parsed before any socket is opened, so this fails fast with
       // a clear typed error and never touches the network.
       await expectLater(runner.connect(), throwsA(isA<SSHKeyDecodeError>()));
+    });
+
+    test('close() aborts a stalled handshake at once (cancel works mid-connect)',
+        () async {
+      // A server that accepts TCP but never sends the SSH banner — exactly the
+      // "TCP connects but the SSH handshake stalls" case (e.g. a flaky Tailscale
+      // link). Without an abortable connect this would block for the full 15 s
+      // timeout, so "Abbrechen" would appear to do nothing.
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final held = <Socket>[];
+      server.listen(held.add); // hold the socket open, send nothing
+
+      final runner = Dartssh2Runner(
+        SshConfig(
+          host: '127.0.0.1',
+          port: server.port,
+          username: 'pi',
+          password: 'pw',
+          timeout: const Duration(seconds: 15),
+        ),
+        hostKeyStore: FakeHostKeyStore(),
+      );
+
+      final connecting = runner.connect();
+      // Let the TCP connect complete and the handshake stall.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      final sw = Stopwatch()..start();
+      await runner.close(); // the user taps "Abbrechen"
+      await connecting; // connect returns immediately (aborted), not after 15 s
+      sw.stop();
+
+      expect(sw.elapsed, lessThan(const Duration(seconds: 3)));
+
+      for (final s in held) {
+        s.destroy();
+      }
+      await server.close();
     });
   });
 }
