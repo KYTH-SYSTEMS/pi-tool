@@ -5,6 +5,7 @@ import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 /// In-memory config store so the widget test never touches platform channels.
 class _FakeStore extends AppConfigStore {
@@ -60,6 +61,53 @@ void main() {
     expect(find.text('Live-Log'), findsOneWidget);
     // Host/IP, Benutzer, Port, Passwort.
     expect(find.byType(TextField), findsNWidgets(4));
+  });
+
+  testWidgets('footer shows the app version + an "Auf Update prüfen" button',
+      (tester) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Pi-Tool',
+      packageName: 'systems.kyth.pitool',
+      version: '0.21.2',
+      buildNumber: '40',
+      buildSignature: '',
+    );
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(store: _FakeStore(), updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextButton, 'Auf Update prüfen'), findsOneWidget);
+    final version = find.text('Pi-Tool v0.21.2');
+    await tester.scrollUntilVisible(version, 300,
+        scrollable: find.byType(Scrollable).first);
+    expect(version, findsOneWidget);
+  });
+
+  testWidgets('"Auf Update prüfen" reports up to date on the current version',
+      (tester) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Pi-Tool',
+      packageName: 'systems.kyth.pitool',
+      version: '0.21.2',
+      buildNumber: '40',
+      buildSignature: '',
+    );
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(store: _FakeStore(), updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    final btn = find.widgetWithText(TextButton, 'Auf Update prüfen');
+    await tester.scrollUntilVisible(btn, 300,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(btn);
+    await tester.pump(); // kick off the async check
+    await tester.pump(const Duration(milliseconds: 300)); // resolve + snackbar
+    expect(find.text('Aktuell – du hast die neueste Version (v0.21.2).'),
+        findsOneWidget);
   });
 
   testWidgets('warns when testing the connection with an empty host',

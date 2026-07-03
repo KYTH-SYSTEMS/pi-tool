@@ -177,6 +177,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String? _statusMessage;
   bool _statusOk = true;
   ReleaseInfo? _update;
+  String _appVersion = ''; // this app's version, shown in the footer
   String? _setupUrl;
   Timer? _saveDebounce;
   bool _hostKeyIssue = false;
@@ -419,10 +420,33 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _checkForUpdate() async {
     try {
       final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _appVersion = info.version);
       final release = await _updateChecker.checkForUpdate(info.version);
       if (release != null && mounted) setState(() => _update = release);
     } catch (_) {
       // never let the update check disrupt the app
+    }
+  }
+
+  /// Manual "Auf Update prüfen": re-checks GitHub and reports the outcome (an
+  /// update banner if newer, else a snackbar). Fail-soft — a failed check just
+  /// says so.
+  Future<void> _checkUpdatesNow() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final release = await _updateChecker.checkForUpdate(info.version);
+      if (!mounted) return;
+      setState(() {
+        _appVersion = info.version;
+        if (release != null) _update = release;
+      });
+      _snack(release != null
+          ? 'Update verfügbar: ${release.version}'
+          : 'Aktuell – du hast die neueste Version (v${info.version}).');
+    } catch (_) {
+      if (mounted) {
+        _snack('Update-Prüfung fehlgeschlagen – später erneut versuchen.');
+      }
     }
   }
 
@@ -1937,6 +1961,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                   label: const Text('Changelog'),
                 ),
                 TextButton.icon(
+                  onPressed: _checkUpdatesNow,
+                  icon: const Icon(Icons.system_update, size: 18),
+                  label: const Text('Auf Update prüfen'),
+                ),
+                TextButton.icon(
                   onPressed: () => _openUrl(kPrivacyUrl),
                   icon: const Icon(Icons.privacy_tip_outlined, size: 18),
                   label: const Text('Datenschutz'),
@@ -1973,6 +2002,16 @@ class _UpdaterPageState extends State<UpdaterPage>
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
+            if (_appVersion.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Pi-Tool v$_appVersion',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ],
+            const SizedBox(height: 4),
           ],
         ),
       ),
