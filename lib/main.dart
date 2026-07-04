@@ -1873,6 +1873,15 @@ class _UpdaterPageState extends State<UpdaterPage>
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // App-Update-Hinweis immer ganz oben.
+            if (_update != null) ...[
+              _UpdateBanner(
+                release: _update!,
+                onDownload: () => _openUrl(_update!.downloadUrl),
+                onDismiss: () => setState(() => _update = null),
+              ),
+              const SizedBox(height: 8),
+            ],
             _ProfileBar(
               profiles: _profiles,
               activeIndex: _activeIndex.clamp(0, _profiles.length - 1),
@@ -1932,14 +1941,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ],
               ],
             ),
-            if (_update != null) ...[
-              const SizedBox(height: 8),
-              _UpdateBanner(
-                release: _update!,
-                onDownload: () => _openUrl(_update!.downloadUrl),
-                onDismiss: () => setState(() => _update = null),
-              ),
-            ],
             // No host yet (first start, or a freshly added profile) → offer a
             // prominent network scan. Rebuilds live as the host field changes.
             ValueListenableBuilder<TextEditingValue>(
