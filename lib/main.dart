@@ -266,10 +266,27 @@ class _UpdaterPageState extends State<UpdaterPage>
       c.addListener(_invalidateConnTest);
     }
     if (_locked) {
-      _tryUnlock();
+      _unlockAfterSplash();
     } else {
       _autoStatus();
     }
+  }
+
+  /// Prompt for biometric unlock only once the brand splash has finished — the
+  /// system biometric dialog would otherwise pop over (and hide) the splash.
+  void _unlockAfterSplash() {
+    if (splashDoneNotifier.value) {
+      _tryUnlock();
+      return;
+    }
+    void listener() {
+      if (splashDoneNotifier.value) {
+        splashDoneNotifier.removeListener(listener);
+        if (mounted) _tryUnlock();
+      }
+    }
+
+    splashDoneNotifier.addListener(listener);
   }
 
   void _invalidateConnTest() {
@@ -1824,8 +1841,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _showApiStatus();
                 case 'status':
                   _showStatus();
-                case 'restart':
-                  _restartService();
                 case 'reboot':
                   _reboot();
                 case 'find':
@@ -1847,10 +1862,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                   value: 'status',
                   enabled: !_busy,
                   child: const Text('Status / Logs anzeigen')),
-              PopupMenuItem(
-                  value: 'restart',
-                  enabled: !_busy,
-                  child: const Text('evcc-Dienst neu starten')),
               PopupMenuItem(
                   value: 'reboot',
                   enabled: !_busy,

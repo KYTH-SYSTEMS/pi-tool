@@ -12,6 +12,12 @@ import 'package:video_player/video_player.dart';
 /// the first frame loads or when it fades into the (near-black) app.
 const Color _kSplashBg = Color(0xFF0A0A0B);
 
+/// True once the brand splash has finished (or was never shown). The app waits
+/// for this before popping the biometric unlock prompt, so the system dialog
+/// can't cover the splash video. Defaults to true, so anything that runs
+/// without the splash (widget tests, hot reload) is never blocked.
+final ValueNotifier<bool> splashDoneNotifier = ValueNotifier<bool>(true);
+
 /// Wraps [child], showing the KYTH splash video over it until the clip ends (or
 /// the user taps to skip, or a safety cap fires), then fades the overlay away.
 /// Fail-safe: any load error reveals [child] immediately — the splash can never
@@ -34,6 +40,7 @@ class _KythSplashGateState extends State<KythSplashGate> {
   @override
   void initState() {
     super.initState();
+    splashDoneNotifier.value = false; // hold the unlock prompt until we're done
     _init();
   }
 
@@ -67,6 +74,7 @@ class _KythSplashGateState extends State<KythSplashGate> {
   void _finish() {
     if (_fading) return;
     _cap?.cancel();
+    splashDoneNotifier.value = true; // splash done → the app may now unlock
     if (!mounted) return;
     setState(() => _fading = true);
     Timer(const Duration(milliseconds: 350), () {
@@ -77,6 +85,7 @@ class _KythSplashGateState extends State<KythSplashGate> {
   @override
   void dispose() {
     _cap?.cancel();
+    splashDoneNotifier.value = true; // never leave the unlock prompt blocked
     _controller?.removeListener(_onTick);
     _controller?.dispose();
     super.dispose();
