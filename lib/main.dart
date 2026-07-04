@@ -185,6 +185,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   SshConfig? _lastConfig;
   Future<void> Function()? _lastAction;
   int _detectGen = 0; // bumped on Pi switch to invalidate in-flight detection
+  int _fgDetectGen = 0; // bumped by a foreground detect so a slow, sudo-less
+  // _autoStatus can't overwrite the fresher (sudo-aware) result afterwards
 
   List<TextEditingController> get _savedControllers =>
       [_host, _port, _user, _password, _privateKey, _keyPassphrase, _uiPort];
@@ -660,6 +662,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastAction = _testConnection;
     setState(() => _testing = true);
     await _guard(() async {
+      _fgDetectGen++; // an in-flight silent _autoStatus must not overwrite this
       final detected =
           await _updater.detectServices(config: config, onLog: _appendLog);
       final services = await _reconcileEvcc(detected);
@@ -738,7 +741,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _reboot() async {
     if (_busy) return;
     if (!await _confirm(
-      'Pi neustarten?',
+      'Pi neu starten?',
       'Startet den Raspberry Pi neu. Die Verbindung bricht dabei kurz ab.',
     )) {
       return;
@@ -1180,6 +1183,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (_authMode == AuthMode.password && _password.text.isEmpty) return;
     if (_authMode == AuthMode.key && _privateKey.text.trim().isEmpty) return;
     final gen = _detectGen; // invalidated if the user switches Pi mid-detection
+    final fg = _fgDetectGen; // invalidated by any foreground detect meanwhile
     _autoDetecting = true;
     try {
       // Silent launch check stays password-free: never escalate docker to sudo
@@ -1192,8 +1196,10 @@ class _UpdaterPageState extends State<UpdaterPage>
         allowSudoForDocker: false,
       );
       final reconciled = await _reconcileEvcc(services);
-      // Don't clobber an action started meanwhile, or a switch to another Pi.
-      if (!mounted || _busy || gen != _detectGen) return;
+      // Don't clobber an action or foreground detect started meanwhile, or a
+      // switch to another Pi. _autoStatus is the lowest-fidelity (sudo-less)
+      // source, so it must never overwrite a fresher result.
+      if (!mounted || _busy || gen != _detectGen || fg != _fgDetectGen) return;
       setState(() {
         _services = reconciled;
         _connectionOk = true;
@@ -1202,6 +1208,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       // silent — never disrupt launch
     } finally {
       _autoDetecting = false;
+      // If the Pi was switched while we were in flight, our _autoDetecting flag
+      // made the switch's own auto-detect a no-op — run it now for the new Pi.
+      if (mounted && gen != _detectGen) _autoStatus();
     }
   }
 
@@ -1210,6 +1219,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Best-effort: a failed refresh keeps the last snapshot.
   Future<void> _refreshServices(SshConfig config) async {
     try {
+      _fgDetectGen++; // supersede any in-flight silent _autoStatus
       final s = await _updater.detectServices(config: config, onLog: (_) {});
       final reconciled = await _reconcileEvcc(s);
       if (mounted) {
@@ -1512,18 +1522,26 @@ class _UpdaterPageState extends State<UpdaterPage>
   List<Widget> _serviceCards() {
     if (_services.isEmpty) {
       final cs = Theme.of(context).colorScheme;
+      // After a failed connect, don't tell the user to just do the thing that
+      // failed — point them at the likely cause instead.
+      final failed = _connectionOk == false;
       return [
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
             children: [
-              Icon(Icons.lan_outlined, size: 18, color: cs.onSurfaceVariant),
+              Icon(failed ? Icons.error_outline : Icons.lan_outlined,
+                  size: 18, color: failed ? cs.error : cs.onSurfaceVariant),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Tippe „Verbindung herstellen", um die Dienste auf dem Pi zu '
-                  'erkennen.',
-                  style: TextStyle(color: cs.onSurfaceVariant),
+                  failed
+                      ? 'Verbindung fehlgeschlagen – Host/IP und Zugangsdaten '
+                          'prüfen, dann erneut verbinden.'
+                      : 'Tippe „Verbindung herstellen", um die Dienste auf dem '
+                          'Pi zu erkennen.',
+                  style:
+                      TextStyle(color: failed ? cs.error : cs.onSurfaceVariant),
                 ),
               ),
             ],
@@ -1572,7 +1590,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                     _CardAction(
                         'Probelauf (ändert nichts)', () => _run(dryRun: true)),
                     _CardAction('Live-Status', _showApiStatus),
-                    _CardAction('Dienst neustarten', _restartService),
+                    _CardAction('Dienst neu starten', _restartService),
                     _CardAction('Status / Logs anzeigen', _showStatus),
                     // Backups are made only for apt installs; restore would also
                     // `systemctl start evcc`, which has no unit on a Docker host.
@@ -1593,7 +1611,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (upToDate) _CardAction('Trotzdem aktualisieren', _updatePihole),
               _CardAction('Sichern (Teleporter)', _backupPihole),
               _CardAction('Blocklisten aktualisieren', _piholeGravity),
-              _CardAction('DNS neustarten', _piholeRestartDns),
+              _CardAction('DNS neu starten', _piholeRestartDns),
             ],
           ));
         case 'homeassistant':
@@ -1616,7 +1634,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               if (upToDate)
                 _CardAction('Trotzdem aktualisieren', _upgradeSystem),
-              _CardAction('Pi neustarten', _reboot),
+              _CardAction('Pi neu starten', _reboot),
             ],
           ));
         default:
@@ -1831,16 +1849,16 @@ class _UpdaterPageState extends State<UpdaterPage>
               PopupMenuItem(
                   value: 'restart',
                   enabled: !_busy,
-                  child: const Text('evcc-Dienst neustarten')),
+                  child: const Text('evcc-Dienst neu starten')),
               PopupMenuItem(
                   value: 'reboot',
                   enabled: !_busy,
-                  child: const Text('Pi neustarten')),
+                  child: const Text('Pi neu starten')),
               const PopupMenuDivider(),
               PopupMenuItem(
                   value: 'find',
                   enabled: !_busy,
-                  child: const Text('Pi im Netzwerk suchen')),
+                  child: const Text('Pi im WLAN suchen')),
               const PopupMenuItem(value: 'share', child: Text('Log teilen')),
               const PopupMenuItem(value: 'history', child: Text('Verlauf')),
               const PopupMenuDivider(),
@@ -1932,7 +1950,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   child: OutlinedButton.icon(
                     onPressed: _busy ? null : _findPi,
                     icon: const Icon(Icons.wifi_find, size: 18),
-                    label: const Text('Pi im Netzwerk suchen'),
+                    label: const Text('Pi im WLAN suchen'),
                     style: OutlinedButton.styleFrom(
                         minimumSize: const Size.fromHeight(44)),
                   ),
@@ -2031,15 +2049,15 @@ class _UpdaterPageState extends State<UpdaterPage>
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
-            if (_appVersion.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Pi-Tool v$_appVersion',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-              ),
-            ],
+            const SizedBox(height: 8),
+            Text(
+              _appVersion.isEmpty
+                  ? 'by KYTH.'
+                  : 'Pi-Tool v$_appVersion · by KYTH.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
             const SizedBox(height: 4),
           ],
         ),

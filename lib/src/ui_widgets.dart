@@ -4,6 +4,10 @@ part of '../main.dart';
 // main.dart. Kept as a part so they stay library-private and share the
 // top-level theme constants (kGreen/kBlack/kCard) without re-importing.
 
+/// A green that stays legible on both themes — vivid kGreen on the dark
+/// surfaces, darkened for light mode where bright kGreen washes out.
+Color _themeGreen(bool dark) => dark ? kGreen : const Color(0xFF15803D);
+
 enum _ProfileAction { rename, delete }
 
 /// Active-Pi selector. A bordered card matching [_ConnectionCard]; each profile
@@ -63,7 +67,7 @@ class _ProfileBar extends StatelessWidget {
         message: 'Neues Profil',
         child: ActionChip(
           avatar: Icon(Icons.add,
-              size: 18, color: enabled ? kGreen : cs.onSurfaceVariant),
+              size: 18, color: enabled ? _themeGreen(dark) : cs.onSurfaceVariant),
           label: const Text('Profil'),
           visualDensity: VisualDensity.compact,
           backgroundColor: kGreen.withValues(alpha: dark ? 0.10 : 0.08),
@@ -157,7 +161,7 @@ class _TestButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final okGreen = dark ? kGreen : const Color(0xFF15803D);
+    final okGreen = _themeGreen(dark);
 
     Widget icon;
     String label;
@@ -264,17 +268,29 @@ class _ServiceCard extends StatelessWidget {
     final upToDate =
         status.installed && status.updateKnown && !status.updateAvailable;
 
+    // Bright accents read fine on the dark card but wash out on the light card,
+    // so text/icons use a darkened variant in light mode (the small decorative
+    // dot keeps the vivid tone).
+    final okGreen = _themeGreen(dark);
+    final warnAmber = dark ? const Color(0xFFE0A030) : const Color(0xFF9A6B00);
+
     // Status LED: not installed → grey; update → amber; active → green;
-    // installed-but-inactive → red.
+    // installed-but-inactive → red. [led] = the vivid dot, [ledText] = the
+    // legible-on-any-theme label colour.
     final Color led;
+    final Color ledText;
     if (!status.installed) {
       led = cs.onSurfaceVariant;
+      ledText = cs.onSurfaceVariant;
     } else if (status.updateAvailable) {
       led = const Color(0xFFE0A030);
+      ledText = warnAmber;
     } else if (status.active) {
       led = kGreen;
+      ledText = okGreen;
     } else {
       led = cs.error;
+      ledText = cs.error;
     }
 
     return Container(
@@ -305,7 +321,7 @@ class _ServiceCard extends StatelessWidget {
                         ? 'Update'
                         : (status.active ? 'aktiv' : 'inaktiv'))
                     : 'nicht installiert',
-                style: TextStyle(color: led, fontSize: 12),
+                style: TextStyle(color: ledText, fontSize: 12),
               ),
               if (actions.isNotEmpty)
                 PopupMenuButton<int>(
@@ -343,7 +359,7 @@ class _ServiceCard extends StatelessWidget {
               child: Text(
                 status.health,
                 style: status.healthWarning
-                    ? mono?.copyWith(color: const Color(0xFFE0A030))
+                    ? mono?.copyWith(color: warnAmber)
                     : mono,
               ),
             ),
@@ -355,8 +371,8 @@ class _ServiceCard extends StatelessWidget {
                   child: upToDate
                       ? OutlinedButton.icon(
                           onPressed: null,
-                          icon: const Icon(Icons.check_circle_outline,
-                              size: 18, color: kGreen),
+                          icon: Icon(Icons.check_circle_outline,
+                              size: 18, color: okGreen),
                           label: const Text('Aktuell'),
                           style: OutlinedButton.styleFrom(
                               minimumSize: const Size.fromHeight(42)),
@@ -662,6 +678,9 @@ class _LockScreen extends StatelessWidget {
             const Text('Pi-Tool',
                 style: TextStyle(
                     fontSize: 22, fontWeight: FontWeight.w800, color: kGreen)),
+            const SizedBox(height: 2),
+            const Text('by KYTH.',
+                style: TextStyle(color: Colors.white38, fontSize: 12)),
             const SizedBox(height: 6),
             const Text('Gesperrt', style: TextStyle(color: Colors.white54)),
             const SizedBox(height: 20),
@@ -767,7 +786,8 @@ class _LogView extends StatelessWidget {
       ),
       child: lines.isEmpty
           ? const Text(
-              'Noch keine Ausgabe. Tippe „evcc aktualisieren" oder „Probelauf".',
+              'Noch keine Ausgabe. Aktionen (z. B. „Aktualisieren") erscheinen '
+              'hier live, sobald du einen Dienst startest.',
               style: TextStyle(color: Color(0xFF8A8F84), fontSize: 13),
             )
           : SingleChildScrollView(
@@ -845,7 +865,8 @@ class _ApiStatusSheet extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.bolt, color: kGreen),
+              Icon(Icons.bolt,
+                  color: _themeGreen(theme.brightness == Brightness.dark)),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(s.siteTitle ?? 'evcc-Status',
@@ -913,7 +934,9 @@ class _ApiStatusSheet extends StatelessWidget {
       dense: true,
       leading: Icon(
         lp.charging ? Icons.ev_station : Icons.ev_station_outlined,
-        color: lp.charging ? kGreen : theme.colorScheme.onSurfaceVariant,
+        color: lp.charging
+            ? _themeGreen(theme.brightness == Brightness.dark)
+            : theme.colorScheme.onSurfaceVariant,
       ),
       title: Text(lp.title),
       subtitle: Text(bits.join('  ·  ')),

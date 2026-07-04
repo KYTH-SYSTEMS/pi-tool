@@ -79,10 +79,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.widgetWithText(TextButton, 'Auf Update prüfen'), findsOneWidget);
-    final version = find.text('Pi-Tool v0.21.2');
+    final version = find.textContaining('Pi-Tool v0.21.2');
     await tester.scrollUntilVisible(version, 300,
         scrollable: find.byType(Scrollable).first);
     expect(version, findsOneWidget);
+    // Dezentes KYTH-Branding in der Fußzeile.
+    expect(find.textContaining('by KYTH.'), findsOneWidget);
   });
 
   testWidgets('"Auf Update prüfen" reports up to date on the current version',
@@ -213,7 +215,7 @@ void main() {
     // Tap the ⋮-menu entry specifically (the prominent scan button shows the
     // same text while the host is empty).
     await tester.tap(
-        find.widgetWithText(PopupMenuItem<String>, 'Pi im Netzwerk suchen'));
+        find.widgetWithText(PopupMenuItem<String>, 'Pi im WLAN suchen'));
     await tester.pumpAndSettle();
 
     // Results sheet lists the host; tapping it adopts the IP.
@@ -239,7 +241,7 @@ void main() {
 
     // The button is shown because the host is empty (first start / new Pi).
     final scanButton =
-        find.widgetWithText(OutlinedButton, 'Pi im Netzwerk suchen');
+        find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen');
     expect(scanButton, findsOneWidget);
 
     await tester.tap(scanButton);
@@ -250,7 +252,7 @@ void main() {
 
     expect(store.saved.active.host, '192.168.178.77');
     // Once a host is set, the prominent button disappears.
-    expect(find.widgetWithText(OutlinedButton, 'Pi im Netzwerk suchen'),
+    expect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'),
         findsNothing);
   });
 

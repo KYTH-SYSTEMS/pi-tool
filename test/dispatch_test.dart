@@ -796,7 +796,7 @@ void main() {
 
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Pi im Netzwerk suchen'));
+    await tester.tap(find.text('Pi im WLAN suchen'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Keine SSH-Geräte'), findsOneWidget);
