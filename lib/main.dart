@@ -126,12 +126,6 @@ class _UpdaterPageState extends State<UpdaterPage>
   late final AppConfigStore _store = widget.store ?? AppConfigStore();
   late final EvccUpdater _updater =
       widget.updater ?? EvccUpdater.real(confirmFirstUse: _confirmFirstHostKey);
-  // Separate updater for the silent on-launch/after-switch detection so it never
-  // shares the foreground action's single cancel handle (_active/_cancelRequested).
-  // It never trusts a first-seen key on its own — trust is only established via
-  // an explicit, user-confirmed connect.
-  late final EvccUpdater _autoUpdater = widget.updater ??
-      EvccUpdater.real(confirmFirstUse: (_) async => false);
   late final UpdateChecker _updateChecker =
       widget.updateChecker ?? UpdateChecker();
   late final Authenticator _authenticator =
@@ -162,11 +156,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _lockEnabled = false;
   bool _locked = false;
   bool _booting = true; // true until settings load, so the shell isn't shown
-  bool _autoDetecting = false; // a silent _autoStatus detect is in flight
   bool _unlocking = false;
   String _themeMode = 'system';
   String _channel = 'stable';
-  bool _autoCheck = false;
   bool _backupBeforeUpdate = true;
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
@@ -185,9 +177,6 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _hostKeyIssue = false;
   SshConfig? _lastConfig;
   Future<void> Function()? _lastAction;
-  int _detectGen = 0; // bumped on Pi switch to invalidate in-flight detection
-  int _fgDetectGen = 0; // bumped by a foreground detect so a slow, sudo-less
-  // _autoStatus can't overwrite the fresher (sudo-aware) result afterwards
 
   List<TextEditingController> get _savedControllers =>
       [_host, _port, _user, _password, _privateKey, _keyPassphrase, _uiPort];
@@ -249,7 +238,6 @@ class _UpdaterPageState extends State<UpdaterPage>
       _lockEnabled = cfg.lockEnabled;
       _themeMode = cfg.themeMode;
       _channel = cfg.channel;
-      _autoCheck = cfg.autoCheck;
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
       _applyProfile(cfg.active);
       if (_lockEnabled) _locked = true;
@@ -265,11 +253,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     for (final c in [_host, _port, _user, _password, _privateKey, _keyPassphrase]) {
       c.addListener(_invalidateConnTest);
     }
-    if (_locked) {
-      _unlockAfterSplash();
-    } else {
-      _autoStatus();
-    }
+    if (_locked) _unlockAfterSplash();
   }
 
   /// Prompt for biometric unlock only once the brand splash has finished — the
@@ -310,10 +294,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Switching to another Pi: drop everything tied to the previous host so
   /// nothing from it leaks into the new Pi's view — detected services, the
   /// connection indicator, banners, the host-key "trust new key" prompt and the
-  /// stashed trust-and-retry target ([_lastConfig]/[_lastAction]). Bumping
-  /// [_detectGen] also invalidates any in-flight [_autoStatus] from the old Pi.
-  /// Call inside the switching setState; pair with [_autoStatus] after it so the
-  /// new Pi is silently re-detected when auto-check is on.
+  /// stashed trust-and-retry target ([_lastConfig]/[_lastAction]).
   void _resetDetectionForNewPi() {
     _services = [];
     _connectionOk = null;
@@ -322,7 +303,6 @@ class _UpdaterPageState extends State<UpdaterPage>
     _hostKeyIssue = false;
     _lastConfig = null;
     _lastAction = null;
-    _detectGen++;
   }
 
   /// Debounced auto-save: persists ~0.8s after the last edit.
@@ -361,7 +341,6 @@ class _UpdaterPageState extends State<UpdaterPage>
       lockEnabled: _lockEnabled,
       themeMode: _themeMode,
       channel: _channel,
-      autoCheck: _autoCheck,
       backupBeforeUpdate: _backupBeforeUpdate,
     );
   }
@@ -377,7 +356,6 @@ class _UpdaterPageState extends State<UpdaterPage>
       _resetDetectionForNewPi();
     });
     _persistSettings();
-    _autoStatus(); // re-detect the newly selected Pi when auto-check is on
   }
 
   Future<void> _addProfile() async {
@@ -427,7 +405,6 @@ class _UpdaterPageState extends State<UpdaterPage>
       _resetDetectionForNewPi();
     });
     _persistSettings();
-    _autoStatus(); // re-detect the now-active Pi when auto-check is on
   }
 
   Future<String?> _promptName(String title, String initial) async {
@@ -680,7 +657,6 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastAction = _testConnection;
     setState(() => _testing = true);
     await _guard(() async {
-      _fgDetectGen++; // an in-flight silent _autoStatus must not overwrite this
       final detected =
           await _updater.detectServices(config: config, onLog: _appendLog);
       final services = await _reconcileEvcc(detected);
@@ -1190,54 +1166,11 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
   }
 
-  /// Silent read-only status check on launch (opt-in). Pre-fills the version
-  /// badge + status without entering the busy state or clearing the log.
-  Future<void> _autoStatus() async {
-    if (_busy || _autoDetecting || !_autoCheck || _host.text.trim().isEmpty) {
-      return;
-    }
-    final port = int.tryParse(_port.text.trim());
-    if (port == null) return;
-    if (_authMode == AuthMode.password && _password.text.isEmpty) return;
-    if (_authMode == AuthMode.key && _privateKey.text.trim().isEmpty) return;
-    final gen = _detectGen; // invalidated if the user switches Pi mid-detection
-    final fg = _fgDetectGen; // invalidated by any foreground detect meanwhile
-    _autoDetecting = true;
-    try {
-      // Silent launch check stays password-free: never escalate docker to sudo
-      // here (only the explicit "Verbindung herstellen"/an action does that).
-      // Uses _autoUpdater so it never touches the foreground action's cancel
-      // handle if the user starts an action while this is still in flight.
-      final services = await _autoUpdater.detectServices(
-        config: _configFor(port),
-        onLog: (_) {},
-        allowSudoForDocker: false,
-      );
-      final reconciled = await _reconcileEvcc(services);
-      // Don't clobber an action or foreground detect started meanwhile, or a
-      // switch to another Pi. _autoStatus is the lowest-fidelity (sudo-less)
-      // source, so it must never overwrite a fresher result.
-      if (!mounted || _busy || gen != _detectGen || fg != _fgDetectGen) return;
-      setState(() {
-        _services = reconciled;
-        _connectionOk = true;
-      });
-    } catch (_) {
-      // silent — never disrupt launch
-    } finally {
-      _autoDetecting = false;
-      // If the Pi was switched while we were in flight, our _autoDetecting flag
-      // made the switch's own auto-detect a no-op — run it now for the new Pi.
-      if (mounted && gen != _detectGen) _autoStatus();
-    }
-  }
-
   /// Re-detects the services after a successful action so the cards (LED,
   /// version, installed-state) reflect the change instead of going stale.
   /// Best-effort: a failed refresh keeps the last snapshot.
   Future<void> _refreshServices(SshConfig config) async {
     try {
-      _fgDetectGen++; // supersede any in-flight silent _autoStatus
       final s = await _updater.detectServices(config: config, onLog: (_) {});
       final reconciled = await _reconcileEvcc(s);
       if (mounted) {
@@ -1449,18 +1382,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                       return;
                     }
                     setState(() => _lockEnabled = v);
-                    setSheet(() {});
-                    _scheduleSave();
-                  },
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Beim Start Status prüfen'),
-                  subtitle:
-                      const Text('Liest evcc-Version + Dienststatus automatisch'),
-                  value: _autoCheck,
-                  onChanged: (v) {
-                    setState(() => _autoCheck = v);
                     setSheet(() {});
                     _scheduleSave();
                   },
