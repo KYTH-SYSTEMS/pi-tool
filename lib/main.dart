@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'src/authenticator.dart';
 import 'src/commands.dart';
+import 'src/kyth_splash.dart';
 import 'src/evcc_api.dart';
 import 'src/evcc_updater.dart';
 import 'src/history.dart';
@@ -78,7 +79,7 @@ class EvccPiToolApp extends StatelessWidget {
         themeMode: mode,
         theme: _buildTheme(Brightness.light),
         darkTheme: _buildTheme(Brightness.dark),
-        home: const UpdaterPage(),
+        home: const KythSplashGate(child: UpdaterPage()),
       ),
     );
   }
