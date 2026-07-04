@@ -679,7 +679,7 @@ class _LockScreen extends StatelessWidget {
                 style: TextStyle(
                     fontSize: 22, fontWeight: FontWeight.w800, color: kGreen)),
             const SizedBox(height: 2),
-            const Text('by KYTH.',
+            const Text('by KYTH. Systems',
                 style: TextStyle(color: Colors.white38, fontSize: 12)),
             const SizedBox(height: 6),
             const Text('Gesperrt', style: TextStyle(color: Colors.white54)),

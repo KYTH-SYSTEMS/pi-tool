@@ -2054,8 +2054,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             const SizedBox(height: 8),
             Text(
               _appVersion.isEmpty
-                  ? 'by KYTH.'
-                  : 'Pi-Tool v$_appVersion · by KYTH.',
+                  ? 'by KYTH. Systems'
+                  : 'Pi-Tool v$_appVersion · by KYTH. Systems',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
