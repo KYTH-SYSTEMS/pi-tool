@@ -734,8 +734,19 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastAction = _testConnection;
     setState(() => _testing = true);
     await _guard(() async {
-      final detected =
-          await _updater.detectServices(config: config, onLog: _appendLog);
+      final detected = await _updater.detectServices(
+        config: config,
+        onLog: _appendLog,
+        // Progressive: as soon as the SSH connection is up (before the service
+        // probes run) show "Verbunden" so the wait feels shorter.
+        onConnected: () {
+          if (!mounted) return;
+          setState(() {
+            _statusMessage = 'Verbunden – erkenne Dienste …';
+            _statusOk = true;
+          });
+        },
+      );
       final services = await _reconcileEvcc(detected);
       if (!mounted) return;
       setState(() {

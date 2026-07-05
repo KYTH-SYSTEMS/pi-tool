@@ -531,6 +531,55 @@ String? parseServiceBackupPath(String output) {
   return (exec: t, sudo: false);
 }
 
+/// Shell that runs the batched detection script (fed via stdin). LC_ALL=C for
+/// stable parsing, and distinct from the plain `bash -s` used elsewhere.
+const String detectShellCommand = 'LC_ALL=C bash -s';
+
+const String _detectMarker = '@@PT@@';
+
+/// Builds ONE shell script that runs every read-only detection probe, each
+/// preceded by a unique section marker, so the whole detection is a single SSH
+/// round-trip instead of ~13. [probes] is (sectionKey, command) pairs. Each
+/// command's stderr is merged and failures are swallowed, so one missing tool
+/// doesn't abort the rest. Parse the result with [splitDetectSections].
+String buildDetectBatch(List<(String key, String command)> probes) {
+  final b = StringBuffer();
+  for (final (key, cmd) in probes) {
+    // A leading blank line guarantees the marker sits on its own line even if
+    // the previous command's output had no trailing newline.
+    b.writeln('echo');
+    b.writeln('echo $_detectMarker$key$_detectMarker');
+    b.writeln('{ $cmd ; } 2>&1 || true');
+  }
+  return b.toString();
+}
+
+/// Splits [buildDetectBatch] output back into sectionKey → content.
+Map<String, String> splitDetectSections(String output) {
+  final map = <String, String>{};
+  String? key;
+  final buf = <String>[];
+  void flush() {
+    final k = key;
+    if (k != null) map[k] = buf.join('\n').trim();
+    buf.clear();
+  }
+
+  for (final line in output.split('\n')) {
+    final t = line.trim();
+    if (t.length > _detectMarker.length * 2 &&
+        t.startsWith(_detectMarker) &&
+        t.endsWith(_detectMarker)) {
+      flush();
+      key = t.substring(_detectMarker.length, t.length - _detectMarker.length);
+    } else if (key != null) {
+      buf.add(line);
+    }
+  }
+  flush();
+  return map;
+}
+
 /// Lists existing evcc backups, newest first. No sudo: the dir + archives are
 /// created by root with a standard umask, so they're world-readable.
 const String listBackupsCommand =

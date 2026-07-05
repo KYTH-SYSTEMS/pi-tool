@@ -345,58 +345,70 @@ class EvccUpdater {
     required SshConfig config,
     required void Function(String line) onLog,
     bool allowSudoForDocker = true,
+    void Function()? onConnected, // fired after connect, before the probes
   }) {
     return _withConnection<List<ServiceStatus>>(
       config: config,
       onLog: onLog,
       body: (runner, log) async {
+        onConnected?.call(); // progressive UI: "Verbunden" before the probes
         log('Erkenne Dienste …');
         final out = <ServiceStatus>[];
 
-        // ---- Docker listing (shared by evcc-docker + Home Assistant) ----
-        // Fetched once; sudo retry only if the daemon denies access and allowed.
-        var docker = await runner.run(dockerListCommand);
-        if (allowSudoForDocker &&
-            isDockerPermissionError('${docker.stdout}\n${docker.stderr}')) {
-          docker = await runner.run(dockerListSudoCommand,
+        // ONE round-trip for every read-only probe (was ~13 sequential calls —
+        // slow over high-latency links like Tailscale). is-active for ALL known
+        // apt-service units is cheap, so probe them all here too.
+        final units = knownAptServices.map((s) => s.unit).toList();
+        final probes = <(String, String)>[
+          ('DOCKER', dockerListCommand),
+          ('PENDING', systemPendingCommand),
+          ('EVCC_V', versionQuery),
+          ('EVCC_SVC', serviceStatus),
+          ('PIHOLE_V', piholeVersionCommand),
+          ('PIHOLE_S', piholeStatusCommand),
+          ('APTSVC', aptServicesQuery),
+          for (final u in units) ('UNIT:$u', 'systemctl is-active $u'),
+          ('OS', systemOsCommand),
+          ('TEMP', systemTempCommand),
+          ('DISK', systemDiskCommand),
+          ('MEM', systemMemCommand),
+          ('UPTIME', systemUptimeCommand),
+        ];
+        final batch = await runner.run(detectShellCommand,
+            stdin: '${buildDetectBatch(probes)}\n');
+        final sec = splitDetectSections(batch.stdout);
+
+        // ---- Docker (shared by evcc-docker + Home Assistant) ----
+        // sudo retry only if the daemon denied access and it's allowed.
+        var dockerPs = sec['DOCKER'] ?? '';
+        if (allowSudoForDocker && isDockerPermissionError(dockerPs)) {
+          final sd = await runner.run(dockerListSudoCommand,
               stdin: '${config.password}\n');
-          // Best-effort detection must not throw (that would abort Pi-hole /
-          // System detection) — but a rejected sudo password would otherwise
-          // make docker-based evcc/Home Assistant look "not installed", so warn.
-          if (isSudoPasswordFailure('${docker.stdout}\n${docker.stderr}')) {
+          if (isSudoPasswordFailure('${sd.stdout}\n${sd.stderr}')) {
             log('sudo-Passwort abgelehnt – Docker-Dienste konnten nicht '
                 'erkannt werden.');
           }
+          dockerPs = sd.stdout;
         }
-        final dockerPs = docker.stdout;
 
         // ---- pending apt upgrades (shared by evcc-apt + System) ----
-        // No sudo: a simulated full-upgrade. Tells the pending count AND which
-        // packages (e.g. evcc) actually have an update in the local index. Only
-        // trust it (updateKnown) when the simulation actually produced a summary
-        // and didn't error — otherwise we'd claim "Aktuell" on a broken apt.
-        final pend = await runner.run(systemPendingCommand);
-        final pending = parsePendingUpdates(pend.stdout);
-        final aptKnown =
-            pending != null && (pend.exitCode == null || pend.exitCode == 0);
+        // Simulated full-upgrade: pending count + which packages have an update
+        // in the local index. Trust it (updateKnown) only when it parsed.
+        final pending = parsePendingUpdates(sec['PENDING'] ?? '');
+        final aptKnown = pending != null;
         final pendingCount = pending ?? 0;
-        final aptUpgrades = parseAptUpgrades(pend.stdout);
+        final aptUpgrades = parseAptUpgrades(sec['PENDING'] ?? '');
 
         // ---- evcc (apt or docker) ----
-        final dpkg = await runner.run(versionQuery);
-        final aptV = parseInstalledVersion(dpkg.stdout);
+        final aptV = parseInstalledVersion(sec['EVCC_V'] ?? '');
         if (aptV != null) {
-          final svc = await runner.run(serviceStatus);
-          final active = isServiceActive(svc.stdout);
+          final active = isServiceActive(sec['EVCC_SVC'] ?? '');
           out.add(ServiceStatus(
             id: 'evcc',
             name: 'evcc',
             installed: true,
             version: aptV,
             active: active,
-            // We know currency from the apt simulation (best-effort: depends on
-            // the local package index being reasonably fresh). Match arch-
-            // qualified names too (multiarch prints e.g. "Inst evcc:arm64").
             updateAvailable:
                 aptUpgrades.any((p) => p == 'evcc' || p.startsWith('evcc:')),
             updateKnown: aptKnown,
@@ -416,11 +428,9 @@ class EvccUpdater {
         }
 
         // ---- Pi-hole ----
-        final pv = await runner.run(piholeVersionCommand);
-        final pver = parsePiholeVersion(pv.stdout);
+        final pver = parsePiholeVersion(sec['PIHOLE_V'] ?? '');
         if (pver != null) {
-          final ps = await runner.run(piholeStatusCommand);
-          final blocking = isPiholeBlocking(ps.stdout);
+          final blocking = isPiholeBlocking(sec['PIHOLE_S'] ?? '');
           out.add(ServiceStatus(
             id: 'pihole',
             name: 'Pi-hole',
@@ -448,28 +458,22 @@ class EvccUpdater {
             : ServiceStatus.absent('homeassistant', 'Home Assistant'));
 
         // ---- extra apt services (Grafana, InfluxDB, …) ----
-        // One dpkg query for all known packages; a card only when installed.
-        final extras = await runner.run(aptServicesQuery);
-        final extraVersions = parseAptServiceVersions(extras.stdout);
+        final extraVersions = parseAptServiceVersions(sec['APTSVC'] ?? '');
         for (final svc in knownAptServices) {
           final pkg = svc.packages
               .firstWhere(extraVersions.containsKey, orElse: () => '');
           if (pkg.isEmpty) continue;
-          final act = await runner.run('systemctl is-active ${svc.unit}');
-          final active = isServiceActive(act.stdout);
+          final active = isServiceActive(sec['UNIT:${svc.unit}'] ?? '');
           out.add(ServiceStatus(
             id: svc.id,
             name: svc.name,
             installed: true,
             version: extraVersions[pkg],
             active: active,
-            // Match only the INSTALLED package (an "Inst influxdb2" that would
-            // come in as something NEW is not an update for a v1 card).
-            updateAvailable: aptUpgrades
-                .any((u) => u == pkg || u.startsWith('$pkg:')),
+            updateAvailable:
+                aptUpgrades.any((u) => u == pkg || u.startsWith('$pkg:')),
             updateKnown: aptKnown,
             detail: 'apt · $pkg · Dienst ${active ? 'aktiv' : 'inaktiv'}',
-            // InfluxDB v1 has no web UI — only v2 (package influxdb2) gets one.
             webPort: (svc.id == 'influxdb' && pkg != 'influxdb2')
                 ? null
                 : svc.webPort,
@@ -478,23 +482,17 @@ class EvccUpdater {
         }
 
         // ---- System (always present) ----
-        final os = await runner.run(systemOsCommand);
-        // Vitals: all no-sudo, best-effort — a failed probe just omits itself.
-        final temp = await runner.run(systemTempCommand);
-        final disk = await runner.run(systemDiskCommand);
-        final mem = await runner.run(systemMemCommand);
-        final up = await runner.run(systemUptimeCommand);
         final health = SystemHealth(
-          tempC: parseTemperatureC(temp.stdout),
-          disk: parseDiskUsage(disk.stdout),
-          memAvailableMb: parseMemAvailableMb(mem.stdout),
-          uptime: up.stdout.trim(),
+          tempC: parseTemperatureC(sec['TEMP'] ?? ''),
+          disk: parseDiskUsage(sec['DISK'] ?? ''),
+          memAvailableMb: parseMemAvailableMb(sec['MEM'] ?? ''),
+          uptime: (sec['UPTIME'] ?? '').trim(),
         );
         out.add(ServiceStatus(
           id: 'system',
           name: 'System (Pi)',
           installed: true,
-          version: parseOsPrettyName(os.stdout),
+          version: parseOsPrettyName(sec['OS'] ?? ''),
           active: true,
           updateAvailable: pendingCount > 0,
           updateKnown: aptKnown,

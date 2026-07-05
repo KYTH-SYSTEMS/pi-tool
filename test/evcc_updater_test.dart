@@ -64,6 +64,12 @@ class FakeSshRunner implements SshRunner {
 
     if (runErrors.containsKey(command)) throw runErrors[command]!;
 
+    // Detection is now a single batched command. Tests still configure the
+    // per-probe outputs individually, so synthesize the batch from them.
+    if (command == detectShellCommand) {
+      return _r(_synthesizeDetectBatch(stdin ?? ''));
+    }
+
     final queue = responses[command];
     final CommandResult result;
     if (queue == null || queue.isEmpty) {
@@ -77,6 +83,35 @@ class FakeSshRunner implements SshRunner {
       if (result.stderr.isNotEmpty) onOutput(result.stderr);
     }
     return result;
+  }
+
+  /// Rebuilds the batched detection output from the individually-configured
+  /// per-command [responses], so the existing per-command tests keep working
+  /// unchanged. Honors [runErrors] on any probe command (throws it).
+  String _synthesizeDetectBatch(String script) {
+    const m = '@@PT@@';
+    final b = StringBuffer();
+    final lines = script.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      final t = lines[i].trim();
+      if (!(t.startsWith('echo $m') && t.endsWith(m) && t != 'echo $m$m')) {
+        continue;
+      }
+      final key = t.substring('echo $m'.length, t.length - m.length);
+      var cmd = (i + 1 < lines.length) ? lines[i + 1].trim() : '';
+      const wrap = ' ; } 2>&1';
+      if (cmd.startsWith('{ ') && cmd.contains(wrap)) {
+        cmd = cmd.substring(2, cmd.indexOf(wrap));
+      }
+      if (runErrors.containsKey(cmd)) throw runErrors[cmd]!;
+      final queue = responses[cmd];
+      final outp = (queue == null || queue.isEmpty)
+          ? ''
+          : (queue.length > 1 ? queue.removeAt(0) : queue.first).stdout;
+      b.writeln('$m$key$m');
+      if (outp.isNotEmpty) b.write(outp.endsWith('\n') ? outp : '$outp\n');
+    }
+    return b.toString();
   }
 
   @override

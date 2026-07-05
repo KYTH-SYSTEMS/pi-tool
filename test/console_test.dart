@@ -33,4 +33,43 @@ void main() {
       expect(r.exec, "sudo -S -p ''");
     });
   });
+
+  group('buildDetectBatch / splitDetectSections', () {
+    test('batch script marks + runs each probe (failures swallowed)', () {
+      final script = buildDetectBatch([
+        ('DOCKER', 'docker ps'),
+        ('OS', 'cat /etc/os-release'),
+      ]);
+      expect(script, contains('@@PT@@DOCKER@@PT@@'));
+      expect(script, contains('{ docker ps ; } 2>&1 || true'));
+      expect(script, contains('@@PT@@OS@@PT@@'));
+    });
+
+    test('split parses each section back out, trimmed', () {
+      const output = '@@PT@@DOCKER@@PT@@\n'
+          'evcc|ghcr.io/evcc\n'
+          '@@PT@@OS@@PT@@\n'
+          'PRETTY_NAME="Debian 12"\n';
+      final sec = splitDetectSections(output);
+      expect(sec['DOCKER'], 'evcc|ghcr.io/evcc');
+      expect(sec['OS'], 'PRETTY_NAME="Debian 12"');
+    });
+
+    test('round-trips: split(run(build)) recovers each probe output', () {
+      // Simulate the shell running the built script: echo blank, echo marker,
+      // then the command output.
+      final probes = [('A', 'x'), ('B', 'y')];
+      buildDetectBatch(probes); // (structure asserted above)
+      const simulated = '\n@@PT@@A@@PT@@\naaa\n\n@@PT@@B@@PT@@\nbbb line2\n';
+      final sec = splitDetectSections(simulated);
+      expect(sec['A'], 'aaa');
+      expect(sec['B'], 'bbb line2');
+    });
+
+    test('missing/empty section → empty string, not null lookup surprise', () {
+      final sec = splitDetectSections('@@PT@@A@@PT@@\n');
+      expect(sec['A'], '');
+      expect(sec['NOPE'], isNull);
+    });
+  });
 }

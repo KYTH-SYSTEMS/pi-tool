@@ -66,8 +66,10 @@ class FakeEvccUpdater extends EvccUpdater {
     required SshConfig config,
     required void Function(String line) onLog,
     bool allowSudoForDocker = true,
+    void Function()? onConnected,
   }) async {
     if (detectGate != null) await detectGate!.future;
+    onConnected?.call();
     if (detectError != null) throw detectError!;
     return services;
   }

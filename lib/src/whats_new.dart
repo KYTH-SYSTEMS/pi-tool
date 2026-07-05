@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.21.15': [
+    'Verbindung deutlich schneller: alle Dienst-Prüfungen laufen jetzt in EINER '
+        'SSH-Runde statt ~13 nacheinander — vor allem über Tailscale spürbar.',
+    'Sofort „Verbunden" anzeigen, die Karten füllen sich direkt danach.',
+    'Konsole: eigene Befehle direkt auf dem Pi absetzen (sudo unterstützt).',
+  ],
   '0.21.14': [
     'Konsole: eigene Befehle direkt auf dem Pi absetzen (sudo unterstützt) — '
         'statt nur Log jetzt mit Eingabe unten.',
