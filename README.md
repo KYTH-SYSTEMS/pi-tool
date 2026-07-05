@@ -36,6 +36,9 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
   nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,
   InfluxDB, Mosquitto) und installiert den gewählten (experimentell). So bleibt
   die Übersicht schlank, egal wie viele Dienste unterstützt werden.
+- **Konsole** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
+  unterstützt, das Pi-Passwort wird sicher via stdin gepiped), Ausgabe live.
+  Auf eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB oder ≥90 % belegt) warnt sie, bevor

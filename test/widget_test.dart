@@ -7,9 +7,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+/// Default config for tests: like AppConfig.initial but with the first-run
+/// disclaimer already accepted, so tests land on the app, not the gate.
+const _acceptedInitial = AppConfig(
+  profiles: [Profile(name: 'Standard')],
+  activeIndex: 0,
+  disclaimerAccepted: true,
+);
+
 /// In-memory config store so the widget test never touches platform channels.
 class _FakeStore extends AppConfigStore {
-  _FakeStore([this._initial = AppConfig.initial]);
+  _FakeStore([this._initial = _acceptedInitial]);
 
   final AppConfig _initial;
   AppConfig saved = AppConfig.initial;
@@ -47,6 +55,30 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
+  testWidgets('first run shows the disclaimer; accepting reveals + saves it',
+      (tester) async {
+    useTallScreen(tester);
+    // A config that has NOT accepted the disclaimer yet.
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'Standard')],
+      activeIndex: 0,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Willkommen bei Pi-Tool'), findsOneWidget);
+    expect(find.text('Verbindung herstellen'), findsNothing); // app is gated
+
+    await tester
+        .tap(find.widgetWithText(FilledButton, 'Akzeptieren und starten'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Verbindung herstellen'), findsWidgets); // app revealed
+    expect(store.saved.disclaimerAccepted, isTrue); // persisted
+  });
+
   testWidgets('renders the connection screen with the detect hint',
       (tester) async {
     useTallScreen(tester);
@@ -58,9 +90,9 @@ void main() {
         findsOneWidget); // compact connect button
     expect(find.textContaining('Verbindung herstellen'),
         findsWidgets); // + hint
-    expect(find.text('Live-Log'), findsOneWidget);
-    // Host/IP, Benutzer, Port, Passwort.
-    expect(find.byType(TextField), findsNWidgets(4));
+    expect(find.text('Konsole'), findsOneWidget);
+    // Host/IP, Benutzer, Port, Passwort + the console command input.
+    expect(find.byType(TextField), findsNWidgets(5));
   });
 
   testWidgets('footer shows the app version + an "Auf Update prüfen" button',
@@ -184,6 +216,7 @@ void main() {
         Profile(name: 'Eltern', host: '2.2.2.2'),
       ],
       activeIndex: 0,
+      disclaimerAccepted: true,
     ));
     await tester.pumpWidget(MaterialApp(
       home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
@@ -280,6 +313,7 @@ void main() {
     final store = _FakeStore(const AppConfig(
       profiles: [Profile(name: 'Standard', host: '192.168.178.64')],
       activeIndex: 0,
+      disclaimerAccepted: true,
     ));
     await tester.pumpWidget(MaterialApp(
       home: UpdaterPage(

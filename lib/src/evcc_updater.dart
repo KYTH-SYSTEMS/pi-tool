@@ -1201,6 +1201,39 @@ class EvccUpdater {
 
   /// Reboots the Pi. The SSH connection drops as a result — that's treated as
   /// success. A rejected sudo password (no disconnect) is reported.
+  /// Runs a free-form console command on the Pi in a one-off SSH session and
+  /// returns its combined stdout+stderr. A `sudo …` command gets the Pi password
+  /// piped in (see [buildConsoleExec]); everything else runs verbatim. Output is
+  /// streamed to [onLog] line by line (password-redacted). The user is
+  /// responsible for what they run — this is a raw shell, not a guarded action.
+  Future<String> runConsoleCommand({
+    required SshConfig config,
+    required String command,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<String>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('\$ $command');
+          final prep = buildConsoleExec(command);
+          final result = await runner.run(
+            prep.exec,
+            stdin: prep.sudo ? '${config.password}\n' : null,
+            onOutput: (chunk) {
+              final t = chunk.trimRight();
+              if (t.isNotEmpty) log(t);
+            },
+          );
+          if (prep.sudo &&
+              isSudoPasswordFailure('${result.stdout}\n${result.stderr}')) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+          return '${result.stdout}${result.stderr}';
+        },
+      );
+
   Future<void> reboot({
     required SshConfig config,
     required void Function(String line) onLog,

@@ -696,6 +696,111 @@ class _LockScreen extends StatelessWidget {
   }
 }
 
+/// First-run disclaimer/terms the user must accept once. Placeholder text —
+/// meant to be replaced by lawyer-reviewed terms for a Play Store release.
+class _DisclaimerScreen extends StatelessWidget {
+  const _DisclaimerScreen({
+    required this.onAccept,
+    required this.onDecline,
+    required this.onPrivacy,
+  });
+
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+  final VoidCallback onPrivacy;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget bullet(String s) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('•  '),
+              Expanded(child: Text(s)),
+            ],
+          ),
+        );
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _PromptMark(size: 26, chevronColor: theme.colorScheme.onSurface),
+                  const SizedBox(width: 10),
+                  Text('Willkommen bei Pi-Tool',
+                      style: theme.textTheme.titleLarge),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Pi-Tool führt auf den von dir eingerichteten Geräten '
+                        'Befehle über SSH aus — auch mit erhöhten Rechten '
+                        '(sudo): Paket-Updates, Dienst- und System-Neustarts '
+                        'sowie frei eingegebene Konsolen-Befehle.',
+                      ),
+                      const SizedBox(height: 14),
+                      Text('Mit „Akzeptieren" bestätigst du:',
+                          style: theme.textTheme.titleSmall),
+                      const SizedBox(height: 10),
+                      bullet('Du bist berechtigt, die Zielgeräte zu verwalten, '
+                          'und nutzt Pi-Tool auf eigene Verantwortung.'),
+                      bullet('KYTH. Systems übernimmt keine Haftung für Schäden '
+                          'an System, Daten oder Hardware.'),
+                      bullet('Deine Zugangsdaten bleiben verschlüsselt auf dem '
+                          'Gerät — keine Cloud, keine Weitergabe, kein Tracking.'),
+                      bullet('Pi-Tool ist ein inoffizielles Werkzeug und nicht '
+                          'mit evcc oder Pi-hole verbunden.'),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: onPrivacy,
+                          icon: const Icon(Icons.privacy_tip_outlined, size: 18),
+                          label: const Text('Datenschutzerklärung'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '© 2026 KYTH. Systems UG (haftungsbeschränkt) i.G.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: onAccept,
+                style:
+                    FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+                child: const Text('Akzeptieren und starten'),
+              ),
+              const SizedBox(height: 6),
+              TextButton(
+                onPressed: onDecline,
+                child: const Text('Ablehnen (App beenden)'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _StatusBanner extends StatelessWidget {
   const _StatusBanner({required this.message, required this.ok});
 

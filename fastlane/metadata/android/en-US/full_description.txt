@@ -6,6 +6,7 @@ Services:
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
 * Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI (Grafana/InfluxDB)
 * "Add service" – every not-yet-installed service (evcc, Pi-hole, Home Assistant, Grafana, InfluxDB, Mosquitto) in one picker; the main screen shows only what's actually running
+* Console – run your own commands directly on the Pi over SSH (sudo supported), live output
 * System (whole Pi) – update all packages (apt full-upgrade), reboot, health readout (temperature, disk, RAM, uptime) with a low-disk warning
 
 Features:

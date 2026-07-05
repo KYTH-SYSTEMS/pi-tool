@@ -735,6 +735,42 @@ void main() {
     });
   });
 
+  group('EvccUpdater.runConsoleCommand', () {
+    test('runs a plain command, echoes it and streams the output', () async {
+      final runner = FakeSshRunner({
+        'df -h': [_r('Filesystem Size\n/dev/root 30G\n')],
+      });
+      final logs = <String>[];
+      final out = await _updaterWith(runner)
+          .runConsoleCommand(config: _config, command: 'df -h', onLog: logs.add);
+      expect(out, contains('/dev/root'));
+      expect(logs, contains(r'$ df -h')); // the command is echoed
+    });
+
+    test('pipes the Pi password for a sudo command', () async {
+      const exec = "sudo -S -p '' systemctl restart evcc";
+      final runner = FakeSshRunner({exec: [_r('')]});
+      await _updaterWith(runner).runConsoleCommand(
+          config: _config,
+          command: 'sudo systemctl restart evcc',
+          onLog: (_) {});
+      expect(runner.stdinByCommand[exec], startsWith('sekret\n'));
+    });
+
+    test('a rejected sudo password surfaces as a sudo error', () async {
+      const exec = "sudo -S -p '' apt-get update";
+      final runner = FakeSshRunner({
+        exec: [_r('sudo: 1 incorrect password attempt', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner).runConsoleCommand(
+            config: _config, command: 'sudo apt-get update', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
+    });
+  });
+
   group('EvccUpdater.reboot', () {
     test('reports failure on a non-zero, non-password exit', () async {
       final runner = FakeSshRunner({

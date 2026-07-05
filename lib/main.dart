@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -147,6 +148,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   final _keyPassphrase = TextEditingController();
   final _uiPort = TextEditingController(text: '7070');
   final _logScroll = ScrollController();
+  final _consoleInput = TextEditingController(); // free-form command entry
 
   bool _fullUpgrade = false;
   bool _obscure = true;
@@ -160,6 +162,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _themeMode = 'system';
   String _channel = 'stable';
   bool _backupBeforeUpdate = true;
+  bool _disclaimerAccepted = false; // first-run terms accepted
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -198,6 +201,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       c.dispose();
     }
     _logScroll.dispose();
+    _consoleInput.dispose();
     super.dispose();
   }
 
@@ -239,6 +243,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _themeMode = cfg.themeMode;
       _channel = cfg.channel;
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
+      _disclaimerAccepted = cfg.disclaimerAccepted;
       _applyProfile(cfg.active);
       if (_lockEnabled) _locked = true;
       _booting = false; // settings + lock state resolved → reveal the UI
@@ -342,7 +347,14 @@ class _UpdaterPageState extends State<UpdaterPage>
       themeMode: _themeMode,
       channel: _channel,
       backupBeforeUpdate: _backupBeforeUpdate,
+      disclaimerAccepted: _disclaimerAccepted,
     );
+  }
+
+  /// Records first-run acceptance of the disclaimer and persists it.
+  void _acceptDisclaimer() {
+    setState(() => _disclaimerAccepted = true);
+    _persistSettings();
   }
 
   // ---- profile management --------------------------------------------------
@@ -1166,6 +1178,26 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
   }
 
+  /// Runs a free-form console command entered by the user and streams the
+  /// output into the console log. sudo is handled by the updater.
+  Future<void> _runConsoleCommand(String command) async {
+    final cmd = command.trim();
+    if (cmd.isEmpty || _busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _consoleInput.clear();
+    _lastAction = () => _runConsoleCommand(cmd);
+    await _guard(() async {
+      await _updater
+          .runConsoleCommand(config: config, command: cmd, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Befehl ausgeführt: $cmd';
+        _statusOk = true;
+      });
+    }, backgroundMessage: 'Befehl läuft …');
+  }
+
   /// Re-detects the services after a successful action so the cards (LED,
   /// version, installed-state) reflect the change instead of going stale.
   /// Best-effort: a failed refresh keeps the last snapshot.
@@ -1738,6 +1770,14 @@ class _UpdaterPageState extends State<UpdaterPage>
       );
     }
     if (_locked) return _LockScreen(onUnlock: _tryUnlock);
+    // First run: require accepting the disclaimer before anything else.
+    if (!_disclaimerAccepted) {
+      return _DisclaimerScreen(
+        onAccept: _acceptDisclaimer,
+        onDecline: () => SystemNavigator.pop(),
+        onPrivacy: () => _openUrl(kPrivacyUrl),
+      );
+    }
 
     final theme = Theme.of(context);
     return Scaffold(
@@ -1918,9 +1958,49 @@ class _UpdaterPageState extends State<UpdaterPage>
               ),
             ],
             const SizedBox(height: 12),
-            Text('Live-Log', style: theme.textTheme.titleSmall),
+            Text('Konsole', style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             _LogView(lines: _log, controller: _logScroll),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const Key('consoleField'),
+                    controller: _consoleInput,
+                    enabled: !_busy,
+                    textInputAction: TextInputAction.send,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    style: const TextStyle(
+                        fontFamily: 'monospace', fontSize: 13),
+                    onSubmitted:
+                        _busy ? null : (v) => _runConsoleCommand(v),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      prefixText: '\$ ',
+                      hintText: 'Befehl absetzen … (z. B. df -h)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  onPressed: _busy
+                      ? null
+                      : () => _runConsoleCommand(_consoleInput.text),
+                  icon: const Icon(Icons.keyboard_return),
+                  tooltip: 'Befehl absetzen',
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Befehle laufen mit deinen Rechten direkt auf dem Pi (sudo wird '
+              'unterstützt). Auf eigene Gefahr.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
             const SizedBox(height: 12),
             Wrap(
               alignment: WrapAlignment.center,
@@ -1976,12 +2056,19 @@ class _UpdaterPageState extends State<UpdaterPage>
             ),
             const SizedBox(height: 4),
             Text(
-              'Nutzung auf eigene Gefahr – keine Haftung für Schäden am '
-              'System. Inoffizielles Tool, nicht mit evcc oder Pi-hole '
-              'verbunden.',
+              'Nutzung auf eigene Gefahr. Wir übernehmen keine Haftung für '
+              'Schäden an System, Daten oder Hardware.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Inoffizielles Tool, nicht mit evcc oder Pi-hole verbunden.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant
+                      .withValues(alpha: 0.7)),
             ),
             const SizedBox(height: 8),
             Text(

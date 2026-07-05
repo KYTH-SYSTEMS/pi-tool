@@ -516,6 +516,21 @@ String? parseServiceBackupPath(String output) {
   return null;
 }
 
+/// Prepares a free-form console command for one-off SSH execution. A command
+/// that STARTS with `sudo` is rewritten to `sudo -S -p ''` so sudo reads the
+/// password from stdin (piped by the caller) instead of blocking on a TTY
+/// prompt, and its prompt text can't leak into the output. [sudo] tells the
+/// caller whether to pipe the password. The command is otherwise passed through
+/// verbatim — the user is responsible for what they run.
+({String exec, bool sudo}) buildConsoleExec(String command) {
+  final t = command.trim();
+  if (t == 'sudo' || t.startsWith('sudo ')) {
+    final rest = t.substring(4).trim();
+    return (exec: rest.isEmpty ? "sudo -S -p ''" : "sudo -S -p '' $rest", sudo: true);
+  }
+  return (exec: t, sudo: false);
+}
+
 /// Lists existing evcc backups, newest first. No sudo: the dir + archives are
 /// created by root with a standard umask, so they're world-readable.
 const String listBackupsCommand =

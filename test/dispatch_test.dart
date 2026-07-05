@@ -95,6 +95,19 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       aptInstalls.add(service.id);
 
+  final consoleCommands = <String>[];
+
+  @override
+  Future<String> runConsoleCommand({
+    required SshConfig config,
+    required String command,
+    required void Function(String line) onLog,
+  }) async {
+    consoleCommands.add(command);
+    onLog('\$ $command');
+    return 'ok';
+  }
+
   @override
   Future<String> backupPihole({
     required SshConfig config,
@@ -230,6 +243,7 @@ final _noUpdateChecker =
 const _ready = AppConfig(
   profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
   activeIndex: 0,
+  disclaimerAccepted: true,
 );
 
 void main() {
@@ -295,6 +309,7 @@ void main() {
         Profile(name: 'Eltern', host: '10.0.0.9', password: 'pw'),
       ],
       activeIndex: 0,
+      disclaimerAccepted: true,
     );
     await tester.pumpWidget(MaterialApp(
       home: UpdaterPage(
@@ -526,6 +541,22 @@ void main() {
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
   });
 
+  testWidgets('console: a typed command is run on the Pi', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+
+    final field = find.byKey(const Key('consoleField'));
+    await tester.ensureVisible(field);
+    await tester.enterText(field, 'df -h');
+    await tester.tap(find.byIcon(Icons.keyboard_return));
+    await tester.pumpAndSettle();
+
+    expect(u.consoleCommands, ['df -h']);
+    expect(find.textContaining(r'$ df -h'), findsWidgets); // echoed in console
+  });
+
   testWidgets('the System (Pi) card is rendered first', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater(); // default: evcc + system, in that order
@@ -721,6 +752,7 @@ void main() {
         Profile(name: 'Eltern', host: '10.0.0.9', password: 'pw'),
       ],
       activeIndex: 0,
+      disclaimerAccepted: true,
     );
     final u = FakeEvccUpdater()
       ..detectError = const EvccUpdateException(

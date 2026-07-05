@@ -19,11 +19,13 @@ void main() {
         autoCheck: true,
         backupBeforeUpdate: false,
         notifyUpdates: true,
+        disclaimerAccepted: true,
       );
 
       final back = parseAppConfig(encodeAppConfig(cfg));
       expect(back.backupBeforeUpdate, isFalse);
       expect(back.notifyUpdates, isTrue);
+      expect(back.disclaimerAccepted, isTrue);
       expect(back.profiles.length, 2);
       expect(back.profiles[0].name, 'Zuhause');
       expect(back.profiles[0].authMode, AuthMode.key);
@@ -47,6 +49,12 @@ void main() {
 
     test('notifyUpdates defaults OFF when the key is absent', () {
       expect(parseAppConfig('{"profiles":[],"activeIndex":0}').notifyUpdates,
+          isFalse);
+    });
+
+    test('disclaimerAccepted defaults OFF when the key is absent', () {
+      expect(
+          parseAppConfig('{"profiles":[],"activeIndex":0}').disclaimerAccepted,
           isFalse);
     });
 

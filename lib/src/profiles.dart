@@ -84,6 +84,9 @@ class AppConfig {
   /// Daily background check that notifies when a Pi has pending updates.
   final bool notifyUpdates;
 
+  /// Whether the user accepted the first-run disclaimer/terms.
+  final bool disclaimerAccepted;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -95,6 +98,7 @@ class AppConfig {
     this.autoCheck = false,
     this.backupBeforeUpdate = true,
     this.notifyUpdates = false,
+    this.disclaimerAccepted = false,
   });
 
   static const initial =
@@ -117,6 +121,7 @@ class AppConfig {
     bool? autoCheck,
     bool? backupBeforeUpdate,
     bool? notifyUpdates,
+    bool? disclaimerAccepted,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -129,6 +134,7 @@ class AppConfig {
         autoCheck: autoCheck ?? this.autoCheck,
         backupBeforeUpdate: backupBeforeUpdate ?? this.backupBeforeUpdate,
         notifyUpdates: notifyUpdates ?? this.notifyUpdates,
+        disclaimerAccepted: disclaimerAccepted ?? this.disclaimerAccepted,
       );
 
   Map<String, dynamic> toJson() => {
@@ -142,6 +148,7 @@ class AppConfig {
         'autoCheck': autoCheck,
         'backupBeforeUpdate': backupBeforeUpdate,
         'notifyUpdates': notifyUpdates,
+        'disclaimerAccepted': disclaimerAccepted,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -164,6 +171,7 @@ class AppConfig {
       // Default ON; only an explicit false disables it.
       backupBeforeUpdate: j['backupBeforeUpdate'] != false,
       notifyUpdates: j['notifyUpdates'] == true,
+      disclaimerAccepted: j['disclaimerAccepted'] == true,
     );
   }
 }
