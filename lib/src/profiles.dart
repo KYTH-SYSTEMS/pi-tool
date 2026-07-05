@@ -87,6 +87,9 @@ class AppConfig {
   /// Whether the user accepted the first-run disclaimer/terms.
   final bool disclaimerAccepted;
 
+  /// The app version last seen by the user — drives the "What's New" popup.
+  final String lastSeenVersion;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -99,6 +102,7 @@ class AppConfig {
     this.backupBeforeUpdate = true,
     this.notifyUpdates = false,
     this.disclaimerAccepted = false,
+    this.lastSeenVersion = '',
   });
 
   static const initial =
@@ -122,6 +126,7 @@ class AppConfig {
     bool? backupBeforeUpdate,
     bool? notifyUpdates,
     bool? disclaimerAccepted,
+    String? lastSeenVersion,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -135,6 +140,7 @@ class AppConfig {
         backupBeforeUpdate: backupBeforeUpdate ?? this.backupBeforeUpdate,
         notifyUpdates: notifyUpdates ?? this.notifyUpdates,
         disclaimerAccepted: disclaimerAccepted ?? this.disclaimerAccepted,
+        lastSeenVersion: lastSeenVersion ?? this.lastSeenVersion,
       );
 
   Map<String, dynamic> toJson() => {
@@ -149,6 +155,7 @@ class AppConfig {
         'backupBeforeUpdate': backupBeforeUpdate,
         'notifyUpdates': notifyUpdates,
         'disclaimerAccepted': disclaimerAccepted,
+        'lastSeenVersion': lastSeenVersion,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -172,6 +179,7 @@ class AppConfig {
       backupBeforeUpdate: j['backupBeforeUpdate'] != false,
       notifyUpdates: j['notifyUpdates'] == true,
       disclaimerAccepted: j['disclaimerAccepted'] == true,
+      lastSeenVersion: (j['lastSeenVersion'] ?? '').toString(),
     );
   }
 }

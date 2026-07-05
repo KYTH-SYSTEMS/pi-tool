@@ -55,6 +55,34 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
+  testWidgets('"What\'s New" popup shows after a version change, then records',
+      (tester) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Pi-Tool',
+      packageName: 'systems.kyth.pitool',
+      version: '0.21.14',
+      buildNumber: '52',
+      buildSignature: '',
+    );
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'Standard', host: '1.2.3.4')],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+      lastSeenVersion: '0.21.13', // updated FROM this
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Neu in v0.21.14'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, "Los geht's"));
+    await tester.pumpAndSettle();
+    expect(find.text('Neu in v0.21.14'), findsNothing);
+    expect(store.saved.lastSeenVersion, '0.21.14'); // recorded
+  });
+
   testWidgets('first run shows the disclaimer; accepting reveals + saves it',
       (tester) async {
     useTallScreen(tester);

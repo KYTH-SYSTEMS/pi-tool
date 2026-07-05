@@ -20,12 +20,14 @@ void main() {
         backupBeforeUpdate: false,
         notifyUpdates: true,
         disclaimerAccepted: true,
+        lastSeenVersion: '0.20.0',
       );
 
       final back = parseAppConfig(encodeAppConfig(cfg));
       expect(back.backupBeforeUpdate, isFalse);
       expect(back.notifyUpdates, isTrue);
       expect(back.disclaimerAccepted, isTrue);
+      expect(back.lastSeenVersion, '0.20.0');
       expect(back.profiles.length, 2);
       expect(back.profiles[0].name, 'Zuhause');
       expect(back.profiles[0].authMode, AuthMode.key);

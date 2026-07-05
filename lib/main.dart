@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'src/authenticator.dart';
 import 'src/commands.dart';
 import 'src/kyth_splash.dart';
+import 'src/whats_new.dart';
 import 'src/evcc_api.dart';
 import 'src/evcc_updater.dart';
 import 'src/history.dart';
@@ -163,6 +164,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _channel = 'stable';
   bool _backupBeforeUpdate = true;
   bool _disclaimerAccepted = false; // first-run terms accepted
+  String _lastSeenVersion = ''; // for the "What's New" popup after an update
+  bool _whatsNewChecked = false; // one-shot guard for the popup
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -244,6 +247,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _channel = cfg.channel;
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
       _disclaimerAccepted = cfg.disclaimerAccepted;
+      _lastSeenVersion = cfg.lastSeenVersion;
       _applyProfile(cfg.active);
       if (_lockEnabled) _locked = true;
       _booting = false; // settings + lock state resolved → reveal the UI
@@ -348,6 +352,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       channel: _channel,
       backupBeforeUpdate: _backupBeforeUpdate,
       disclaimerAccepted: _disclaimerAccepted,
+      lastSeenVersion: _lastSeenVersion,
     );
   }
 
@@ -355,6 +360,66 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _acceptDisclaimer() {
     setState(() => _disclaimerAccepted = true);
     _persistSettings();
+  }
+
+  /// On the first launch after an update, show a "What's New" popup once. The
+  /// current version is recorded either way (a fresh install records silently).
+  Future<void> _maybeShowWhatsNew() async {
+    try {
+      final current = (await PackageInfo.fromPlatform()).version;
+      if (current.isEmpty) return;
+      final last = _lastSeenVersion;
+      final notes = whatsNewFor(current);
+      // Show on a real update; and also once for an EXISTING user (has a Pi
+      // configured) whose last-seen version wasn't tracked yet — so the first
+      // version with this feature isn't silently missed. A truly fresh install
+      // (no host) records the version silently and shows nothing.
+      final existingUser = _profiles.any((p) => p.host.trim().isNotEmpty);
+      final show = notes != null &&
+          (shouldShowWhatsNew(lastSeen: last, current: current) ||
+              (last.isEmpty && existingUser));
+      if (last != current) {
+        _lastSeenVersion = current;
+        _persistSettings();
+      }
+      if (show && mounted) await _showWhatsNewDialog(current, notes);
+    } catch (_) {
+      // never let the popup disrupt startup
+    }
+  }
+
+  Future<void> _showWhatsNewDialog(String version, List<String> notes) {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Neu in v$version'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final n in notes)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('•  '),
+                      Expanded(child: Text(n)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text("Los geht's"),
+          ),
+        ],
+      ),
+    );
   }
 
   // ---- profile management --------------------------------------------------
@@ -1777,6 +1842,12 @@ class _UpdaterPageState extends State<UpdaterPage>
         onDecline: () => SystemNavigator.pop(),
         onPrivacy: () => _openUrl(kPrivacyUrl),
       );
+    }
+    // App shell is about to show → check for a "What's New" popup once.
+    if (!_whatsNewChecked) {
+      _whatsNewChecked = true;
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _maybeShowWhatsNew());
     }
 
     final theme = Theme.of(context);
