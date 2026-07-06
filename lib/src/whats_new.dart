@@ -13,6 +13,14 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.22.0': [
+    'Backups komplett: Pi-hole- und Home-Assistant-Backups lassen sich jetzt '
+        'direkt in der App wiederherstellen und verwalten (auflisten, löschen); '
+        'alte Backups werden automatisch aufgeräumt (die letzten 5 bleiben).',
+    'Neu auf der System-Karte: „Aufräumen" gibt Speicher frei (apt, ungenutzte '
+        'Docker-Images, altes Journal) und zeigt, wie viel.',
+    'Konsole: Verlauf + Schnellbefehle über das Uhr-Symbol neben der Eingabe.',
+  ],
   '0.21.15': [
     'Verbindung deutlich schneller: alle Dienst-Prüfungen laufen jetzt in EINER '
         'SSH-Runde statt ~13 nacheinander — vor allem über Tailscale spürbar.',

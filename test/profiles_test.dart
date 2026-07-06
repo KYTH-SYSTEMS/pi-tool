@@ -21,6 +21,7 @@ void main() {
         notifyUpdates: true,
         disclaimerAccepted: true,
         lastSeenVersion: '0.20.0',
+        consoleHistory: ['df -h', 'docker ps'],
       );
 
       final back = parseAppConfig(encodeAppConfig(cfg));
@@ -28,6 +29,7 @@ void main() {
       expect(back.notifyUpdates, isTrue);
       expect(back.disclaimerAccepted, isTrue);
       expect(back.lastSeenVersion, '0.20.0');
+      expect(back.consoleHistory, ['df -h', 'docker ps']);
       expect(back.profiles.length, 2);
       expect(back.profiles[0].name, 'Zuhause');
       expect(back.profiles[0].authMode, AuthMode.key);

@@ -47,6 +47,123 @@ void main() {
       expect(s, contains(r"'\''"));
       expect(s, isNot(contains("-C '/x';reboot")));
     });
+
+    test('both backup scripts rotate: keep the newest 5, delete the rest', () {
+      final p = buildPiholeBackupScript();
+      expect(p, contains('tail -n +6'));
+      expect(p, contains('pihole-backup-'));
+      final h = buildHomeAssistantBackupScript('/opt/ha/config');
+      expect(h, contains('tail -n +6'));
+      expect(h, contains('homeassistant-backup-'));
+    });
+  });
+
+  group('service backup management', () {
+    test('list command targets one service prefix, newest first, no sudo', () {
+      final c = serviceBackupListCommand('pihole');
+      expect(c, contains('ls -1t'));
+      expect(c, contains('/var/backups/pi-tool/pihole-backup-*'));
+      expect(c, contains('2>/dev/null'));
+      expect(c, isNot(contains('sudo')));
+    });
+
+    test('parseServiceBackupList keeps .tar.gz and .zip archives only', () {
+      const out = '/var/backups/pi-tool/pihole-backup-20260706-1.zip\n'
+          '/var/backups/pi-tool/pihole-backup-20260705-1.tar.gz\n'
+          'ls: nonsense\n';
+      final list = parseServiceBackupList(out);
+      expect(list, hasLength(2));
+      expect(list.first, endsWith('.zip'));
+    });
+
+    test('delete command removes exactly the quoted file via sudo', () {
+      final c = serviceBackupDeleteCommand("/var/backups/pi-tool/a'b.zip");
+      expect(c, startsWith('LC_ALL=C sudo -S rm -f --'));
+      expect(c, contains(r"'/var/backups/pi-tool/a'\''b.zip'")); // quoted
+    });
+  });
+
+  group('buildPiholeRestoreScript', () {
+    test('a v6 zip is imported via pihole-FTL --teleporter + DNS restart', () {
+      final s =
+          buildPiholeRestoreScript('/var/backups/pi-tool/pihole-backup-x.zip');
+      expect(s, contains('pihole-FTL --teleporter'));
+      expect(s, contains("'/var/backups/pi-tool/pihole-backup-x.zip'"));
+      expect(s, contains('pihole restartdns'));
+      expect(s, contains('RESTORE_OK'));
+    });
+
+    test('quotes a hostile path (no injection)', () {
+      final s = buildPiholeRestoreScript("/x';reboot;'.zip");
+      expect(s, contains(r"'\''"));
+      expect(s, isNot(contains("teleporter /x';reboot")));
+    });
+
+    test('a v5 tar.gz is refused with a clear message (web-UI only)', () {
+      final s = buildPiholeRestoreScript(
+          '/var/backups/pi-tool/pihole-backup-x.tar.gz');
+      expect(s, contains('RESTORE_FAIL_V5'));
+      expect(s, isNot(contains('--teleporter'))); // never attempt a v5 import
+    });
+  });
+
+  group('buildHomeAssistantRestoreScript', () {
+    test('stops the container, extracts into /config, starts it again', () {
+      final s = buildHomeAssistantRestoreScript(
+        archivePath: '/var/backups/pi-tool/homeassistant-backup-x.tar.gz',
+        configPath: '/opt/homeassistant/config',
+        containerName: 'homeassistant',
+      );
+      expect(s, contains("docker stop 'homeassistant'"));
+      expect(s, contains("-C '/opt/homeassistant/config'"));
+      expect(s, contains("docker start 'homeassistant'"));
+      expect(s, contains('RESTORE_OK'));
+    });
+
+    test('quotes hostile values everywhere (no injection)', () {
+      final s = buildHomeAssistantRestoreScript(
+        archivePath: "/a';reboot;'.tar.gz",
+        configPath: "/c';reboot;'",
+        containerName: "n';reboot;'",
+      );
+      expect(s, isNot(contains("stop n';reboot")));
+      expect(s, isNot(contains("-C /c';reboot")));
+    });
+
+    test('the container restarts even when tar fails (start is in a trap)', () {
+      final s = buildHomeAssistantRestoreScript(
+        archivePath: '/a.tar.gz',
+        configPath: '/c',
+        containerName: 'ha',
+      );
+      // docker start must be guaranteed via trap, not only on the happy path.
+      expect(s, contains('trap'));
+    });
+  });
+
+  group('buildCleanupScript / parseCleanupFreed', () {
+    test('cleans apt, dangling docker images and old journal, reports space',
+        () {
+      final s = buildCleanupScript();
+      expect(s, contains('apt-get autoremove -y'));
+      expect(s, contains('apt-get clean'));
+      // Only dangling images — container prune would delete our rollback
+      // containers (…-evccpitool-old)!
+      expect(s, contains('docker image prune -f'));
+      expect(s, isNot(contains('container prune')));
+      expect(s, isNot(contains('system prune')));
+      expect(s, contains('journalctl --vacuum-time=7d'));
+      expect(s, contains('CLEANUP_OK'));
+    });
+
+    test('parseCleanupFreed computes freed bytes from the marker', () {
+      // before-avail=1 GB, after-avail=1.5 GB → 500 MB freed
+      expect(parseCleanupFreed('x\nCLEANUP_OK 1000000000 1500000000\n'),
+          500000000);
+      // Nothing freed / negative drift clamps to 0.
+      expect(parseCleanupFreed('CLEANUP_OK 1000 900'), 0);
+      expect(parseCleanupFreed('no marker'), isNull);
+    });
   });
 
   group('homeAssistantConfigPath (from docker inspect)', () {

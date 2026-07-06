@@ -3,6 +3,8 @@
 /// design/2026-06-30-multi-service.md.
 library;
 
+import '../commands.dart' show shSingleQuote;
+
 /// Prints Pi-hole/Core/FTL versions if installed; empty/error if not (no sudo).
 const String piholeVersionCommand = 'pihole -v 2>/dev/null';
 
@@ -96,7 +98,30 @@ out="/var/backups/pi-tool/pihole-backup-$(date +%Y%m%d-%H%M%S).$ext"
 mv "$f" "$out"
 chmod 0644 "$out" 2>/dev/null || true
 cd /; rm -rf "$d"
+ls -1t /var/backups/pi-tool/pihole-backup-* 2>/dev/null | tail -n +6 | xargs -r rm -f --
 echo "BACKUP_OK $out"
+''';
+}
+
+/// Root script that restores a Pi-hole Teleporter backup. Only the v6 CLI can
+/// import (`pihole-FTL --teleporter <zip>`, since Pi-hole v6); a v5 `.tar.gz`
+/// archive can only be imported via the web UI, so it's refused with a clear
+/// marker instead of attempting something unsupported. DNS restart afterwards
+/// is best-effort.
+String buildPiholeRestoreScript(String archivePath) {
+  if (!archivePath.endsWith('.zip')) {
+    return '''
+echo "RESTORE_FAIL_V5"
+exit 1
+''';
+  }
+  final a = shSingleQuote(archivePath);
+  return '''
+set -e
+if [ ! -f $a ]; then echo "RESTORE_FAIL_MISSING"; exit 1; fi
+pihole-FTL --teleporter $a
+pihole restartdns 2>/dev/null || true
+echo "RESTORE_OK"
 ''';
 }
 

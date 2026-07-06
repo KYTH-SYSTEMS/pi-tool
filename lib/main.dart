@@ -166,6 +166,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _disclaimerAccepted = false; // first-run terms accepted
   String _lastSeenVersion = ''; // for the "What's New" popup after an update
   bool _whatsNewChecked = false; // one-shot guard for the popup
+  List<String> _consoleHistory = []; // recent console commands, newest first
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -248,6 +249,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
       _disclaimerAccepted = cfg.disclaimerAccepted;
       _lastSeenVersion = cfg.lastSeenVersion;
+      _consoleHistory = List.of(cfg.consoleHistory);
       _applyProfile(cfg.active);
       if (_lockEnabled) _locked = true;
       _booting = false; // settings + lock state resolved → reveal the UI
@@ -353,6 +355,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       backupBeforeUpdate: _backupBeforeUpdate,
       disclaimerAccepted: _disclaimerAccepted,
       lastSeenVersion: _lastSeenVersion,
+      consoleHistory: _consoleHistory,
     );
   }
 
@@ -920,6 +923,156 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
   }
 
+  // ---- service backup management (Pi-hole + Home Assistant) ----
+
+  /// Lists a service's backups and lets the user restore or delete one.
+  Future<void> _manageServiceBackups({
+    required String servicePrefix,
+    required String serviceName,
+    required Future<void> Function(SshConfig config, String path) restore,
+    required String restoreWarning,
+  }) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    List<String>? backups;
+    await _guard(() async {
+      backups = await _updater.listServiceBackups(
+          config: config, servicePrefix: servicePrefix, onLog: _appendLog);
+    });
+    if (!mounted || backups == null) return;
+    if (backups!.isEmpty) {
+      _snack('Keine $serviceName-Backups auf dem Pi gefunden.');
+      return;
+    }
+    final choice = await _pickServiceBackup(serviceName, backups!);
+    if (choice == null || !mounted) return;
+    final (action, path) = choice;
+    if (action == 'delete') {
+      if (!await _confirm('Backup löschen?',
+          'Löscht das $serviceName-Backup vom ${_backupLabel(path)} endgültig '
+          'vom Pi.')) {
+        return;
+      }
+      _beginBusy();
+      await _guard(() async {
+        await _updater.deleteServiceBackup(
+            config: config, path: path, onLog: _appendLog);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Backup gelöscht (${_backupLabel(path)}).';
+          _statusOk = true;
+        });
+      }, backgroundMessage: 'Backup wird gelöscht …');
+      return;
+    }
+    if (!await _confirm('Backup wiederherstellen?', restoreWarning)) return;
+    _beginBusy();
+    await _guard(() async {
+      await restore(config, path);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage =
+            '$serviceName wiederhergestellt (${_backupLabel(path)}).';
+        _statusOk = true;
+      });
+      _addHistory('$serviceName-Backup wiederhergestellt.');
+    }, backgroundMessage: '$serviceName wird wiederhergestellt …');
+  }
+
+  Future<void> _managePiholeBackups() => _manageServiceBackups(
+        servicePrefix: 'pihole',
+        serviceName: 'Pi-hole',
+        restoreWarning:
+            'Importiert das Teleporter-Backup und überschreibt die aktuelle '
+            'Pi-hole-Konfiguration (Listen, Einstellungen). DNS wird kurz neu '
+            'gestartet.',
+        restore: (config, path) => _updater.restorePiholeBackup(
+            config: config, path: path, onLog: _appendLog),
+      );
+
+  Future<void> _manageHomeAssistantBackups() => _manageServiceBackups(
+        servicePrefix: 'homeassistant',
+        serviceName: 'Home Assistant',
+        restoreWarning:
+            'Stoppt Home Assistant kurz, spielt das /config-Backup über die '
+            'aktuelle Konfiguration ein und startet den Container wieder.',
+        restore: (config, path) => _updater.restoreHomeAssistantBackup(
+            config: config, path: path, onLog: _appendLog),
+      );
+
+  /// Sheet of one service's backups: tap = restore, trash icon = delete.
+  Future<(String action, String path)?> _pickServiceBackup(
+      String serviceName, List<String> backups) {
+    return showModalBottomSheet<(String, String)>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              title: Text('$serviceName-Backups',
+                  style: Theme.of(ctx).textTheme.titleMedium),
+              subtitle:
+                  const Text('Antippen = wiederherstellen · Neuestes zuerst'),
+            ),
+            for (final b in backups)
+              ListTile(
+                leading: const Icon(Icons.restore),
+                title: Text(_backupLabel(b)),
+                subtitle: Text(b,
+                    style: const TextStyle(
+                        fontFamily: 'monospace', fontSize: 11)),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Backup löschen',
+                  onPressed: () => Navigator.pop(ctx, ('delete', b)),
+                ),
+                onTap: () => Navigator.pop(ctx, ('restore', b)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---- system cleanup ----
+
+  /// Frees disk space on the Pi (confirmed), then reports how much.
+  Future<void> _cleanupSystem() async {
+    if (_busy) return;
+    if (!await _confirm(
+      'Speicher freigeben?',
+      'Räumt auf dem Pi auf: nicht mehr benötigte Pakete (apt autoremove + '
+          'clean), ungenutzte Docker-Images und System-Journal älter als '
+          '7 Tage. Deine Daten und laufenden Dienste bleiben unberührt.',
+    )) {
+      return;
+    }
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _cleanupSystem;
+    await _guard(() async {
+      final freed =
+          await _updater.cleanupSystem(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Aufgeräumt – ${_formatBytes(freed)} freigegeben.';
+        _statusOk = true;
+      });
+      _addHistory('System aufgeräumt (${_formatBytes(freed)} freigegeben).');
+      await _refreshServices(config);
+    }, backgroundMessage: 'Speicher wird freigegeben …');
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1000 * 1000 * 1000) {
+      return '${(bytes / (1000 * 1000 * 1000)).toStringAsFixed(1)} GB';
+    }
+    return '${(bytes / (1000 * 1000)).round()} MB';
+  }
+
   // ---- Pi-hole + System service actions ----
 
   Future<void> _updatePihole() async {
@@ -1247,6 +1400,14 @@ class _UpdaterPageState extends State<UpdaterPage>
     final config = _prepare();
     if (config == null) return;
     _consoleInput.clear();
+    // Remember the command (newest first, deduped, capped) for the history.
+    _consoleHistory
+      ..remove(cmd)
+      ..insert(0, cmd);
+    if (_consoleHistory.length > 20) {
+      _consoleHistory = _consoleHistory.sublist(0, 20);
+    }
+    _scheduleSave();
     _lastAction = () => _runConsoleCommand(cmd);
     await _guard(() async {
       await _updater
@@ -1257,6 +1418,69 @@ class _UpdaterPageState extends State<UpdaterPage>
         _statusOk = true;
       });
     }, backgroundMessage: 'Befehl läuft …');
+  }
+
+  /// Frequently useful read-only commands, offered above the history.
+  static const _quickCommands = [
+    'df -h',
+    'free -m',
+    'uptime',
+    'docker ps',
+    'systemctl --failed',
+    'journalctl -n 50 --no-pager',
+  ];
+
+  /// Bottom sheet with quick commands + the recent-command history. Tapping an
+  /// entry fills the input (deliberately does NOT auto-run it).
+  void _showConsoleHistory() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              title: Text('Schnellbefehle',
+                  style: Theme.of(ctx).textTheme.titleSmall),
+              dense: true,
+            ),
+            for (final c in _quickCommands)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.bolt, size: 18),
+                title: Text(c,
+                    style: const TextStyle(
+                        fontFamily: 'monospace', fontSize: 13)),
+                onTap: () {
+                  _consoleInput.text = c;
+                  Navigator.pop(ctx);
+                },
+              ),
+            if (_consoleHistory.isNotEmpty) ...[
+              const Divider(),
+              ListTile(
+                title: Text('Verlauf',
+                    style: Theme.of(ctx).textTheme.titleSmall),
+                dense: true,
+              ),
+              for (final c in _consoleHistory)
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.history, size: 18),
+                  title: Text(c,
+                      style: const TextStyle(
+                          fontFamily: 'monospace', fontSize: 13)),
+                  onTap: () {
+                    _consoleInput.text = c;
+                    Navigator.pop(ctx);
+                  },
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   /// Re-detects the services after a successful action so the cards (LED,
@@ -1641,6 +1865,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               if (upToDate) _CardAction('Trotzdem aktualisieren', _updatePihole),
               _CardAction('Sichern (Teleporter)', _backupPihole),
+              _CardAction('Backups verwalten', _managePiholeBackups),
               _CardAction('Blocklisten aktualisieren', _piholeGravity),
               _CardAction('DNS neu starten', _piholeRestartDns),
             ],
@@ -1653,7 +1878,10 @@ class _UpdaterPageState extends State<UpdaterPage>
             primaryLabel: 'Aktualisieren',
             onPrimary: _updateHomeAssistant,
             onOpenWeb: _openHomeAssistant,
-            actions: [_CardAction('Sichern (/config)', _backupHomeAssistant)],
+            actions: [
+              _CardAction('Sichern (/config)', _backupHomeAssistant),
+              _CardAction('Backups verwalten', _manageHomeAssistantBackups),
+            ],
           ));
         case 'system':
           cards.add(_ServiceCard(
@@ -1665,6 +1893,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               if (upToDate)
                 _CardAction('Trotzdem aktualisieren', _upgradeSystem),
+              _CardAction('Aufräumen (Speicher freigeben)', _cleanupSystem),
               _CardAction('Pi neu starten', _reboot),
             ],
           ));
@@ -2044,7 +2273,13 @@ class _UpdaterPageState extends State<UpdaterPage>
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: _busy ? null : _showConsoleHistory,
+                  icon: const Icon(Icons.history),
+                  tooltip: 'Verlauf + Schnellbefehle',
+                ),
+                const SizedBox(width: 4),
                 IconButton.filledTonal(
                   onPressed: _busy
                       ? null

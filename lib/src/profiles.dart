@@ -90,6 +90,9 @@ class AppConfig {
   /// The app version last seen by the user — drives the "What's New" popup.
   final String lastSeenVersion;
 
+  /// Recent console commands (newest first, capped by the UI).
+  final List<String> consoleHistory;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -103,6 +106,7 @@ class AppConfig {
     this.notifyUpdates = false,
     this.disclaimerAccepted = false,
     this.lastSeenVersion = '',
+    this.consoleHistory = const [],
   });
 
   static const initial =
@@ -127,6 +131,7 @@ class AppConfig {
     bool? notifyUpdates,
     bool? disclaimerAccepted,
     String? lastSeenVersion,
+    List<String>? consoleHistory,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -141,6 +146,7 @@ class AppConfig {
         notifyUpdates: notifyUpdates ?? this.notifyUpdates,
         disclaimerAccepted: disclaimerAccepted ?? this.disclaimerAccepted,
         lastSeenVersion: lastSeenVersion ?? this.lastSeenVersion,
+        consoleHistory: consoleHistory ?? this.consoleHistory,
       );
 
   Map<String, dynamic> toJson() => {
@@ -156,6 +162,7 @@ class AppConfig {
         'notifyUpdates': notifyUpdates,
         'disclaimerAccepted': disclaimerAccepted,
         'lastSeenVersion': lastSeenVersion,
+        'consoleHistory': consoleHistory,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -180,6 +187,9 @@ class AppConfig {
       notifyUpdates: j['notifyUpdates'] == true,
       disclaimerAccepted: j['disclaimerAccepted'] == true,
       lastSeenVersion: (j['lastSeenVersion'] ?? '').toString(),
+      consoleHistory: (j['consoleHistory'] is List)
+          ? (j['consoleHistory'] as List).map((e) => e.toString()).toList()
+          : const [],
     );
   }
 }

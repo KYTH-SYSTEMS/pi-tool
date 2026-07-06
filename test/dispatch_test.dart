@@ -97,6 +97,53 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       aptInstalls.add(service.id);
 
+  List<String> serviceBackups = const [];
+  final restoredPihole = <String>[];
+  final restoredHa = <String>[];
+  final deletedBackups = <String>[];
+  int cleanupCalls = 0;
+
+  @override
+  Future<List<String>> listServiceBackups({
+    required SshConfig config,
+    required String servicePrefix,
+    required void Function(String line) onLog,
+  }) async =>
+      serviceBackups;
+
+  @override
+  Future<void> deleteServiceBackup({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      deletedBackups.add(path);
+
+  @override
+  Future<void> restorePiholeBackup({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      restoredPihole.add(path);
+
+  @override
+  Future<void> restoreHomeAssistantBackup({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      restoredHa.add(path);
+
+  @override
+  Future<int> cleanupSystem({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async {
+    cleanupCalls++;
+    return 250000000; // 250 MB
+  }
+
   final consoleCommands = <String>[];
 
   @override
@@ -542,6 +589,115 @@ void main() {
 
     expect(u.aptUpdates, ['grafana']);
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
+  });
+
+  testWidgets('System ⋮ → Aufräumen frees space after a confirm',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aufräumen (Speicher freigeben)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.cleanupCalls, 1);
+    expect(find.textContaining('250 MB freigegeben'), findsOneWidget);
+  });
+
+  testWidgets('Pi-hole ⋮ → Backups verwalten → restore flow', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            version: 'v6.0.4',
+            active: true),
+      ]
+      ..serviceBackups = const [
+        '/var/backups/pi-tool/pihole-backup-20260706-090000.zip'
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+
+    // The sheet lists the backup with its formatted timestamp → tap = restore.
+    await tester.tap(find.text('06.07.2026 09:00 Uhr'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.restoredPihole,
+        ['/var/backups/pi-tool/pihole-backup-20260706-090000.zip']);
+    expect(find.textContaining('wiederhergestellt'), findsWidgets);
+  });
+
+  testWidgets('backup manager: trash icon deletes after a confirm',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            version: 'v6.0.4',
+            active: true),
+      ]
+      ..serviceBackups = const [
+        '/var/backups/pi-tool/pihole-backup-20260706-090000.zip'
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.delete_outline));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.deletedBackups,
+        ['/var/backups/pi-tool/pihole-backup-20260706-090000.zip']);
+    expect(u.restoredPihole, isEmpty);
+  });
+
+  testWidgets('console history: a run command is persisted and re-offered',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+
+    final field = find.byKey(const Key('consoleField'));
+    await tester.ensureVisible(field);
+    await tester.enterText(field, 'free -h');
+    await tester.tap(find.byIcon(Icons.keyboard_return));
+    await tester.pumpAndSettle();
+
+    // History sheet offers the command; tapping fills the field (not run).
+    await tester.tap(find.byIcon(Icons.history).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Verlauf'), findsOneWidget);
+    await tester.tap(find.text('free -h').last);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(field).controller!.text, 'free -h');
+    expect(u.consoleCommands, ['free -h']); // not re-run by the tap
   });
 
   testWidgets('console: a typed command is run on the Pi', (tester) async {

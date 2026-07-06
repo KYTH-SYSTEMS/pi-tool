@@ -80,7 +80,32 @@ rc=\$?
 set -e
 if [ "\$rc" -gt 1 ]; then echo "BACKUP_FAIL"; rm -f "\$out"; exit 1; fi
 chmod 0644 "\$out" 2>/dev/null || true
+ls -1t /var/backups/pi-tool/homeassistant-backup-* 2>/dev/null | tail -n +6 | xargs -r rm -f --
 echo "BACKUP_OK \$out"
+''';
+}
+
+/// Root/bash script (sudo shell) that restores a HA config backup: stop the
+/// container, extract the tar into [configPath], start it again. The restart is
+/// in a `trap`, so even a failing tar can't leave Home Assistant stopped.
+/// Extracts OVER the existing config (no wipe — a wipe on a bad archive would
+/// be worse than leftover files).
+String buildHomeAssistantRestoreScript({
+  required String archivePath,
+  required String configPath,
+  required String containerName,
+}) {
+  final a = shSingleQuote(archivePath);
+  final c = shSingleQuote(configPath);
+  final n = shSingleQuote(containerName);
+  return '''
+set -e
+if [ ! -f $a ]; then echo "RESTORE_FAIL_MISSING"; exit 1; fi
+if [ ! -d $c ]; then echo "RESTORE_FAIL_NOCONF"; exit 1; fi
+docker stop $n
+trap "docker start $n >/dev/null 2>&1 || true" EXIT
+tar -xzf $a -C $c
+echo "RESTORE_OK"
 ''';
 }
 

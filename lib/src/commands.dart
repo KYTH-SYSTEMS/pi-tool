@@ -528,6 +528,57 @@ String? parseServiceBackupPath(String output) {
   return (exec: t, sudo: false);
 }
 
+/// Lists one service's backups under /var/backups/pi-tool, newest first. No
+/// sudo: the dir is 0755 and the archives 0644 (see the backup scripts).
+String serviceBackupListCommand(String servicePrefix) =>
+    'ls -1t /var/backups/pi-tool/$servicePrefix-backup-* 2>/dev/null';
+
+/// Parses [serviceBackupListCommand] output into archive paths (newest first).
+List<String> parseServiceBackupList(String lsOutput) => lsOutput
+    .split('\n')
+    .map((l) => l.trim())
+    .where((l) => l.endsWith('.tar.gz') || l.endsWith('.zip'))
+    .toList();
+
+/// Deletes one backup archive (root owns the dir, so sudo). `--` stops option
+/// parsing; the path is single-quoted against injection.
+String serviceBackupDeleteCommand(String path) =>
+    'LC_ALL=C sudo -S rm -f -- ${shSingleQuote(path)}';
+
+/// Root script that frees disk space, conservatively: apt autoremove + clean,
+/// DANGLING docker images only (a container/system prune would delete the
+/// stopped `…-evccpitool-old` rollback containers we deliberately keep), and
+/// journal older than 7 days. Reports `CLEANUP_OK <before> <after>` (available
+/// bytes on / before/after) for [parseCleanupFreed]. Steps are best-effort so
+/// e.g. a Pi without docker still cleans apt + journal.
+String buildCleanupScript() => r'''
+export DEBIAN_FRONTEND=noninteractive
+before=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
+apt-get autoremove -y 2>&1 || true
+apt-get clean 2>&1 || true
+docker image prune -f 2>&1 || true
+journalctl --vacuum-time=7d 2>&1 || true
+after=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
+echo "CLEANUP_OK $before $after"
+''';
+
+/// Freed bytes from the `CLEANUP_OK <before> <after>` marker (clamped at 0),
+/// or null when the marker is missing (script failed).
+int? parseCleanupFreed(String output) {
+  for (final line in output.split('\n')) {
+    final t = line.trim();
+    if (!t.startsWith('CLEANUP_OK ')) continue;
+    final parts = t.split(RegExp(r'\s+'));
+    if (parts.length < 3) return null;
+    final before = int.tryParse(parts[1]);
+    final after = int.tryParse(parts[2]);
+    if (before == null || after == null) return null;
+    final freed = after - before;
+    return freed > 0 ? freed : 0;
+  }
+  return null;
+}
+
 /// Shell that runs the batched detection script (fed via stdin). LC_ALL=C for
 /// stable parsing, and distinct from the plain `bash -s` used elsewhere.
 const String detectShellCommand = 'LC_ALL=C bash -s';

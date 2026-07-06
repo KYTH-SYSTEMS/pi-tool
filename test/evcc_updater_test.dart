@@ -757,6 +757,107 @@ void main() {
     });
   });
 
+  group('EvccUpdater service backup management', () {
+    test('listServiceBackups lists one service, newest first', () async {
+      final cmd = serviceBackupListCommand('pihole');
+      final runner = FakeSshRunner({
+        cmd: [
+          _r('/var/backups/pi-tool/pihole-backup-2.zip\n'
+              '/var/backups/pi-tool/pihole-backup-1.zip\n')
+        ],
+      });
+      final list = await _updaterWith(runner).listServiceBackups(
+          config: _config, servicePrefix: 'pihole', onLog: (_) {});
+      expect(list, hasLength(2));
+      expect(list.first, endsWith('pihole-backup-2.zip'));
+    });
+
+    test('deleteServiceBackup removes via sudo (password on stdin)', () async {
+      const path = '/var/backups/pi-tool/pihole-backup-1.zip';
+      final cmd = serviceBackupDeleteCommand(path);
+      final runner = FakeSshRunner({cmd: [_r('')]});
+      await _updaterWith(runner)
+          .deleteServiceBackup(config: _config, path: path, onLog: (_) {});
+      expect(runner.stdinByCommand[cmd], 'sekret\n');
+    });
+
+    test('restorePiholeBackup runs the teleporter import as root', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('RESTORE_OK\n')],
+      });
+      await _updaterWith(runner).restorePiholeBackup(
+          config: _config,
+          path: '/var/backups/pi-tool/pihole-backup-1.zip',
+          onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, startsWith('sekret\n'));
+      expect(stdin, contains('pihole-FTL --teleporter'));
+    });
+
+    test('restorePiholeBackup refuses a v5 tar.gz with a clear error',
+        () async {
+      final runner = FakeSshRunner({});
+      await expectLater(
+        _updaterWith(runner).restorePiholeBackup(
+            config: _config,
+            path: '/var/backups/pi-tool/pihole-backup-1.tar.gz',
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('Web-Oberfläche'))),
+      );
+      expect(runner.commandsRun, isEmpty); // never even connects to the Pi
+    });
+
+    test('restoreHomeAssistantBackup stops, extracts and restarts via trap',
+        () async {
+      final inspectCmd = dockerInspectJsonCommand('homeassistant');
+      final runner = FakeSshRunner({
+        dockerListCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+        inspectCmd: [
+          _r('[{"Name":"/homeassistant","Mounts":['
+              '{"Type":"bind","Source":"/opt/ha/config","Destination":"/config"}]}]')
+        ],
+        installShellCommand: [_r('RESTORE_OK\n')],
+      });
+      await _updaterWith(runner).restoreHomeAssistantBackup(
+          config: _config,
+          path: '/var/backups/pi-tool/homeassistant-backup-1.tar.gz',
+          onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, contains("docker stop 'homeassistant'"));
+      expect(stdin, contains("-C '/opt/ha/config'"));
+      expect(stdin, contains('trap'));
+    });
+  });
+
+  group('EvccUpdater.cleanupSystem', () {
+    test('runs the cleanup as root and returns the freed bytes', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('cleaning …\nCLEANUP_OK 1000000000 1250000000\n')
+        ],
+      });
+      final freed = await _updaterWith(runner)
+          .cleanupSystem(config: _config, onLog: (_) {});
+      expect(freed, 250000000);
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, startsWith('sekret\n'));
+      expect(stdin, contains('apt-get autoremove -y'));
+    });
+
+    test('a missing marker is a clear failure', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('boom', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner).cleanupSystem(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+  });
+
   group('EvccUpdater.runConsoleCommand', () {
     test('runs a plain command, echoes it and streams the output', () async {
       final runner = FakeSshRunner({

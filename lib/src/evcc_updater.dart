@@ -657,6 +657,151 @@ class EvccUpdater {
     );
   }
 
+  /// Lists one service's backups under /var/backups/pi-tool (newest first).
+  Future<List<String>> listServiceBackups({
+    required SshConfig config,
+    required String servicePrefix,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<List<String>>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final r = await runner.run(serviceBackupListCommand(servicePrefix));
+          return parseServiceBackupList(r.stdout);
+        },
+      );
+
+  /// Deletes one backup archive (root owns the backup dir → sudo).
+  Future<void> deleteServiceBackup({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) => _sudoCommand(runner, log, config,
+            serviceBackupDeleteCommand(path), 'Löschen fehlgeschlagen'),
+      );
+
+  /// Restores a Pi-hole Teleporter backup. Only v6 `.zip` archives can be
+  /// imported via CLI — a v5 `.tar.gz` is refused with a clear message (its
+  /// import exists only in the web UI).
+  Future<void> restorePiholeBackup({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async {
+    if (!path.endsWith('.zip')) {
+      throw const EvccUpdateException(
+        UpdateErrorKind.unknown,
+        'Dieses Backup stammt von Pi-hole v5 (.tar.gz) und kann nur über die '
+        'Web-Oberfläche importiert werden (Einstellungen → Teleporter).',
+      );
+    }
+    await _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Stelle Pi-hole-Backup wieder her …');
+        await _runRootScript(runner, log, config,
+            sudo: true,
+            script: buildPiholeRestoreScript(path),
+            failMsg: 'Pi-hole-Wiederherstellung fehlgeschlagen');
+        log('Pi-hole wiederhergestellt.');
+      },
+    );
+  }
+
+  /// Restores a Home Assistant config backup: stop container → extract the tar
+  /// into /config → start (the start is trap-guaranteed). The container + its
+  /// /config path are discovered like in [backupHomeAssistant].
+  Future<void> restoreHomeAssistantBackup({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        var listing = await runner.run(dockerListCommand);
+        var sudo = false;
+        if (isDockerPermissionError('${listing.stdout}\n${listing.stderr}')) {
+          sudo = true;
+          listing = await runner.run(dockerListSudoCommand,
+              stdin: '${config.password}\n');
+          if (isSudoPasswordFailure('${listing.stdout}\n${listing.stderr}')) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+        }
+        final ha = parseHomeAssistant(listing.stdout);
+        if (ha == null) {
+          throw const EvccUpdateException(
+              UpdateErrorKind.unknown, 'Kein Home-Assistant-Container gefunden.');
+        }
+        final inspectCmd = sudo
+            ? dockerInspectJsonSudoCommand(ha.name)
+            : dockerInspectJsonCommand(ha.name);
+        final inspect = await runner.run(inspectCmd,
+            stdin: sudo ? '${config.password}\n' : null);
+        if (sudo &&
+            isSudoPasswordFailure('${inspect.stdout}\n${inspect.stderr}')) {
+          throw const EvccUpdateException(UpdateErrorKind.sudo,
+              'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+        }
+        final cfg = homeAssistantConfigPath(inspect.stdout);
+        if (cfg == null) {
+          throw const EvccUpdateException(UpdateErrorKind.unknown,
+              'Konnte das /config-Verzeichnis nicht ermitteln.');
+        }
+        log('Stelle Home-Assistant-Backup wieder her (/config: $cfg) …');
+        await _runRootScript(runner, log, config,
+            sudo: true,
+            script: buildHomeAssistantRestoreScript(
+                archivePath: path, configPath: cfg, containerName: ha.name),
+            failMsg: 'Home-Assistant-Wiederherstellung fehlgeschlagen');
+        log('Home Assistant wiederhergestellt.');
+      },
+    );
+  }
+
+  /// Frees disk space (apt autoremove/clean, dangling docker images, journal
+  /// >7d) and returns the freed bytes. Conservative on purpose — see
+  /// [buildCleanupScript].
+  Future<int> cleanupSystem({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<int>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Räume auf (apt, Docker-Images, Journal) …');
+          final result = await runner.run(
+            installShellCommand,
+            stdin: '${config.password}\n${buildCleanupScript()}\n',
+            onOutput: (chunk) {
+              final t = chunk.trimRight();
+              if (t.isNotEmpty) log(t);
+            },
+          );
+          final combined = '${result.stdout}\n${result.stderr}';
+          if (isSudoPasswordFailure(combined)) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+          final freed = parseCleanupFreed(combined);
+          if (freed == null) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Aufräumen fehlgeschlagen (Details im Log).');
+          }
+          return freed;
+        },
+      );
+
   /// Installs Pi-hole unattended (experimental — see buildPiholeInstallScript).
   Future<void> installPihole({
     required SshConfig config,
