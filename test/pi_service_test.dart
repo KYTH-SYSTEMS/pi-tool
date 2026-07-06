@@ -71,4 +71,39 @@ void main() {
           .first.updateAvailable, isFalse);
     });
   });
+
+  group('applyLatestHomeAssistantVersion', () {
+    ServiceStatus ha(String? version) => ServiceStatus(
+        id: 'homeassistant',
+        name: 'Home Assistant',
+        installed: true,
+        version: version,
+        active: true,
+        detail: 'Docker · homeassistant');
+
+    test('current calver → updateKnown, no update (card shows "Aktuell")', () {
+      final out = applyLatestHomeAssistantVersion([ha('2026.6.3')], '2026.6.3');
+      final s = out.first;
+      expect(s.updateKnown, isTrue);
+      expect(s.updateAvailable, isFalse);
+    });
+
+    test('older installed calver → update available', () {
+      final out = applyLatestHomeAssistantVersion([ha('2026.5.1')], '2026.6.3');
+      expect(out.first.updateAvailable, isTrue);
+      expect(out.first.updateKnown, isTrue);
+    });
+
+    test('non-comparable tag (stable/latest) stays unknown', () {
+      final out = applyLatestHomeAssistantVersion([ha('stable')], '2026.6.3');
+      expect(out.first.updateKnown, isFalse);
+    });
+
+    test('no-op on null/empty latest', () {
+      expect(applyLatestHomeAssistantVersion([ha('2026.6.3')], null)
+          .first.updateKnown, isFalse);
+      expect(applyLatestHomeAssistantVersion([ha('2026.6.3')], '')
+          .first.updateKnown, isFalse);
+    });
+  });
 }

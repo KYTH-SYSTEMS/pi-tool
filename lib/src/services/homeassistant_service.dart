@@ -80,7 +80,7 @@ rc=\$?
 set -e
 if [ "\$rc" -gt 1 ]; then echo "BACKUP_FAIL"; rm -f "\$out"; exit 1; fi
 chmod 0644 "\$out" 2>/dev/null || true
-ls -1t /var/backups/pi-tool/homeassistant-backup-* 2>/dev/null | tail -n +6 | xargs -r rm -f --
+ls -1t /var/backups/pi-tool/homeassistant-backup-* 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
 echo "BACKUP_OK \$out"
 ''';
 }
@@ -98,6 +98,12 @@ String buildHomeAssistantRestoreScript({
   final a = shSingleQuote(archivePath);
   final c = shSingleQuote(configPath);
   final n = shSingleQuote(containerName);
+  // The trap guarantees the container is brought back up if the tar aborts
+  // under `set -e` (script exits non-zero, no RESTORE_OK → surfaced). On the
+  // happy path we clear the trap and start VISIBLY, then verify the container
+  // is actually running before RESTORE_OK — a swallowed start failure would
+  // otherwise leave HA down while we report success (it runs with
+  // --restart=unless-stopped, so a manual stop persists across reboots).
   return '''
 set -e
 if [ ! -f $a ]; then echo "RESTORE_FAIL_MISSING"; exit 1; fi
@@ -105,8 +111,29 @@ if [ ! -d $c ]; then echo "RESTORE_FAIL_NOCONF"; exit 1; fi
 docker stop $n
 trap "docker start $n >/dev/null 2>&1 || true" EXIT
 tar -xzf $a -C $c
+trap - EXIT
+docker start $n
+sleep 2
+running=\$(docker inspect -f '{{.State.Running}}' $n 2>/dev/null || echo false)
+if [ "\$running" != "true" ]; then echo "RESTORE_FAIL_START"; exit 1; fi
 echo "RESTORE_OK"
 ''';
+}
+
+/// No-sudo one-liner (for the detection batch) that finds the running HA
+/// container and prints its REAL version from /config/.HA_VERSION — the image
+/// tag alone (often "stable") isn't a comparable version. Empty when HA isn't
+/// running or docker needs sudo (then currency simply stays unknown).
+const String haVersionProbe =
+    "hac=\$(docker ps --format '{{.Names}}|{{.Image}}' 2>/dev/null | "
+    "grep -iE 'home-?assistant|hass' | head -n1 | cut -d'|' -f1); "
+    '[ -n "\$hac" ] && docker exec "\$hac" cat /config/.HA_VERSION 2>/dev/null '
+    '|| true';
+
+/// The HA version (e.g. "2026.6.3") from [haVersionProbe] output, or null.
+String? parseHaVersion(String out) {
+  final m = RegExp(r'\d{4}\.\d+(?:\.\d+)?').firstMatch(out.trim());
+  return m?.group(0);
 }
 
 /// Finds the Home Assistant container in

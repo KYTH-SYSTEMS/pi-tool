@@ -166,6 +166,25 @@ void main() {
     });
   });
 
+  group('parseHaVersion (from /config/.HA_VERSION)', () {
+    test('reads a calver version, trimmed', () {
+      expect(parseHaVersion('2026.6.3\n'), '2026.6.3');
+      expect(parseHaVersion('  2026.12.0 '), '2026.12.0');
+    });
+    test('null when no version is present (probe empty / HA not running)', () {
+      expect(parseHaVersion(''), isNull);
+      expect(parseHaVersion('cat: /config/.HA_VERSION: No such file'), isNull);
+    });
+  });
+
+  group('haVersionProbe', () {
+    test('finds the HA container and cats its version, no sudo', () {
+      expect(haVersionProbe, contains('.HA_VERSION'));
+      expect(haVersionProbe, contains('docker exec'));
+      expect(haVersionProbe, isNot(contains('sudo')));
+    });
+  });
+
   group('homeAssistantConfigPath (from docker inspect)', () {
     test('reads the /config bind-mount source', () {
       const inspect = '[{"Name":"/homeassistant","Mounts":['

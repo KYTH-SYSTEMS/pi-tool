@@ -99,6 +99,7 @@ class UpdaterPage extends StatefulWidget {
     this.apiClient,
     this.piFinder,
     this.evccReleaseFetcher,
+    this.haVersionFetcher,
     this.keepAlive,
   });
 
@@ -118,6 +119,10 @@ class UpdaterPage extends StatefulWidget {
   /// Fetches evcc's latest release (for the pre-update notes). Injectable so
   /// tests can drive the confirm/cancel flow without a live GitHub call.
   final Future<EvccRelease?> Function()? evccReleaseFetcher;
+
+  /// Fetches Home Assistant's latest release tag (for the currency check).
+  /// Injectable so tests stay offline.
+  final Future<String?> Function()? haVersionFetcher;
 
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
@@ -139,6 +144,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.piFinder ?? findSshHosts;
   late final Future<EvccRelease?> Function() _fetchEvccRelease =
       widget.evccReleaseFetcher ?? fetchEvccRelease;
+  late final Future<String?> Function() _fetchHaLatest =
+      widget.haVersionFetcher ?? fetchLatestHomeAssistantVersion;
   final HistoryStore _historyStore = HistoryStore();
 
   final _host = TextEditingController();
@@ -179,6 +186,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   ReleaseInfo? _update;
   String _appVersion = ''; // this app's version, shown in the footer
   EvccRelease? _evccLatest; // evcc's latest GitHub release, cached per session
+  String? _haLatest; // Home Assistant's latest release, cached per session
   String? _setupUrl;
   Timer? _saveDebounce;
   bool _hostKeyIssue = false;
@@ -935,6 +943,14 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (_busy) return;
     final config = _prepare();
     if (config == null) return;
+    // Set BEFORE the first guard so a host-key "trust & retry" replays THIS
+    // (listing) action, not whatever ran previously.
+    _lastAction = () => _manageServiceBackups(
+          servicePrefix: servicePrefix,
+          serviceName: serviceName,
+          restore: restore,
+          restoreWarning: restoreWarning,
+        );
     List<String>? backups;
     await _guard(() async {
       backups = await _updater.listServiceBackups(
@@ -950,7 +966,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     final (action, path) = choice;
     if (action == 'delete') {
       if (!await _confirm('Backup löschen?',
-          'Löscht das $serviceName-Backup vom ${_backupLabel(path)} endgültig '
+          'Löscht das $serviceName-Backup (${_backupLabel(path)}) endgültig '
           'vom Pi.')) {
         return;
       }
@@ -963,6 +979,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           _statusMessage = 'Backup gelöscht (${_backupLabel(path)}).';
           _statusOk = true;
         });
+        _addHistory('$serviceName-Backup gelöscht (${_backupLabel(path)}).');
       }, backgroundMessage: 'Backup wird gelöscht …');
       return;
     }
@@ -1463,6 +1480,15 @@ class _UpdaterPageState extends State<UpdaterPage>
                 title: Text('Verlauf',
                     style: Theme.of(ctx).textTheme.titleSmall),
                 dense: true,
+                trailing: TextButton.icon(
+                  icon: const Icon(Icons.delete_sweep, size: 18),
+                  label: const Text('Löschen'),
+                  onPressed: () {
+                    setState(() => _consoleHistory = []);
+                    _scheduleSave();
+                    Navigator.pop(ctx);
+                  },
+                ),
               ),
               for (final c in _consoleHistory)
                 ListTile(
@@ -1505,14 +1531,28 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// apt index on the Pi can't hide an available evcc update (see
   /// applyLatestEvccVersion). The release is fetched once per session and reused;
   /// fail-soft — any error just leaves the apt-based result as is.
+  /// Cross-checks apt-evcc AND Home Assistant currency against their latest
+  /// GitHub releases (both cached per session, both fail-soft). Named for evcc
+  /// historically; also reconciles HA so its card can show "Aktuell ✓" instead
+  /// of always offering "Aktualisieren".
   Future<List<ServiceStatus>> _reconcileEvcc(
       List<ServiceStatus> services) async {
+    var out = services;
     try {
       _evccLatest ??= await _fetchEvccRelease();
-      return applyLatestEvccVersion(services, _evccLatest?.version);
+      out = applyLatestEvccVersion(out, _evccLatest?.version);
     } catch (_) {
-      return services;
+      // fail-soft
     }
+    try {
+      if (out.any((s) => s.id == 'homeassistant' && s.installed)) {
+        _haLatest ??= await _fetchHaLatest();
+        out = applyLatestHomeAssistantVersion(out, _haLatest);
+      }
+    } catch (_) {
+      // fail-soft
+    }
+    return out;
   }
 
   void _addHistory(String text) {

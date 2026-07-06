@@ -19,7 +19,11 @@ const Map<String, List<String>> _whatsNew = {
         'alte Backups werden automatisch aufgeräumt (die letzten 5 bleiben).',
     'Neu auf der System-Karte: „Aufräumen" gibt Speicher frei (apt, ungenutzte '
         'Docker-Images, altes Journal) und zeigt, wie viel.',
-    'Konsole: Verlauf + Schnellbefehle über das Uhr-Symbol neben der Eingabe.',
+    'Home Assistant zeigt jetzt „Aktuell", wenn es aktuell ist — die echte '
+        'Version wird gegen das neueste Release geprüft (nicht mehr immer '
+        '„Aktualisieren").',
+    'Konsole: Verlauf + Schnellbefehle über das Uhr-Symbol neben der Eingabe '
+        '(Verlauf löschbar).',
   ],
   '0.21.15': [
     'Verbindung deutlich schneller: alle Dienst-Prüfungen laufen jetzt in EINER '

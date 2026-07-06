@@ -135,6 +135,20 @@ Future<EvccRelease?> fetchEvccRelease({HttpGetJson? getJson}) async {
   }
 }
 
+/// Home Assistant's latest release tag (e.g. "2026.6.3"). Fail-soft: null on any
+/// error, so it can never block detection.
+Future<String?> fetchLatestHomeAssistantVersion({HttpGetJson? getJson}) async {
+  final get = getJson ?? _defaultGetJson;
+  try {
+    final json = await get(Uri.parse(
+        'https://api.github.com/repos/home-assistant/core/releases/latest'));
+    final tag = (json['tag_name'] ?? '').toString().trim();
+    return tag.isEmpty ? null : tag;
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<Map<String, dynamic>> _defaultGetJson(Uri url) async {
   final client = HttpClient();
   try {

@@ -106,6 +106,32 @@ List<ServiceStatus> applyLatestEvccVersion(
   ];
 }
 
+/// Cross-checks the running Home Assistant against its latest GitHub release.
+/// HA's version comes from /config/.HA_VERSION (see haVersionProbe) — a calver
+/// like "2026.6.3". Only compares when BOTH the installed version and [latest]
+/// look like a calver, so a non-pinned image tag ("stable"/"latest") stays
+/// "unknown" (updateKnown false) rather than being wrongly flagged. On a valid
+/// compare we set updateKnown=true so the card can finally show "Aktuell ✓"
+/// when current. Fail-safe: null/empty latest → unchanged.
+List<ServiceStatus> applyLatestHomeAssistantVersion(
+    List<ServiceStatus> services, String? latest) {
+  final calver = RegExp(r'^\d{4}\.\d+(?:\.\d+)?$');
+  if (latest == null || !calver.hasMatch(latest)) return services;
+  return [
+    for (final s in services)
+      if (s.id == 'homeassistant' &&
+          s.installed &&
+          s.version != null &&
+          calver.hasMatch(s.version!))
+        s.copyWith(
+          updateKnown: true,
+          updateAvailable: isNewerVersion(latest, s.version!),
+        )
+      else
+        s,
+  ];
+}
+
 /// Orders services for the overview so the System (Pi) card is always first;
 /// the remaining services keep their detected order.
 List<ServiceStatus> orderServicesForDisplay(List<ServiceStatus> services) => [

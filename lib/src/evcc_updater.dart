@@ -366,6 +366,7 @@ class EvccUpdater {
           ('EVCC_SVC', serviceStatus),
           ('PIHOLE_V', piholeVersionCommand),
           ('PIHOLE_S', piholeStatusCommand),
+          ('HA_VERSION', haVersionProbe),
           ('APTSVC', aptServicesQuery),
           for (final u in units) ('UNIT:$u', 'systemctl is-active $u'),
           ('OS', systemOsCommand),
@@ -446,13 +447,16 @@ class EvccUpdater {
         }
 
         // ---- Home Assistant (Docker container) ----
+        // Prefer the REAL version from /config/.HA_VERSION over the image tag
+        // ("stable" isn't comparable) so currency can be reconciled vs GitHub.
         final ha = parseHomeAssistant(dockerPs);
+        final haRealVersion = parseHaVersion(sec['HA_VERSION'] ?? '');
         out.add(ha != null
             ? ServiceStatus(
                 id: 'homeassistant',
                 name: 'Home Assistant',
                 installed: true,
-                version: ha.version,
+                version: haRealVersion ?? ha.version,
                 active: true,
                 detail: 'Docker · ${ha.name}')
             : ServiceStatus.absent('homeassistant', 'Home Assistant'));
@@ -705,9 +709,9 @@ class EvccUpdater {
       onLog: onLog,
       body: (runner, log) async {
         log('Stelle Pi-hole-Backup wieder her …');
-        await _runRootScript(runner, log, config,
-            sudo: true,
+        await _runRootScriptExpectMarker(runner, log, config,
             script: buildPiholeRestoreScript(path),
+            successMarker: 'RESTORE_OK',
             failMsg: 'Pi-hole-Wiederherstellung fehlgeschlagen');
         log('Pi-hole wiederhergestellt.');
       },
@@ -758,10 +762,10 @@ class EvccUpdater {
               'Konnte das /config-Verzeichnis nicht ermitteln.');
         }
         log('Stelle Home-Assistant-Backup wieder her (/config: $cfg) …');
-        await _runRootScript(runner, log, config,
-            sudo: true,
+        await _runRootScriptExpectMarker(runner, log, config,
             script: buildHomeAssistantRestoreScript(
                 archivePath: path, configPath: cfg, containerName: ha.name),
+            successMarker: 'RESTORE_OK',
             failMsg: 'Home-Assistant-Wiederherstellung fehlgeschlagen');
         log('Home Assistant wiederhergestellt.');
       },
@@ -1160,6 +1164,41 @@ class EvccUpdater {
         UpdateErrorKind.unknown,
         '$failMsg (Exit ${result.exitCode}). Details im Log.',
       );
+    }
+  }
+
+  /// Runs a DESTRUCTIVE root [script] that must print [successMarker] to count
+  /// as successful. Stricter than [_runRootScript]: a missing marker is a
+  /// failure even when the exit code is null (remote killed by a signal or the
+  /// connection torn down mid-run) — for a half-done restore we must never
+  /// report success. The marker is only ever reached at the end of the happy
+  /// path (the scripts run under `set -e`).
+  Future<void> _runRootScriptExpectMarker(
+    SshRunner runner,
+    void Function(String) log,
+    SshConfig config, {
+    required String script,
+    required String successMarker,
+    required String failMsg,
+  }) async {
+    final result = await runner.run(
+      installShellCommand,
+      stdin: '${config.password}\n$script\n',
+      onOutput: (chunk) {
+        final t = chunk.trimRight();
+        if (t.isNotEmpty) log(t);
+      },
+    );
+    final combined = '${result.stdout}\n${result.stderr}';
+    if (isSudoPasswordFailure(combined)) {
+      throw const EvccUpdateException(UpdateErrorKind.sudo,
+          'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+    }
+    final ok = combined.contains(successMarker) &&
+        !(result.exitCode != null && result.exitCode != 0);
+    if (!ok) {
+      throw EvccUpdateException(
+          UpdateErrorKind.unknown, '$failMsg (Details im Log).');
     }
   }
 

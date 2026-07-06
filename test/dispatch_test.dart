@@ -305,13 +305,16 @@ void main() {
   }
 
   Widget page(FakeEvccUpdater updater,
-          {Future<EvccRelease?> Function()? rel, KeepAliveService? keepAlive}) =>
+          {Future<EvccRelease?> Function()? rel,
+          Future<String?> Function()? haLatest,
+          KeepAliveService? keepAlive}) =>
       MaterialApp(
         home: UpdaterPage(
           store: _FakeStore(_ready),
           updater: updater,
           updateChecker: _noUpdateChecker,
           evccReleaseFetcher: rel ?? () async => null,
+          haVersionFetcher: haLatest ?? () async => null,
           keepAlive: keepAlive,
         ),
       );
@@ -591,6 +594,27 @@ void main() {
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
   });
 
+  testWidgets('Home Assistant on the latest version shows "Aktuell"',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            version: '2026.6.3', // real version from /config/.HA_VERSION
+            active: true,
+            detail: 'Docker · homeassistant'),
+      ];
+    await tester.pumpWidget(page(u, haLatest: () async => '2026.6.3'));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Currency now KNOWN and current → "Aktuell", not a nagging "Aktualisieren".
+    expect(find.text('Aktuell'), findsOneWidget);
+  });
+
   testWidgets('System ⋮ → Aufräumen frees space after a confirm',
       (tester) async {
     useTallScreen(tester);
@@ -698,6 +722,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<TextField>(field).controller!.text, 'free -h');
     expect(u.consoleCommands, ['free -h']); // not re-run by the tap
+
+    // The history can be cleared (privacy: commands may contain secrets).
+    await tester.tap(find.byIcon(Icons.history).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Löschen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.history).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Verlauf'), findsNothing); // history section gone
   });
 
   testWidgets('console: a typed command is run on the Pi', (tester) async {
