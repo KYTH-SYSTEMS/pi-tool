@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'src/authenticator.dart';
 import 'src/commands.dart';
+import 'src/entitlement.dart';
 import 'src/kyth_splash.dart';
 import 'src/whats_new.dart';
 import 'src/evcc_api.dart';
@@ -100,6 +101,7 @@ class UpdaterPage extends StatefulWidget {
     this.piFinder,
     this.evccReleaseFetcher,
     this.haVersionFetcher,
+    this.entitlement,
     this.keepAlive,
   });
 
@@ -124,6 +126,10 @@ class UpdaterPage extends StatefulWidget {
   /// Injectable so tests stay offline.
   final Future<String?> Function()? haVersionFetcher;
 
+  /// Source of the Pro entitlement. Defaults to [DormantEntitlement] (everyone
+  /// Pro) until Play Billing is wired at launch; injectable for tests.
+  final EntitlementService? entitlement;
+
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
 }
@@ -146,6 +152,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.evccReleaseFetcher ?? fetchEvccRelease;
   late final Future<String?> Function() _fetchHaLatest =
       widget.haVersionFetcher ?? fetchLatestHomeAssistantVersion;
+  late final EntitlementService _entitlement =
+      widget.entitlement ?? const DormantEntitlement();
   final HistoryStore _historyStore = HistoryStore();
 
   final _host = TextEditingController();
@@ -174,6 +182,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _lastSeenVersion = ''; // for the "What's New" popup after an update
   bool _whatsNewChecked = false; // one-shot guard for the popup
   List<String> _consoleHistory = []; // recent console commands, newest first
+  bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -202,6 +211,12 @@ class _UpdaterPageState extends State<UpdaterPage>
     WidgetsBinding.instance.addObserver(this);
     _loadSettings();
     _checkForUpdate();
+    _loadEntitlement();
+  }
+
+  Future<void> _loadEntitlement() async {
+    final pro = await _entitlement.isPro();
+    if (mounted) setState(() => _isPro = pro);
   }
 
   @override
@@ -373,6 +388,96 @@ class _UpdaterPageState extends State<UpdaterPage>
     _persistSettings();
   }
 
+  /// Runs [action] for Pro users; otherwise opens the paywall. The single gate
+  /// every Pro feature routes through.
+  void _proGate(VoidCallback action) {
+    if (_isPro) {
+      action();
+    } else {
+      _showPaywall();
+    }
+  }
+
+  /// Bottom sheet explaining Pro and offering the one-time unlock. Billing is
+  /// dormant pre-launch (buyPro succeeds), so this only ever shows once the Play
+  /// build gates a free user.
+  Future<void> _showPaywall() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Icon(Icons.workspace_premium, color: kGreen),
+                const SizedBox(width: 10),
+                Text('Pi-Tool Pro',
+                    style: Theme.of(ctx).textTheme.titleLarge),
+              ]),
+              const SizedBox(height: 12),
+              const Text('Einmalig freischalten – kein Abo:'),
+              const SizedBox(height: 10),
+              for (final f in const [
+                'Backups sichern, wiederherstellen & verwalten',
+                'Konsole – eigene Befehle auf dem Pi',
+                'Mehrere Pis (Profile) verwalten',
+                'Aufräumen – Speicher freigeben',
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.check, size: 18, color: kGreen),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(f)),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.lock_open),
+                  label: const Text('Pro freischalten – 5 €'),
+                  onPressed: () async {
+                    final ok = await _entitlement.buyPro();
+                    if (!ctx.mounted) return;
+                    Navigator.pop(ctx);
+                    if (ok && mounted) {
+                      setState(() => _isPro = true);
+                      _snack('Pro freigeschaltet – danke!');
+                    }
+                  },
+                ),
+              ),
+              Center(
+                child: TextButton(
+                  onPressed: () async {
+                    final ok = await _entitlement.restore();
+                    if (!ctx.mounted) return;
+                    Navigator.pop(ctx);
+                    if (mounted) {
+                      setState(() => _isPro = ok);
+                      _snack(ok
+                          ? 'Pro wiederhergestellt.'
+                          : 'Kein früherer Kauf gefunden.');
+                    }
+                  },
+                  child: const Text('Käufe wiederherstellen'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// On the first launch after an update, show a "What's New" popup once. The
   /// current version is recorded either way (a fresh install records silently).
   Future<void> _maybeShowWhatsNew() async {
@@ -447,6 +552,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   Future<void> _addProfile() async {
+    if (isAddProfileLocked(isPro: _isPro, profileCount: _profiles.length)) {
+      _showPaywall(); // multiple Pis are a Pro feature
+      return;
+    }
     final name = await _promptName('Neues Profil', '');
     if (name == null || !mounted) return;
     _profiles[_activeIndex] = _currentProfile();
@@ -1414,6 +1523,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _runConsoleCommand(String command) async {
     final cmd = command.trim();
     if (cmd.isEmpty || _busy) return;
+    if (!_isPro) {
+      _showPaywall(); // Konsole is a Pro feature
+      return;
+    }
     final config = _prepare();
     if (config == null) return;
     _consoleInput.clear();
@@ -1872,6 +1985,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       switch (s.id) {
         case 'evcc':
           cards.add(_ServiceCard(
+            isPro: _isPro,
             status: s,
             icon: Icons.bolt,
             enabled: !_busy,
@@ -1890,12 +2004,14 @@ class _UpdaterPageState extends State<UpdaterPage>
                     // Backups are made only for apt installs; restore would also
                     // `systemctl start evcc`, which has no unit on a Docker host.
                     if (s.detail.startsWith('apt'))
-                      _CardAction('Backup wiederherstellen', _restoreBackup),
+                      _CardAction('Backup wiederherstellen',
+                          () => _proGate(_restoreBackup), pro: true),
                   ]
                 : const [],
           ));
         case 'pihole':
           cards.add(_ServiceCard(
+            isPro: _isPro,
             status: s,
             icon: Icons.shield_outlined,
             enabled: !_busy,
@@ -1904,14 +2020,17 @@ class _UpdaterPageState extends State<UpdaterPage>
             onOpenWeb: _openPiholeAdmin,
             actions: [
               if (upToDate) _CardAction('Trotzdem aktualisieren', _updatePihole),
-              _CardAction('Sichern (Teleporter)', _backupPihole),
-              _CardAction('Backups verwalten', _managePiholeBackups),
+              _CardAction('Sichern (Teleporter)',
+                  () => _proGate(_backupPihole), pro: true),
+              _CardAction('Backups verwalten',
+                  () => _proGate(_managePiholeBackups), pro: true),
               _CardAction('Blocklisten aktualisieren', _piholeGravity),
               _CardAction('DNS neu starten', _piholeRestartDns),
             ],
           ));
         case 'homeassistant':
           cards.add(_ServiceCard(
+            isPro: _isPro,
             status: s,
             icon: Icons.cottage_outlined,
             enabled: !_busy,
@@ -1919,12 +2038,15 @@ class _UpdaterPageState extends State<UpdaterPage>
             onPrimary: _updateHomeAssistant,
             onOpenWeb: _openHomeAssistant,
             actions: [
-              _CardAction('Sichern (/config)', _backupHomeAssistant),
-              _CardAction('Backups verwalten', _manageHomeAssistantBackups),
+              _CardAction('Sichern (/config)',
+                  () => _proGate(_backupHomeAssistant), pro: true),
+              _CardAction('Backups verwalten',
+                  () => _proGate(_manageHomeAssistantBackups), pro: true),
             ],
           ));
         case 'system':
           cards.add(_ServiceCard(
+            isPro: _isPro,
             status: s,
             icon: Icons.memory,
             enabled: !_busy,
@@ -1933,7 +2055,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               if (upToDate)
                 _CardAction('Trotzdem aktualisieren', _upgradeSystem),
-              _CardAction('Aufräumen (Speicher freigeben)', _cleanupSystem),
+              _CardAction('Aufräumen (Speicher freigeben)',
+                  () => _proGate(_cleanupSystem), pro: true),
               _CardAction('Pi neu starten', _reboot),
             ],
           ));
@@ -1941,6 +2064,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           // Generic apt service (Grafana, InfluxDB, …): update via apt,
           // optional web UI. Only ever emitted when installed.
           cards.add(_ServiceCard(
+            isPro: _isPro,
             status: s,
             icon: _serviceIcon(s.id),
             enabled: !_busy,

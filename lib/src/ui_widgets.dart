@@ -214,11 +214,13 @@ class _TestButton extends StatelessWidget {
   }
 }
 
-/// One entry in a service card's ⋮ menu.
+/// One entry in a service card's ⋮ menu. [pro] marks a Pro-only action so the
+/// menu can show a lock for free users (the tap still routes through the gate).
 class _CardAction {
-  const _CardAction(this.label, this.onTap);
+  const _CardAction(this.label, this.onTap, {this.pro = false});
   final String label;
   final VoidCallback onTap;
+  final bool pro;
 }
 
 /// One entry in the "Dienst hinzufügen" picker: a not-yet-installed service and
@@ -243,6 +245,7 @@ class _ServiceCard extends StatelessWidget {
     required this.enabled,
     this.onOpenWeb,
     this.actions = const [],
+    this.isPro = true,
   });
 
   final ServiceStatus status;
@@ -252,6 +255,7 @@ class _ServiceCard extends StatelessWidget {
   final bool enabled;
   final VoidCallback? onOpenWeb;
   final List<_CardAction> actions;
+  final bool isPro; // false → Pro actions show a lock badge
 
   @override
   Widget build(BuildContext context) {
@@ -334,7 +338,19 @@ class _ServiceCard extends StatelessWidget {
                   onSelected: (i) => actions[i].onTap(),
                   itemBuilder: (_) => [
                     for (var i = 0; i < actions.length; i++)
-                      PopupMenuItem(value: i, child: Text(actions[i].label)),
+                      PopupMenuItem(
+                        value: i,
+                        child: (actions[i].pro && !isPro)
+                            ? Row(
+                                children: [
+                                  Expanded(child: Text(actions[i].label)),
+                                  const SizedBox(width: 8),
+                                  Icon(Icons.lock_outline,
+                                      size: 15, color: cs.onSurfaceVariant),
+                                ],
+                              )
+                            : Text(actions[i].label),
+                      ),
                   ],
                 )
               else

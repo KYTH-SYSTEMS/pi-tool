@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/commands.dart';
+import 'package:evcc_updater/src/entitlement.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
@@ -12,6 +13,23 @@ import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+class _FakeEntitlement implements EntitlementService {
+  _FakeEntitlement({this.pro = true});
+  bool pro;
+  int buyCalls = 0;
+  @override
+  Future<bool> isPro() async => pro;
+  @override
+  Future<bool> buyPro() async {
+    buyCalls++;
+    pro = true;
+    return true;
+  }
+
+  @override
+  Future<bool> restore() async => pro;
+}
 
 class _FakeStore extends AppConfigStore {
   _FakeStore([this._initial = AppConfig.initial]);
@@ -307,6 +325,7 @@ void main() {
   Widget page(FakeEvccUpdater updater,
           {Future<EvccRelease?> Function()? rel,
           Future<String?> Function()? haLatest,
+          EntitlementService? entitlement,
           KeepAliveService? keepAlive}) =>
       MaterialApp(
         home: UpdaterPage(
@@ -315,6 +334,7 @@ void main() {
           updateChecker: _noUpdateChecker,
           evccReleaseFetcher: rel ?? () async => null,
           haVersionFetcher: haLatest ?? () async => null,
+          entitlement: entitlement,
           keepAlive: keepAlive,
         ),
       );
@@ -592,6 +612,53 @@ void main() {
 
     expect(u.aptUpdates, ['grafana']);
     expect(find.text('Grafana aktualisiert.'), findsOneWidget);
+  });
+
+  testWidgets('free user: Konsole is gated → paywall, command not run',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u, entitlement: _FakeEntitlement(pro: false)));
+    await tester.pumpAndSettle();
+
+    final field = find.byKey(const Key('consoleField'));
+    await tester.ensureVisible(field);
+    await tester.enterText(field, 'df -h');
+    await tester.tap(find.byIcon(Icons.keyboard_return));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pi-Tool Pro'), findsOneWidget); // paywall
+    expect(u.consoleCommands, isEmpty); // gated, never sent to the Pi
+  });
+
+  testWidgets('free user: Aufräumen shows a lock and opens the paywall',
+      (tester) async {
+    useTallScreen(tester);
+    final ent = _FakeEntitlement(pro: false);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u, entitlement: ent));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aufräumen (Speicher freigeben)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pi-Tool Pro'), findsOneWidget);
+    expect(u.cleanupCalls, 0);
+
+    // Unlocking runs it: buy, then re-open the menu and tap again.
+    await tester.tap(find.widgetWithText(FilledButton, 'Pro freischalten – 5 €'));
+    await tester.pumpAndSettle();
+    expect(ent.buyCalls, 1);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aufräumen (Speicher freigeben)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.cleanupCalls, 1);
   });
 
   testWidgets('Home Assistant on the latest version shows "Aktuell"',
