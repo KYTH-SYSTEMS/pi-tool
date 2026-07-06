@@ -1,0 +1,5 @@
+First release.
+
+Manage your Raspberry Pi over SSH: detect, install and update evcc, Pi-hole, Home Assistant, Grafana, InfluxDB & Mosquitto — plus the whole system. With status/health, backups (create & restore), a console, cleanup and multiple Pi profiles.
+
+Unofficial tool, not affiliated with evcc or Pi-hole.

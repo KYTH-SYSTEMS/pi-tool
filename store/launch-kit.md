@@ -1,0 +1,131 @@
+# Pi-Tool — Launch-Kit (kostenloser Start)
+
+Ziel: **kostenlos** in Google Play + auf F-Droid, Reichweite sammeln, den 5-€-Pro-Kauf
+später per Update nachschieben (Gating liegt schon fertig+schlafend im Code).
+
+Legende: **[DU]** = nur du kannst es (Konto, Zahlung, Gerät) · **[ICH]** = mache/habe ich erledigt.
+
+---
+
+## 0. Zuerst starten (hat Vorlauf!)
+- **[DU] Google-Play-Developer-Konto** als Organisation (KYTH. Systems UG). Einmalig 25 $.
+  Org-Konten brauchen eine **D-U-N-S-Nummer** + Identitätsprüfung → **Tage bis Wochen**.
+  Jetzt anstoßen, läuft parallel zu allem anderen. (D-U-N-S kostenlos bei Dun & Bradstreet.)
+- **[DU] Kontakt-E-Mail** festlegen, die öffentlich im Eintrag steht (z. B. eine KYTH-Adresse,
+  nicht zwingend die private).
+
+---
+
+## 1. Store-Eintrag (Texte + Grafiken)
+Schon fertig im Repo unter `fastlane/metadata/android/{de-DE,en-US}/`:
+- **[ICH] Titel** `title.txt` — „Pi-Tool (inoffiziell)" / „Pi-Tool (unofficial)" (max 30 Zeichen ✓)
+- **[ICH] Kurzbeschreibung** `short_description.txt` (max 80 Zeichen ✓)
+- **[ICH] Vollbeschreibung** `full_description.txt` (max 4000 Zeichen ✓)
+- **[ICH] Changelog** `changelogs/57.txt` (= versionCode von 0.23.0)
+- **[ICH] App-Icon** 512×512 (`images/icon.png`) + **Feature-Grafik** 1024×500 (`images/featureGraphic.png`)
+
+Fehlt noch:
+- **[DU] Screenshots** (mind. 2, empfohlen 4–6). Brauchen die laufende App → Emulator/Gerät.
+  Specs: PNG/JPG, 9:16 (Hochformat), kürzeste Seite ≥ 320 px, längste ≤ 3840 px.
+  Ablage für F-Droid/fastlane: `fastlane/metadata/android/de-DE/images/phoneScreenshots/1.png` (2.png, …).
+  Motiv-Vorschläge: Karten-Übersicht (evcc/Pi-hole/System), „Dienst hinzufügen"-Picker,
+  Konsole, Backups-Sheet, Health-Anzeige.
+
+Weitere Eintrags-Felder in der Play Console:
+- **Kategorie:** Tools. **Tags:** passend (kein Spam).
+- **Datenschutz-URL:** https://profex1337.github.io/evcc-pi-tool/privacy.html (steht ✓)
+
+---
+
+## 2. Data Safety (Datensicherheit) — exakte Antworten
+Kernaussage: **Wir sammeln/teilen NICHTS.** Zugangsdaten gibt der Nutzer ein, sie bleiben
+**nur auf dem Gerät** (verschlüsselt im Android Keystore) und gehen ausschließlich an den
+**eigenen Pi** des Nutzers. Kein Backend, keine Analytics, keine Ads-SDKs, kein Crash-Reporting.
+
+- „Sammelt oder teilt deine App Nutzerdaten?" → **Nein.**
+  (Play-Definition „Sammeln" = Übertragung an Entwickler/Dritte. Auf-dem-Gerät-Speicherung zählt nicht,
+  und die SSH-Verbindung geht nur an das eigene Gerät des Nutzers.)
+- „Daten bei Übertragung verschlüsselt?" → **Ja** (SSH).
+- „Können Nutzer Löschung anfordern?" → Daten liegen nur lokal; Deinstallation entfernt alles.
+- Ads / Werbe-IDs → **Nein.**
+
+> Hinweis: Diese Angaben sind eine verbindliche Erklärung. Sie sind für unsere App korrekt
+> („No data collected / No data shared"); einmal in Ruhe gegenlesen und abnicken.
+
+---
+
+## 3. Content Rating (Alterseinstufung, IARC-Fragebogen)
+Alles **Nein** (keine Gewalt, kein Sex, keine Drogen, kein Glücksspiel, kein Nutzer-Chat,
+kein Standort-Teilen). Ergebnis: **USK 0 / PEGI 3 / „Ab 0"**.
+
+---
+
+## 4. Zielgruppe, Ads, Preis
+- **Zielgruppe/Alter:** **nicht** für Kinder — Bracket **18+** wählen (Admin-/Utility-Tool),
+  hält uns aus der „Families"-Policy raus.
+- **Enthält Ads:** Nein.
+- **Preis:** **Kostenlos.** (Pro kommt später als In-App-Kauf — jetzt noch NICHTS anlegen.)
+
+---
+
+## 5. Closed Testing (Pflicht vor Produktion)
+Neue Konten müssen vor der Produktion einen **geschlossenen Test mit ≥ 12 Testern über
+14 Tage** laufen lassen.
+- **[DU]** Closed-Testing-Track anlegen, AAB/APK hochladen, Opt-in-Link teilen.
+- **[DU]** 12 Tester finden — ideal aus der **evcc-Community** (Forum/Discord) + Freunde/Bekannte.
+- Nach 14 Tagen aktiver Teilnahme → Freischaltung für Produktion beantragen.
+
+---
+
+## 6. ASO / Auffindbarkeit (+ Markenrecht!)
+- Play hat **kein** separates Keyword-Feld — Suchbegriffe kommen aus Titel + Beschreibung.
+  Natürlich einbauen (steht in der Beschreibung schon): *Raspberry Pi, SSH, self-hosted,
+  Server, Update, Admin, evcc, Pi-hole, Home Assistant*.
+- **Markenrecht:** „evcc"/„Pi-hole"/„Home Assistant" **NICHT in den Titel** (Play flaggt das als
+  Impersonation, und es verärgert die Projekte). In der Beschreibung ok — mit dem „inoffiziell,
+  nicht verbunden"-Hinweis (steht schon drin).
+
+---
+
+## 7. F-Droid — der schnellste kostenlose Reichweiten-Kanal
+Unsere App ist FOSS (MIT), **ohne** proprietäre/Google-Bibliotheken (kein Firebase/GMS,
+kein Tracking) → F-Droid-tauglich.
+
+**Empfohlen zuerst: IzzyOnDroid (IoD).** Ein beliebtes F-Droid-kompatibles Repo, das die
+**signierte APK direkt aus den GitHub-Releases** zieht und unsere fastlane-Metadaten nutzt —
+**kein Build-Rezept nötig.**
+- **[DU]** „Request for Packaging" im IzzyOnDroid-Tracker stellen (GitLab: `IzzyOnDroid/repo`),
+  Repo-URL angeben. Er prüft automatisch auf Tracker (exodus) — bei uns sauber.
+- Voraussetzung erfüllt: APK in GitHub-Releases ✓, Tags ✓, fastlane-Metadaten ✓.
+
+**Später optional: offizielles F-Droid-Repo.** Baut aus dem Quellcode (Flutter wird unterstützt,
+Rezept aber fummeliger). Mehr Aufwand → erst nach dem Start angehen, wenn gewünscht.
+
+---
+
+## 8. Checkliste
+**[DU] — Vorlauf, jetzt starten**
+- [ ] D-U-N-S-Nummer beantragen
+- [ ] Google-Play-Konto (KYTH-Org) + Identitätsprüfung
+- [ ] öffentliche Kontakt-E-Mail festlegen
+- [ ] 12 Tester organisieren (evcc-Community)
+- [ ] Screenshots aufnehmen (Emulator/Gerät)
+
+**[DU] — in der Play Console**
+- [ ] Store-Eintrag füllen (Texte aus `fastlane/…` übernehmen oder via `fastlane supply`)
+- [ ] Data Safety = „no data collected/shared" (siehe §2)
+- [ ] Content Rating (alles Nein → USK 0)
+- [ ] Zielgruppe 18+, keine Ads, kostenlos
+- [ ] Closed Test starten (12/14)
+- [ ] nach 14 Tagen: Produktion beantragen
+
+**[DU] — F-Droid**
+- [ ] IzzyOnDroid „Request for Packaging" stellen
+
+**[ICH] — erledigt / auf Zuruf**
+- [x] fastlane-Metadaten (Titel, Kurz-/Langbeschreibung, Changelog, Icon, Feature-Grafik)
+- [x] `&amp;`-Fix in der englischen Kurzbeschreibung
+- [x] Datenschutz + Impressum gehostet (GitHub Pages)
+- [x] Freemium-Gating fertig + schlafend (Pro-Umschaltung ohne Nacharbeit)
+- [ ] auf Zuruf: Community-Launch-Posts (evcc-Forum/Reddit), `fastlane supply`-Setup,
+      Pro-Kauf scharf schalten (In-App-Kauf), iOS

@@ -1,1 +1,1 @@
-Update/install evcc, Pi-hole &amp; the whole Pi over SSH, in one tap.
+Update/install evcc, Pi-hole & the whole Pi over SSH, in one tap.
