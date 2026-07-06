@@ -847,14 +847,43 @@ class _UpdaterPageState extends State<UpdaterPage>
     final config = _prepare();
     if (config == null) return;
     _lastAction = _showStatus;
+    final (cmd, sudo) = _evccStatusCommand();
     await _guard(() async {
-      await _updater.fetchStatus(config: config, onLog: _appendLog);
+      await _updater.fetchStatus(
+          config: config, command: cmd, sudo: sudo, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Status abgerufen (siehe Live-Log).';
+        _statusMessage = 'Status abgerufen (siehe Konsole).';
         _statusOk = true;
       });
     });
+  }
+
+  /// The right evcc status command for the detected install: systemd `status`
+  /// for apt (the default), or `docker logs` for a container-based evcc — so it
+  /// no longer fails with "Unit evcc.service could not be found" on Docker.
+  (String?, bool) _evccStatusCommand() {
+    ServiceStatus? evcc;
+    for (final s in _services) {
+      if (s.id == 'evcc' && s.installed) {
+        evcc = s;
+        break;
+      }
+    }
+    const dockerPrefix = 'Docker · ';
+    if (evcc != null && evcc.detail.startsWith(dockerPrefix)) {
+      final name = evcc.detail.substring(dockerPrefix.length).trim();
+      if (name.isNotEmpty) {
+        final q = shSingleQuote(name);
+        // Non-sudo first, sudo fallback if the daemon needs it (password piped).
+        return (
+          'docker logs --tail 80 $q 2>&1 || '
+              "sudo -S -p '' docker logs --tail 80 $q 2>&1",
+          true,
+        );
+      }
+    }
+    return (null, false); // default → statusCommand (systemctl status evcc)
   }
 
   /// Lists the evcc backups on the Pi, lets the user pick one, confirms, then

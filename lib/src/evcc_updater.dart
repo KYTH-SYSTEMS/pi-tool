@@ -1280,18 +1280,25 @@ class EvccUpdater {
     );
   }
 
-  /// Fetches `systemctl status evcc` (incl. recent log lines) for diagnostics.
+  /// Fetches evcc status/logs for diagnostics. Defaults to `systemctl status
+  /// evcc` (apt/systemd install); the caller passes a [command] like
+  /// `docker logs …` for a container-based evcc. Set [sudo] to pipe the Pi
+  /// password (used by the docker fallback).
   Future<String> fetchStatus({
     required SshConfig config,
     required void Function(String line) onLog,
+    String? command,
+    bool sudo = false,
   }) {
+    final cmd = command ?? statusCommand;
     return _withConnection<String>(
       config: config,
       onLog: onLog,
       body: (runner, log) async {
-        log('\$ $statusCommand');
+        log('\$ $cmd');
         final result = await runner.run(
-          statusCommand,
+          cmd,
+          stdin: sudo ? '${config.password}\n' : null,
           onOutput: (chunk) {
             final t = chunk.trimRight();
             if (t.isNotEmpty) log(t);
