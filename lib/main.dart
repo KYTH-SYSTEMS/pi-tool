@@ -842,50 +842,6 @@ class _UpdaterPageState extends State<UpdaterPage>
     });
   }
 
-  Future<void> _showStatus() async {
-    if (_busy) return;
-    final config = _prepare();
-    if (config == null) return;
-    _lastAction = _showStatus;
-    final (cmd, sudo) = _evccStatusCommand();
-    await _guard(() async {
-      await _updater.fetchStatus(
-          config: config, command: cmd, sudo: sudo, onLog: _appendLog);
-      if (!mounted) return;
-      setState(() {
-        _statusMessage = 'Status abgerufen (siehe Konsole).';
-        _statusOk = true;
-      });
-    });
-  }
-
-  /// The right evcc status command for the detected install: systemd `status`
-  /// for apt (the default), or `docker logs` for a container-based evcc — so it
-  /// no longer fails with "Unit evcc.service could not be found" on Docker.
-  (String?, bool) _evccStatusCommand() {
-    ServiceStatus? evcc;
-    for (final s in _services) {
-      if (s.id == 'evcc' && s.installed) {
-        evcc = s;
-        break;
-      }
-    }
-    const dockerPrefix = 'Docker · ';
-    if (evcc != null && evcc.detail.startsWith(dockerPrefix)) {
-      final name = evcc.detail.substring(dockerPrefix.length).trim();
-      if (name.isNotEmpty) {
-        final q = shSingleQuote(name);
-        // Non-sudo first, sudo fallback if the daemon needs it (password piped).
-        return (
-          'docker logs --tail 80 $q 2>&1 || '
-              "sudo -S -p '' docker logs --tail 80 $q 2>&1",
-          true,
-        );
-      }
-    }
-    return (null, false); // default → statusCommand (systemctl status evcc)
-  }
-
   /// Lists the evcc backups on the Pi, lets the user pick one, confirms, then
   /// restores it (stops evcc → extract → restart). Backups are made before apt
   /// updates (see the backup-before-update setting).
@@ -1667,7 +1623,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                         'Probelauf (ändert nichts)', () => _run(dryRun: true)),
                     _CardAction('Live-Status', _showApiStatus),
                     _CardAction('Dienst neu starten', _restartService),
-                    _CardAction('Status / Logs anzeigen', _showStatus),
                     // Backups are made only for apt installs; restore would also
                     // `systemctl start evcc`, which has no unit on a Docker host.
                     if (s.detail.startsWith('apt'))
@@ -1911,8 +1866,6 @@ class _UpdaterPageState extends State<UpdaterPage>
               switch (v) {
                 case 'api':
                   _showApiStatus();
-                case 'status':
-                  _showStatus();
                 case 'reboot':
                   _reboot();
                 case 'find':
@@ -1930,10 +1883,6 @@ class _UpdaterPageState extends State<UpdaterPage>
             itemBuilder: (_) => [
               const PopupMenuItem(
                   value: 'api', child: Text('evcc-Status (Live)')),
-              PopupMenuItem(
-                  value: 'status',
-                  enabled: !_busy,
-                  child: const Text('Status / Logs anzeigen')),
               PopupMenuItem(
                   value: 'reboot',
                   enabled: !_busy,

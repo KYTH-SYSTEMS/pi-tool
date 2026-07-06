@@ -574,34 +574,6 @@ void main() {
       );
     });
 
-    test('fetchStatus returns the systemctl status output', () async {
-      final runner = FakeSshRunner({
-        statusCommand: [
-          _r('● evcc.service - evcc\n   Active: active (running) since ...')
-        ],
-      });
-
-      final status =
-          await _updaterWith(runner).fetchStatus(config: _config, onLog: (_) {});
-
-      expect(status, contains('active (running)'));
-      expect(runner.commandsRun, contains(statusCommand));
-    });
-
-    test('fetchStatus runs a custom command and pipes the password when sudo',
-        () async {
-      const cmd = "docker logs --tail 80 'evcc'";
-      final runner = FakeSshRunner({
-        cmd: [_r('starting evcc ...\nlistening on :7070')]
-      });
-
-      final status = await _updaterWith(runner).fetchStatus(
-          config: _config, command: cmd, sudo: true, onLog: (_) {});
-
-      expect(status, contains('listening on :7070'));
-      expect(runner.commandsRun, contains(cmd));
-      expect(runner.stdinByCommand[cmd], 'sekret\n'); // password piped
-    });
   });
 
   group('EvccUpdater.backup', () {

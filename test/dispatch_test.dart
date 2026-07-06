@@ -110,21 +110,6 @@ class FakeEvccUpdater extends EvccUpdater {
     return 'ok';
   }
 
-  String? lastStatusCommand;
-  bool lastStatusSudo = false;
-
-  @override
-  Future<String> fetchStatus({
-    required SshConfig config,
-    required void Function(String line) onLog,
-    String? command,
-    bool sudo = false,
-  }) async {
-    lastStatusCommand = command;
-    lastStatusSudo = sudo;
-    onLog('status …');
-    return 'ok';
-  }
 
   @override
   Future<String> backupPihole({
@@ -573,59 +558,6 @@ void main() {
 
     expect(u.consoleCommands, ['df -h']);
     expect(find.textContaining(r'$ df -h'), findsWidgets); // echoed in console
-  });
-
-  testWidgets('Status/Logs uses docker logs for a Docker-based evcc',
-      (tester) async {
-    useTallScreen(tester);
-    final u = FakeEvccUpdater()
-      ..services = const [
-        ServiceStatus(
-            id: 'evcc',
-            name: 'evcc',
-            installed: true,
-            version: 'evcc/evcc:latest',
-            active: true,
-            detail: 'Docker · evcc'),
-      ];
-    await tester.pumpWidget(page(u));
-    await tester.pumpAndSettle();
-    await detect(tester);
-
-    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Status / Logs anzeigen'));
-    await tester.pumpAndSettle();
-
-    expect(u.lastStatusCommand, contains('docker logs'));
-    expect(u.lastStatusCommand, contains("'evcc'"));
-    expect(u.lastStatusSudo, isTrue);
-  });
-
-  testWidgets('Status/Logs uses systemctl for an apt evcc', (tester) async {
-    useTallScreen(tester);
-    final u = FakeEvccUpdater()
-      ..services = const [
-        ServiceStatus(
-            id: 'evcc',
-            name: 'evcc',
-            installed: true,
-            version: '0.310.0',
-            active: true,
-            detail: 'apt · Dienst aktiv'),
-      ];
-    await tester.pumpWidget(page(u));
-    await tester.pumpAndSettle();
-    await detect(tester);
-
-    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Status / Logs anzeigen'));
-    await tester.pumpAndSettle();
-
-    // null command → the updater uses its systemctl default.
-    expect(u.lastStatusCommand, isNull);
-    expect(u.lastStatusSudo, isFalse);
   });
 
   testWidgets('the System (Pi) card is rendered first', (tester) async {
