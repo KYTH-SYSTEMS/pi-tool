@@ -374,6 +374,17 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // Bottom-nav helpers (Dienste = default; Automatik/Terminal are separate tabs).
+  Future<void> goTerminal(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.terminal_outlined));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> goAutomatik(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.bolt_outlined));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('test shows "Verbunden" and reveals the service cards',
       (tester) async {
     useTallScreen(tester);
@@ -648,6 +659,7 @@ void main() {
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u, entitlement: _FakeEntitlement(pro: false)));
     await tester.pumpAndSettle();
+    await goTerminal(tester);
 
     final field = find.byKey(const Key('consoleField'));
     await tester.ensureVisible(field);
@@ -716,10 +728,8 @@ void main() {
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u)); // dormant entitlement → Pro
     await tester.pumpAndSettle();
-    await detect(tester);
+    await goAutomatik(tester);
 
-    await tester.tap(find.byKey(const ValueKey('menu-system')));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Automatische Updates'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
@@ -734,10 +744,8 @@ void main() {
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u, entitlement: _FakeEntitlement(pro: false)));
     await tester.pumpAndSettle();
-    await detect(tester);
+    await goAutomatik(tester);
 
-    await tester.tap(find.byKey(const ValueKey('menu-system')));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Automatische Updates'));
     await tester.pumpAndSettle();
 
@@ -837,6 +845,7 @@ void main() {
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
+    await goTerminal(tester);
 
     final field = find.byKey(const Key('consoleField'));
     await tester.ensureVisible(field);
@@ -868,6 +877,7 @@ void main() {
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
+    await goTerminal(tester);
 
     final field = find.byKey(const Key('consoleField'));
     await tester.ensureVisible(field);

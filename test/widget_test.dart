@@ -118,9 +118,19 @@ void main() {
         findsOneWidget); // compact connect button
     expect(find.textContaining('Verbindung herstellen'),
         findsWidgets); // + hint
+    // Bottom-nav cockpit: three tabs.
+    expect(find.text('Dienste'), findsOneWidget);
+    expect(find.text('Automatik'), findsOneWidget);
+    expect(find.text('Terminal'), findsOneWidget);
+    // Dienste tab has the 4 connection fields; the console lives on Terminal.
+    expect(find.byType(TextField), findsNWidgets(4));
+    expect(find.text('Konsole'), findsNothing);
+
+    // The Terminal tab reveals the console + its input.
+    await tester.tap(find.byIcon(Icons.terminal_outlined));
+    await tester.pumpAndSettle();
     expect(find.text('Konsole'), findsOneWidget);
-    // Host/IP, Benutzer, Port, Passwort + the console command input.
-    expect(find.byType(TextField), findsNWidgets(5));
+    expect(find.byType(TextField), findsNWidgets(1));
   });
 
   testWidgets('footer shows the app version + an "Auf Update prüfen" button',

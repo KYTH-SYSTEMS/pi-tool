@@ -13,6 +13,11 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.25.0': [
+    'Neue Struktur: unten drei Tabs — „Dienste" (deine Karten), „Automatik" '
+        '(automatische Updates, bald Health-Alerts) und „Terminal" (die '
+        'Konsole). Übersichtlicher, je mehr dazukommt.',
+  ],
   '0.24.0': [
     'Automatische Updates: der Pi aktualisiert sich künftig selbst nach '
         'Zeitplan (täglich/wöchentlich). evcc wird vorher gesichert und bei '

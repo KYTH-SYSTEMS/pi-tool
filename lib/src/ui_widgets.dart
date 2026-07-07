@@ -214,6 +214,47 @@ class _TestButton extends StatelessWidget {
   }
 }
 
+/// A tappable tile on the Automatik tab (one automation feature). Shows a lock
+/// when [locked] (Pro), or a muted "coming soon" look when not [enabled].
+class _AutomationTile extends StatelessWidget {
+  const _AutomationTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+    this.locked = false,
+    this.enabled = true,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+  final bool locked;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      color: dark ? kCard : cs.surfaceContainerHighest,
+      child: ListTile(
+        enabled: enabled,
+        leading: Icon(icon, color: enabled ? _themeGreen(dark) : null),
+        title: Text(title,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+        subtitle: Text(subtitle),
+        trailing: locked
+            ? Icon(Icons.lock_outline, size: 18, color: cs.onSurfaceVariant)
+            : (enabled ? const Icon(Icons.chevron_right) : null),
+        onTap: enabled ? onTap : null,
+      ),
+    );
+  }
+}
+
 /// One entry in a service card's ⋮ menu. [pro] marks a Pro-only action so the
 /// menu can show a lock for free users (the tap still routes through the gate).
 class _CardAction {

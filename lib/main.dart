@@ -184,6 +184,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _whatsNewChecked = false; // one-shot guard for the popup
   List<String> _consoleHistory = []; // recent console commands, newest first
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
+  int _tab = 0; // 0 = Dienste, 1 = Automatik, 2 = Terminal
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -2218,8 +2219,6 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               if (upToDate)
                 _CardAction('Trotzdem aktualisieren', _upgradeSystem),
-              _CardAction('Automatische Updates',
-                  () => _proGate(_configureAutoUpdate), pro: true),
               _CardAction('Aufräumen (Speicher freigeben)',
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction('Pi neu starten', _reboot),
@@ -2460,7 +2459,19 @@ class _UpdaterPageState extends State<UpdaterPage>
         ],
       ),
       body: SafeArea(
-        child: ListView(
+        child: Column(
+          children: [
+            if (_statusMessage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: _StatusBanner(message: _statusMessage!, ok: _statusOk),
+              ),
+            Expanded(
+              child: IndexedStack(
+                index: _tab,
+                children: [
+                  // ---- Tab 0: Dienste ----
+                  ListView(
           padding: const EdgeInsets.all(16),
           children: [
             // App-Update-Hinweis immer ganz oben.
@@ -2551,10 +2562,6 @@ class _UpdaterPageState extends State<UpdaterPage>
             ),
             const SizedBox(height: 12),
             ..._serviceCards(),
-            if (_statusMessage != null) ...[
-              const SizedBox(height: 12),
-              _StatusBanner(message: _statusMessage!, ok: _statusOk),
-            ],
             if (_hostKeyIssue) ...[
               const SizedBox(height: 8),
               FilledButton.icon(
@@ -2575,56 +2582,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                     minimumSize: const Size.fromHeight(48)),
               ),
             ],
-            const SizedBox(height: 12),
-            Text('Konsole', style: theme.textTheme.titleSmall),
-            const SizedBox(height: 4),
-            _LogView(lines: _log, controller: _logScroll),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const Key('consoleField'),
-                    controller: _consoleInput,
-                    enabled: !_busy,
-                    textInputAction: TextInputAction.send,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    style: const TextStyle(
-                        fontFamily: 'monospace', fontSize: 13),
-                    onSubmitted:
-                        _busy ? null : (v) => _runConsoleCommand(v),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      prefixText: '\$ ',
-                      hintText: 'Befehl absetzen … (z. B. df -h)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  onPressed: _busy ? null : _showConsoleHistory,
-                  icon: const Icon(Icons.history),
-                  tooltip: 'Verlauf + Schnellbefehle',
-                ),
-                const SizedBox(width: 4),
-                IconButton.filledTonal(
-                  onPressed: _busy
-                      ? null
-                      : () => _runConsoleCommand(_consoleInput.text),
-                  icon: const Icon(Icons.keyboard_return),
-                  tooltip: 'Befehl absetzen',
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Befehle laufen mit deinen Rechten direkt auf dem Pi (sudo wird '
-              'unterstützt). Auf eigene Gefahr.',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
             const SizedBox(height: 12),
             Wrap(
               alignment: WrapAlignment.center,
@@ -2705,9 +2662,120 @@ class _UpdaterPageState extends State<UpdaterPage>
             ),
             const SizedBox(height: 4),
           ],
+                  ),
+                  // ---- Tab 1: Automatik ----
+                  _automatikTab(theme),
+                  // ---- Tab 2: Terminal ----
+                  _terminalTab(theme),
+                ],
+              ),
+            ),
+          ],
         ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (i) => setState(() => _tab = i),
+        destinations: const [
+          NavigationDestination(
+              icon: Icon(Icons.dns_outlined),
+              selectedIcon: Icon(Icons.dns),
+              label: 'Dienste'),
+          NavigationDestination(
+              icon: Icon(Icons.bolt_outlined),
+              selectedIcon: Icon(Icons.bolt),
+              label: 'Automatik'),
+          NavigationDestination(
+              icon: Icon(Icons.terminal_outlined),
+              selectedIcon: Icon(Icons.terminal),
+              label: 'Terminal'),
+        ],
       ),
     );
   }
+
+  // ---- Automatik tab: cross-cutting automation (updates, alerts) ----
+
+  Widget _automatikTab(ThemeData theme) => ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text('Automatik', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            'Läuft autonom auf dem Pi — kein Hintergrunddienst auf dem Handy '
+            'nötig.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 12),
+          _AutomationTile(
+            icon: Icons.update,
+            title: 'Automatische Updates',
+            subtitle: 'Zeitplan-Updates mit evcc-Backup + Selbstheilung',
+            locked: !_isPro,
+            onTap: () => _proGate(_configureAutoUpdate),
+          ),
+          _AutomationTile(
+            icon: Icons.notifications_active_outlined,
+            title: 'Health-Alerts',
+            subtitle: 'Bald: Push bei voller Platte, totem Dienst, hoher Temp …',
+            enabled: false,
+          ),
+        ],
+      );
+
+  // ---- Terminal tab: console (later: logs, files) ----
+
+  Widget _terminalTab(ThemeData theme) => ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text('Konsole', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          _LogView(lines: _log, controller: _logScroll),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const Key('consoleField'),
+                  controller: _consoleInput,
+                  enabled: !_busy,
+                  textInputAction: TextInputAction.send,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                  onSubmitted: _busy ? null : (v) => _runConsoleCommand(v),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    prefixText: '\$ ',
+                    hintText: 'Befehl absetzen … (z. B. df -h)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                onPressed: _busy ? null : _showConsoleHistory,
+                icon: const Icon(Icons.history),
+                tooltip: 'Verlauf + Schnellbefehle',
+              ),
+              const SizedBox(width: 4),
+              IconButton.filledTonal(
+                onPressed:
+                    _busy ? null : () => _runConsoleCommand(_consoleInput.text),
+                icon: const Icon(Icons.keyboard_return),
+                tooltip: 'Befehl absetzen',
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Befehle laufen mit deinen Rechten direkt auf dem Pi (sudo wird '
+            'unterstützt). Auf eigene Gefahr.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
+      );
 }
 
