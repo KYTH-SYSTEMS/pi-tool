@@ -528,6 +528,66 @@ String? parseServiceBackupPath(String output) {
   return (exec: t, sudo: false);
 }
 
+/// Returns a German hint when [command] is an interactive/TUI program that can't
+/// work in the non-PTY console (no terminal, no keyboard) — else null. The
+/// console runs one-off commands over a plain exec channel, so `htop`, editors,
+/// pagers and follow-mode (`-f`) would either error ("Error opening terminal:
+/// unknown") or hang. We catch these and suggest a non-interactive alternative
+/// instead of running them.
+String? interactiveCommandHint(String command) {
+  final tokens = command.trim().split(RegExp(r'\s+'))..removeWhere((t) => t.isEmpty);
+  if (tokens.isEmpty) return null;
+  // Skip a leading `sudo` and its options so "sudo htop" is caught too.
+  var i = 0;
+  if (tokens[i] == 'sudo') {
+    i++;
+    while (i < tokens.length && tokens[i].startsWith('-')) {
+      i++;
+    }
+  }
+  if (i >= tokens.length) return null;
+  final prog = tokens[i].split('/').last; // basename
+  final args = tokens.sublist(i + 1);
+  bool hasFlag(String c) =>
+      args.any((t) => t.startsWith('-') && t.contains(c));
+
+  if (args.contains('-f') && (prog == 'tail' || prog == 'journalctl')) {
+    return 'Der Folgemodus „-f" hängt in der Konsole (nicht abbrechbar). Lass '
+        '„-f" weg — z. B. „${prog == 'journalctl' ? 'journalctl -n 50 --no-pager' : 'tail -n 50 <datei>'}".';
+  }
+  switch (prog) {
+    case 'top':
+    case 'atop':
+      if (hasFlag('b')) return null; // batch mode (top -bn1) is fine
+      return 'htop/top brauchen ein echtes Terminal. Für einen Schnappschuss: '
+          '„top -bn1".';
+    case 'htop':
+    case 'btop':
+      return 'htop/top brauchen ein echtes Terminal. Für einen Schnappschuss: '
+          '„top -bn1".';
+    case 'vi':
+    case 'vim':
+    case 'nano':
+    case 'emacs':
+    case 'pico':
+      return 'Editoren laufen hier nicht interaktiv. Bearbeite Dateien über den '
+          'Datei-Explorer bzw. den Config-Editor.';
+    case 'less':
+    case 'more':
+      return '„$prog" braucht ein Terminal. Nutze „cat" (oder „… | head").';
+    case 'man':
+      return '„man" braucht ein Terminal. Nutze „<befehl> --help".';
+    case 'watch':
+      return '„watch" läuft hier nicht dauerhaft. Setz den Befehl einmalig ab.';
+    case 'ssh':
+    case 'telnet':
+      return 'Interaktive Sitzungen (ssh/telnet) sind in der Konsole nicht '
+          'möglich.';
+    default:
+      return null;
+  }
+}
+
 /// Lists one service's backups under /var/backups/pi-tool, newest first. No
 /// sudo: the dir is 0755 and the archives 0644 (see the backup scripts).
 String serviceBackupListCommand(String servicePrefix) =>

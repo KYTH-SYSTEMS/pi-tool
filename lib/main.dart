@@ -2170,6 +2170,26 @@ class _UpdaterPageState extends State<UpdaterPage>
       _showPaywall(); // Konsole is a Pro feature
       return;
     }
+    // Interactive/TUI programs (htop, editors, pagers, -f follow) can't work in
+    // the non-PTY console — show a helpful hint instead of the cryptic error.
+    final hint = interactiveCommandHint(cmd);
+    if (hint != null) {
+      _consoleInput.clear();
+      _appendLog('\$ $cmd');
+      _appendLog('⚠ $hint');
+      setState(() {
+        _statusMessage = 'Interaktiver Befehl – nicht ausgeführt.';
+        _statusOk = false;
+      });
+      _consoleHistory
+        ..remove(cmd)
+        ..insert(0, cmd);
+      if (_consoleHistory.length > 20) {
+        _consoleHistory = _consoleHistory.sublist(0, 20);
+      }
+      _scheduleSave();
+      return;
+    }
     final config = _prepare();
     if (config == null) return;
     _consoleInput.clear();

@@ -2,6 +2,41 @@ import 'package:evcc_updater/src/commands.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('interactiveCommandHint', () {
+    test('flags htop/top and suggests a snapshot', () {
+      expect(interactiveCommandHint('htop'), contains('top -bn1'));
+      expect(interactiveCommandHint('top'), isNotNull);
+      expect(interactiveCommandHint('sudo htop'), isNotNull); // strips sudo
+    });
+
+    test('flags editors, pagers, man and watch', () {
+      expect(interactiveCommandHint('vi /etc/evcc.yaml'), isNotNull);
+      expect(interactiveCommandHint('nano x'), isNotNull);
+      expect(interactiveCommandHint('less /var/log/syslog'), isNotNull);
+      expect(interactiveCommandHint('man ls'), isNotNull);
+      expect(interactiveCommandHint('watch df -h'), isNotNull);
+    });
+
+    test('flags -f follow mode as hanging', () {
+      expect(interactiveCommandHint('journalctl -f'), contains('-f'));
+      expect(interactiveCommandHint('tail -f /var/log/syslog'), isNotNull);
+    });
+
+    test('passes normal one-shot commands', () {
+      expect(interactiveCommandHint('df -h'), isNull);
+      expect(interactiveCommandHint('docker ps'), isNull);
+      expect(interactiveCommandHint('journalctl -n 50 --no-pager'), isNull);
+      expect(interactiveCommandHint('top -bn1'), isNull); // batch mode is fine
+      expect(interactiveCommandHint('cat /etc/os-release'), isNull);
+      expect(interactiveCommandHint(''), isNull);
+    });
+
+    test('does not misfire on lookalike names', () {
+      expect(interactiveCommandHint('echo topic'), isNull);
+      expect(interactiveCommandHint('topgrade'), isNull);
+    });
+  });
+
   group('buildConsoleExec', () {
     test('a plain command runs as-is, no password needed', () {
       final r = buildConsoleExec('df -h');

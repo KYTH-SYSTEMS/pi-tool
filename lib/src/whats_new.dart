@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.34.0': [
+    'Konsole: interaktive Befehle wie „htop", „top", Editoren oder der '
+        'Folgemodus „-f" brauchen ein echtes Terminal und liefen bisher nur in '
+        'einen Fehler. Jetzt gibt die App einen klaren Hinweis mit passender '
+        'Alternative (z. B. „top -bn1") – statt „Error opening terminal".',
+  ],
   '0.33.0': [
     'Neu und noch keinen Pi? Es gibt jetzt eine eingebaute Schritt-für-Schritt-'
         'Anleitung „Pi einrichten" (mit Raspberry Pi Imager: SSH, Benutzer, WLAN) '

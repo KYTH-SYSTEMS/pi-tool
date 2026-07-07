@@ -1290,6 +1290,24 @@ void main() {
     expect(find.textContaining(r'$ df -h'), findsWidgets); // echoed in console
   });
 
+  testWidgets('console: an interactive command (htop) is not run, shows a hint',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goTerminal(tester);
+
+    final field = find.byKey(const Key('consoleField'));
+    await tester.ensureVisible(field);
+    await tester.enterText(field, 'htop');
+    await tester.tap(find.byIcon(Icons.keyboard_return));
+    await tester.pumpAndSettle();
+
+    expect(u.consoleCommands, isEmpty); // never sent to the Pi
+    expect(find.textContaining('top -bn1'), findsWidgets); // helpful hint shown
+  });
+
   testWidgets('the System (Pi) card is rendered first', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater(); // default: evcc + system, in that order
