@@ -19,6 +19,31 @@ const int kFilePreviewLimit = 512 * 1024;
 String buildReadFileCommand(String path) =>
     "sudo -S -p '' head -c $kFilePreviewLimit ${shSingleQuote(path)} 2>/dev/null | base64";
 
+/// Max bytes for an upload — keeps the base64 payload (transported inside the
+/// script over stdin) and the app's memory bounded.
+const int kFileUploadLimit = 8 * 1024 * 1024;
+
+/// Writes [base64Content] (a whole file) to [path] as root. The payload is
+/// base64 (safe charset) and single-quoted, so arbitrary bytes/names can't
+/// inject shell. Decodes into a temp file in the SAME directory, then `mv -f`
+/// (atomic rename) so a half-written upload never truncates an existing file.
+/// Prints `UPLOAD_OK` — the caller verifies that marker, not the exit code.
+String buildUploadScript({required String path, required String base64Content}) {
+  final q = shSingleQuote(path);
+  return 'set -e\n'
+      'dir=\$(dirname $q)\n'
+      'tmp=\$(mktemp "\$dir/.pitool-up.XXXXXX")\n'
+      'printf %s ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"\n'
+      'chmod 644 "\$tmp"\n'
+      'mv -f "\$tmp" $q\n'
+      'echo UPLOAD_OK\n';
+}
+
+/// Deletes a file (`rm -f`) or directory (`rm -rf`) as root. `--` stops option
+/// parsing and the path is single-quoted.
+String buildDeleteCommand({required String path, required bool isDir}) =>
+    "sudo -S -p '' rm -${isDir ? 'rf' : 'f'} -- ${shSingleQuote(path)}";
+
 /// One directory entry.
 typedef DirEntry = ({String name, bool isDir});
 

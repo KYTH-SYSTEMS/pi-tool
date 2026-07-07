@@ -11,6 +11,31 @@ void main() {
       expect(buildReadFileCommand('/etc/evcc.yaml'), endsWith('| base64'));
       expect(buildListDirCommand("/x';reboot;'"), contains(r"'\''"));
     });
+
+    test('upload: base64-decodes atomically into the target dir + marker', () {
+      final s = buildUploadScript(path: '/etc/evcc.yaml', base64Content: 'aGk=');
+      expect(s, contains('base64 -d'));
+      expect(s, contains('mv -f')); // atomic rename over the target
+      expect(s, contains("'/etc/evcc.yaml'"));
+      expect(s, contains('aGk=')); // the payload
+      expect(s, contains('UPLOAD_OK')); // success marker the caller verifies
+    });
+
+    test('upload: hostile path + content are single-quoted (no injection)', () {
+      final s = buildUploadScript(
+          path: "/x';reboot;'", base64Content: "YQ==';reboot;'");
+      expect(s, contains(r"'\''")); // escaped, not executable
+      expect(s, isNot(contains('\n;reboot;')));
+    });
+
+    test('delete: file rm -f, dir rm -rf, both -- and quoted', () {
+      expect(buildDeleteCommand(path: '/tmp/a', isDir: false),
+          "sudo -S -p '' rm -f -- '/tmp/a'");
+      expect(buildDeleteCommand(path: '/tmp/d', isDir: true),
+          "sudo -S -p '' rm -rf -- '/tmp/d'");
+      expect(buildDeleteCommand(path: "/x';reboot;'", isDir: false),
+          contains(r"'\''"));
+    });
   });
 
   group('parseDirListing', () {

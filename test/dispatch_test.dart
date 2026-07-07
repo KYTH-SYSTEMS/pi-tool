@@ -262,6 +262,8 @@ class FakeEvccUpdater extends EvccUpdater {
 
   List<DirEntry> dirEntries = const [];
   Uint8List fileBytes = Uint8List(0);
+  final uploadedTo = <String>[];
+  final deletedPaths = <String>[];
 
   @override
   Future<List<DirEntry>> listDir({
@@ -270,6 +272,24 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       dirEntries;
+
+  @override
+  Future<void> uploadFile({
+    required SshConfig config,
+    required String path,
+    required Uint8List bytes,
+    required void Function(String line) onLog,
+  }) async =>
+      uploadedTo.add(path);
+
+  @override
+  Future<void> deleteRemotePath({
+    required SshConfig config,
+    required String path,
+    required bool isDir,
+    required void Function(String line) onLog,
+  }) async =>
+      deletedPaths.add(path);
 
   @override
   Future<Uint8List> readFileBytes({
@@ -541,6 +561,51 @@ void main() {
     await tester.tap(find.byIcon(Icons.bolt_outlined));
     await tester.pumpAndSettle();
   }
+
+  Future<void> goDateien(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.folder_outlined));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Dateien tab: lists entries, offers upload, deletes a file',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [
+        (name: 'projects', isDir: true),
+        (name: 'notes.txt', isDir: false),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    expect(find.text('projects'), findsOneWidget);
+    expect(find.text('notes.txt'), findsOneWidget);
+    expect(find.byIcon(Icons.upload_file), findsOneWidget); // upload action
+
+    // Delete the file via its ⋮ → confirm.
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, 'notes.txt'),
+        matching: find.byIcon(Icons.more_vert)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Löschen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter')); // confirm
+    await tester.pumpAndSettle();
+
+    expect(u.deletedPaths, ['/home/notes.txt']);
+  });
+
+  testWidgets('Dateien tab: free user sees the Pro placeholder', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
+    await tester.pumpWidget(page(u, entitlement: _FakeEntitlement(pro: false)));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    expect(find.text('Datei-Explorer (Pro)'), findsOneWidget);
+    expect(find.text('x'), findsNothing); // no browsing for free users
+  });
 
   testWidgets('test shows "Verbunden" and reveals the service cards',
       (tester) async {
@@ -967,20 +1032,16 @@ void main() {
     expect(u.savedConfig, contains('https'));
   });
 
-  testWidgets('Terminal → Dateien durchsuchen lists dirs + previews a file',
-      (tester) async {
+  testWidgets('Dateien tab lists dirs + previews a file', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
       ..dirEntries = const [(name: 'notes.txt', isDir: false)]
       ..fileBytes = Uint8List.fromList(utf8.encode('hallo pi'));
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
-    await goTerminal(tester);
+    await goDateien(tester);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Dateien durchsuchen'));
-    await tester.pumpAndSettle();
     expect(find.text('notes.txt'), findsOneWidget); // listing
-
     await tester.tap(find.text('notes.txt'));
     await tester.pumpAndSettle();
     expect(find.textContaining('hallo pi'), findsOneWidget); // preview

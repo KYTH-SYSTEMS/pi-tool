@@ -1023,6 +1023,56 @@ class EvccUpdater {
         },
       );
 
+  /// Uploads local [bytes] to a remote [path] (root). Content is base64-encoded
+  /// and written atomically; success requires the UPLOAD_OK marker.
+  Future<void> uploadFile({
+    required SshConfig config,
+    required String path,
+    required Uint8List bytes,
+    required void Function(String line) onLog,
+  }) {
+    final b64 = base64.encode(bytes);
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Lade hoch: $path …');
+        await _runRootScriptExpectMarker(runner, log, config,
+            script: buildUploadScript(path: path, base64Content: b64),
+            successMarker: 'UPLOAD_OK',
+            failMsg: 'Hochladen fehlgeschlagen');
+      },
+    );
+  }
+
+  /// Deletes a remote file or directory (root). No marker — a clean exit with no
+  /// sudo rejection is success.
+  Future<void> deleteRemotePath({
+    required SshConfig config,
+    required String path,
+    required bool isDir,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Lösche: $path …');
+          final r = await runner.run(
+              buildDeleteCommand(path: path, isDir: isDir),
+              stdin: '${config.password}\n');
+          final out = '${r.stdout}${r.stderr}';
+          if (isSudoPasswordFailure(out)) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.sudo, 'sudo-Passwort abgelehnt.');
+          }
+          if (r.exitCode != null && r.exitCode != 0) {
+            throw EvccUpdateException(UpdateErrorKind.unknown,
+                out.trim().isEmpty ? 'Löschen fehlgeschlagen.' : out.trim());
+          }
+        },
+      );
+
   /// Reads a config file (root). Returns its text (or the error text).
   Future<String> readConfigFile({
     required SshConfig config,

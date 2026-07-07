@@ -81,24 +81,39 @@ class _TestButton extends StatelessWidget {
 }
 
 /// Read-only remote file browser: navigate directories, tap a file to preview.
-class _FileBrowserPage extends StatefulWidget {
-  const _FileBrowserPage({
+/// Embedded remote file browser (the „Dateien" tab). Browse directories, tap a
+/// file to preview it, upload a file into the current directory, or delete an
+/// entry. Manages its own path + loading; each action calls back to the page,
+/// which connects over SSH. Taps are serialised so two connections never open
+/// at once.
+class _FilesView extends StatefulWidget {
+  const _FilesView({
     required this.startPath,
     required this.onList,
     required this.onOpenFile,
+    required this.onUpload,
+    required this.onDelete,
   });
   final String startPath;
   final Future<List<DirEntry>> Function(String path) onList;
   final Future<void> Function(String path) onOpenFile;
+
+  /// Picks + uploads a local file into [dir]. Returns true if something was
+  /// uploaded (→ the view reloads).
+  final Future<bool> Function(String dir) onUpload;
+
+  /// Deletes [entry] inside [dir]. Returns true if deleted (→ the view reloads).
+  final Future<bool> Function(DirEntry entry, String dir) onDelete;
+
   @override
-  State<_FileBrowserPage> createState() => _FileBrowserPageState();
+  State<_FilesView> createState() => _FilesViewState();
 }
 
-class _FileBrowserPageState extends State<_FileBrowserPage> {
+class _FilesViewState extends State<_FilesView> {
   late String _path = widget.startPath;
   List<DirEntry>? _entries;
   bool _loading = false; // dir-load (shows the body spinner)
-  bool _opening = false; // file-open (gates taps only, no body change)
+  bool _working = false; // open/upload/delete in flight → gate taps
   String? _error;
 
   @override
@@ -129,64 +144,102 @@ class _FileBrowserPageState extends State<_FileBrowserPage> {
     }
   }
 
-  Future<void> _open(String path) async {
-    setState(() => _opening = true);
+  Future<void> _work(Future<void> Function() body) async {
+    setState(() => _working = true);
     try {
-      await widget.onOpenFile(path);
+      await body();
     } finally {
-      if (mounted) setState(() => _opening = false);
+      if (mounted) setState(() => _working = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final atRoot = _path == '/';
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Dateien'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(28),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(_path,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            ),
+    final busy = _loading || _working;
+    final entries = _entries ?? const <DirEntry>[];
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 4, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(_path,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+              ),
+              IconButton(
+                tooltip: 'Aktualisieren',
+                onPressed: busy ? null : () => _load(_path),
+                icon: const Icon(Icons.refresh),
+              ),
+              IconButton(
+                tooltip: 'Datei hochladen',
+                onPressed: busy
+                    ? null
+                    : () => _work(() async {
+                          if (await widget.onUpload(_path)) await _load(_path);
+                        }),
+                icon: const Icon(Icons.upload_file),
+              ),
+            ],
           ),
         ),
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text(_error!))
-              : ListView(
-                  children: [
-                    if (!atRoot)
-                      ListTile(
-                        leading: const Icon(Icons.arrow_upward),
-                        title: const Text('..'),
-                        onTap: (_loading || _opening)
-                            ? null
-                            : () => _load(parentRemotePath(_path)),
-                      ),
-                    for (final e in _entries ?? const <DirEntry>[])
-                      ListTile(
-                        leading: Icon(e.isDir
-                            ? Icons.folder
-                            : Icons.insert_drive_file_outlined),
-                        title: Text(e.name),
-                        // Serialize: ignore taps while a load/open is in flight,
-                        // so we never open two SSH connections at once.
-                        onTap: (_loading || _opening)
-                            ? null
-                            : e.isDir
-                                ? () => _load(joinRemotePath(_path, e.name))
-                                : () => _open(joinRemotePath(_path, e.name)),
-                      ),
-                  ],
-                ),
+        const Divider(height: 1),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? Center(child: Text(_error!))
+                  : ListView(
+                      children: [
+                        if (!atRoot)
+                          ListTile(
+                            leading: const Icon(Icons.arrow_upward),
+                            title: const Text('..'),
+                            onTap: busy
+                                ? null
+                                : () => _load(parentRemotePath(_path)),
+                          ),
+                        if (entries.isEmpty && !atRoot)
+                          const ListTile(
+                              enabled: false, title: Text('— leer —')),
+                        for (final e in entries)
+                          ListTile(
+                            leading: Icon(e.isDir
+                                ? Icons.folder
+                                : Icons.insert_drive_file_outlined),
+                            title: Text(e.name),
+                            onTap: busy
+                                ? null
+                                : e.isDir
+                                    ? () => _load(joinRemotePath(_path, e.name))
+                                    : () => _work(() => widget.onOpenFile(
+                                        joinRemotePath(_path, e.name))),
+                            trailing: PopupMenuButton<String>(
+                              enabled: !busy,
+                              tooltip: 'Aktionen',
+                              onSelected: (v) {
+                                if (v == 'delete') {
+                                  _work(() async {
+                                    if (await widget.onDelete(e, _path)) {
+                                      await _load(_path);
+                                    }
+                                  });
+                                }
+                              },
+                              itemBuilder: (_) => [
+                                const PopupMenuItem(
+                                    value: 'delete', child: Text('Löschen')),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+        ),
+      ],
     );
   }
 }

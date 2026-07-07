@@ -170,7 +170,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Install-Zeit-Expand von `$(reboot)`. Blöcke nie zusammenlegen/entquoten.
 - **`files.dart`** — Datei-Browser über den normalen Exec-Kanal (kein SFTP → der
   `FakeSshRunner`-Seam deckt ihn ab). `head -c 512K | base64` (Server-seitiges
-  Limit gegen OOM bei riesigen Dateien).
+  Limit gegen OOM bei riesigen Dateien). **Upload** (`buildUploadScript`, base64
+  → atomar `mv -f`, Marker `UPLOAD_OK`, Limit `kFileUploadLimit` 8 MB) und
+  **Löschen** (`buildDeleteCommand`, `rm -f`/`-rf` mit `--` + Quoting) laufen als
+  Root. Lokale Dateiauswahl via `file_picker` (nur bei User-Aktion, nicht im
+  Startpfad). **Dep-Hinweis:** `file_picker` pinnt win32 ^5, daher sind
+  `share_plus`/`package_info_plus` bewusst auf win32-^5-Versionen gehalten (sonst
+  bricht der Windows-Kompilat der Tests).
 - **`notifications.dart`** — **schlafender**, plugin-freier Kern für
   Update-Benachrichtigungen; bewusst *nicht* verdrahtet (v0.20.0-Lektion — kein
   ungetesteter Native-Code im Startpfad).
@@ -210,9 +216,9 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
 ## 7. UI-Shell (`main.dart`, `ui_widgets.dart` (part), `kyth_splash.dart`)
 
 Ein großer `StatefulWidget` (`_UpdaterPageState`) hält allen State und rendert das
-**Cockpit**: `NavigationBar` + `IndexedStack`, 3 Tabs **Dienste / Automatik /
-Terminal**. `ui_widgets.dart` ist ein `part of '../main.dart'` (teilt sich
-`kGreen/kBlack/kCard` ohne Re-Import — nicht in einen Import „aufräumen").
+**Cockpit**: `NavigationBar` + `IndexedStack`, 4 Tabs **Dienste / Automatik /
+Terminal / Dateien**. `ui_widgets.dart` ist ein `part of '../main.dart'` (teilt
+sich `kGreen/kBlack/kCard` ohne Re-Import — nicht in einen Import „aufräumen").
 
 **Gate-Reihenfolge in `build()`** (load-bearing): `_booting` (neutraler
 Splash-Ersatz) → `_locked` (Lock-Screen) → `!_disclaimerAccepted`
@@ -247,6 +253,15 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Pi-Einrichtung per Raspberry Pi Imager (SSH/Benutzer/WLAN). Erreichbar via
   `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen,
   solange das Host-Feld leer ist (neben „Pi im WLAN suchen").
+- **Dateien-Tab:** `_FilesView` (in `ui_widgets.dart`) = eingebetteter Browser
+  (durchsuchen/vorschau/hochladen/löschen). Config via `_filesConfig()` (leise,
+  ohne `_busy` — Tab zeigt sonst einen „erst verbinden"-Platzhalter); Pro-gated
+  (`_filesPlaceholder` für Free). Datei-Ops (`_filesList/_filesOpen/_filesUpload/
+  _filesDelete`) verbinden pro Aktion selbst (wie der frühere Browser, ohne
+  `_guard`); der View serialisiert Taps gegen doppelte Verbindungen.
+- **Terminal/Konsole:** `interactiveCommandHint` (commands.dart) fängt TUI-Befehle
+  (htop/vi/less/`-f`) ab und zeigt eine Alternative, statt „Error opening
+  terminal" — die Konsole hat kein PTY.
 - **`kyth_splash.dart`**: `splashDoneNotifier` (default `true`, damit Tests/Hot-
   Reload nie blockieren); der Lock wartet darauf, bevor die Biometrie kommt.
 

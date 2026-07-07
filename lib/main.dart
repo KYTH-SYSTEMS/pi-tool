@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -1370,21 +1371,87 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   // ---- remote file browser (read-only) ----
 
-  Future<void> _browseFiles() async {
-    if (_busy) return;
-    final config = _prepare();
-    if (config == null) return;
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => _FileBrowserPage(
-        startPath: '/home',
-        onList: (p) =>
-            _updater.listDir(config: config, path: p, onLog: _appendLog),
-        onOpenFile: (p) => _openRemoteFile(config, p),
-      ),
-    ));
-    // _prepare() set _busy; the browser manages its own loading, so release the
-    // global lock when it closes (otherwise the whole main screen stays dead).
-    if (mounted) setState(() => _busy = false);
+  // ---- Dateien tab: remote file browser (browse / preview / upload / delete) ----
+
+  /// Quiet SSH config for the Dateien tab (no snack, no _busy). Null when no
+  /// host is set yet — the tab then shows a "connect first" hint.
+  SshConfig? _filesConfig() {
+    if (_host.text.trim().isEmpty) return null;
+    final port = int.tryParse(_port.text.trim());
+    if (port == null || port <= 0 || port > 65535) return null;
+    return _configFor(port);
+  }
+
+  Future<List<DirEntry>> _filesList(String path) {
+    final c = _filesConfig();
+    if (c == null) {
+      throw const EvccUpdateException(
+          UpdateErrorKind.connection, 'Kein Pi verbunden.');
+    }
+    return _updater.listDir(config: c, path: path, onLog: _appendLog);
+  }
+
+  Future<void> _filesOpen(String path) async {
+    final c = _filesConfig();
+    if (c == null) return;
+    await _openRemoteFile(c, path);
+  }
+
+  Future<bool> _filesUpload(String dir) async {
+    final c = _filesConfig();
+    if (c == null) {
+      _snack('Erst oben einen Pi verbinden.');
+      return false;
+    }
+    final picked = await FilePicker.platform.pickFiles(withData: true);
+    if (picked == null || picked.files.isEmpty || !mounted) return false;
+    final f = picked.files.first;
+    final bytes = f.bytes;
+    if (bytes == null) {
+      _snack('Datei konnte nicht gelesen werden.');
+      return false;
+    }
+    if (bytes.length > kFileUploadLimit) {
+      _snack('Datei zu groß (max ${kFileUploadLimit ~/ (1024 * 1024)} MB).');
+      return false;
+    }
+    final target = joinRemotePath(dir, f.name);
+    try {
+      _snack('Lädt „${f.name}" hoch …');
+      await _updater
+          .uploadFile(config: c, path: target, bytes: bytes, onLog: _appendLog);
+      if (mounted) _snack('Hochgeladen: ${f.name}');
+      return true;
+    } catch (_) {
+      if (mounted) _snack('Hochladen fehlgeschlagen (Rechte?).');
+      return false;
+    }
+  }
+
+  Future<bool> _filesDelete(DirEntry entry, String dir) async {
+    final c = _filesConfig();
+    if (c == null) return false;
+    if (!await _confirm(
+      '„${entry.name}" löschen?',
+      entry.isDir
+          ? 'Löscht den Ordner samt Inhalt. Das kann nicht rückgängig gemacht '
+              'werden.'
+          : 'Das kann nicht rückgängig gemacht werden.',
+    )) {
+      return false;
+    }
+    try {
+      await _updater.deleteRemotePath(
+          config: c,
+          path: joinRemotePath(dir, entry.name),
+          isDir: entry.isDir,
+          onLog: _appendLog);
+      if (mounted) _snack('Gelöscht: ${entry.name}');
+      return true;
+    } catch (_) {
+      if (mounted) _snack('Löschen fehlgeschlagen (Rechte?).');
+      return false;
+    }
   }
 
   Future<void> _openRemoteFile(SshConfig config, String path) async {
@@ -3541,6 +3608,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _automatikTab(theme),
                   // ---- Tab 2: Terminal ----
                   _terminalTab(theme),
+                  // ---- Tab 3: Dateien ----
+                  _dateienTab(theme),
                 ],
               ),
             ),
@@ -3563,6 +3632,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               icon: Icon(Icons.terminal_outlined),
               selectedIcon: Icon(Icons.terminal),
               label: 'Terminal'),
+          NavigationDestination(
+              icon: Icon(Icons.folder_outlined),
+              selectedIcon: Icon(Icons.folder),
+              label: 'Dateien'),
         ],
       ),
     );
@@ -3653,16 +3726,70 @@ class _UpdaterPageState extends State<UpdaterPage>
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _busy ? null : () => _proGate(_browseFiles),
-            icon: Icon(_isPro ? Icons.folder_open : Icons.lock_outline,
-                size: 18),
-            label: const Text('Dateien durchsuchen'),
-            style:
-                OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
-          ),
         ],
+      );
+
+  // ---- Dateien tab: browse / preview / upload / delete on the Pi ----
+
+  Widget _dateienTab(ThemeData theme) {
+    if (!_isPro) {
+      return _filesPlaceholder(
+        theme,
+        icon: Icons.lock_outline,
+        title: 'Datei-Explorer (Pro)',
+        body: 'Die Dateien deines Pi durchsuchen, hochladen und löschen ist '
+            'Teil von Pro.',
+        actionLabel: 'Pro freischalten',
+        onAction: _showPaywall,
+      );
+    }
+    if (_filesConfig() == null) {
+      return _filesPlaceholder(
+        theme,
+        icon: Icons.dns_outlined,
+        title: 'Kein Pi verbunden',
+        body: 'Trage im Tab „Dienste" Host + Zugangsdaten ein — dann kannst du '
+            'hier die Dateien deines Pi durchsuchen und hochladen.',
+      );
+    }
+    return _FilesView(
+      startPath: '/home',
+      onList: _filesList,
+      onOpenFile: _filesOpen,
+      onUpload: _filesUpload,
+      onDelete: _filesDelete,
+    );
+  }
+
+  Widget _filesPlaceholder(
+    ThemeData theme, {
+    required IconData icon,
+    required String title,
+    required String body,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) =>
+      Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 44, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(height: 12),
+              Text(title, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 6),
+              Text(body,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              if (actionLabel != null && onAction != null) ...[
+                const SizedBox(height: 16),
+                FilledButton(onPressed: onAction, child: Text(actionLabel)),
+              ],
+            ],
+          ),
+        ),
       );
 }
 
