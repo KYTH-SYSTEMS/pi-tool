@@ -248,6 +248,20 @@ void main() {
     expect(find.byType(LicensePage), findsOneWidget);
   });
 
+  testWidgets('the ⋮ menu opens the Pi setup guide', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(_page());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pi einrichten'));
+    await tester.pumpAndSettle();
+
+    // The guide shows the Imager download action.
+    expect(find.text('Raspberry Pi Imager laden'), findsOneWidget);
+  });
+
   testWidgets('the app-bar switcher switches the active Pi', (tester) async {
     useTallScreen(tester);
     final store = _FakeStore(const AppConfig(

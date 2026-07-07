@@ -243,6 +243,10 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   `_AddableService`-Picker-Einträgen, nie Karten. `_ServiceCard`-⋮ hat stabiles
   `ValueKey('menu-${id}')`. Pro-Aktionen zeigen Free-Nutzern ein Schloss, der Tap
   feuert trotzdem (Gate in der Callback via `_proGate` → `_showPaywall`).
+- **Onboarding:** `_SetupGuidePage` (in `ui_widgets.dart`) erklärt Einsteigern die
+  Pi-Einrichtung per Raspberry Pi Imager (SSH/Benutzer/WLAN). Erreichbar via
+  `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen,
+  solange das Host-Feld leer ist (neben „Pi im WLAN suchen").
 - **`kyth_splash.dart`**: `splashDoneNotifier` (default `true`, damit Tests/Hot-
   Reload nie blockieren); der Lock wartet darauf, bevor die Biometrie kommt.
 

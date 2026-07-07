@@ -44,6 +44,7 @@ const kEvccPlayStoreUrl =
 const kPrivacyUrl = 'https://profex1337.github.io/evcc-pi-tool/privacy.html';
 const kImpressumUrl = 'https://profex1337.github.io/evcc-pi-tool/impressum.html';
 const kReleasesUrl = 'https://github.com/profex1337/evcc-pi-tool/releases';
+const kImagerUrl = 'https://www.raspberrypi.com/software/';
 
 /// Drives MaterialApp.themeMode; updated from the loaded setting + the picker.
 final ValueNotifier<ThemeMode> themeModeNotifier =
@@ -2468,6 +2469,12 @@ class _UpdaterPageState extends State<UpdaterPage>
       ..showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  void _openSetupGuide() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => _SetupGuidePage(onDownloadImager: () => _openUrl(kImagerUrl)),
+    ));
+  }
+
   void _openSettings() {
     showModalBottomSheet<void>(
       context: context,
@@ -3293,6 +3300,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _showApiStatus();
                 case 'reboot':
                   _reboot();
+                case 'setup':
+                  _openSetupGuide();
                 case 'find':
                   _findPi();
                 case 'share':
@@ -3313,6 +3322,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   enabled: !_busy,
                   child: const Text('Pi neu starten')),
               const PopupMenuDivider(),
+              const PopupMenuItem(
+                  value: 'setup', child: Text('Pi einrichten')),
               PopupMenuItem(
                   value: 'find',
                   enabled: !_busy,
@@ -3393,12 +3404,22 @@ class _UpdaterPageState extends State<UpdaterPage>
                 if (value.text.trim().isNotEmpty) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.only(top: 10),
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : _findPi,
-                    icon: const Icon(Icons.wifi_find, size: 18),
-                    label: const Text('Pi im WLAN suchen'),
-                    style: OutlinedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(44)),
+                  child: Column(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : _findPi,
+                        icon: const Icon(Icons.wifi_find, size: 18),
+                        label: const Text('Pi im WLAN suchen'),
+                        style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(44)),
+                      ),
+                      // Beginners without a ready Pi: link the Imager guide.
+                      TextButton.icon(
+                        onPressed: _openSetupGuide,
+                        icon: const Icon(Icons.menu_book_outlined, size: 18),
+                        label: const Text('Noch keinen Pi? So richtest du einen ein'),
+                      ),
+                    ],
                   ),
                 );
               },

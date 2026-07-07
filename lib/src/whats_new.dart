@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.33.0': [
+    'Neu und noch keinen Pi? Es gibt jetzt eine eingebaute Schritt-für-Schritt-'
+        'Anleitung „Pi einrichten" (mit Raspberry Pi Imager: SSH, Benutzer, WLAN) '
+        '— erreichbar über das ⋮-Menü und direkt auf dem Verbindungs-Screen, '
+        'wenn noch kein Pi eingetragen ist.',
+  ],
   '0.32.0': [
     'Aktiver Pi immer sichtbar: oben in der Leiste steht jetzt der aktuelle Pi '
         '— auf jedem Tab. Antippen öffnet den Umschalter zum Wechseln, '

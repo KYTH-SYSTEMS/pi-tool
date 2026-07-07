@@ -191,6 +191,119 @@ class _FileBrowserPageState extends State<_FileBrowserPage> {
   }
 }
 
+/// Beginner guide: set up a fresh Pi with Raspberry Pi Imager so this app can
+/// connect (enable SSH + user/password + WiFi via the Imager's advanced options).
+class _SetupGuidePage extends StatelessWidget {
+  const _SetupGuidePage({required this.onDownloadImager});
+  final VoidCallback onDownloadImager;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget bullet(String t) => Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('•  '),
+            Expanded(child: Text(t)),
+          ]),
+        );
+    Widget step(int n, String title, Widget body) => Padding(
+          padding: const EdgeInsets.only(bottom: 20),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CircleAvatar(
+              radius: 14,
+              backgroundColor: kGreen,
+              child: Text('$n',
+                  style: const TextStyle(
+                      color: kBlack, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  body,
+                ],
+              ),
+            ),
+          ]),
+        );
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Pi einrichten')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            'Damit Pi-Tool sich verbinden kann, muss der Pi per SSH erreichbar '
+            'sein. Der „Raspberry Pi Imager" richtet das in wenigen Minuten ein '
+            '— ganz ohne Bildschirm/Tastatur am Pi.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 20),
+          step(
+            1,
+            'Imager installieren',
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Lade den „Raspberry Pi Imager" auf deinen Computer '
+                  'und starte ihn. Steck die SD-Karte des Pi in den Rechner.'),
+              const SizedBox(height: 6),
+              OutlinedButton.icon(
+                onPressed: onDownloadImager,
+                icon: const Icon(Icons.download, size: 18),
+                label: const Text('Raspberry Pi Imager laden'),
+              ),
+            ]),
+          ),
+          step(
+            2,
+            'System wählen',
+            const Text('Wähle dein Pi-Modell, dann „Raspberry Pi OS Lite '
+                '(64-Bit)" (ohne Desktop – schlank und ideal für Pi-Tool) und '
+                'die SD-Karte.'),
+          ),
+          step(
+            3,
+            '⚙️ Erweiterte Optionen (wichtig!)',
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Vor dem Schreiben auf das Zahnrad ⚙ bzw. '
+                  '„Einstellungen bearbeiten" tippen und setzen:'),
+              bullet('SSH aktivieren (mit Passwort-Anmeldung)'),
+              bullet('Benutzername + Passwort – die trägst du gleich in '
+                  'Pi-Tool ein'),
+              bullet('Hostname, z. B. „wohnzimmer-pi" (erreichbar als '
+                  'wohnzimmer-pi.local)'),
+              bullet('WLAN: Netzwerkname, Passwort und Land – oder ein '
+                  'LAN-Kabel nutzen'),
+            ]),
+          ),
+          step(
+            4,
+            'Schreiben & starten',
+            const Text('SD-Karte beschreiben, in den Pi stecken, Strom '
+                'anschließen. Der erste Start dauert 1–2 Minuten.'),
+          ),
+          step(
+            5,
+            'In Pi-Tool verbinden',
+            const Text('Oben den Pi wählen/anlegen, als Host „<hostname>.local" '
+                'eintragen (oder „Pi im WLAN suchen"), Benutzer + Passwort aus '
+                'Schritt 3 – dann „Verbindung herstellen". Fertig.'),
+          ),
+          Text(
+            'Tipp: Klappt „.local" nicht, nutze „Pi im WLAN suchen" oder die IP '
+            'aus deinem Router.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Full-screen editor for a remote config file. Pops the edited text on save,
 /// or null when the user backs out (cancel).
 class _ConfigEditorPage extends StatefulWidget {
