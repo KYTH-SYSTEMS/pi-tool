@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -1395,37 +1394,6 @@ class _UpdaterPageState extends State<UpdaterPage>
     final c = _filesConfig();
     if (c == null) return;
     await _openRemoteFile(c, path);
-  }
-
-  Future<bool> _filesUpload(String dir) async {
-    final c = _filesConfig();
-    if (c == null) {
-      _snack('Erst oben einen Pi verbinden.');
-      return false;
-    }
-    final picked = await FilePicker.pickFiles(withData: true);
-    if (picked == null || picked.files.isEmpty || !mounted) return false;
-    final f = picked.files.first;
-    final bytes = f.bytes;
-    if (bytes == null) {
-      _snack('Datei konnte nicht gelesen werden.');
-      return false;
-    }
-    if (bytes.length > kFileUploadLimit) {
-      _snack('Datei zu groß (max ${kFileUploadLimit ~/ (1024 * 1024)} MB).');
-      return false;
-    }
-    final target = joinRemotePath(dir, f.name);
-    try {
-      _snack('Lädt „${f.name}" hoch …');
-      await _updater
-          .uploadFile(config: c, path: target, bytes: bytes, onLog: _appendLog);
-      if (mounted) _snack('Hochgeladen: ${f.name}');
-      return true;
-    } catch (_) {
-      if (mounted) _snack('Hochladen fehlgeschlagen (Rechte?).');
-      return false;
-    }
   }
 
   Future<bool> _filesDelete(DirEntry entry, String dir) async {
@@ -3756,7 +3724,6 @@ class _UpdaterPageState extends State<UpdaterPage>
       startPath: '/home',
       onList: _filesList,
       onOpenFile: _filesOpen,
-      onUpload: _filesUpload,
       onDelete: _filesDelete,
     );
   }

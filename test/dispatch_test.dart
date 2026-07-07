@@ -567,8 +567,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('Dateien tab: lists entries, offers upload, deletes a file',
-      (tester) async {
+  testWidgets('Dateien tab: lists entries and deletes a file', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
       ..dirEntries = const [
@@ -581,7 +580,6 @@ void main() {
 
     expect(find.text('projects'), findsOneWidget);
     expect(find.text('notes.txt'), findsOneWidget);
-    expect(find.byIcon(Icons.upload_file), findsOneWidget); // upload action
 
     // Delete the file via its ⋮ → confirm.
     await tester.tap(find.descendant(

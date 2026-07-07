@@ -170,13 +170,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Install-Zeit-Expand von `$(reboot)`. Blöcke nie zusammenlegen/entquoten.
 - **`files.dart`** — Datei-Browser über den normalen Exec-Kanal (kein SFTP → der
   `FakeSshRunner`-Seam deckt ihn ab). `head -c 512K | base64` (Server-seitiges
-  Limit gegen OOM bei riesigen Dateien). **Upload** (`buildUploadScript`, base64
-  → atomar `mv -f`, Marker `UPLOAD_OK`, Limit `kFileUploadLimit` 8 MB) und
-  **Löschen** (`buildDeleteCommand`, `rm -f`/`-rf` mit `--` + Quoting) laufen als
-  Root. Lokale Dateiauswahl via `file_picker` (nur bei User-Aktion, nicht im
-  Startpfad). **Dep-Hinweis:** `file_picker` pinnt win32 ^5, daher sind
-  `share_plus`/`package_info_plus` bewusst auf win32-^5-Versionen gehalten (sonst
-  bricht der Windows-Kompilat der Tests).
+  Limit gegen OOM bei riesigen Dateien). **Löschen** (`buildDeleteCommand`,
+  `rm -f`/`-rf` mit `--` + Quoting) läuft als Root. **Upload** (`buildUploadScript`,
+  base64 → atomar `mv -f`, Marker `UPLOAD_OK`, Limit `kFileUploadLimit` 8 MB) +
+  `EvccUpdater.uploadFile` sind getestet vorhanden, aber **noch nicht in die UI
+  verdrahtet** — die lokale Dateiauswahl braucht ein Picker-Plugin, das mit dem
+  aktuellen AGP 9 erst validiert werden muss (`file_picker` scheiterte am
+  Android-Build).
 - **`notifications.dart`** — **schlafender**, plugin-freier Kern für
   Update-Benachrichtigungen; bewusst *nicht* verdrahtet (v0.20.0-Lektion — kein
   ungetesteter Native-Code im Startpfad).
@@ -254,11 +254,12 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen,
   solange das Host-Feld leer ist (neben „Pi im WLAN suchen").
 - **Dateien-Tab:** `_FilesView` (in `ui_widgets.dart`) = eingebetteter Browser
-  (durchsuchen/vorschau/hochladen/löschen). Config via `_filesConfig()` (leise,
-  ohne `_busy` — Tab zeigt sonst einen „erst verbinden"-Platzhalter); Pro-gated
-  (`_filesPlaceholder` für Free). Datei-Ops (`_filesList/_filesOpen/_filesUpload/
-  _filesDelete`) verbinden pro Aktion selbst (wie der frühere Browser, ohne
-  `_guard`); der View serialisiert Taps gegen doppelte Verbindungen.
+  (durchsuchen/vorschau/löschen; Upload-Button via optionalem `onUpload`, aktuell
+  nicht gesetzt). Config via `_filesConfig()` (leise, ohne `_busy` — Tab zeigt
+  sonst einen „erst verbinden"-Platzhalter); Pro-gated (`_filesPlaceholder` für
+  Free). Datei-Ops (`_filesList/_filesOpen/_filesDelete`) verbinden pro Aktion
+  selbst (wie der frühere Browser, ohne `_guard`); der View serialisiert Taps
+  gegen doppelte Verbindungen.
 - **Terminal/Konsole:** `interactiveCommandHint` (commands.dart) fängt TUI-Befehle
   (htop/vi/less/`-f`) ab und zeigt eine Alternative, statt „Error opening
   terminal" — die Konsole hat kein PTY.

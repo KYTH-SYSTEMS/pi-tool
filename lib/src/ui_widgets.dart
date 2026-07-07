@@ -91,16 +91,11 @@ class _FilesView extends StatefulWidget {
     required this.startPath,
     required this.onList,
     required this.onOpenFile,
-    required this.onUpload,
     required this.onDelete,
   });
   final String startPath;
   final Future<List<DirEntry>> Function(String path) onList;
   final Future<void> Function(String path) onOpenFile;
-
-  /// Picks + uploads a local file into [dir]. Returns true if something was
-  /// uploaded (→ the view reloads).
-  final Future<bool> Function(String dir) onUpload;
 
   /// Deletes [entry] inside [dir]. Returns true if deleted (→ the view reloads).
   final Future<bool> Function(DirEntry entry, String dir) onDelete;
@@ -174,15 +169,6 @@ class _FilesViewState extends State<_FilesView> {
                 tooltip: 'Aktualisieren',
                 onPressed: busy ? null : () => _load(_path),
                 icon: const Icon(Icons.refresh),
-              ),
-              IconButton(
-                tooltip: 'Datei hochladen',
-                onPressed: busy
-                    ? null
-                    : () => _work(() async {
-                          if (await widget.onUpload(_path)) await _load(_path);
-                        }),
-                icon: const Icon(Icons.upload_file),
               ),
             ],
           ),

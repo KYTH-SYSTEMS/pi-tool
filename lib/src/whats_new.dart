@@ -15,8 +15,8 @@ List<String>? whatsNewFor(String version) => _whatsNew[version];
 const Map<String, List<String>> _whatsNew = {
   '0.35.0': [
     'Neuer Tab „Dateien": die Dateien deines Pi durchsuchen, antippen zum '
-        'Ansehen, per Knopf vom Handy hochladen und löschen — direkt unten in '
-        'der Leiste erreichbar.',
+        'Ansehen und löschen — direkt unten in der Leiste erreichbar. '
+        '(Hochladen folgt in Kürze.)',
   ],
   '0.34.0': [
     'Konsole: interaktive Befehle wie „htop", „top", Editoren oder der '
