@@ -171,12 +171,16 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
 - **`files.dart`** — Datei-Browser über den normalen Exec-Kanal (kein SFTP → der
   `FakeSshRunner`-Seam deckt ihn ab). `head -c 512K | base64` (Server-seitiges
   Limit gegen OOM bei riesigen Dateien). **Löschen** (`buildDeleteCommand`,
-  `rm -f`/`-rf` mit `--` + Quoting) läuft als Root. **Upload** (`buildUploadScript`,
-  base64 → atomar `mv -f`, Marker `UPLOAD_OK`, Limit `kFileUploadLimit` 8 MB) +
-  `EvccUpdater.uploadFile` sind getestet vorhanden, aber **noch nicht in die UI
-  verdrahtet** — die lokale Dateiauswahl braucht ein Picker-Plugin, das mit dem
-  aktuellen AGP 9 erst validiert werden muss (`file_picker` scheiterte am
-  Android-Build).
+  `rm -f`/`-rf` mit `--` + Quoting) und **Upload** (`buildUploadScript`, base64 →
+  atomar `mv -f`, Marker `UPLOAD_OK`, Limit `kFileUploadLimit` 8 MB, via
+  `EvccUpdater.uploadFile`) laufen als Root.
+- **`file_pick.dart` + native `MainActivity`** — lokale Dateiauswahl fürs Upload.
+  **Bewusst KEIN Picker-Plugin:** `file_picker` bringt sein eigenes altes
+  Kotlin-Gradle-Plugin mit und scheitert am AGP-9-/Built-in-Kotlin-Setup (und es
+  gibt kein stabiles file_picker mit win32 ^6). Stattdessen ein winziger
+  Android-SAF-Picker (`ACTION_OPEN_DOCUMENT`) **in der App** (`MainActivity.kt`,
+  MethodChannel `pi_tool/filepicker`) → nutzt das projekteigene Kotlin/AGP.
+  `FilePickerService`-Seam (`ChannelFilePicker` real, injizierbar für Tests).
 - **`notifications.dart`** — **schlafender**, plugin-freier Kern für
   Update-Benachrichtigungen; bewusst *nicht* verdrahtet (v0.20.0-Lektion — kein
   ungetesteter Native-Code im Startpfad).
@@ -254,12 +258,12 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen,
   solange das Host-Feld leer ist (neben „Pi im WLAN suchen").
 - **Dateien-Tab:** `_FilesView` (in `ui_widgets.dart`) = eingebetteter Browser
-  (durchsuchen/vorschau/löschen; Upload-Button via optionalem `onUpload`, aktuell
-  nicht gesetzt). Config via `_filesConfig()` (leise, ohne `_busy` — Tab zeigt
-  sonst einen „erst verbinden"-Platzhalter); Pro-gated (`_filesPlaceholder` für
-  Free). Datei-Ops (`_filesList/_filesOpen/_filesDelete`) verbinden pro Aktion
-  selbst (wie der frühere Browser, ohne `_guard`); der View serialisiert Taps
-  gegen doppelte Verbindungen.
+  (durchsuchen/vorschau/hochladen/löschen). Config via `_filesConfig()` (leise,
+  ohne `_busy` — Tab zeigt sonst einen „erst verbinden"-Platzhalter); Pro-gated
+  (`_filesPlaceholder` für Free). Datei-Ops (`_filesList/_filesOpen/_filesUpload/
+  _filesDelete`) verbinden pro Aktion selbst (wie der frühere Browser, ohne
+  `_guard`); `_filesUpload` nutzt den `FilePickerService`-Seam. Der View
+  serialisiert Taps gegen doppelte Verbindungen.
 - **Terminal/Konsole:** `interactiveCommandHint` (commands.dart) fängt TUI-Befehle
   (htop/vi/less/`-f`) ab und zeigt eine Alternative, statt „Error opening
   terminal" — die Konsole hat kein PTY.

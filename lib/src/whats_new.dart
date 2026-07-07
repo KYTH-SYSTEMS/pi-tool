@@ -13,6 +13,11 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.36.0': [
+    'Dateien hochladen ist da: im Dateien-Tab oben rechts auf das Upload-Symbol '
+        'tippen, eine Datei vom Handy wählen — sie landet im gerade geöffneten '
+        'Ordner auf dem Pi.',
+  ],
   '0.35.0': [
     'Neuer Tab „Dateien": die Dateien deines Pi durchsuchen, antippen zum '
         'Ansehen und löschen — direkt unten in der Leiste erreichbar. '

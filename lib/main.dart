@@ -12,6 +12,7 @@ import 'src/alerts.dart';
 import 'src/auto_update.dart';
 import 'src/commands.dart';
 import 'src/entitlement.dart';
+import 'src/file_pick.dart';
 import 'src/files.dart';
 import 'src/kyth_splash.dart';
 import 'src/whats_new.dart';
@@ -108,6 +109,7 @@ class UpdaterPage extends StatefulWidget {
     this.haVersionFetcher,
     this.entitlement,
     this.keepAlive,
+    this.filePicker,
   });
 
   final AppConfigStore? store;
@@ -135,6 +137,10 @@ class UpdaterPage extends StatefulWidget {
   /// Pro) until Play Billing is wired at launch; injectable for tests.
   final EntitlementService? entitlement;
 
+  /// Picks a local file to upload. Defaults to the in-app SAF picker; injectable
+  /// so widget tests supply bytes without a platform channel.
+  final FilePickerService? filePicker;
+
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
 }
@@ -159,6 +165,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.haVersionFetcher ?? fetchLatestHomeAssistantVersion;
   late final EntitlementService _entitlement =
       widget.entitlement ?? const DormantEntitlement();
+  late final FilePickerService _filePicker =
+      widget.filePicker ?? const ChannelFilePicker();
   final HistoryStore _historyStore = HistoryStore();
 
   final _host = TextEditingController();
@@ -1394,6 +1402,37 @@ class _UpdaterPageState extends State<UpdaterPage>
     final c = _filesConfig();
     if (c == null) return;
     await _openRemoteFile(c, path);
+  }
+
+  Future<bool> _filesUpload(String dir) async {
+    final c = _filesConfig();
+    if (c == null) {
+      _snack('Erst oben einen Pi verbinden.');
+      return false;
+    }
+    PickedFile? picked;
+    try {
+      picked = await _filePicker.pick();
+    } catch (_) {
+      if (mounted) _snack('Dateiauswahl fehlgeschlagen.');
+      return false;
+    }
+    if (picked == null || !mounted) return false; // cancelled
+    if (picked.bytes.length > kFileUploadLimit) {
+      _snack('Datei zu groß (max ${kFileUploadLimit ~/ (1024 * 1024)} MB).');
+      return false;
+    }
+    final target = joinRemotePath(dir, picked.name);
+    try {
+      _snack('Lädt „${picked.name}" hoch …');
+      await _updater.uploadFile(
+          config: c, path: target, bytes: picked.bytes, onLog: _appendLog);
+      if (mounted) _snack('Hochgeladen: ${picked.name}');
+      return true;
+    } catch (_) {
+      if (mounted) _snack('Hochladen fehlgeschlagen (Rechte?).');
+      return false;
+    }
   }
 
   Future<bool> _filesDelete(DirEntry entry, String dir) async {
@@ -3724,6 +3763,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       startPath: '/home',
       onList: _filesList,
       onOpenFile: _filesOpen,
+      onUpload: _filesUpload,
       onDelete: _filesDelete,
     );
   }

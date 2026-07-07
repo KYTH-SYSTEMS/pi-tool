@@ -9,6 +9,7 @@ import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/entitlement.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
+import 'package:evcc_updater/src/file_pick.dart';
 import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/profiles.dart';
@@ -18,6 +19,13 @@ import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+class _FakeFilePicker implements FilePickerService {
+  _FakeFilePicker(this.file);
+  final PickedFile? file;
+  @override
+  Future<PickedFile?> pick() async => file;
+}
 
 class _FakeEntitlement implements EntitlementService {
   _FakeEntitlement({this.pro = true});
@@ -531,7 +539,8 @@ void main() {
           {Future<EvccRelease?> Function()? rel,
           Future<String?> Function()? haLatest,
           EntitlementService? entitlement,
-          KeepAliveService? keepAlive}) =>
+          KeepAliveService? keepAlive,
+          FilePickerService? filePicker}) =>
       MaterialApp(
         home: UpdaterPage(
           store: _FakeStore(_ready),
@@ -541,6 +550,7 @@ void main() {
           haVersionFetcher: haLatest ?? () async => null,
           entitlement: entitlement,
           keepAlive: keepAlive,
+          filePicker: filePicker,
         ),
       );
 
@@ -592,6 +602,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(u.deletedPaths, ['/home/notes.txt']);
+  });
+
+  testWidgets('Dateien tab: upload writes the picked file to the current dir',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
+    final picker = _FakeFilePicker(
+        (name: 'config.yaml', bytes: Uint8List.fromList([1, 2, 3])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(u.uploadedTo, ['/home/config.yaml']); // written into the browsed dir
   });
 
   testWidgets('Dateien tab: free user sees the Pro placeholder', (tester) async {
