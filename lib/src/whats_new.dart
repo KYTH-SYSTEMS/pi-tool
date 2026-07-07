@@ -15,9 +15,8 @@ List<String>? whatsNewFor(String version) => _whatsNew[version];
 const Map<String, List<String>> _whatsNew = {
   '0.32.0': [
     'Aktiver Pi immer sichtbar: oben in der Leiste steht jetzt der aktuelle Pi '
-        '(mit Farbpunkt) — auf jedem Tab. Antippen öffnet den Umschalter zum '
-        'Wechseln, Hinzufügen und Umbenennen. Die separate Profil-Leiste unten '
-        'entfällt.',
+        '— auf jedem Tab. Antippen öffnet den Umschalter zum Wechseln, '
+        'Hinzufügen und Umbenennen. Die separate Profil-Leiste unten entfällt.',
   ],
   '0.31.0': [
     'Tailscale (VPN/Mesh) als Dienst: installieren, per Login-Link verbinden, '

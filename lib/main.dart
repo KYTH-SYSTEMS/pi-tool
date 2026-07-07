@@ -556,19 +556,6 @@ class _UpdaterPageState extends State<UpdaterPage>
       ? 'Standard'
       : _profiles[_activeIndex.clamp(0, _profiles.length - 1)].name;
 
-  // A stable colour per profile (by name), so multiple Pis are distinguishable
-  // at a glance in the app-bar switcher.
-  static const _profilePalette = [
-    Color(0xFF1FD65F),
-    Color(0xFF3B82F6),
-    Color(0xFFF59E0B),
-    Color(0xFFEF4444),
-    Color(0xFFA855F7),
-    Color(0xFF14B8A6),
-  ];
-  Color _profileColor(String name) =>
-      _profilePalette[name.hashCode.abs() % _profilePalette.length];
-
   /// Bottom sheet to pick / add / rename / delete a Pi profile — the single home
   /// for profile management (replaces the old on-screen profile bar).
   void _showProfileSwitcher() {
@@ -587,8 +574,10 @@ class _UpdaterPageState extends State<UpdaterPage>
             ),
             for (var i = 0; i < _profiles.length; i++)
               ListTile(
-                leading: Icon(Icons.circle,
-                    size: 14, color: _profileColor(_profiles[i].name)),
+                // Neutral icon (the check on the right marks the active Pi) — a
+                // coloured dot here read like a "connected" status light.
+                leading: Icon(Icons.dns_outlined,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant),
                 title: Text(_profiles[i].name),
                 subtitle: _profiles[i].host.trim().isEmpty
                     ? null
@@ -3264,8 +3253,8 @@ class _UpdaterPageState extends State<UpdaterPage>
               padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
               child: Row(
                 children: [
-                  Icon(Icons.circle,
-                      size: 11, color: _profileColor(_activeProfileName)),
+                  Icon(Icons.dns_outlined,
+                      size: 16, color: theme.colorScheme.onSurfaceVariant),
                   const SizedBox(width: 8),
                   Flexible(
                     child: Text(_activeProfileName,
