@@ -19,9 +19,10 @@ if (hasKeystore) {
 
 android {
     namespace = "systems.kyth.pitool"
-    // Pinned to 35 (not flutter.compileSdkVersion): file_picker's AAR requires
-    // compileSdk >= 35. Matches targetSdk below.
-    compileSdk = 35
+    // Pinned to 36 (not flutter.compileSdkVersion): file_picker needs >= 35 and
+    // share_plus/secure_storage/local_auth/etc. compile against 36 — 36 covers
+    // all of them (SDKs are backward compatible).
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
