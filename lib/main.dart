@@ -1403,7 +1403,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _snack('Erst oben einen Pi verbinden.');
       return false;
     }
-    final picked = await FilePicker.platform.pickFiles(withData: true);
+    final picked = await FilePicker.pickFiles(withData: true);
     if (picked == null || picked.files.isEmpty || !mounted) return false;
     final f = picked.files.first;
     final bytes = f.bytes;
