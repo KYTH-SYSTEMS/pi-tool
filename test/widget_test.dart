@@ -272,6 +272,38 @@ void main() {
     expect(store.saved.active.host, '2.2.2.2');
   });
 
+  testWidgets('deleting a profile via its ⋮ removes it', (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [
+        Profile(name: 'Standard', host: '1.1.1.1'),
+        Profile(name: 'Eltern', host: '2.2.2.2'),
+      ],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    // Open the ⋮ on the 'Eltern' row (not the active one) and delete it.
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, 'Eltern'),
+        matching: find.byIcon(Icons.more_vert)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Löschen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter')); // confirm
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the save debounce
+
+    expect(store.saved.profiles.length, 1);
+    expect(store.saved.profiles.first.name, 'Standard');
+  });
+
   testWidgets('Pi finden fills the host field from a scan result',
       (tester) async {
     useTallScreen(tester);

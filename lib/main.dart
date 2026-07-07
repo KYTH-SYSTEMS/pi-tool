@@ -584,8 +584,30 @@ class _UpdaterPageState extends State<UpdaterPage>
                     : Text(_profiles[i].host,
                         style: const TextStyle(
                             fontFamily: 'monospace', fontSize: 12)),
-                trailing:
-                    i == _activeIndex ? const Icon(Icons.check, color: kGreen) : null,
+                // Per-profile: check on the active one + a ⋮ to rename/delete
+                // ANY profile (no need to switch to it first).
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (i == _activeIndex)
+                      const Icon(Icons.check, color: kGreen, size: 20),
+                    PopupMenuButton<String>(
+                      tooltip: 'Profil-Aktionen',
+                      onSelected: (v) {
+                        Navigator.pop(ctx);
+                        if (v == 'rename') _renameProfile(i);
+                        if (v == 'delete') _deleteProfile(i);
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                            value: 'rename', child: Text('Umbenennen')),
+                        if (_profiles.length > 1)
+                          const PopupMenuItem(
+                              value: 'delete', child: Text('Löschen')),
+                      ],
+                    ),
+                  ],
+                ),
                 onTap: () {
                   Navigator.pop(ctx);
                   if (i != _activeIndex) _switchProfile(i);
@@ -600,23 +622,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                 _addProfile();
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: Text('„$_activeProfileName" umbenennen'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _renameActiveProfile();
-              },
-            ),
-            if (_profiles.length > 1)
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: Text('„$_activeProfileName" löschen'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _deleteActiveProfile();
-                },
-              ),
           ],
         ),
       ),
@@ -652,23 +657,22 @@ class _UpdaterPageState extends State<UpdaterPage>
     _persistSettings();
   }
 
-  Future<void> _renameActiveProfile() async {
-    final current =
-        _activeIndex < _profiles.length ? _profiles[_activeIndex].name : '';
-    final name = await _promptName('Profil umbenennen', current);
+  Future<void> _renameProfile(int i) async {
+    if (i < 0 || i >= _profiles.length) return;
+    final name = await _promptName('Profil umbenennen', _profiles[i].name);
     if (name == null || !mounted) return;
     setState(() {
-      _profiles[_activeIndex] = _currentProfile().copyWith(name: name);
+      // Capture live edits before renaming the active profile.
+      if (i == _activeIndex) _profiles[i] = _currentProfile();
+      _profiles[i] = _profiles[i].copyWith(name: name);
     });
     _persistSettings();
   }
 
-  Future<void> _deleteActiveProfile() async {
-    if (_profiles.length <= 1) return;
-    final name =
-        _activeIndex < _profiles.length ? _profiles[_activeIndex].name : '';
-    // Destructive + irreversible (wipes host, credentials and any SSH key) —
-    // always confirm, like reboot/install.
+  Future<void> _deleteProfile(int i) async {
+    if (_profiles.length <= 1 || i < 0 || i >= _profiles.length) return;
+    final name = _profiles[i].name;
+    // Destructive + irreversible (wipes host, credentials and any SSH key).
     if (!await _confirm(
       'Profil „$name" löschen?',
       'Entfernt das Profil samt gespeicherter Zugangsdaten und SSH-Key. '
@@ -676,13 +680,24 @@ class _UpdaterPageState extends State<UpdaterPage>
     )) {
       return;
     }
-    if (_profiles.length <= 1) return; // re-check after the async gap
-    final next = [..._profiles]..removeAt(_activeIndex);
+    if (_profiles.length <= 1 || i >= _profiles.length) return; // re-check
+    final wasActive = i == _activeIndex;
+    // Preserve the active profile's live edits when deleting a different one.
+    if (!wasActive && _activeIndex < _profiles.length) {
+      _profiles[_activeIndex] = _currentProfile();
+    }
+    final next = [..._profiles]..removeAt(i);
     setState(() {
       _profiles = next;
-      _activeIndex = _activeIndex.clamp(0, next.length - 1);
-      _applyProfile(_profiles[_activeIndex]);
-      _resetDetectionForNewPi();
+      if (wasActive) {
+        _activeIndex = _activeIndex.clamp(0, next.length - 1);
+        _applyProfile(_profiles[_activeIndex]);
+        _resetDetectionForNewPi();
+      } else {
+        // A lower-index deletion shifts the active profile down by one.
+        if (i < _activeIndex) _activeIndex -= 1;
+        _activeIndex = _activeIndex.clamp(0, next.length - 1);
+      }
     });
     _persistSettings();
   }
