@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/alerts.dart';
+import 'package:evcc_updater/src/authenticator.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
@@ -25,6 +26,27 @@ class _FakeFilePicker implements FilePickerService {
   final PickedFile? file;
   @override
   Future<PickedFile?> pick() async => file;
+}
+
+/// Picker that runs [duringPick] before returning — used to simulate the system
+/// picker backgrounding the app (paused → resumed) while a pick is in flight.
+class _BackgroundingPicker implements FilePickerService {
+  _BackgroundingPicker(this.file, this.duringPick);
+  final PickedFile? file;
+  final Future<void> Function() duringPick;
+  @override
+  Future<PickedFile?> pick() async {
+    await duringPick();
+    return file;
+  }
+}
+
+/// Authenticator that always succeeds — the app auto-unlocks on load.
+class _AllowAuth implements Authenticator {
+  @override
+  Future<bool> canAuthenticate() async => true;
+  @override
+  Future<bool> authenticate(String reason) async => true;
 }
 
 class _FakeEntitlement implements EntitlementService {
@@ -618,6 +640,51 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(u.uploadedTo, ['/home/config.yaml']); // written into the browsed dir
+  });
+
+  testWidgets('Dateien tab: upload does not trip the app lock', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
+    // The picker backgrounds the app (paused → resumed) while picking; with
+    // app-lock ON, that must NOT drop the user back to the lock screen.
+    final picker = _BackgroundingPicker(
+      (name: 'a.txt', bytes: Uint8List.fromList([1])),
+      () async {
+        // Valid transitions only (the framework asserts them); `hidden` is one
+        // of the states the lock triggers on.
+        for (final s in const [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden, // → lock check happens here
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(s);
+        }
+      },
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'S', host: '1.1.1.1', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          lockEnabled: true,
+        )),
+        updater: u,
+        updateChecker: _noUpdateChecker,
+        authenticator: _AllowAuth(),
+        filePicker: picker,
+      ),
+    ));
+    await tester.pumpAndSettle(); // loads + auto-unlocks
+    expect(find.text('Entsperren'), findsNothing); // unlocked to start
+
+    await goDateien(tester);
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(u.uploadedTo, ['/home/a.txt']); // upload happened
+    expect(find.text('Entsperren'), findsNothing); // and it did NOT re-lock
   });
 
   testWidgets('Dateien tab: free user sees the Pro placeholder', (tester) async {

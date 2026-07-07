@@ -188,6 +188,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _locked = false;
   bool _booting = true; // true until settings load, so the shell isn't shown
   bool _unlocking = false;
+  // Suppress the auto-lock for an in-app modal that backgrounds us (e.g. the
+  // system file picker) — otherwise you return from picking a file to the lock
+  // screen. Like _unlocking (which covers the biometric prompt).
+  bool _suppressLock = false;
   String _themeMode = 'system';
   String _channel = 'stable';
   bool _backupBeforeUpdate = true;
@@ -263,7 +267,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     // and not while an unlock is already in progress.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      if (_lockEnabled && !_unlocking && mounted) {
+      if (_lockEnabled && !_unlocking && !_suppressLock && mounted) {
         // Dismiss any open sheet/dialog (API status, history, settings, find-Pi)
         // so it can't stay readable above the lock screen on resume.
         Navigator.of(context, rootNavigator: true)
@@ -1411,11 +1415,16 @@ class _UpdaterPageState extends State<UpdaterPage>
       return false;
     }
     PickedFile? picked;
+    // The system picker backgrounds the app — hold off the auto-lock so the user
+    // doesn't return from picking to the lock screen.
+    _suppressLock = true;
     try {
       picked = await _filePicker.pick();
     } catch (_) {
       if (mounted) _snack('Dateiauswahl fehlgeschlagen.');
       return false;
+    } finally {
+      _suppressLock = false;
     }
     if (picked == null || !mounted) return false; // cancelled
     if (picked.bytes.length > kFileUploadLimit) {
