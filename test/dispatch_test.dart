@@ -191,6 +191,17 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       autoStatus;
 
+  String serviceLogs = '-- journal --\n';
+
+  @override
+  Future<String> fetchServiceLogs({
+    required SshConfig config,
+    required String id,
+    required String detail,
+    required void Function(String line) onLog,
+  }) async =>
+      serviceLogs;
+
   String? alertsTopic;
   bool alertsDisabled = false;
   int testAlertCalls = 0;
@@ -789,6 +800,40 @@ void main() {
 
     expect(find.text('Pi-Tool Pro'), findsOneWidget);
     expect(u.enabledOnCalendar, isNull);
+  });
+
+  testWidgets('guided setup installs the selected monitoring stack in one flow',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater(); // default: evcc + system → the stack is missing
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Dienst hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Energie-Monitoring-Stack'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Installieren'));
+    await tester.pumpAndSettle();
+
+    // All three stack parts installed in sequence.
+    expect(u.aptInstalls, containsAll(['influxdb', 'grafana', 'mosquitto']));
+  });
+
+  testWidgets('service ⋮ → Logs anzeigen shows the log sheet', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..serviceLogs = 'evcc[1]: charging started';
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Logs anzeigen'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('charging started'), findsOneWidget);
   });
 
   testWidgets('Automatik → Health-Alerts: enable installs with the topic',

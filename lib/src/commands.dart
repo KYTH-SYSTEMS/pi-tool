@@ -583,6 +583,42 @@ int? parseCleanupFreed(String output) {
 /// stable parsing, and distinct from the plain `bash -s` used elsewhere.
 const String detectShellCommand = 'LC_ALL=C bash -s';
 
+/// The right "show recent logs" command for a detected service: `docker logs`
+/// for a container (with a sudo fallback), the whole journal for the System
+/// card, or `journalctl -u <unit>` otherwise. Sudo is piped (journals + the
+/// docker fallback usually need root). [id] is the service id, [detail] its
+/// detected detail line (`Docker · NAME` for containers).
+({String command, bool sudo}) buildServiceLogsCommand({
+  required String id,
+  required String detail,
+}) {
+  const dockerPrefix = 'Docker · ';
+  if (detail.startsWith(dockerPrefix)) {
+    final name = detail.substring(dockerPrefix.length).trim();
+    final q = shSingleQuote(name);
+    return (
+      command: 'docker logs --tail 200 $q 2>&1 || '
+          "sudo -S -p '' docker logs --tail 200 $q 2>&1",
+      sudo: true,
+    );
+  }
+  if (id == 'system') {
+    return (
+      command: "sudo -S -p '' journalctl -n 200 --no-pager 2>&1",
+      sudo: true,
+    );
+  }
+  const units = {
+    'pihole': 'pihole-FTL',
+    'grafana': 'grafana-server',
+  };
+  final unit = units[id] ?? id; // evcc, influxdb, mosquitto use their id
+  return (
+    command: "sudo -S -p '' journalctl -u $unit -n 200 --no-pager 2>&1",
+    sudo: true,
+  );
+}
+
 const String _detectMarker = '@@PT@@';
 
 /// Builds ONE shell script that runs every read-only detection probe, each

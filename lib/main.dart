@@ -1208,6 +1208,56 @@ class _UpdaterPageState extends State<UpdaterPage>
     return '${(bytes / (1000 * 1000)).round()} MB';
   }
 
+  // ---- service logs (journalctl / docker logs) ----
+
+  Future<void> _showServiceLogs(ServiceStatus s) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _showServiceLogs(s);
+    String? logs;
+    await _guard(() async {
+      logs = await _updater.fetchServiceLogs(
+          config: config, id: s.id, detail: s.detail, onLog: _appendLog);
+    }, backgroundMessage: 'Logs werden geladen …');
+    if (!mounted || logs == null) return;
+    await _showLogSheet(s.name, logs!);
+  }
+
+  Future<void> _showLogSheet(String name, String logs) {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SizedBox(
+        height: MediaQuery.of(ctx).size.height * 0.78,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Logs: $name',
+                    style: Theme.of(ctx).textTheme.titleMedium),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  logs.trim().isEmpty ? 'Keine Ausgabe.' : logs,
+                  style:
+                      const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ---- Health-Alerts (on-Pi systemd timer → ntfy push) ----
 
   Future<void> _configureAlerts() async {
@@ -2346,6 +2396,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             onOpenWeb: _openEvccUi,
             actions: s.installed
                 ? [
+                    _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
                     if (upToDate)
                       _CardAction(
                           'Trotzdem aktualisieren', () => _run(dryRun: false)),
@@ -2371,6 +2422,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             onPrimary: _updatePihole,
             onOpenWeb: _openPiholeAdmin,
             actions: [
+              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
               if (upToDate) _CardAction('Trotzdem aktualisieren', _updatePihole),
               _CardAction('Sichern (Teleporter)',
                   () => _proGate(_backupPihole), pro: true),
@@ -2390,6 +2442,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             onPrimary: _updateHomeAssistant,
             onOpenWeb: _openHomeAssistant,
             actions: [
+              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
               _CardAction('Sichern (/config)',
                   () => _proGate(_backupHomeAssistant), pro: true),
               _CardAction('Backups verwalten',
@@ -2405,6 +2458,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             primaryLabel: 'Updates installieren',
             onPrimary: _upgradeSystem,
             actions: [
+              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
               if (upToDate)
                 _CardAction('Trotzdem aktualisieren', _upgradeSystem),
               _CardAction('Aufräumen (Speicher freigeben)',
@@ -2425,6 +2479,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             onOpenWeb:
                 s.webPort != null ? () => _openServiceWeb(s.webPort!) : null,
             actions: [
+              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
               if (upToDate)
                 _CardAction(
                     'Trotzdem aktualisieren', () => _updateAptService(s)),
@@ -2444,6 +2499,23 @@ class _UpdaterPageState extends State<UpdaterPage>
         subtitle:
             svc.webPort != null ? 'Web-Oberfläche auf Port ${svc.webPort}' : null,
       ));
+    }
+    // Guided one-flow setup of the evcc monitoring stack, offered at the top of
+    // the picker when at least two of its parts are still missing.
+    final stackMissing = knownInstallableServices
+        .where((s) =>
+            _stackIds.contains(s.id) && !present.contains(s.id))
+        .toList();
+    if (stackMissing.length >= 2) {
+      addable.insert(
+        0,
+        _AddableService(
+          'Energie-Monitoring-Stack',
+          Icons.auto_awesome,
+          _guidedSetup,
+          subtitle: 'InfluxDB + Grafana + Mosquitto in einem Schritt',
+        ),
+      );
     }
     if (addable.isNotEmpty) {
       cards.add(Padding(
@@ -2503,6 +2575,117 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Installs an on-demand apt service (Grafana, InfluxDB, Mosquitto), then
   /// re-detects so the new card appears.
+  // The evcc "monitoring stack": time-series DB + dashboards + MQTT broker.
+  static const _stackIds = ['influxdb', 'grafana', 'mosquitto'];
+
+  /// Guided one-flow install of the (still-missing) monitoring-stack services.
+  Future<void> _guidedSetup() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    final present = _services.where((s) => s.installed).map((s) => s.id).toSet();
+    final stack = knownInstallableServices
+        .where((s) => _stackIds.contains(s.id) && !present.contains(s.id))
+        .toList();
+    if (stack.isEmpty) {
+      _snack('Der Monitoring-Stack ist bereits installiert.');
+      return;
+    }
+    final chosen = await _showGuidedSetupSheet(stack);
+    if (chosen == null || chosen.isEmpty || !mounted) return;
+    _lastAction = _guidedSetup;
+    _beginBusy();
+    await _guard(() async {
+      for (final svc in chosen) {
+        _appendLog('== Installiere ${svc.name} ==');
+        await _updater.installAptService(
+            config: config, service: svc, onLog: _appendLog);
+      }
+      if (!mounted) return;
+      final names = chosen.map((s) => s.name).join(', ');
+      setState(() {
+        _statusMessage = 'Monitoring-Stack installiert: $names.';
+        _statusOk = true;
+      });
+      _addHistory('Energie-Stack installiert: $names.');
+      await _refreshServices(config);
+    }, backgroundMessage: 'Monitoring-Stack wird installiert …');
+  }
+
+  String _stackRole(String id) {
+    switch (id) {
+      case 'influxdb':
+        return 'Zeitreihen-Datenbank (speichert die Messwerte)';
+      case 'grafana':
+        return 'Dashboards (visualisiert die Daten)';
+      case 'mosquitto':
+        return 'MQTT-Broker (Datenverteilung)';
+      default:
+        return '';
+    }
+  }
+
+  Future<List<AptService>?> _showGuidedSetupSheet(List<AptService> services) {
+    final selected = services.map((s) => s.id).toSet();
+    return showModalBottomSheet<List<AptService>>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Energie-Monitoring-Stack',
+                    style: Theme.of(ctx).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                const Text('Installiert die Bausteine, um deine '
+                    'evcc-Energiedaten zu speichern und als Dashboard zu sehen '
+                    '— in einem Schritt.'),
+                const SizedBox(height: 12),
+                for (final svc in services)
+                  CheckboxListTile(
+                    value: selected.contains(svc.id),
+                    onChanged: (v) => setSheet(() =>
+                        v == true ? selected.add(svc.id) : selected.remove(svc.id)),
+                    title: Text(svc.name),
+                    subtitle: Text(_stackRole(svc.id)),
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    dense: true,
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  'Danach in evcc InfluxDB + MQTT eintragen (siehe evcc-Doku). '
+                  'Experimentell — installiert aus den offiziellen apt-Quellen.',
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.download),
+                    label: const Text('Installieren'),
+                    onPressed: selected.isEmpty
+                        ? null
+                        : () => Navigator.pop(
+                            ctx,
+                            services
+                                .where((s) => selected.contains(s.id))
+                                .toList()),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _installAptService(AptService service) async {
     if (_busy) return;
     final config = _prepare();

@@ -810,6 +810,29 @@ class EvccUpdater {
         },
       );
 
+  /// Fetches the recent logs for a service (journalctl or docker logs, chosen
+  /// by [buildServiceLogsCommand]). Sudo is piped when needed.
+  Future<String> fetchServiceLogs({
+    required SshConfig config,
+    required String id,
+    required String detail,
+    required void Function(String line) onLog,
+  }) {
+    final spec = buildServiceLogsCommand(id: id, detail: detail);
+    return _withConnection<String>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Logs: $id …');
+        final r = await runner.run(
+          spec.command,
+          stdin: spec.sudo ? '${config.password}\n' : null,
+        );
+        return r.stdout.isNotEmpty ? r.stdout : r.stderr;
+      },
+    );
+  }
+
   /// Installs the on-Pi health-check timer that pushes ntfy alerts. Root.
   Future<void> enableAlerts({
     required SshConfig config,

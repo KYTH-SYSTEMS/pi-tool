@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.27.0': [
+    'Logs ansehen: jede Dienst-Karte hat jetzt „Logs anzeigen" (journald bzw. '
+        'docker logs) — praktisch zur Fehlersuche.',
+    'Geführtes Setup: „Energie-Monitoring-Stack" (InfluxDB + Grafana + '
+        'Mosquitto) in einem Schritt installieren, oben im „Dienst hinzufügen".',
+  ],
   '0.26.0': [
     'Health-Alerts: der Pi meldet sich per Push (über ntfy), wenn die Platte '
         'volllÃ¤uft, ein Dienst ausfällt, es zu heiß wird oder Updates anstehen '

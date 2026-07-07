@@ -907,6 +907,32 @@ void main() {
     });
   });
 
+  group('EvccUpdater.fetchServiceLogs', () {
+    test('runs journalctl for an apt service and pipes the password', () async {
+      final spec = buildServiceLogsCommand(id: 'evcc', detail: 'apt · aktiv');
+      final runner = FakeSshRunner({
+        spec.command: [_r('-- Logs begin --\nevcc[123]: started\n')]
+      });
+      final logs = await _updaterWith(runner).fetchServiceLogs(
+          config: _config, id: 'evcc', detail: 'apt · aktiv', onLog: (_) {});
+      expect(logs, contains('started'));
+      expect(runner.stdinByCommand[spec.command], 'sekret\n');
+    });
+
+    test('docker service reads docker logs (no password unless the fallback)',
+        () async {
+      final spec = buildServiceLogsCommand(
+          id: 'homeassistant', detail: 'Docker · homeassistant');
+      final runner = FakeSshRunner({spec.command: [_r('HA up on :8123\n')]});
+      final logs = await _updaterWith(runner).fetchServiceLogs(
+          config: _config,
+          id: 'homeassistant',
+          detail: 'Docker · homeassistant',
+          onLog: (_) {});
+      expect(logs, contains(':8123'));
+    });
+  });
+
   group('EvccUpdater health-alerts', () {
     test('enableAlerts installs the timer with the ntfy destination', () async {
       final runner = FakeSshRunner({

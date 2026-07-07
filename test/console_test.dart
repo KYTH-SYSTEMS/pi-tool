@@ -72,4 +72,36 @@ void main() {
       expect(sec['NOPE'], isNull);
     });
   });
+
+  group('buildServiceLogsCommand', () {
+    test('apt/systemd service → journalctl -u <unit>', () {
+      final r = buildServiceLogsCommand(id: 'evcc', detail: 'apt · aktiv');
+      expect(r.command, contains('journalctl -u evcc'));
+      expect(r.sudo, isTrue);
+    });
+    test('maps pihole → pihole-FTL and grafana → grafana-server', () {
+      expect(buildServiceLogsCommand(id: 'pihole', detail: 'apt').command,
+          contains('journalctl -u pihole-FTL'));
+      expect(buildServiceLogsCommand(id: 'grafana', detail: 'apt').command,
+          contains('journalctl -u grafana-server'));
+    });
+    test('System card → the whole journal', () {
+      final r = buildServiceLogsCommand(id: 'system', detail: '');
+      expect(r.command, contains('journalctl -n 200'));
+      expect(r.command, isNot(contains('-u ')));
+    });
+    test('Docker service → docker logs <name> with a sudo fallback', () {
+      final r = buildServiceLogsCommand(
+          id: 'homeassistant', detail: 'Docker · homeassistant');
+      expect(r.command, contains("docker logs --tail 200 'homeassistant'"));
+      expect(r.command, contains('|| '));
+      expect(r.sudo, isTrue);
+    });
+    test('quotes a hostile container name', () {
+      final r =
+          buildServiceLogsCommand(id: 'evcc', detail: "Docker · x';reboot;'");
+      expect(r.command, contains(r"'\''"));
+      expect(r.command, isNot(contains("logs --tail 200 x';reboot")));
+    });
+  });
 }
