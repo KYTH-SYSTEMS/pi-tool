@@ -93,6 +93,10 @@ class AppConfig {
   /// Recent console commands (newest first, capped by the UI).
   final List<String> consoleHistory;
 
+  /// Health-Alerts ntfy destination (prefilled in the config sheet).
+  final String alertsNtfyServer;
+  final String alertsNtfyTopic;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -107,6 +111,8 @@ class AppConfig {
     this.disclaimerAccepted = false,
     this.lastSeenVersion = '',
     this.consoleHistory = const [],
+    this.alertsNtfyServer = 'https://ntfy.sh',
+    this.alertsNtfyTopic = '',
   });
 
   static const initial =
@@ -132,6 +138,8 @@ class AppConfig {
     bool? disclaimerAccepted,
     String? lastSeenVersion,
     List<String>? consoleHistory,
+    String? alertsNtfyServer,
+    String? alertsNtfyTopic,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -147,6 +155,8 @@ class AppConfig {
         disclaimerAccepted: disclaimerAccepted ?? this.disclaimerAccepted,
         lastSeenVersion: lastSeenVersion ?? this.lastSeenVersion,
         consoleHistory: consoleHistory ?? this.consoleHistory,
+        alertsNtfyServer: alertsNtfyServer ?? this.alertsNtfyServer,
+        alertsNtfyTopic: alertsNtfyTopic ?? this.alertsNtfyTopic,
       );
 
   Map<String, dynamic> toJson() => {
@@ -163,6 +173,8 @@ class AppConfig {
         'disclaimerAccepted': disclaimerAccepted,
         'lastSeenVersion': lastSeenVersion,
         'consoleHistory': consoleHistory,
+        'alertsNtfyServer': alertsNtfyServer,
+        'alertsNtfyTopic': alertsNtfyTopic,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -190,6 +202,9 @@ class AppConfig {
       consoleHistory: (j['consoleHistory'] is List)
           ? (j['consoleHistory'] as List).map((e) => e.toString()).toList()
           : const [],
+      alertsNtfyServer:
+          (j['alertsNtfyServer'] ?? 'https://ntfy.sh').toString(),
+      alertsNtfyTopic: (j['alertsNtfyTopic'] ?? '').toString(),
     );
   }
 }

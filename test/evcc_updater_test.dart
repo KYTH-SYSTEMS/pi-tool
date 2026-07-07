@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:evcc_updater/src/alerts.dart';
 import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
@@ -903,6 +904,54 @@ void main() {
           .readAutoUpdateStatus(config: _config, onLog: (_) {});
       expect(st.enabled, isTrue);
       expect(st.lastResult, contains('ok'));
+    });
+  });
+
+  group('EvccUpdater health-alerts', () {
+    test('enableAlerts installs the timer with the ntfy destination', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('ALERTS_INSTALLED\n')]
+      });
+      await _updaterWith(runner).enableAlerts(
+          config: _config,
+          ntfyServer: 'https://ntfy.sh',
+          ntfyTopic: 'my-pi-42',
+          onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, startsWith('sekret\n'));
+      expect(stdin, contains("TOPIC='my-pi-42'"));
+      expect(stdin, contains('enable --now pi-tool-alerts.timer'));
+    });
+
+    test('disableAlerts removes the timer', () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('ALERTS_REMOVED\n')]});
+      await _updaterWith(runner)
+          .disableAlerts(config: _config, onLog: (_) {});
+      expect(runner.stdinByCommand[installShellCommand],
+          contains('disable --now pi-tool-alerts.timer'));
+    });
+
+    test('sendTestAlert curls the ntfy destination', () async {
+      final cmd = buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42');
+      final runner = FakeSshRunner({cmd: [_r('')]});
+      await _updaterWith(runner).sendTestAlert(
+          config: _config,
+          ntfyServer: 'https://ntfy.sh',
+          ntfyTopic: 'my-pi-42',
+          onLog: (_) {});
+      expect(runner.commandsRun, contains(cmd));
+    });
+
+    test('readAlertsStatus parses the timer state', () async {
+      final runner = FakeSshRunner({
+        alertsStatusCommand: [_r('ENABLED enabled\nLAST 2026-07-07 12:00 checked\n')]
+      });
+      final st = await _updaterWith(runner)
+          .readAlertsStatus(config: _config, onLog: (_) {});
+      expect(st.enabled, isTrue);
+      expect(st.lastCheck, contains('12:00'));
     });
   });
 

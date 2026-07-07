@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'src/authenticator.dart';
+import 'src/alerts.dart';
 import 'src/auto_update.dart';
 import 'src/commands.dart';
 import 'src/entitlement.dart';
@@ -183,6 +184,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _lastSeenVersion = ''; // for the "What's New" popup after an update
   bool _whatsNewChecked = false; // one-shot guard for the popup
   List<String> _consoleHistory = []; // recent console commands, newest first
+  String _alertsServer = 'https://ntfy.sh'; // Health-Alerts ntfy destination
+  String _alertsTopic = '';
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
   int _tab = 0; // 0 = Dienste, 1 = Automatik, 2 = Terminal
   bool _testing = false; // a "Verbindung herstellen" run is in flight
@@ -275,6 +278,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       _disclaimerAccepted = cfg.disclaimerAccepted;
       _lastSeenVersion = cfg.lastSeenVersion;
       _consoleHistory = List.of(cfg.consoleHistory);
+      _alertsServer = cfg.alertsNtfyServer;
+      _alertsTopic = cfg.alertsNtfyTopic;
       _applyProfile(cfg.active);
       if (_lockEnabled) _locked = true;
       _booting = false; // settings + lock state resolved → reveal the UI
@@ -381,6 +386,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       disclaimerAccepted: _disclaimerAccepted,
       lastSeenVersion: _lastSeenVersion,
       consoleHistory: _consoleHistory,
+      alertsNtfyServer: _alertsServer,
+      alertsNtfyTopic: _alertsTopic,
     );
   }
 
@@ -1199,6 +1206,187 @@ class _UpdaterPageState extends State<UpdaterPage>
       return '${(bytes / (1000 * 1000 * 1000)).toStringAsFixed(1)} GB';
     }
     return '${(bytes / (1000 * 1000)).round()} MB';
+  }
+
+  // ---- Health-Alerts (on-Pi systemd timer → ntfy push) ----
+
+  Future<void> _configureAlerts() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _configureAlerts;
+    AlertsStatus? status;
+    await _guard(() async {
+      status = await _updater.readAlertsStatus(config: config, onLog: _appendLog);
+    });
+    if (!mounted || status == null) return;
+    final choice = await _showAlertsSheet(status!, config);
+    if (choice == null || !mounted) return;
+    _beginBusy();
+    await _guard(() async {
+      if (choice.enable) {
+        setState(() {
+          _alertsServer = choice.server;
+          _alertsTopic = choice.topic;
+        });
+        _persistSettings();
+        await _updater.enableAlerts(
+            config: config,
+            ntfyServer: choice.server,
+            ntfyTopic: choice.topic,
+            onLog: _appendLog);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Health-Alerts aktiv (ntfy: ${choice.topic}).';
+          _statusOk = true;
+        });
+        _addHistory('Health-Alerts eingerichtet (ntfy).');
+      } else {
+        await _updater.disableAlerts(config: config, onLog: _appendLog);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Health-Alerts deaktiviert.';
+          _statusOk = true;
+        });
+        _addHistory('Health-Alerts deaktiviert.');
+      }
+    },
+        backgroundMessage: choice.enable
+            ? 'Richte Health-Alerts ein …'
+            : 'Deaktiviere Health-Alerts …');
+  }
+
+  /// Fires a one-off test push (best-effort) so the user can confirm ntfy works.
+  Future<void> _sendTestAlert(
+      SshConfig config, String server, String topic) async {
+    try {
+      await _updater.sendTestAlert(
+          config: config,
+          ntfyServer: server,
+          ntfyTopic: topic,
+          onLog: _appendLog);
+      _snack('Test-Benachrichtigung gesendet — prüf dein ntfy.');
+    } catch (_) {
+      _snack('Test fehlgeschlagen (Details im Terminal-Log).');
+    }
+  }
+
+  Future<({bool enable, String server, String topic})?> _showAlertsSheet(
+      AlertsStatus status, SshConfig config) {
+    final serverCtrl = TextEditingController(text: _alertsServer);
+    final topicCtrl = TextEditingController(text: _alertsTopic);
+    return showModalBottomSheet<({bool enable, String server, String topic})>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 4,
+            bottom: 20 + MediaQuery.of(ctx).viewInsets.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Health-Alerts', style: Theme.of(ctx).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            const Text('Der Pi meldet sich per Push (via ntfy), wenn die Platte '
+                'volllÃ¤uft, ein Dienst ausfällt, es zu heiß wird oder Updates '
+                'anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.'),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: () => _openUrl('https://ntfy.sh'),
+              child: Text('So funktioniert ntfy (App installieren, Thema '
+                  'abonnieren) →',
+                  style: TextStyle(
+                      color: Theme.of(ctx).colorScheme.primary, fontSize: 13)),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              status.enabled
+                  ? 'Aktuell aktiv · letzte Prüfung: ${status.lastCheck ?? '—'}'
+                  : 'Aktuell aus.',
+              style: TextStyle(
+                  color: status.enabled ? kGreen : null,
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: topicCtrl,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'ntfy-Thema (Topic)',
+                hintText: 'z. B. mein-pi-a7Xk',
+                helperText: 'Frei wählbar, aber schwer erratbar wählen.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: serverCtrl,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'ntfy-Server',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () {
+                      final topic = topicCtrl.text.trim();
+                      if (topic.isEmpty) {
+                        _snack('Bitte ein ntfy-Thema eingeben.');
+                        return;
+                      }
+                      Navigator.pop(ctx, (
+                        enable: true,
+                        server: serverCtrl.text.trim().isEmpty
+                            ? 'https://ntfy.sh'
+                            : serverCtrl.text.trim(),
+                        topic: topic
+                      ));
+                    },
+                    child: Text(status.enabled ? 'Aktualisieren' : 'Einschalten'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: () {
+                    final topic = topicCtrl.text.trim();
+                    if (topic.isEmpty) {
+                      _snack('Bitte ein ntfy-Thema eingeben.');
+                      return;
+                    }
+                    _sendTestAlert(
+                        config,
+                        serverCtrl.text.trim().isEmpty
+                            ? 'https://ntfy.sh'
+                            : serverCtrl.text.trim(),
+                        topic);
+                  },
+                  child: const Text('Test'),
+                ),
+              ],
+            ),
+            if (status.enabled)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx,
+                      (enable: false, server: '', topic: '')),
+                  child: const Text('Ausschalten'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ---- scheduled automatic updates (on-Pi systemd timer) ----
@@ -2718,8 +2906,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           _AutomationTile(
             icon: Icons.notifications_active_outlined,
             title: 'Health-Alerts',
-            subtitle: 'Bald: Push bei voller Platte, totem Dienst, hoher Temp …',
-            enabled: false,
+            subtitle: 'Push bei voller Platte, totem Dienst, Hitze, Updates '
+                '(via ntfy)',
+            locked: !_isPro,
+            onTap: () => _proGate(_configureAlerts),
           ),
         ],
       );

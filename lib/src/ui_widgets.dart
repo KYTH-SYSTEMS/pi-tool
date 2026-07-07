@@ -223,7 +223,6 @@ class _AutomationTile extends StatelessWidget {
     required this.subtitle,
     this.onTap,
     this.locked = false,
-    this.enabled = true,
   });
 
   final IconData icon;
@@ -231,7 +230,6 @@ class _AutomationTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback? onTap;
   final bool locked;
-  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -241,15 +239,14 @@ class _AutomationTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       color: dark ? kCard : cs.surfaceContainerHighest,
       child: ListTile(
-        enabled: enabled,
-        leading: Icon(icon, color: enabled ? _themeGreen(dark) : null),
+        leading: Icon(icon, color: _themeGreen(dark)),
         title: Text(title,
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
         subtitle: Text(subtitle),
         trailing: locked
             ? Icon(Icons.lock_outline, size: 18, color: cs.onSurfaceVariant)
-            : (enabled ? const Icon(Icons.chevron_right) : null),
-        onTap: enabled ? onTap : null,
+            : const Icon(Icons.chevron_right),
+        onTap: onTap,
       ),
     );
   }

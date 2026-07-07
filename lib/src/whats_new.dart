@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.26.0': [
+    'Health-Alerts: der Pi meldet sich per Push (über ntfy), wenn die Platte '
+        'volllÃ¤uft, ein Dienst ausfällt, es zu heiß wird oder Updates anstehen '
+        '— alle 30 Min., kostenlos und ohne Konto. Automatik-Tab → '
+        '„Health-Alerts".',
+  ],
   '0.25.0': [
     'Neue Struktur: unten drei Tabs — „Dienste" (deine Karten), „Automatik" '
         '(automatische Updates, bald Health-Alerts) und „Terminal" (die '

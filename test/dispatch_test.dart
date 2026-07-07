@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:evcc_updater/main.dart';
+import 'package:evcc_updater/src/alerts.dart';
 import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/entitlement.dart';
@@ -189,6 +190,43 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       autoStatus;
+
+  String? alertsTopic;
+  bool alertsDisabled = false;
+  int testAlertCalls = 0;
+  AlertsStatus alertsStatus = (enabled: false, lastCheck: null);
+
+  @override
+  Future<void> enableAlerts({
+    required SshConfig config,
+    required String ntfyServer,
+    required String ntfyTopic,
+    required void Function(String line) onLog,
+  }) async =>
+      alertsTopic = ntfyTopic;
+
+  @override
+  Future<void> disableAlerts({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      alertsDisabled = true;
+
+  @override
+  Future<AlertsStatus> readAlertsStatus({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      alertsStatus;
+
+  @override
+  Future<void> sendTestAlert({
+    required SshConfig config,
+    required String ntfyServer,
+    required String ntfyTopic,
+    required void Function(String line) onLog,
+  }) async =>
+      testAlertCalls++;
 
   final consoleCommands = <String>[];
 
@@ -751,6 +789,23 @@ void main() {
 
     expect(find.text('Pi-Tool Pro'), findsOneWidget);
     expect(u.enabledOnCalendar, isNull);
+  });
+
+  testWidgets('Automatik → Health-Alerts: enable installs with the topic',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'mein-pi-a7Xk');
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    expect(u.alertsTopic, 'mein-pi-a7Xk');
   });
 
   testWidgets('System ⋮ → Aufräumen frees space after a confirm',

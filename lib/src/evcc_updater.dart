@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import 'alerts.dart';
 import 'auto_update.dart';
 import 'commands.dart';
 import 'dartssh2_runner.dart';
@@ -806,6 +807,74 @@ class EvccUpdater {
               script: buildAutoUpdateRemoveScript(),
               successMarker: 'AUTOUPDATE_REMOVED',
               failMsg: 'Deaktivieren der automatischen Updates fehlgeschlagen');
+        },
+      );
+
+  /// Installs the on-Pi health-check timer that pushes ntfy alerts. Root.
+  Future<void> enableAlerts({
+    required SshConfig config,
+    required String ntfyServer,
+    required String ntfyTopic,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Richte Health-Alerts ein …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildAlertsInstallScript(
+                  ntfyServer: ntfyServer, ntfyTopic: ntfyTopic),
+              successMarker: 'ALERTS_INSTALLED',
+              failMsg: 'Einrichten der Health-Alerts fehlgeschlagen');
+        },
+      );
+
+  /// Removes the health-alerts timer. Root.
+  Future<void> disableAlerts({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Deaktiviere Health-Alerts …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildAlertsRemoveScript(),
+              successMarker: 'ALERTS_REMOVED',
+              failMsg: 'Deaktivieren der Health-Alerts fehlgeschlagen');
+        },
+      );
+
+  /// Reads whether the alerts timer is active + last check. No sudo.
+  Future<AlertsStatus> readAlertsStatus({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<AlertsStatus>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final r = await runner.run(alertsStatusCommand);
+          return parseAlertsStatus(r.stdout);
+        },
+      );
+
+  /// Sends a one-off test push to verify the ntfy destination. No sudo.
+  Future<void> sendTestAlert({
+    required SshConfig config,
+    required String ntfyServer,
+    required String ntfyTopic,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Sende Test-Benachrichtigung …');
+          await runner.run(buildTestAlertCommand(
+              ntfyServer: ntfyServer, ntfyTopic: ntfyTopic));
         },
       );
 
