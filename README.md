@@ -257,6 +257,10 @@ flutter analyze
 flutter test
 ```
 
+> 📐 **Vollständige Architektur-Referenz:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> (Schichten, Seams, Sicherheits-Invarianten, „neuen Dienst hinzufügen").
+> Arbeitsregeln + Pflege-Pflicht: [`CLAUDE.md`](CLAUDE.md).
+
 Die Architektur trennt **testbare reine Logik** von I/O:
 
 - `lib/src/commands.dart` — Kommando-Bau + Docker-/Install-Erkennung
