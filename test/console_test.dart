@@ -73,6 +73,31 @@ void main() {
     });
   });
 
+  group('config read/write', () {
+    test('read cats the path as root, shell-quoted', () {
+      expect(buildConfigReadCommand('/etc/evcc.yaml'),
+          "sudo -S -p '' cat '/etc/evcc.yaml'");
+      final bad = buildConfigReadCommand("/etc/x';reboot;'");
+      expect(bad, contains(r"'\''"));
+    });
+
+    test('write backs up then base64-decodes the new content into place', () {
+      final s = buildConfigWriteScript(
+          path: '/etc/evcc.yaml', base64Content: 'aGkK');
+      expect(s, contains('/var/backups/pi-tool')); // backup first
+      expect(s, contains("cp '/etc/evcc.yaml'"));
+      expect(s, contains("printf '%s' 'aGkK' | base64 -d > '/etc/evcc.yaml'"));
+      expect(s, contains('CONFIG_SAVED'));
+    });
+
+    test('a hostile path cannot break out of the write script', () {
+      final s = buildConfigWriteScript(
+          path: "/etc/x';reboot;'", base64Content: 'aGkK');
+      expect(s, contains(r"'\''"));
+      expect(s, isNot(contains("> /etc/x';reboot")));
+    });
+  });
+
   group('buildServiceLogsCommand', () {
     test('apt/systemd service → journalctl -u <unit>', () {
       final r = buildServiceLogsCommand(id: 'evcc', detail: 'apt · aktiv');

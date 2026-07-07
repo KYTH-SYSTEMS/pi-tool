@@ -7,6 +7,7 @@ import 'package:evcc_updater/src/alerts.dart';
 import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
+import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
@@ -904,6 +905,74 @@ void main() {
           .readAutoUpdateStatus(config: _config, onLog: (_) {});
       expect(st.enabled, isTrue);
       expect(st.lastResult, contains('ok'));
+    });
+  });
+
+  group('EvccUpdater file browser', () {
+    test('listDir lists a directory as root (password piped)', () async {
+      final cmd = buildListDirCommand('/home/pi');
+      final runner = FakeSshRunner({cmd: [_r('backups/\nnotes.txt\n')]});
+      final e = await _updaterWith(runner)
+          .listDir(config: _config, path: '/home/pi', onLog: (_) {});
+      expect(e.map((x) => x.name).toList(), ['backups', 'notes.txt']);
+      expect(runner.stdinByCommand[cmd], 'sekret\n');
+    });
+
+    test('readFileBytes base64-decodes the file content', () async {
+      final cmd = buildReadFileCommand('/etc/hostname');
+      final runner = FakeSshRunner({cmd: [_r('cGkK\n')]}); // base64('pi\n')
+      final bytes = await _updaterWith(runner)
+          .readFileBytes(config: _config, path: '/etc/hostname', onLog: (_) {});
+      expect(utf8.decode(bytes), 'pi\n');
+    });
+
+    test('readFileBytes on unreadable output is a clear failure', () async {
+      final cmd = buildReadFileCommand('/root/secret');
+      final runner =
+          FakeSshRunner({cmd: [_r('base64: /root/secret: Permission denied')]});
+      await expectLater(
+        _updaterWith(runner)
+            .readFileBytes(config: _config, path: '/root/secret', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+  });
+
+  group('EvccUpdater config edit', () {
+    test('readConfigFile cats the file as root (password piped)', () async {
+      final cmd = buildConfigReadCommand('/etc/evcc.yaml');
+      final runner = FakeSshRunner({cmd: [_r('network:\n  schema: http\n')]});
+      final text = await _updaterWith(runner)
+          .readConfigFile(config: _config, path: '/etc/evcc.yaml', onLog: (_) {});
+      expect(text, contains('schema: http'));
+      expect(runner.stdinByCommand[cmd], 'sekret\n');
+    });
+
+    test('saveConfigFile base64-transfers the content + backs up', () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('CONFIG_SAVED\n')]});
+      await _updaterWith(runner).saveConfigFile(
+          config: _config,
+          path: '/etc/evcc.yaml',
+          content: 'hallo: welt',
+          onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, startsWith('sekret\n'));
+      // 'hallo: welt' → base64
+      expect(stdin, contains('base64 -d'));
+      expect(stdin, contains('aGFsbG86IHdlbHQ='));
+    });
+
+    test('saveConfigFile fails clearly without the marker', () async {
+      final runner = FakeSshRunner({installShellCommand: [_r('boom', exitCode: 1)]});
+      await expectLater(
+        _updaterWith(runner).saveConfigFile(
+            config: _config,
+            path: '/etc/evcc.yaml',
+            content: 'x',
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
     });
   });
 

@@ -583,6 +583,31 @@ int? parseCleanupFreed(String output) {
 /// stable parsing, and distinct from the plain `bash -s` used elsewhere.
 const String detectShellCommand = 'LC_ALL=C bash -s';
 
+/// Reads a config file as root (many live under /etc, root-owned).
+String buildConfigReadCommand(String path) =>
+    "sudo -S -p '' cat ${shSingleQuote(path)}";
+
+/// Root script that backs the current [path] up (under /var/backups/pi-tool),
+/// then overwrites it with [base64Content]. Base64 sidesteps ALL shell-quoting
+/// / injection issues with arbitrary file content (b64 is only `A-Za-z0-9+/=`).
+/// Prints `CONFIG_SAVED` on success.
+String buildConfigWriteScript({
+  required String path,
+  required String base64Content,
+}) {
+  final p = shSingleQuote(path);
+  return '''
+set -e
+mkdir -p /var/backups/pi-tool
+if [ -f $p ]; then
+  cp $p "/var/backups/pi-tool/config-\$(basename $p)-\$(date +%Y%m%d-%H%M%S).bak"
+  ls -1t "/var/backups/pi-tool/config-\$(basename $p)-"* 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
+fi
+printf '%s' '$base64Content' | base64 -d > $p
+echo CONFIG_SAVED
+''';
+}
+
 /// The right "show recent logs" command for a detected service: `docker logs`
 /// for a container (with a sudo fallback), the whole journal for the System
 /// card, or `journalctl -u <unit>` otherwise. Sudo is piped (journals + the

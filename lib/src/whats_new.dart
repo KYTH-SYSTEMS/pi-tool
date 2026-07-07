@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.28.0': [
+    'Konfiguration bearbeiten: evcc.yaml direkt in der App ändern — mit '
+        'automatischer Sicherung vorher (evcc-Karte → „Konfiguration '
+        'bearbeiten").',
+    'Datei-Browser: durch die Verzeichnisse des Pi navigieren und Dateien '
+        'ansehen (Terminal-Tab → „Dateien durchsuchen").',
+  ],
   '0.27.0': [
     'Logs ansehen: jede Dienst-Karte hat jetzt „Logs anzeigen" (journald bzw. '
         'docker logs) — praktisch zur Fehlersuche.',

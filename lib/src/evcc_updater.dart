@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
 import 'alerts.dart';
 import 'auto_update.dart';
 import 'commands.dart';
+import 'files.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
 import 'parsing.dart';
@@ -809,6 +812,81 @@ class EvccUpdater {
               failMsg: 'Deaktivieren der automatischen Updates fehlgeschlagen');
         },
       );
+
+  /// Lists a remote directory (root, so any path works). No writes.
+  Future<List<DirEntry>> listDir({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<List<DirEntry>>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final r = await runner.run(buildListDirCommand(path),
+              stdin: '${config.password}\n');
+          return parseDirListing(r.stdout);
+        },
+      );
+
+  /// Reads a remote file's raw bytes (base64 over the channel).
+  Future<Uint8List> readFileBytes({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<Uint8List>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final r = await runner.run(buildReadFileCommand(path),
+              stdin: '${config.password}\n');
+          try {
+            return base64.decode(r.stdout.replaceAll(RegExp(r'\s'), ''));
+          } catch (_) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Datei konnte nicht gelesen werden (Rechte? Binärdatei?).');
+          }
+        },
+      );
+
+  /// Reads a config file (root). Returns its text (or the error text).
+  Future<String> readConfigFile({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<String>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final r = await runner.run(buildConfigReadCommand(path),
+              stdin: '${config.password}\n');
+          return r.stdout.isNotEmpty ? r.stdout : r.stderr;
+        },
+      );
+
+  /// Saves [content] to a config file (root), backing up the old one first.
+  /// Content is transferred base64-encoded, so any bytes are safe.
+  Future<void> saveConfigFile({
+    required SshConfig config,
+    required String path,
+    required String content,
+    required void Function(String line) onLog,
+  }) {
+    final b64 = base64.encode(utf8.encode(content));
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Speichere $path …');
+        await _runRootScriptExpectMarker(runner, log, config,
+            script: buildConfigWriteScript(path: path, base64Content: b64),
+            successMarker: 'CONFIG_SAVED',
+            failMsg: 'Speichern fehlgeschlagen');
+      },
+    );
+  }
 
   /// Fetches the recent logs for a service (journalctl or docker logs, chosen
   /// by [buildServiceLogsCommand]). Sudo is piped when needed.

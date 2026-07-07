@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator;
@@ -11,6 +12,7 @@ import 'src/alerts.dart';
 import 'src/auto_update.dart';
 import 'src/commands.dart';
 import 'src/entitlement.dart';
+import 'src/files.dart';
 import 'src/kyth_splash.dart';
 import 'src/whats_new.dart';
 import 'src/evcc_api.dart';
@@ -1206,6 +1208,72 @@ class _UpdaterPageState extends State<UpdaterPage>
       return '${(bytes / (1000 * 1000 * 1000)).toStringAsFixed(1)} GB';
     }
     return '${(bytes / (1000 * 1000)).round()} MB';
+  }
+
+  // ---- remote file browser (read-only) ----
+
+  Future<void> _browseFiles() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _FileBrowserPage(
+        startPath: '/home',
+        onList: (p) =>
+            _updater.listDir(config: config, path: p, onLog: _appendLog),
+        onOpenFile: (p) => _openRemoteFile(config, p),
+      ),
+    ));
+  }
+
+  Future<void> _openRemoteFile(SshConfig config, String path) async {
+    try {
+      final bytes = await _updater.readFileBytes(
+          config: config, path: path, onLog: _appendLog);
+      if (!mounted) return;
+      final text = utf8.decode(bytes, allowMalformed: true);
+      final name = path.split('/').last;
+      await _showLogSheet('Datei: $name',
+          text.length > 100000 ? '${text.substring(0, 100000)}\n…' : text);
+    } catch (_) {
+      if (mounted) _snack('Datei konnte nicht geladen werden.');
+    }
+  }
+
+  // ---- config editor (read → edit → save with backup) ----
+
+  Future<void> _editConfig(String path, String title) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _editConfig(path, title);
+    String? content;
+    await _guard(() async {
+      content =
+          await _updater.readConfigFile(config: config, path: path, onLog: _appendLog);
+    }, backgroundMessage: '$title wird geladen …');
+    if (!mounted || content == null) return;
+    final edited = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => _ConfigEditorPage(title: title, initial: content!),
+      ),
+    );
+    if (edited == null || !mounted || edited == content) return; // cancel/no-op
+    if (!await _confirm('Speichern?',
+        'Überschreibt $path auf dem Pi (eine Sicherung wird vorher angelegt).')) {
+      return;
+    }
+    _beginBusy();
+    await _guard(() async {
+      await _updater.saveConfigFile(
+          config: config, path: path, content: edited, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = '$title gespeichert (Backup angelegt).';
+        _statusOk = true;
+      });
+      _addHistory('$title bearbeitet.');
+    }, backgroundMessage: '$title wird gespeichert …');
   }
 
   // ---- service logs (journalctl / docker logs) ----
@@ -2406,9 +2474,15 @@ class _UpdaterPageState extends State<UpdaterPage>
                     _CardAction('Dienst neu starten', _restartService),
                     // Backups are made only for apt installs; restore would also
                     // `systemctl start evcc`, which has no unit on a Docker host.
-                    if (s.detail.startsWith('apt'))
+                    if (s.detail.startsWith('apt')) ...[
+                      _CardAction(
+                          'Konfiguration bearbeiten',
+                          () => _proGate(
+                              () => _editConfig('/etc/evcc.yaml', 'evcc.yaml')),
+                          pro: true),
                       _CardAction('Backup wiederherstellen',
                           () => _proGate(_restoreBackup), pro: true),
+                    ],
                   ]
                 : const [],
           ));
@@ -3147,6 +3221,15 @@ class _UpdaterPageState extends State<UpdaterPage>
             'unterstützt). Auf eigene Gefahr.',
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : () => _proGate(_browseFiles),
+            icon: Icon(_isPro ? Icons.folder_open : Icons.lock_outline,
+                size: 18),
+            label: const Text('Dateien durchsuchen'),
+            style:
+                OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
           ),
         ],
       );

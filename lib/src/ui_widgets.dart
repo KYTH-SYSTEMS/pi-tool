@@ -214,6 +214,154 @@ class _TestButton extends StatelessWidget {
   }
 }
 
+/// Read-only remote file browser: navigate directories, tap a file to preview.
+class _FileBrowserPage extends StatefulWidget {
+  const _FileBrowserPage({
+    required this.startPath,
+    required this.onList,
+    required this.onOpenFile,
+  });
+  final String startPath;
+  final Future<List<DirEntry>> Function(String path) onList;
+  final Future<void> Function(String path) onOpenFile;
+  @override
+  State<_FileBrowserPage> createState() => _FileBrowserPageState();
+}
+
+class _FileBrowserPageState extends State<_FileBrowserPage> {
+  late String _path = widget.startPath;
+  List<DirEntry>? _entries;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load(_path);
+  }
+
+  Future<void> _load(String path) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final e = await widget.onList(path);
+      if (!mounted) return;
+      setState(() {
+        _path = path;
+        _entries = e;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Verzeichnis konnte nicht geladen werden.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final atRoot = _path == '/';
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Dateien'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(28),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(_path,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            ),
+          ),
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Text(_error!))
+              : ListView(
+                  children: [
+                    if (!atRoot)
+                      ListTile(
+                        leading: const Icon(Icons.arrow_upward),
+                        title: const Text('..'),
+                        onTap: () => _load(parentRemotePath(_path)),
+                      ),
+                    for (final e in _entries ?? const <DirEntry>[])
+                      ListTile(
+                        leading: Icon(e.isDir
+                            ? Icons.folder
+                            : Icons.insert_drive_file_outlined),
+                        title: Text(e.name),
+                        onTap: e.isDir
+                            ? () => _load(joinRemotePath(_path, e.name))
+                            : () => widget.onOpenFile(
+                                joinRemotePath(_path, e.name)),
+                      ),
+                  ],
+                ),
+    );
+  }
+}
+
+/// Full-screen editor for a remote config file. Pops the edited text on save,
+/// or null when the user backs out (cancel).
+class _ConfigEditorPage extends StatefulWidget {
+  const _ConfigEditorPage({required this.title, required this.initial});
+  final String title;
+  final String initial;
+  @override
+  State<_ConfigEditorPage> createState() => _ConfigEditorPageState();
+}
+
+class _ConfigEditorPageState extends State<_ConfigEditorPage> {
+  late final TextEditingController _c =
+      TextEditingController(text: widget.initial);
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.save),
+            tooltip: 'Speichern',
+            onPressed: () => Navigator.pop(context, _c.text),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(12),
+        child: TextField(
+          controller: _c,
+          maxLines: null,
+          expands: true,
+          textAlignVertical: TextAlignVertical.top,
+          autocorrect: false,
+          enableSuggestions: false,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A tappable tile on the Automatik tab (one automation feature). Shows a lock
 /// when [locked] (Pro), or a muted "coming soon" look when not [enabled].
 class _AutomationTile extends StatelessWidget {

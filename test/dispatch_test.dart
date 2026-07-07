@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/alerts.dart';
+import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/entitlement.dart';
@@ -190,6 +193,45 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       autoStatus;
+
+  List<DirEntry> dirEntries = const [];
+  Uint8List fileBytes = Uint8List(0);
+
+  @override
+  Future<List<DirEntry>> listDir({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      dirEntries;
+
+  @override
+  Future<Uint8List> readFileBytes({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      fileBytes;
+
+  String configText = 'network:\n  schema: http\n';
+  String? savedConfig;
+
+  @override
+  Future<String> readConfigFile({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      configText;
+
+  @override
+  Future<void> saveConfigFile({
+    required SshConfig config,
+    required String path,
+    required String content,
+    required void Function(String line) onLog,
+  }) async =>
+      savedConfig = content;
 
   String serviceLogs = '-- journal --\n';
 
@@ -819,6 +861,59 @@ void main() {
 
     // All three stack parts installed in sequence.
     expect(u.aptInstalls, containsAll(['influxdb', 'grafana', 'mosquitto']));
+  });
+
+  testWidgets('evcc ⋮ → Konfiguration bearbeiten edits and saves (with backup)',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'evcc',
+            name: 'evcc',
+            installed: true,
+            version: '0.310.0',
+            active: true,
+            detail: 'apt · Dienst aktiv'),
+      ]
+      ..configText = 'network:\n  schema: http';
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Konfiguration bearbeiten'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('evcc.yaml'), findsOneWidget); // editor page opened
+    await tester.enterText(
+        find.byType(TextField).first, 'network:\n  schema: https');
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.savedConfig, contains('https'));
+  });
+
+  testWidgets('Terminal → Dateien durchsuchen lists dirs + previews a file',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'notes.txt', isDir: false)]
+      ..fileBytes = Uint8List.fromList(utf8.encode('hallo pi'));
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goTerminal(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Dateien durchsuchen'));
+    await tester.pumpAndSettle();
+    expect(find.text('notes.txt'), findsOneWidget); // listing
+
+    await tester.tap(find.text('notes.txt'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('hallo pi'), findsOneWidget); // preview
   });
 
   testWidgets('service ⋮ → Logs anzeigen shows the log sheet', (tester) async {
