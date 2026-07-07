@@ -1086,7 +1086,7 @@ class EvccUpdater {
             throw const EvccUpdateException(
               UpdateErrorKind.serviceInactive,
               'Home Assistant läuft nach der Installation nicht (siehe '
-              'Live-Log) – evtl. Port-Konflikt (8123) oder fehlende '
+              'Terminal-Log) – evtl. Port-Konflikt (8123) oder fehlende '
               'Docker-Rechte.',
             );
           }

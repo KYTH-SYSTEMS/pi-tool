@@ -190,6 +190,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _alertsTopic = '';
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
   int _tab = 0; // 0 = Dienste, 1 = Automatik, 2 = Terminal
+  String? _busyMessage; // shown in the shared running bar while _busy
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   List<ServiceStatus> _services = []; // detected services → service cards
@@ -734,7 +735,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     Future<void> Function() body, {
     String? backgroundMessage,
   }) async {
-    if (backgroundMessage != null) await _keepAlive.begin(backgroundMessage);
+    if (backgroundMessage != null) {
+      await _keepAlive.begin(backgroundMessage);
+      if (mounted) setState(() => _busyMessage = backgroundMessage);
+    }
     try {
       await body();
     } on EvccUpdateException catch (e) {
@@ -751,12 +755,17 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (!mounted) return;
       setState(() {
         // Keep the raw exception in the (redacted) log, not in the headline.
-        _statusMessage = 'Unerwarteter Fehler – Details im Live-Log.';
+        _statusMessage = 'Unerwarteter Fehler – Details im Terminal-Log.';
         _statusOk = false;
       });
     } finally {
       if (backgroundMessage != null) await _keepAlive.end();
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyMessage = null;
+        });
+      }
     }
   }
 
@@ -863,7 +872,12 @@ class _UpdaterPageState extends State<UpdaterPage>
     final config = _prepare();
     if (config == null) return;
     _lastAction = _testConnection;
-    setState(() => _testing = true);
+    // Show the running bar + Abbrechen during connect, but WITHOUT a keep-alive
+    // (connect is short); the finally in _guard clears _busyMessage.
+    setState(() {
+      _testing = true;
+      _busyMessage = 'Verbinde …';
+    });
     await _guard(() async {
       final detected = await _updater.detectServices(
         config: config,
@@ -1210,6 +1224,63 @@ class _UpdaterPageState extends State<UpdaterPage>
     return '${(bytes / (1000 * 1000)).round()} MB';
   }
 
+  // ---- shared action bars (above all tabs) ----
+
+  /// Visible on every tab while an action runs: progress + what's running + a
+  /// jump to the live log + Abbrechen — so you always see (and can stop) it.
+  Widget _runningBar(ThemeData theme) {
+    final cs = theme.colorScheme;
+    return Material(
+      color: cs.surfaceContainerHighest,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const LinearProgressIndicator(minHeight: 3),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(_busyMessage ?? 'Vorgang läuft …',
+                      style: theme.textTheme.bodyMedium,
+                      overflow: TextOverflow.ellipsis),
+                ),
+                TextButton(
+                  onPressed: () => setState(() => _tab = 2),
+                  child: const Text('Log'),
+                ),
+                const SizedBox(width: 2),
+                OutlinedButton.icon(
+                  onPressed: _cancel,
+                  icon: const Icon(Icons.close, size: 18),
+                  label: const Text('Abbrechen'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: cs.error,
+                    side: BorderSide(color: cs.error.withValues(alpha: 0.55)),
+                    visualDensity: VisualDensity.compact,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Host-key-changed recovery, surfaced on whichever tab the failing action ran.
+  Widget _hostKeyBar(ThemeData theme) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: FilledButton.icon(
+          onPressed: _trustAndRetry,
+          icon: const Icon(Icons.verified_user_outlined),
+          label: const Text('Pi neu aufgesetzt → neuen Key vertrauen'),
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        ),
+      );
+
   // ---- remote file browser (read-only) ----
 
   Future<void> _browseFiles() async {
@@ -1296,10 +1367,12 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, id: s.id, detail: s.detail, onLog: _appendLog);
     }, backgroundMessage: 'Logs werden geladen …');
     if (!mounted || logs == null) return;
-    await _showLogSheet(s.name, logs!);
+    await _showLogSheet('Logs: ${s.name}', logs!);
   }
 
-  Future<void> _showLogSheet(String name, String logs) {
+  /// Scrollable read-only text sheet, reused for service logs and file preview.
+  /// [header] is the full title (caller decides "Logs: …" vs "Datei: …").
+  Future<void> _showLogSheet(String header, String logs) {
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -1312,7 +1385,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Logs: $name',
+                child: Text(header,
                     style: Theme.of(ctx).textTheme.titleMedium),
               ),
             ),
@@ -1390,8 +1463,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           ntfyServer: server,
           ntfyTopic: topic,
           onLog: _appendLog);
+      if (!mounted) return;
       _snack('Test-Benachrichtigung gesendet — prüf dein ntfy.');
     } catch (_) {
+      if (!mounted) return;
       _snack('Test fehlgeschlagen (Details im Terminal-Log).');
     }
   }
@@ -1404,7 +1479,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (ctx) => Padding(
+      builder: (ctx) => SafeArea(
+        child: Padding(
         padding: EdgeInsets.only(
             left: 20,
             right: 20,
@@ -1417,7 +1493,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             Text('Health-Alerts', style: Theme.of(ctx).textTheme.titleLarge),
             const SizedBox(height: 8),
             const Text('Der Pi meldet sich per Push (via ntfy), wenn die Platte '
-                'volllÃ¤uft, ein Dienst ausfällt, es zu heiß wird oder Updates '
+                'vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates '
                 'anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.'),
             const SizedBox(height: 6),
             InkWell(
@@ -1510,6 +1586,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1807,6 +1884,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (_busy) return;
     final config = _prepare();
     if (config == null) return;
+    _lastAction = () => _runServiceBackup(
+        label: label, backgroundMessage: backgroundMessage, run: run);
     await _guard(() async {
       final path = await run(config);
       if (!mounted) return;
@@ -2664,6 +2743,9 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (_busy) return;
     final config = _prepare();
     if (config == null) return;
+    // _prepare() set _busy; the install path re-acquires it via _guard, so
+    // release it now — otherwise cancelling the picker deadlocks the whole UI.
+    if (mounted) setState(() => _busy = false);
     final present = _services.where((s) => s.installed).map((s) => s.id).toSet();
     final stack = knownInstallableServices
         .where((s) => _stackIds.contains(s.id) && !present.contains(s.id))
@@ -2887,8 +2969,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _openSettings();
               }
             },
-            // Read-only / local items stay usable during an update; only the
-            // SSH-mutating items (status/restart/reboot/find) are disabled.
+            // Read-only / local items stay usable during an action; only the
+            // SSH-mutating items (reboot/find) are disabled while busy.
             itemBuilder: (_) => [
               const PopupMenuItem(
                   value: 'api', child: Text('evcc-Status (Live)')),
@@ -2913,6 +2995,13 @@ class _UpdaterPageState extends State<UpdaterPage>
       body: SafeArea(
         child: Column(
           children: [
+            // Shared action bar above ALL tabs: a running action, host-key
+            // recovery and the status banner used to live only on the Dienste
+            // tab, but actions launch from every tab — so surface them globally.
+            // Keyed on _busyMessage (set inside _guard for a named operation) so
+            // it shows for real SSH work, not while a confirm dialog is open.
+            if (_busyMessage != null) _runningBar(theme),
+            if (!_busy && _hostKeyIssue) _hostKeyBar(theme),
             if (_statusMessage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -2962,37 +3051,13 @@ class _UpdaterPageState extends State<UpdaterPage>
               },
             ),
             const SizedBox(height: 8),
-            // Connect + cancel side by side, directly under the settings.
-            Row(
-              children: [
-                Expanded(
-                  child: _TestButton(
-                    testing: _testing,
-                    result: _connectionOk,
-                    enabled: !_busy,
-                    onTap: _testConnection,
-                  ),
-                ),
-                if (_busy) ...[
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: _cancel,
-                    icon: const Icon(Icons.close, size: 18),
-                    label: const Text('Abbrechen'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: theme.colorScheme.error,
-                      side: BorderSide(
-                          color:
-                              theme.colorScheme.error.withValues(alpha: 0.55)),
-                      // No Size.fromHeight here — that forces infinite width,
-                      // which is invalid for a non-flex child inside a Row.
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 8),
-                    ),
-                  ),
-                ],
-              ],
+            // Connect. The cancel affordance lives in the shared running bar
+            // above the tabs now (an action can be started from any tab).
+            _TestButton(
+              testing: _testing,
+              result: _connectionOk,
+              enabled: !_busy,
+              onTap: _testConnection,
             ),
             // No host yet (first start, or a freshly added profile) → offer a
             // prominent network scan. Rebuilds live as the host field changes.
@@ -3014,16 +3079,6 @@ class _UpdaterPageState extends State<UpdaterPage>
             ),
             const SizedBox(height: 12),
             ..._serviceCards(),
-            if (_hostKeyIssue) ...[
-              const SizedBox(height: 8),
-              FilledButton.icon(
-                onPressed: _busy ? null : _trustAndRetry,
-                icon: const Icon(Icons.verified_user_outlined),
-                label: const Text('Pi neu aufgesetzt → neuen Key vertrauen'),
-                style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48)),
-              ),
-            ],
             if (_setupUrl != null) ...[
               const SizedBox(height: 8),
               FilledButton.icon(
@@ -3217,8 +3272,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               IconButton.filledTonal(
                 onPressed:
                     _busy ? null : () => _runConsoleCommand(_consoleInput.text),
-                icon: const Icon(Icons.keyboard_return),
-                tooltip: 'Befehl absetzen',
+                // Lock hint for free users (Konsole is Pro; the tap opens the
+                // paywall via _runConsoleCommand's gate).
+                icon: Icon(_isPro ? Icons.keyboard_return : Icons.lock_outline),
+                tooltip: _isPro ? 'Befehl absetzen' : 'Pro-Funktion',
               ),
             ],
           ),

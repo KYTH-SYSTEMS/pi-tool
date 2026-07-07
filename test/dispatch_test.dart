@@ -755,7 +755,9 @@ void main() {
     final field = find.byKey(const Key('consoleField'));
     await tester.ensureVisible(field);
     await tester.enterText(field, 'df -h');
-    await tester.tap(find.byIcon(Icons.keyboard_return));
+    // The send button shows a lock for free users (Konsole is Pro).
+    expect(find.byIcon(Icons.keyboard_return), findsNothing);
+    await tester.tap(find.byIcon(Icons.lock_outline).first);
     await tester.pumpAndSettle();
 
     expect(find.text('Pi-Tool Pro'), findsOneWidget); // paywall
@@ -946,6 +948,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(u.alertsTopic, 'mein-pi-a7Xk');
+  });
+
+  testWidgets('Automatik → auto-updates: turn OFF when currently active',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..autoStatus = (enabled: true, nextRun: 'So 04:00', lastResult: 'ok');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    await tester.tap(find.text('Automatische Updates'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Ausschalten'));
+    await tester.pumpAndSettle();
+
+    expect(u.autoUpdateDisabled, isTrue);
+  });
+
+  testWidgets('Automatik → Health-Alerts: send a test push, then turn OFF',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..alertsStatus = (enabled: true, lastCheck: '12:00');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'mein-topic-xyz');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pumpAndSettle();
+    expect(u.testAlertCalls, 1);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Ausschalten'));
+    await tester.pumpAndSettle();
+    expect(u.alertsDisabled, isTrue);
   });
 
   testWidgets('System ⋮ → Aufräumen frees space after a confirm',

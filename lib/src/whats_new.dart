@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.29.0': [
+    'Laufende Aktionen sind jetzt auf JEDEM Tab sichtbar: ganz oben ein '
+        'Fortschrittsbalken mit „läuft …", einem Sprung zum Log und Abbrechen '
+        '— egal, von wo du sie gestartet hast.',
+    'Health-Alerts-Dialog wird nicht mehr von der Bedienleiste überdeckt; '
+        'Feinschliff an Texten (Umlaute) und der Bedienung.',
+  ],
   '0.28.0': [
     'Konfiguration bearbeiten: evcc.yaml direkt in der App ändern — mit '
         'automatischer Sicherung vorher (evcc-Karte → „Konfiguration '
@@ -28,7 +35,7 @@ const Map<String, List<String>> _whatsNew = {
   ],
   '0.26.0': [
     'Health-Alerts: der Pi meldet sich per Push (über ntfy), wenn die Platte '
-        'volllÃ¤uft, ein Dienst ausfällt, es zu heiß wird oder Updates anstehen '
+        'vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates anstehen '
         '— alle 30 Min., kostenlos und ohne Konto. Automatik-Tab → '
         '„Health-Alerts".',
   ],
