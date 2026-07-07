@@ -500,15 +500,16 @@ class EvccUpdater {
         final pcCompatible = isPiConnectCompatible(sec['OS'] ?? '');
         final pc = parsePiConnectStatus(sec['PICONNECT'] ?? '');
         if (pc.installed) {
+          // "active" (green LED) = signed in. The on/off sub-state isn't
+          // reliably parseable across rpi-connect versions, so we don't gate on
+          // it (was falsely reporting "inaktiv" on a running, signed-in node).
           out.add(ServiceStatus(
             id: 'piconnect',
             name: 'Raspberry Pi Connect',
             installed: true,
-            active: pc.signedIn && pc.on,
+            active: pc.signedIn,
             version: pc.signedIn ? 'angemeldet' : 'nicht angemeldet',
-            detail: !pc.signedIn
-                ? 'Nicht angemeldet'
-                : (pc.on ? 'Angemeldet · aktiv' : 'Angemeldet · aus'),
+            detail: pc.signedIn ? 'Angemeldet' : 'Nicht angemeldet',
           ));
         } else {
           out.add(ServiceStatus.absent('piconnect', 'Raspberry Pi Connect',
@@ -897,9 +898,15 @@ class EvccUpdater {
         config: config,
         onLog: onLog,
         body: (runner, log) async {
-          await runner.run(
+          log('\$ tailscale ${logout ? 'logout' : 'down'}');
+          final r = await runner.run(
               logout ? tailscaleLogoutCommand : tailscaleDownCommand,
-              stdin: '${config.password}\n');
+              stdin: '${config.password}\n', onOutput: (c) {
+            final t = c.trimRight();
+            if (t.isNotEmpty) log(t);
+          });
+          final out = '${r.stdout}${r.stderr}'.trim();
+          if (out.isNotEmpty) log(out);
         },
       );
 
@@ -946,7 +953,17 @@ class EvccUpdater {
         config: config,
         onLog: onLog,
         body: (runner, log) async {
-          await runner.run(on ? piConnectOnCommand : piConnectOffCommand);
+          log('\$ rpi-connect ${on ? 'on' : 'off'}');
+          final r = await runner.run(
+              on ? piConnectOnCommand : piConnectOffCommand,
+              onOutput: (c) {
+                final t = c.trimRight();
+                if (t.isNotEmpty) log(t);
+              });
+          final out = '${r.stdout}${r.stderr}'.trim();
+          log(out.isEmpty
+              ? 'Fertig (Fernzugriff ${on ? 'aktiviert' : 'pausiert'}).'
+              : out);
         },
       );
 
@@ -959,7 +976,13 @@ class EvccUpdater {
         config: config,
         onLog: onLog,
         body: (runner, log) async {
-          await runner.run(piConnectSignoutCommand);
+          log('\$ rpi-connect signout');
+          final r = await runner.run(piConnectSignoutCommand, onOutput: (c) {
+            final t = c.trimRight();
+            if (t.isNotEmpty) log(t);
+          });
+          final out = '${r.stdout}${r.stderr}'.trim();
+          if (out.isNotEmpty) log(out);
         },
       );
 

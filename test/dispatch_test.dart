@@ -1060,7 +1060,8 @@ void main() {
     expect(u.piConnectInstalled, isFalse);
   });
 
-  testWidgets('Pi Connect card: Deaktivieren toggles it off', (tester) async {
+  testWidgets('Pi Connect: a signed-in node shows aktiv + can pause remote',
+      (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
       ..services = const [
@@ -1068,14 +1069,17 @@ void main() {
             id: 'piconnect',
             name: 'Raspberry Pi Connect',
             installed: true,
-            active: true,
-            detail: 'Angemeldet · aktiv'),
+            active: true, // signed in → active (green), NOT "inaktiv"
+            detail: 'Angemeldet'),
       ];
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
     await detect(tester);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Deaktivieren'));
+    expect(find.text('aktiv'), findsOneWidget); // was falsely "inaktiv" before
+    await tester.tap(find.byKey(const ValueKey('menu-piconnect')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fernzugriff pausieren'));
     await tester.pumpAndSettle();
     expect(u.piConnectSetOn, isFalse);
   });

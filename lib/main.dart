@@ -2702,24 +2702,25 @@ class _UpdaterPageState extends State<UpdaterPage>
             ],
           ));
         case 'piconnect':
-          final signedIn = s.detail.startsWith('Angemeldet');
-          final on = s.detail.contains('aktiv');
+          final signedIn = s.active; // active == signed in
           cards.add(_ServiceCard(
             isPro: _isPro,
             status: s,
             icon: Icons.cast,
             enabled: !_busy,
-            primaryLabel: !signedIn
-                ? 'Anmelden'
-                : (on ? 'Deaktivieren' : 'Aktivieren'),
-            onPrimary:
-                !signedIn ? _piConnectSignin : () => _piConnectSet(!on),
-            onOpenWeb: signedIn
+            primaryLabel: signedIn ? 'Web öffnen' : 'Anmelden',
+            onPrimary: signedIn
                 ? () => _openUrl('https://connect.raspberrypi.com')
-                : null,
-            actions: [
-              if (signedIn) _CardAction('Abmelden', _piConnectSignout),
-            ],
+                : _piConnectSignin,
+            actions: signedIn
+                ? [
+                    _CardAction(
+                        'Fernzugriff aktivieren', () => _piConnectSet(true)),
+                    _CardAction(
+                        'Fernzugriff pausieren', () => _piConnectSet(false)),
+                    _CardAction('Abmelden', _piConnectSignout),
+                  ]
+                : const [],
           ));
         case 'tailscale':
           final up = s.active;
