@@ -13,6 +13,7 @@ Funktionen:
 * Auto-Erkennung aller Dienste in einer SSH-Sitzung
 * Backups inkl. Wiederherstellen & Verwalten in der App: evcc (Config + DB), Pi-hole (Teleporter) und Home Assistant (/config); automatische Rotation
 * System aufräumen: Speicher freigeben (apt, ungenutzte Docker-Images, Journal)
+* Automatische Updates nach Zeitplan (systemd-Timer auf dem Pi; evcc-Sicherung + Selbstheilung)
 * Mehrere Pi-Profile, schnell umschaltbar
 * Verbindung herstellen mit grün/rot-Status
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:evcc_updater/main.dart';
+import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/entitlement.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
@@ -161,6 +162,33 @@ class FakeEvccUpdater extends EvccUpdater {
     cleanupCalls++;
     return 250000000; // 250 MB
   }
+
+  String? enabledOnCalendar;
+  bool autoUpdateDisabled = false;
+  AutoUpdateStatus autoStatus =
+      (enabled: false, nextRun: null, lastResult: null);
+
+  @override
+  Future<void> enableAutoUpdate({
+    required SshConfig config,
+    required String onCalendar,
+    required void Function(String line) onLog,
+  }) async =>
+      enabledOnCalendar = onCalendar;
+
+  @override
+  Future<void> disableAutoUpdate({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      autoUpdateDisabled = true;
+
+  @override
+  Future<AutoUpdateStatus> readAutoUpdateStatus({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      autoStatus;
 
   final consoleCommands = <String>[];
 
@@ -680,6 +708,41 @@ void main() {
 
     // Currency now KNOWN and current → "Aktuell", not a nagging "Aktualisieren".
     expect(find.text('Aktuell'), findsOneWidget);
+  });
+
+  testWidgets('System ⋮ → Automatische Updates schedules a daily timer',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u)); // dormant entitlement → Pro
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Automatische Updates'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    expect(u.enabledOnCalendar, '*-*-* 04:00:00'); // default: daily 04:00
+  });
+
+  testWidgets('free user: Automatische Updates is gated behind the paywall',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u, entitlement: _FakeEntitlement(pro: false)));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Automatische Updates'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pi-Tool Pro'), findsOneWidget);
+    expect(u.enabledOnCalendar, isNull);
   });
 
   testWidgets('System ⋮ → Aufräumen frees space after a confirm',

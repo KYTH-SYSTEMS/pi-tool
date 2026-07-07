@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import 'auto_update.dart';
 import 'commands.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
@@ -771,6 +772,57 @@ class EvccUpdater {
       },
     );
   }
+
+  /// Installs the on-Pi systemd timer for scheduled automatic updates
+  /// ([onCalendar] from [autoUpdateOnCalendar]). Runs as root.
+  Future<void> enableAutoUpdate({
+    required SshConfig config,
+    required String onCalendar,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Richte automatische Updates ein …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildAutoUpdateInstallScript(onCalendar: onCalendar),
+              successMarker: 'AUTOUPDATE_INSTALLED',
+              failMsg: 'Einrichten der automatischen Updates fehlgeschlagen');
+        },
+      );
+
+  /// Removes the scheduled-update timer again. Runs as root.
+  Future<void> disableAutoUpdate({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Deaktiviere automatische Updates …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildAutoUpdateRemoveScript(),
+              successMarker: 'AUTOUPDATE_REMOVED',
+              failMsg: 'Deaktivieren der automatischen Updates fehlgeschlagen');
+        },
+      );
+
+  /// Reads whether the scheduled-update timer is active, its next run and last
+  /// result. No sudo.
+  Future<AutoUpdateStatus> readAutoUpdateStatus({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<AutoUpdateStatus>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final r = await runner.run(autoUpdateStatusCommand);
+          return parseAutoUpdateStatus(r.stdout);
+        },
+      );
 
   /// Frees disk space (apt autoremove/clean, dangling docker images, journal
   /// >7d) and returns the freed bytes. Conservative on purpose — see

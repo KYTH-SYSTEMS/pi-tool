@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.24.0': [
+    'Automatische Updates: der Pi aktualisiert sich künftig selbst nach '
+        'Zeitplan (täglich/wöchentlich). evcc wird vorher gesichert und bei '
+        'Problemen automatisch neu gestartet — kein Hintergrunddienst, ein '
+        'systemd-Timer läuft direkt auf dem Pi. System-Karte → „Automatische '
+        'Updates".',
+  ],
   '0.22.0': [
     'Backups komplett: Pi-hole- und Home-Assistant-Backups lassen sich jetzt '
         'direkt in der App wiederherstellen und verwalten (auflisten, löschen); '

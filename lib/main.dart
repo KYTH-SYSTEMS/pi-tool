@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'src/authenticator.dart';
+import 'src/auto_update.dart';
 import 'src/commands.dart';
 import 'src/entitlement.dart';
 import 'src/kyth_splash.dart';
@@ -1199,6 +1200,168 @@ class _UpdaterPageState extends State<UpdaterPage>
     return '${(bytes / (1000 * 1000)).round()} MB';
   }
 
+  // ---- scheduled automatic updates (on-Pi systemd timer) ----
+
+  /// Reads the current auto-update state, then lets the user schedule/disable it.
+  Future<void> _configureAutoUpdate() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _configureAutoUpdate;
+    AutoUpdateStatus? status;
+    await _guard(() async {
+      status =
+          await _updater.readAutoUpdateStatus(config: config, onLog: _appendLog);
+    });
+    if (!mounted || status == null) return;
+    final choice = await _showAutoUpdateSheet(status!);
+    if (choice == null || !mounted) return;
+
+    _beginBusy();
+    await _guard(() async {
+      if (choice.enable) {
+        final onCal = autoUpdateOnCalendar(
+            weekly: choice.weekly, hour: choice.hour, weekday: choice.weekday);
+        await _updater.enableAutoUpdate(
+            config: config, onCalendar: onCal, onLog: _appendLog);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Automatische Updates aktiv.';
+          _statusOk = true;
+        });
+        _addHistory('Automatische Updates eingerichtet ($onCal).');
+      } else {
+        await _updater.disableAutoUpdate(config: config, onLog: _appendLog);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Automatische Updates deaktiviert.';
+          _statusOk = true;
+        });
+        _addHistory('Automatische Updates deaktiviert.');
+      }
+    },
+        backgroundMessage: choice.enable
+            ? 'Richte automatische Updates ein …'
+            : 'Deaktiviere automatische Updates …');
+  }
+
+  Future<({bool enable, bool weekly, int hour, int weekday})?>
+      _showAutoUpdateSheet(AutoUpdateStatus status) {
+    var weekly = false;
+    var hour = 4;
+    var weekday = 7;
+    const days = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+    return showModalBottomSheet<
+        ({bool enable, bool weekly, int hour, int weekday})>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Automatische Updates',
+                    style: Theme.of(ctx).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                const Text('Der Pi aktualisiert sich künftig selbst (System + '
+                    'Dienste). evcc wird vorher gesichert und bei Problemen '
+                    'automatisch neu gestartet.'),
+                const SizedBox(height: 12),
+                Text(
+                  status.enabled
+                      ? 'Aktuell aktiv · nächste: ${status.nextRun ?? '—'}'
+                      : 'Aktuell aus.',
+                  style: TextStyle(
+                      color: status.enabled ? kGreen : null,
+                      fontWeight: FontWeight.w600),
+                ),
+                if (status.lastResult != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('Zuletzt gelaufen: ${status.lastResult}',
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 12)),
+                  ),
+                const Divider(height: 24),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: false, label: Text('Täglich')),
+                    ButtonSegment(value: true, label: Text('Wöchentlich')),
+                  ],
+                  selected: {weekly},
+                  onSelectionChanged: (s) => setSheet(() => weekly = s.first),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Text('Uhrzeit:  '),
+                    DropdownButton<int>(
+                      value: hour,
+                      items: [
+                        for (var h = 0; h < 24; h++)
+                          DropdownMenuItem(
+                              value: h,
+                              child: Text(
+                                  '${h.toString().padLeft(2, '0')}:00 Uhr')),
+                      ],
+                      onChanged: (v) => setSheet(() => hour = v ?? 4),
+                    ),
+                    if (weekly) ...[
+                      const Spacer(),
+                      const Text('Tag:  '),
+                      DropdownButton<int>(
+                        value: weekday,
+                        items: [
+                          for (var d = 1; d <= 7; d++)
+                            DropdownMenuItem(
+                                value: d, child: Text(days[d - 1])),
+                        ],
+                        onChanged: (v) => setSheet(() => weekday = v ?? 7),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(ctx, (
+                          enable: true,
+                          weekly: weekly,
+                          hour: hour,
+                          weekday: weekday
+                        )),
+                        child: Text(
+                            status.enabled ? 'Zeitplan ändern' : 'Einschalten'),
+                      ),
+                    ),
+                    if (status.enabled) ...[
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, (
+                          enable: false,
+                          weekly: false,
+                          hour: 0,
+                          weekday: 7
+                        )),
+                        child: const Text('Ausschalten'),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ---- Pi-hole + System service actions ----
 
   Future<void> _updatePihole() async {
@@ -2055,6 +2218,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               if (upToDate)
                 _CardAction('Trotzdem aktualisieren', _upgradeSystem),
+              _CardAction('Automatische Updates',
+                  () => _proGate(_configureAutoUpdate), pro: true),
               _CardAction('Aufräumen (Speicher freigeben)',
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction('Pi neu starten', _reboot),

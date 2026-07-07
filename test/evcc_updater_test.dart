@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/parsing.dart';
@@ -855,6 +856,53 @@ void main() {
         _updaterWith(runner).cleanupSystem(config: _config, onLog: (_) {}),
         throwsA(isA<EvccUpdateException>()),
       );
+    });
+  });
+
+  group('EvccUpdater auto-update', () {
+    test('enableAutoUpdate installs the timer as root with the schedule',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('AUTOUPDATE_INSTALLED\n')]
+      });
+      await _updaterWith(runner).enableAutoUpdate(
+          config: _config, onCalendar: '*-*-* 04:00:00', onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, startsWith('sekret\n'));
+      expect(stdin, contains('OnCalendar=*-*-* 04:00:00'));
+      expect(stdin, contains('enable --now pi-tool-autoupdate.timer'));
+    });
+
+    test('enableAutoUpdate fails clearly when the marker is missing', () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('boom', exitCode: 1)]});
+      await expectLater(
+        _updaterWith(runner).enableAutoUpdate(
+            config: _config, onCalendar: 'x', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('disableAutoUpdate removes the timer as root', () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('AUTOUPDATE_REMOVED\n')]});
+      await _updaterWith(runner)
+          .disableAutoUpdate(config: _config, onLog: (_) {});
+      expect(runner.stdinByCommand[installShellCommand],
+          contains('disable --now pi-tool-autoupdate.timer'));
+    });
+
+    test('readAutoUpdateStatus parses the timer state', () async {
+      final runner = FakeSshRunner({
+        autoUpdateStatusCommand: [
+          _r('ENABLED enabled\nNEXT Sun 2026-07-12 04:00:00\n'
+              'STATUS 2026-07-05 04:00:12 ok\n')
+        ]
+      });
+      final st = await _updaterWith(runner)
+          .readAutoUpdateStatus(config: _config, onLog: (_) {});
+      expect(st.enabled, isTrue);
+      expect(st.lastResult, contains('ok'));
     });
   });
 

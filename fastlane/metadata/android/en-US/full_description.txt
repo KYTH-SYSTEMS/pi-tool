@@ -13,6 +13,7 @@ Features:
 * Auto-detects all services in one SSH session
 * Backups incl. in-app restore & management: evcc (config + DB), Pi-hole (Teleporter) and Home Assistant (/config); automatic rotation
 * System cleanup: free disk space (apt, unused Docker images, journal)
+* Scheduled automatic updates (on-Pi systemd timer; backs up evcc + self-heals)
 * Backup before the evcc update (config + database), optional
 * Multiple Pi profiles, quick switching
 * Connect with green/red status
