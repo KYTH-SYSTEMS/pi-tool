@@ -862,7 +862,20 @@ class EvccUpdater {
         body: (runner, log) async {
           final r = await runner.run(buildConfigReadCommand(path),
               stdin: '${config.password}\n');
-          return r.stdout.isNotEmpty ? r.stdout : r.stderr;
+          final combined = '${r.stdout}\n${r.stderr}';
+          if (isSudoPasswordFailure(combined)) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+          // Empty stdout means the read failed (missing/no rights) or the file
+          // is empty — either way, do NOT hand back the stderr as "content"
+          // (it must never be saved back as the config).
+          if (r.stdout.isEmpty) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Datei konnte nicht gelesen werden (fehlt, leer oder keine '
+                'Rechte).');
+          }
+          return r.stdout;
         },
       );
 

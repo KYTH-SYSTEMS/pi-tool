@@ -603,7 +603,17 @@ if [ -f $p ]; then
   cp $p "/var/backups/pi-tool/config-\$(basename $p)-\$(date +%Y%m%d-%H%M%S).bak"
   ls -1t "/var/backups/pi-tool/config-\$(basename $p)-"* 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
 fi
-printf '%s' '$base64Content' | base64 -d > $p
+# Write to a temp file, then atomically rename over the target so a mid-write
+# failure (full disk, killed) never leaves a truncated live config. Preserve
+# the original's owner/mode first (a fresh inode would reset them to root+umask).
+d=\$(dirname $p)
+tmp=\$(mktemp "\$d/.pitool-cfg.XXXXXX")
+printf '%s' '$base64Content' | base64 -d > "\$tmp"
+if [ -f $p ]; then
+  chmod --reference=$p "\$tmp" 2>/dev/null || true
+  chown --reference=$p "\$tmp" 2>/dev/null || true
+fi
+mv -f "\$tmp" $p
 echo CONFIG_SAVED
 ''';
 }

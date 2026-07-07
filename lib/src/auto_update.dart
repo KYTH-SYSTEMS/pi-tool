@@ -26,6 +26,7 @@ set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 cat > /usr/local/lib/$autoUpdateUnit.sh <<'WRAP'
 #!/bin/sh
+export DEBIAN_FRONTEND=noninteractive
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 ts=\$(date '+%Y-%m-%d %H:%M:%S')
 was=\$(systemctl is-active evcc 2>/dev/null)
@@ -35,7 +36,9 @@ if dpkg-query -W evcc >/dev/null 2>&1; then
   ls -1t /var/backups/pi-tool/autoupdate-evcc-* 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
 fi
 apt-get update >/dev/null 2>&1
-apt-get -y full-upgrade >/dev/null 2>&1
+# Unattended: never block on a dpkg conffile prompt (would hang forever holding
+# the apt lock); keep the existing config on conflicts.
+apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade >/dev/null 2>&1
 rc=\$?
 heal=""
 if [ "\$was" = "active" ] && [ "\$(systemctl is-active evcc 2>/dev/null)" != "active" ]; then

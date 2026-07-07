@@ -81,12 +81,15 @@ void main() {
       expect(bad, contains(r"'\''"));
     });
 
-    test('write backs up then base64-decodes the new content into place', () {
+    test('write backs up, decodes to a temp file, then atomically renames', () {
       final s = buildConfigWriteScript(
           path: '/etc/evcc.yaml', base64Content: 'aGkK');
       expect(s, contains('/var/backups/pi-tool')); // backup first
       expect(s, contains("cp '/etc/evcc.yaml'"));
-      expect(s, contains("printf '%s' 'aGkK' | base64 -d > '/etc/evcc.yaml'"));
+      expect(s, contains('mktemp')); // atomic: temp then rename
+      expect(s, contains("printf '%s' 'aGkK' | base64 -d > \"\$tmp\""));
+      expect(s, contains("chmod --reference='/etc/evcc.yaml'")); // preserve mode
+      expect(s, contains("mv -f \"\$tmp\" '/etc/evcc.yaml'"));
       expect(s, contains('CONFIG_SAVED'));
     });
 

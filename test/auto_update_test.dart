@@ -25,7 +25,10 @@ void main() {
     });
     test('the wrapper updates apt, self-heals evcc, and logs a result', () {
       expect(s, contains('apt-get update'));
-      expect(s, contains('apt-get -y full-upgrade'));
+      expect(s, contains('full-upgrade'));
+      // Unattended: must not hang on a dpkg conffile prompt.
+      expect(s, contains('DEBIAN_FRONTEND=noninteractive'));
+      expect(s, contains('force-confold'));
       // backup evcc before + bring it back if it dies during the upgrade
       expect(s, contains('systemctl is-active evcc'));
       expect(s, contains('/var/backups/pi-tool'));

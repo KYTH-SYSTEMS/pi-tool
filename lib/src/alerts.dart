@@ -23,11 +23,16 @@ String buildAlertsInstallScript({
   return '''
 set -e
 mkdir -p /var/lib/pi-tool
-cat > /usr/local/lib/$alertsUnit.sh <<WRAP
+cat > /usr/local/lib/$alertsUnit.sh <<'WRAP'
 #!/bin/sh
+mkdir -p /var/lib/pi-tool
+WRAP
+# URL/TOPIC are Dart-substituted (shell-quoted) BEFORE the shell sees them, so a
+# QUOTED heredoc lands them verbatim — no install-time shell expansion of a
+# hostile topic like \$(reboot). They assign as literals at wrapper runtime.
+cat >> /usr/local/lib/$alertsUnit.sh <<'WRAP'
 URL=$url
 TOPIC=$topic
-mkdir -p /var/lib/pi-tool
 WRAP
 cat >> /usr/local/lib/$alertsUnit.sh <<'WRAP'
 problems=""
@@ -48,7 +53,7 @@ hash=\$(printf '%s' "\$problems" | md5sum | awk '{print \$1}')
 last=\$(cat /var/lib/pi-tool/alerts.last 2>/dev/null)
 if [ -n "\$problems" ] && [ "\$hash" != "\$last" ]; then
   printf 'Pi-Tool hat Probleme erkannt:%b' "\$problems" | \\
-    curl -s -H 'Title: Pi-Tool' -H 'Priority: high' -d @- "\$URL/\$TOPIC" >/dev/null 2>&1
+    curl -s -H 'Title: Pi-Tool' -H 'Priority: high' --data-binary @- "\$URL/\$TOPIC" >/dev/null 2>&1
   printf '%s' "\$hash" > /var/lib/pi-tool/alerts.last
 elif [ -z "\$problems" ]; then
   : > /var/lib/pi-tool/alerts.last

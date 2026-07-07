@@ -10,9 +10,14 @@ import 'commands.dart' show shSingleQuote;
 String buildListDirCommand(String path) =>
     "sudo -S -p '' ls -1Ap ${shSingleQuote(path)} 2>&1";
 
-/// Reads a file base64-encoded, so any bytes survive the text channel intact.
+/// Max bytes fetched for a file preview — caps memory so tapping a multi-GB
+/// log/db/.img can't OOM the app.
+const int kFilePreviewLimit = 512 * 1024;
+
+/// Reads (up to [kFilePreviewLimit] bytes of) a file base64-encoded, so any
+/// bytes survive the text channel intact. The size cap is server-side.
 String buildReadFileCommand(String path) =>
-    "sudo -S -p '' base64 ${shSingleQuote(path)} 2>&1";
+    "sudo -S -p '' head -c $kFilePreviewLimit ${shSingleQuote(path)} 2>/dev/null | base64";
 
 /// One directory entry.
 typedef DirEntry = ({String name, bool isDir});

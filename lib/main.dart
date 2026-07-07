@@ -1224,6 +1224,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         onOpenFile: (p) => _openRemoteFile(config, p),
       ),
     ));
+    // _prepare() set _busy; the browser manages its own loading, so release the
+    // global lock when it closes (otherwise the whole main screen stays dead).
+    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _openRemoteFile(SshConfig config, String path) async {
@@ -1259,6 +1262,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       ),
     );
     if (edited == null || !mounted || edited == content) return; // cancel/no-op
+    if (edited.trim().isEmpty) {
+      _snack('Leerer Inhalt — nicht gespeichert (das würde $title zerstören).');
+      return;
+    }
     if (!await _confirm('Speichern?',
         'Überschreibt $path auf dem Pi (eine Sicherung wird vorher angelegt).')) {
       return;

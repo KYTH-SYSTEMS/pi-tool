@@ -5,8 +5,10 @@ void main() {
   group('commands', () {
     test('list + read are sudo and shell-quoted', () {
       expect(buildListDirCommand('/etc'), "sudo -S -p '' ls -1Ap '/etc' 2>&1");
+      // Size-capped read (head -c) so a huge file can't OOM the app.
       expect(buildReadFileCommand('/etc/evcc.yaml'),
-          "sudo -S -p '' base64 '/etc/evcc.yaml' 2>&1");
+          contains("head -c 524288 '/etc/evcc.yaml'"));
+      expect(buildReadFileCommand('/etc/evcc.yaml'), endsWith('| base64'));
       expect(buildListDirCommand("/x';reboot;'"), contains(r"'\''"));
     });
   });

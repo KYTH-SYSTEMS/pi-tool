@@ -231,7 +231,8 @@ class _FileBrowserPage extends StatefulWidget {
 class _FileBrowserPageState extends State<_FileBrowserPage> {
   late String _path = widget.startPath;
   List<DirEntry>? _entries;
-  bool _loading = false;
+  bool _loading = false; // dir-load (shows the body spinner)
+  bool _opening = false; // file-open (gates taps only, no body change)
   String? _error;
 
   @override
@@ -259,6 +260,15 @@ class _FileBrowserPageState extends State<_FileBrowserPage> {
         _loading = false;
         _error = 'Verzeichnis konnte nicht geladen werden.';
       });
+    }
+  }
+
+  Future<void> _open(String path) async {
+    setState(() => _opening = true);
+    try {
+      await widget.onOpenFile(path);
+    } finally {
+      if (mounted) setState(() => _opening = false);
     }
   }
 
@@ -291,7 +301,9 @@ class _FileBrowserPageState extends State<_FileBrowserPage> {
                       ListTile(
                         leading: const Icon(Icons.arrow_upward),
                         title: const Text('..'),
-                        onTap: () => _load(parentRemotePath(_path)),
+                        onTap: (_loading || _opening)
+                            ? null
+                            : () => _load(parentRemotePath(_path)),
                       ),
                     for (final e in _entries ?? const <DirEntry>[])
                       ListTile(
@@ -299,10 +311,13 @@ class _FileBrowserPageState extends State<_FileBrowserPage> {
                             ? Icons.folder
                             : Icons.insert_drive_file_outlined),
                         title: Text(e.name),
-                        onTap: e.isDir
-                            ? () => _load(joinRemotePath(_path, e.name))
-                            : () => widget.onOpenFile(
-                                joinRemotePath(_path, e.name)),
+                        // Serialize: ignore taps while a load/open is in flight,
+                        // so we never open two SSH connections at once.
+                        onTap: (_loading || _opening)
+                            ? null
+                            : e.isDir
+                                ? () => _load(joinRemotePath(_path, e.name))
+                                : () => _open(joinRemotePath(_path, e.name)),
                       ),
                   ],
                 ),
