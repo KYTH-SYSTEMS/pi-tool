@@ -14,6 +14,7 @@ import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/pi_connect.dart';
 import 'package:evcc_updater/src/services/pihole_service.dart';
 import 'package:evcc_updater/src/services/system_service.dart';
+import 'package:evcc_updater/src/services/tailscale.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -974,6 +975,34 @@ void main() {
             onLog: (_) {}),
         throwsA(isA<EvccUpdateException>()),
       );
+    });
+  });
+
+  group('EvccUpdater Tailscale', () {
+    test('installTailscale runs the official installer as root', () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('TAILSCALE_INSTALLED\n')]});
+      await _updaterWith(runner)
+          .installTailscale(config: _config, onLog: (_) {});
+      expect(runner.stdinByCommand[installShellCommand], contains('install.sh'));
+    });
+
+    test('tailscaleUp returns the login URL', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('To authenticate, visit https://login.tailscale.com/a/xyz\n')
+        ]
+      });
+      final url =
+          await _updaterWith(runner).tailscaleUp(config: _config, onLog: (_) {});
+      expect(url, 'https://login.tailscale.com/a/xyz');
+    });
+
+    test('tailscaleSet down pipes the password (sudo)', () async {
+      final runner = FakeSshRunner({tailscaleDownCommand: [_r('')]});
+      await _updaterWith(runner)
+          .tailscaleSet(config: _config, logout: false, onLog: (_) {});
+      expect(runner.stdinByCommand[tailscaleDownCommand], 'sekret\n');
     });
   });
 

@@ -15,6 +15,7 @@ import 'parsing.dart';
 import 'services/apt_services.dart';
 import 'services/homeassistant_service.dart';
 import 'services/pi_connect.dart';
+import 'services/tailscale.dart';
 import 'services/pi_service.dart';
 import 'services/pihole_service.dart';
 import 'services/system_service.dart';
@@ -374,6 +375,7 @@ class EvccUpdater {
           ('PIHOLE_S', piholeStatusCommand),
           ('HA_VERSION', haVersionProbe),
           ('PICONNECT', piConnectStatusCommand),
+          ('TAILSCALE', tailscaleStatusCommand),
           ('APTSVC', aptServicesQuery),
           for (final u in units) ('UNIT:$u', 'systemctl is-active $u'),
           ('OS', systemOsCommand),
@@ -511,6 +513,21 @@ class EvccUpdater {
         } else {
           out.add(ServiceStatus.absent('piconnect', 'Raspberry Pi Connect',
               compatible: pcCompatible));
+        }
+
+        // ---- Tailscale (VPN/mesh, official installer, any OS) ----
+        final ts = parseTailscaleStatus(sec['TAILSCALE'] ?? '');
+        if (ts.installed) {
+          out.add(ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: ts.up,
+            version: ts.up ? ts.ip : null,
+            detail: ts.up ? 'Verbunden · ${ts.ip}' : 'Getrennt',
+          ));
+        } else {
+          out.add(ServiceStatus.absent('tailscale', 'Tailscale'));
         }
 
         // ---- System (always present) ----
@@ -833,6 +850,56 @@ class EvccUpdater {
               script: buildAutoUpdateRemoveScript(),
               successMarker: 'AUTOUPDATE_REMOVED',
               failMsg: 'Deaktivieren der automatischen Updates fehlgeschlagen');
+        },
+      );
+
+  /// Installs Tailscale via the official installer + enables the daemon. Root.
+  Future<void> installTailscale({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Installiere Tailscale …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: tailscaleInstallScript,
+              successMarker: 'TAILSCALE_INSTALLED',
+              failMsg: 'Installation von Tailscale fehlgeschlagen');
+        },
+      );
+
+  /// Runs `tailscale up` (as root) and returns the login URL to open, or null
+  /// when it connected without needing re-auth.
+  Future<String?> tailscaleUp({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<String?>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Verbinde mit Tailscale …');
+          final r = await runner.run(installShellCommand,
+              stdin: '${config.password}\n$tailscaleUpScript\n');
+          return parseTailscaleAuthUrl(r.stdout);
+        },
+      );
+
+  /// Disconnects (`tailscale down`) or logs out (`tailscale logout`). Root.
+  Future<void> tailscaleSet({
+    required SshConfig config,
+    required bool logout,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          await runner.run(
+              logout ? tailscaleLogoutCommand : tailscaleDownCommand,
+              stdin: '${config.password}\n');
         },
       );
 

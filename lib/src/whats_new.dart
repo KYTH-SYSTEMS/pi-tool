@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.31.0': [
+    'Tailscale (VPN/Mesh) als Dienst: installieren, per Login-Link verbinden, '
+        'trennen/abmelden. Und der Clou: die Tailnet-IP (100.x) mit einem Tap '
+        'ins Host-Feld übernehmen — so erreichst du den Pi von überall, ohne '
+        'die Adresse zu suchen.',
+  ],
   '0.30.0': [
     'Raspberry Pi Connect (offizieller Fernzugriff) als Dienst: installieren, '
         'per Link anmelden (Raspberry Pi ID), an/aus schalten, Web-Oberfläche '

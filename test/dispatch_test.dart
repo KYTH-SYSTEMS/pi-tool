@@ -231,6 +231,35 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       piConnectSignedOut = true;
 
+  bool tailscaleInstalled = false;
+  int tailscaleUpCalls = 0;
+  String? tailscaleUpUrl;
+  bool? tailscaleLoggedOut;
+
+  @override
+  Future<void> installTailscale({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      tailscaleInstalled = true;
+
+  @override
+  Future<String?> tailscaleUp({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async {
+    tailscaleUpCalls++;
+    return tailscaleUpUrl;
+  }
+
+  @override
+  Future<void> tailscaleSet({
+    required SshConfig config,
+    required bool logout,
+    required void Function(String line) onLog,
+  }) async =>
+      tailscaleLoggedOut = logout;
+
   List<DirEntry> dirEntries = const [];
   Uint8List fileBytes = Uint8List(0);
 
@@ -953,6 +982,53 @@ void main() {
     await tester.tap(find.text('notes.txt'));
     await tester.pumpAndSettle();
     expect(find.textContaining('hallo pi'), findsOneWidget); // preview
+  });
+
+  testWidgets('Tailscale: adopt the tailnet IP into the host field',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.101.102.103',
+            detail: 'Verbunden · 100.101.102.103'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Diese IP als Host übernehmen'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Host auf 100.101.102.103'), findsOneWidget);
+  });
+
+  testWidgets('Tailscale: Verbinden triggers up when disconnected',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: false,
+            detail: 'Getrennt'),
+      ]
+      ..tailscaleUpUrl = null; // already authed → just connects
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Verbinden'));
+    await tester.pumpAndSettle();
+    expect(u.tailscaleUpCalls, 1);
   });
 
   testWidgets('Pi Connect: incompatible OS is greyed out with a reason',

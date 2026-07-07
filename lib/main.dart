@@ -2546,6 +2546,13 @@ class _UpdaterPageState extends State<UpdaterPage>
                   : 'Nicht kompatibel – braucht Bookworm oder neuer',
               enabled: s.compatible,
             ));
+          case 'tailscale':
+            addable.add(_AddableService(
+              'Tailscale',
+              Icons.vpn_key_outlined,
+              _installTailscale,
+              subtitle: 'VPN/Mesh – den Pi von überall erreichen',
+            ));
         }
         continue;
       }
@@ -2641,6 +2648,26 @@ class _UpdaterPageState extends State<UpdaterPage>
                 : null,
             actions: [
               if (signedIn) _CardAction('Abmelden', _piConnectSignout),
+            ],
+          ));
+        case 'tailscale':
+          final up = s.active;
+          cards.add(_ServiceCard(
+            isPro: _isPro,
+            status: s,
+            icon: Icons.vpn_key,
+            enabled: !_busy,
+            primaryLabel: up ? 'Trennen' : 'Verbinden',
+            onPrimary:
+                up ? () => _tailscaleSet(logout: false) : _tailscaleUp,
+            onOpenWeb: up
+                ? () => _openUrl('https://login.tailscale.com/admin/machines')
+                : null,
+            actions: [
+              if (up && s.version != null)
+                _CardAction('Diese IP als Host übernehmen (${s.version})',
+                    () => _useTailscaleIp(s.version!)),
+              _CardAction('Abmelden', () => _tailscaleSet(logout: true)),
             ],
           ));
         case 'system':
@@ -2964,6 +2991,83 @@ class _UpdaterPageState extends State<UpdaterPage>
       });
       await _refreshServices(config);
     }, backgroundMessage: 'Abmeldung läuft …');
+  }
+
+  // ---- Tailscale (VPN/mesh) ----
+
+  Future<void> _installTailscale() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _installTailscale;
+    await _guard(() async {
+      await _updater.installTailscale(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Tailscale installiert – jetzt „Verbinden".';
+        _statusOk = true;
+      });
+      _addHistory('Tailscale installiert.');
+      await _refreshServices(config);
+    }, backgroundMessage: 'Tailscale wird installiert …');
+  }
+
+  Future<void> _tailscaleUp() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _tailscaleUp;
+    String? url;
+    await _guard(() async {
+      url = await _updater.tailscaleUp(config: config, onLog: _appendLog);
+    }, backgroundMessage: 'Tailscale wird verbunden …');
+    if (!mounted) return;
+    if (url != null) {
+      await _openUrl(url!);
+      if (mounted) {
+        _snack('Im Browser bei Tailscale anmelden, dann erneut „Verbindung '
+            'herstellen".');
+      }
+    } else {
+      // Already authenticated → just re-detect to show the new state.
+      await _refreshServices(config);
+      if (mounted) _snack('Tailscale verbunden.');
+    }
+  }
+
+  Future<void> _tailscaleSet({required bool logout}) async {
+    if (_busy) return;
+    if (logout &&
+        !await _confirm('Abmelden?',
+            'Entfernt den Pi aus deinem Tailnet (neue Anmeldung nötig).')) {
+      return;
+    }
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _tailscaleSet(logout: logout);
+    await _guard(() async {
+      await _updater.tailscaleSet(
+          config: config, logout: logout, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = logout ? 'Tailscale abgemeldet.' : 'Tailscale getrennt.';
+        _statusOk = true;
+      });
+      await _refreshServices(config);
+    },
+        backgroundMessage:
+            logout ? 'Tailscale-Abmeldung läuft …' : 'Tailscale wird getrennt …');
+  }
+
+  /// Puts the Pi's tailnet IP into the host field (the bonus: connect from
+  /// anywhere without hunting for the 100.x address).
+  void _useTailscaleIp(String ip) {
+    setState(() {
+      _host.text = ip;
+      _tab = 0;
+    });
+    _scheduleSave();
+    _snack('Host auf $ip gesetzt – jetzt „Verbindung herstellen".');
   }
 
   Future<void> _installAptService(AptService service) async {
