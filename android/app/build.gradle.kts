@@ -19,7 +19,9 @@ if (hasKeystore) {
 
 android {
     namespace = "systems.kyth.pitool"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned to 35 (not flutter.compileSdkVersion): file_picker's AAR requires
+    // compileSdk >= 35. Matches targetSdk below.
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
