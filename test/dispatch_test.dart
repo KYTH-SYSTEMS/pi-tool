@@ -592,6 +592,8 @@ void main() {
     await detect(tester); // connect → cards for the active Pi
     expect(find.text('System (Pi)'), findsOneWidget);
 
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Eltern')); // switch to the other Pi
     await tester.pumpAndSettle();
 
@@ -1496,7 +1498,10 @@ void main() {
     await detect(tester); // host-key prompt for the active Pi
     expect(find.textContaining('neuen Key vertrauen'), findsOneWidget);
 
-    await tester.tap(find.text('Eltern')); // switch to the other Pi
+    // Switch to the other Pi via the app-bar profile switcher.
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Eltern'));
     await tester.pumpAndSettle();
 
     // The stale trust prompt (pointed at the previous Pi) must be gone.

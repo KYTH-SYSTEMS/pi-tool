@@ -552,6 +552,88 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   // ---- profile management --------------------------------------------------
 
+  String get _activeProfileName => _profiles.isEmpty
+      ? 'Standard'
+      : _profiles[_activeIndex.clamp(0, _profiles.length - 1)].name;
+
+  // A stable colour per profile (by name), so multiple Pis are distinguishable
+  // at a glance in the app-bar switcher.
+  static const _profilePalette = [
+    Color(0xFF1FD65F),
+    Color(0xFF3B82F6),
+    Color(0xFFF59E0B),
+    Color(0xFFEF4444),
+    Color(0xFFA855F7),
+    Color(0xFF14B8A6),
+  ];
+  Color _profileColor(String name) =>
+      _profilePalette[name.hashCode.abs() % _profilePalette.length];
+
+  /// Bottom sheet to pick / add / rename / delete a Pi profile — the single home
+  /// for profile management (replaces the old on-screen profile bar).
+  void _showProfileSwitcher() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              title:
+                  Text('Pi wählen', style: Theme.of(ctx).textTheme.titleMedium),
+              dense: true,
+            ),
+            for (var i = 0; i < _profiles.length; i++)
+              ListTile(
+                leading: Icon(Icons.circle,
+                    size: 14, color: _profileColor(_profiles[i].name)),
+                title: Text(_profiles[i].name),
+                subtitle: _profiles[i].host.trim().isEmpty
+                    ? null
+                    : Text(_profiles[i].host,
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 12)),
+                trailing:
+                    i == _activeIndex ? const Icon(Icons.check, color: kGreen) : null,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (i != _activeIndex) _switchProfile(i);
+                },
+              ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('Profil hinzufügen'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _addProfile();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: Text('„$_activeProfileName" umbenennen'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _renameActiveProfile();
+              },
+            ),
+            if (_profiles.length > 1)
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: Text('„$_activeProfileName" löschen'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _deleteActiveProfile();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _switchProfile(int i) {
     if (i == _activeIndex || i < 0 || i >= _profiles.length) return;
     _profiles[_activeIndex] = _currentProfile(); // capture outgoing edits
@@ -3172,6 +3254,32 @@ class _UpdaterPageState extends State<UpdaterPage>
                     color: theme.colorScheme.primary)),
           ],
         ),
+        // The active Pi, always visible on every tab + a tap to switch/manage.
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(38),
+          child: InkWell(
+            key: const Key('profileSwitcher'),
+            onTap: _busy ? null : _showProfileSwitcher,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.circle,
+                      size: 11, color: _profileColor(_activeProfileName)),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(_activeProfileName,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 13)),
+                  ),
+                  Icon(Icons.arrow_drop_down,
+                      size: 22, color: theme.colorScheme.onSurfaceVariant),
+                ],
+              ),
+            ),
+          ),
+        ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (v) {
@@ -3245,16 +3353,8 @@ class _UpdaterPageState extends State<UpdaterPage>
               ),
               const SizedBox(height: 8),
             ],
-            _ProfileBar(
-              profiles: _profiles,
-              activeIndex: _activeIndex.clamp(0, _profiles.length - 1),
-              enabled: !_busy,
-              onSwitch: _switchProfile,
-              onAdd: _addProfile,
-              onRename: _renameActiveProfile,
-              onDelete: _profiles.length > 1 ? _deleteActiveProfile : null,
-            ),
-            const SizedBox(height: 8),
+            // Profile management moved to the app-bar switcher (visible on every
+            // tab). The Dienste tab goes straight to the connection settings.
             _ConnectionCard(
               host: _host,
               port: _port,

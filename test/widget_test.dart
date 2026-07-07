@@ -220,7 +220,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Neues Profil'));
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Profil hinzufügen'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Eltern');
     await tester.tap(find.widgetWithText(FilledButton, 'OK'));
@@ -246,7 +248,7 @@ void main() {
     expect(find.byType(LicensePage), findsOneWidget);
   });
 
-  testWidgets('tapping a profile chip switches the active Pi', (tester) async {
+  testWidgets('the app-bar switcher switches the active Pi', (tester) async {
     useTallScreen(tester);
     final store = _FakeStore(const AppConfig(
       profiles: [
@@ -261,7 +263,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Eltern')); // the inactive profile chip
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Eltern')); // the inactive profile in the sheet
     await tester.pumpAndSettle();
 
     expect(store.saved.activeIndex, 1); // switch persisted immediately
