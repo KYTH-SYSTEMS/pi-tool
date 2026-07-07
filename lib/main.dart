@@ -1437,11 +1437,13 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.uploadFile(
           config: c, path: target, bytes: picked.bytes, onLog: _appendLog);
       if (mounted) _snack('Hochgeladen: ${picked.name}');
-      return true;
     } catch (_) {
       if (mounted) _snack('Hochladen fehlgeschlagen (Rechte?).');
-      return false;
     }
+    // Reload after any upload ATTEMPT, not only on success: if the app was
+    // backgrounded by the picker the success marker can be missed even though
+    // the file was written — a reload then still surfaces it.
+    return true;
   }
 
   Future<bool> _filesDelete(DirEntry entry, String dir) async {
@@ -3634,7 +3636,13 @@ class _UpdaterPageState extends State<UpdaterPage>
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
+        onDestinationSelected: (i) => setState(() {
+          _tab = i;
+          // Don't carry a stale result banner (e.g. "Verbindung OK") onto
+          // another tab — file ops don't run through _guard, so it would
+          // otherwise stick on the Dateien/Terminal tabs.
+          _statusMessage = null;
+        }),
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.dns_outlined),

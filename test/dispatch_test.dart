@@ -303,14 +303,23 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       dirEntries;
 
+  bool uploadThrows = false;
+
   @override
   Future<void> uploadFile({
     required SshConfig config,
     required String path,
     required Uint8List bytes,
     required void Function(String line) onLog,
-  }) async =>
-      uploadedTo.add(path);
+  }) async {
+    uploadedTo.add(path);
+    // Simulate the file now existing on the Pi (a reload should surface it).
+    dirEntries = [...dirEntries, (name: path.split('/').last, isDir: false)];
+    // Simulate a lost success marker (file written, but reported as a failure).
+    if (uploadThrows) {
+      throw const EvccUpdateException(UpdateErrorKind.unknown, 'Marker verpasst');
+    }
+  }
 
   @override
   Future<void> deleteRemotePath({
@@ -642,6 +651,43 @@ void main() {
     expect(u.uploadedTo, ['/home/config.yaml']); // written into the browsed dir
   });
 
+  testWidgets('Dateien tab: the list refreshes right after an upload (no manual refresh)',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'old.txt', isDir: false)];
+    final picker = _FakeFilePicker(
+        (name: 'new.txt', bytes: Uint8List.fromList([1, 2, 3])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    expect(find.text('new.txt'), findsNothing); // not there before upload
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(find.text('new.txt'), findsOneWidget); // auto-reloaded, no manual tap
+  });
+
+  testWidgets('Dateien tab: reloads even if the upload marker is lost',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'old.txt', isDir: false)]
+      ..uploadThrows = true; // file written on the Pi, but reported as failure
+    final picker = _FakeFilePicker(
+        (name: 'new.txt', bytes: Uint8List.fromList([1])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    // The reload still surfaces the written file (the reported failure aside).
+    expect(find.text('new.txt'), findsOneWidget);
+  });
+
   testWidgets('Dateien tab: upload does not trip the app lock', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
@@ -685,6 +731,19 @@ void main() {
 
     expect(u.uploadedTo, ['/home/a.txt']); // upload happened
     expect(find.text('Entsperren'), findsNothing); // and it did NOT re-lock
+  });
+
+  testWidgets('switching tabs clears the stale connection banner',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester); // sets the "Verbindung OK – erkannt: …" banner
+
+    expect(find.textContaining('Verbindung OK'), findsOneWidget);
+    await goDateien(tester);
+    expect(find.textContaining('Verbindung OK'), findsNothing); // gone on switch
   });
 
   testWidgets('Dateien tab: free user sees the Pro placeholder', (tester) async {
