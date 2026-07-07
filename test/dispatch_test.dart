@@ -194,6 +194,43 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       autoStatus;
 
+  bool piConnectInstalled = false;
+  int piConnectSigninCalls = 0;
+  String? piConnectSigninUrl;
+  bool? piConnectSetOn;
+  bool piConnectSignedOut = false;
+
+  @override
+  Future<void> installPiConnect({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      piConnectInstalled = true;
+
+  @override
+  Future<String?> piConnectSignin({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async {
+    piConnectSigninCalls++;
+    return piConnectSigninUrl;
+  }
+
+  @override
+  Future<void> piConnectSet({
+    required SshConfig config,
+    required bool on,
+    required void Function(String line) onLog,
+  }) async =>
+      piConnectSetOn = on;
+
+  @override
+  Future<void> piConnectSignout({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      piConnectSignedOut = true;
+
   List<DirEntry> dirEntries = const [];
   Uint8List fileBytes = Uint8List(0);
 
@@ -916,6 +953,53 @@ void main() {
     await tester.tap(find.text('notes.txt'));
     await tester.pumpAndSettle();
     expect(find.textContaining('hallo pi'), findsOneWidget); // preview
+  });
+
+  testWidgets('Pi Connect: incompatible OS is greyed out with a reason',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+        ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: false,
+            compatible: false),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Dienst hinzufügen'));
+    await tester.pumpAndSettle();
+    // Shown (customer knows it exists) but tapping explains why, no install.
+    expect(find.text('Raspberry Pi Connect'), findsOneWidget);
+    await tester.tap(find.text('Raspberry Pi Connect'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Bookworm'), findsWidgets);
+    expect(u.piConnectInstalled, isFalse);
+  });
+
+  testWidgets('Pi Connect card: Deaktivieren toggles it off', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: true,
+            active: true,
+            detail: 'Angemeldet · aktiv'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Deaktivieren'));
+    await tester.pumpAndSettle();
+    expect(u.piConnectSetOn, isFalse);
   });
 
   testWidgets('service ⋮ → Logs anzeigen shows the log sheet', (tester) async {

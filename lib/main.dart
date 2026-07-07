@@ -2532,6 +2532,20 @@ class _UpdaterPageState extends State<UpdaterPage>
           case 'homeassistant':
             addable.add(_AddableService(
                 'Home Assistant', Icons.cottage_outlined, _installHomeAssistant));
+          case 'piconnect':
+            // Shown even when incompatible (greyed), so the customer knows why.
+            addable.add(_AddableService(
+              'Raspberry Pi Connect',
+              Icons.cast,
+              s.compatible
+                  ? _installPiConnect
+                  : () => _snack('Raspberry Pi Connect braucht Raspberry Pi OS '
+                      'Bookworm oder neuer.'),
+              subtitle: s.compatible
+                  ? 'Offizieller Fernzugriff (Shell) – installieren'
+                  : 'Nicht kompatibel – braucht Bookworm oder neuer',
+              enabled: s.compatible,
+            ));
         }
         continue;
       }
@@ -2607,6 +2621,26 @@ class _UpdaterPageState extends State<UpdaterPage>
                   () => _proGate(_backupHomeAssistant), pro: true),
               _CardAction('Backups verwalten',
                   () => _proGate(_manageHomeAssistantBackups), pro: true),
+            ],
+          ));
+        case 'piconnect':
+          final signedIn = s.detail.startsWith('Angemeldet');
+          final on = s.detail.contains('aktiv');
+          cards.add(_ServiceCard(
+            isPro: _isPro,
+            status: s,
+            icon: Icons.cast,
+            enabled: !_busy,
+            primaryLabel: !signedIn
+                ? 'Anmelden'
+                : (on ? 'Deaktivieren' : 'Aktivieren'),
+            onPrimary:
+                !signedIn ? _piConnectSignin : () => _piConnectSet(!on),
+            onOpenWeb: signedIn
+                ? () => _openUrl('https://connect.raspberrypi.com')
+                : null,
+            actions: [
+              if (signedIn) _CardAction('Abmelden', _piConnectSignout),
             ],
           ));
         case 'system':
@@ -2719,9 +2753,14 @@ class _UpdaterPageState extends State<UpdaterPage>
             ),
             for (final item in items)
               ListTile(
+                enabled: item.enabled,
                 leading: Icon(item.icon),
                 title: Text(item.name),
                 subtitle: item.subtitle != null ? Text(item.subtitle!) : null,
+                trailing: item.enabled
+                    ? null
+                    : const Icon(Icons.block, size: 18),
+                // Incompatible items stay tappable so the reason can be shown.
                 onTap: () {
                   Navigator.of(sheetContext).pop();
                   item.onAdd();
@@ -2847,6 +2886,84 @@ class _UpdaterPageState extends State<UpdaterPage>
         ),
       ),
     );
+  }
+
+  // ---- Raspberry Pi Connect (official remote access) ----
+
+  Future<void> _installPiConnect() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _installPiConnect;
+    await _guard(() async {
+      await _updater.installPiConnect(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Raspberry Pi Connect installiert – jetzt anmelden.';
+        _statusOk = true;
+      });
+      _addHistory('Raspberry Pi Connect installiert.');
+      await _refreshServices(config);
+    }, backgroundMessage: 'Raspberry Pi Connect wird installiert …');
+  }
+
+  Future<void> _piConnectSignin() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _piConnectSignin;
+    String? url;
+    await _guard(() async {
+      url = await _updater.piConnectSignin(config: config, onLog: _appendLog);
+    }, backgroundMessage: 'Anmeldung wird gestartet …');
+    if (!mounted) return;
+    if (url == null) {
+      _snack('Kein Anmelde-Link erhalten (Details im Terminal-Log).');
+      return;
+    }
+    await _openUrl(url!);
+    if (mounted) {
+      _snack('Im Browser mit deiner Raspberry Pi ID anmelden, dann erneut '
+          '„Verbindung herstellen".');
+    }
+  }
+
+  Future<void> _piConnectSet(bool on) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _piConnectSet(on);
+    await _guard(() async {
+      await _updater.piConnectSet(config: config, on: on, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = on ? 'Pi Connect aktiviert.' : 'Pi Connect deaktiviert.';
+        _statusOk = true;
+      });
+      await _refreshServices(config);
+    },
+        backgroundMessage:
+            on ? 'Pi Connect wird aktiviert …' : 'Pi Connect wird deaktiviert …');
+  }
+
+  Future<void> _piConnectSignout() async {
+    if (_busy) return;
+    if (!await _confirm('Abmelden?',
+        'Trennt den Pi von deinem Raspberry-Pi-Connect-Konto.')) {
+      return;
+    }
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _piConnectSignout;
+    await _guard(() async {
+      await _updater.piConnectSignout(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Von Pi Connect abgemeldet.';
+        _statusOk = true;
+      });
+      await _refreshServices(config);
+    }, backgroundMessage: 'Abmeldung läuft …');
   }
 
   Future<void> _installAptService(AptService service) async {

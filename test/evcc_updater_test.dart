@@ -11,6 +11,7 @@ import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
+import 'package:evcc_updater/src/services/pi_connect.dart';
 import 'package:evcc_updater/src/services/pihole_service.dart';
 import 'package:evcc_updater/src/services/system_service.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
@@ -973,6 +974,38 @@ void main() {
             onLog: (_) {}),
         throwsA(isA<EvccUpdateException>()),
       );
+    });
+  });
+
+  group('EvccUpdater Pi Connect', () {
+    test('installPiConnect installs lite + linger as root', () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('PICONNECT_INSTALLED\n')]});
+      await _updaterWith(runner)
+          .installPiConnect(config: _config, onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, contains('rpi-connect-lite'));
+      expect(stdin, contains('enable-linger'));
+    });
+
+    test('piConnectSignin returns the verify URL', () async {
+      final runner = FakeSshRunner({
+        piConnectSigninCommand: [
+          _r('Complete sign in by visiting '
+              'https://connect.raspberrypi.com/verify/AB-12\n')
+        ]
+      });
+      final url = await _updaterWith(runner)
+          .piConnectSignin(config: _config, onLog: (_) {});
+      expect(url, 'https://connect.raspberrypi.com/verify/AB-12');
+    });
+
+    test('piConnectSet runs the user command WITHOUT a password', () async {
+      final runner = FakeSshRunner({piConnectOnCommand: [_r('')]});
+      await _updaterWith(runner)
+          .piConnectSet(config: _config, on: true, onLog: (_) {});
+      expect(runner.commandsRun, contains(piConnectOnCommand));
+      expect(runner.stdinByCommand[piConnectOnCommand], isNull);
     });
   });
 

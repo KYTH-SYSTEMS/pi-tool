@@ -427,11 +427,15 @@ class _CardAction {
 /// One entry in the "Dienst hinzufügen" picker: a not-yet-installed service and
 /// how to install it (bespoke evcc/Pi-hole/HA flow, or a generic apt install).
 class _AddableService {
-  const _AddableService(this.name, this.icon, this.onAdd, {this.subtitle});
+  const _AddableService(this.name, this.icon, this.onAdd,
+      {this.subtitle, this.enabled = true});
   final String name;
   final IconData icon;
   final VoidCallback onAdd;
   final String? subtitle;
+
+  /// False → shown greyed (e.g. incompatible OS); [onAdd] can still explain why.
+  final bool enabled;
 }
 
 /// A detected-service card (style B): name + status LED + version (mono) +

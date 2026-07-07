@@ -14,6 +14,7 @@ import 'host_key.dart';
 import 'parsing.dart';
 import 'services/apt_services.dart';
 import 'services/homeassistant_service.dart';
+import 'services/pi_connect.dart';
 import 'services/pi_service.dart';
 import 'services/pihole_service.dart';
 import 'services/system_service.dart';
@@ -372,6 +373,7 @@ class EvccUpdater {
           ('PIHOLE_V', piholeVersionCommand),
           ('PIHOLE_S', piholeStatusCommand),
           ('HA_VERSION', haVersionProbe),
+          ('PICONNECT', piConnectStatusCommand),
           ('APTSVC', aptServicesQuery),
           for (final u in units) ('UNIT:$u', 'systemctl is-active $u'),
           ('OS', systemOsCommand),
@@ -488,6 +490,27 @@ class EvccUpdater {
                 : svc.webPort,
             aptPackage: pkg,
           ));
+        }
+
+        // ---- Raspberry Pi Connect (official remote access) ----
+        // Needs Bookworm+; when incompatible we still emit an (absent) entry so
+        // the UI can show it greyed with the reason instead of hiding it.
+        final pcCompatible = isPiConnectCompatible(sec['OS'] ?? '');
+        final pc = parsePiConnectStatus(sec['PICONNECT'] ?? '');
+        if (pc.installed) {
+          out.add(ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: true,
+            active: pc.signedIn && pc.on,
+            version: pc.signedIn ? 'angemeldet' : 'nicht angemeldet',
+            detail: !pc.signedIn
+                ? 'Nicht angemeldet'
+                : (pc.on ? 'Angemeldet · aktiv' : 'Angemeldet · aus'),
+          ));
+        } else {
+          out.add(ServiceStatus.absent('piconnect', 'Raspberry Pi Connect',
+              compatible: pcCompatible));
         }
 
         // ---- System (always present) ----
@@ -810,6 +833,66 @@ class EvccUpdater {
               script: buildAutoUpdateRemoveScript(),
               successMarker: 'AUTOUPDATE_REMOVED',
               failMsg: 'Deaktivieren der automatischen Updates fehlgeschlagen');
+        },
+      );
+
+  /// Installs Raspberry Pi Connect (headless/lite) + enables linger. Root.
+  Future<void> installPiConnect({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Installiere Raspberry Pi Connect …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: piConnectInstallScript,
+              successMarker: 'PICONNECT_INSTALLED',
+              failMsg: 'Installation von Pi Connect fehlgeschlagen');
+        },
+      );
+
+  /// Starts sign-in and returns the verify URL (open it in a browser + log in
+  /// with the Raspberry Pi ID). No sudo — it's a user service.
+  Future<String?> piConnectSignin({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<String?>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Starte Anmeldung bei Pi Connect …');
+          final r = await runner.run(piConnectSigninCommand);
+          return parseSigninUrl(r.stdout);
+        },
+      );
+
+  /// Turns Pi Connect on / off (user service, no sudo).
+  Future<void> piConnectSet({
+    required SshConfig config,
+    required bool on,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          await runner.run(on ? piConnectOnCommand : piConnectOffCommand);
+        },
+      );
+
+  /// Signs the Pi out of Pi Connect (user service, no sudo).
+  Future<void> piConnectSignout({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          await runner.run(piConnectSignoutCommand);
         },
       );
 

@@ -48,6 +48,10 @@ class ServiceStatus {
   /// for the InfluxDB card) — what an update actually upgrades.
   final String? aptPackage;
 
+  /// False → the service can't run on this Pi (e.g. Pi Connect needs Bookworm+);
+  /// the UI shows it greyed with a reason instead of offering it. Default true.
+  final bool compatible;
+
   const ServiceStatus({
     required this.id,
     required this.name,
@@ -61,11 +65,13 @@ class ServiceStatus {
     this.healthWarning = false,
     this.webPort,
     this.aptPackage,
+    this.compatible = true,
   });
 
   /// A "not installed" status for a service the app knows about but didn't find.
-  factory ServiceStatus.absent(String id, String name) =>
-      ServiceStatus(id: id, name: name, installed: false);
+  factory ServiceStatus.absent(String id, String name, {bool compatible = true}) =>
+      ServiceStatus(
+          id: id, name: name, installed: false, compatible: compatible);
 
   ServiceStatus copyWith({bool? updateAvailable, bool? updateKnown}) =>
       ServiceStatus(
@@ -81,6 +87,7 @@ class ServiceStatus {
         healthWarning: healthWarning,
         webPort: webPort,
         aptPackage: aptPackage,
+        compatible: compatible,
       );
 }
 

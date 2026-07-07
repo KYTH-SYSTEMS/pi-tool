@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.30.0': [
+    'Raspberry Pi Connect (offizieller Fernzugriff) als Dienst: installieren, '
+        'per Link anmelden (Raspberry Pi ID), an/aus schalten, Web-Oberfläche '
+        'öffnen. Braucht Raspberry Pi OS Bookworm+ — auf älteren Pis wird es '
+        'ausgegraut mit Hinweis angezeigt.',
+  ],
   '0.29.0': [
     'Laufende Aktionen sind jetzt auf JEDEM Tab sichtbar: ganz oben ein '
         'Fortschrittsbalken mit „läuft …", einem Sprung zum Log und Abbrechen '
