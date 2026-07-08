@@ -248,6 +248,28 @@ void main() {
     expect(find.byType(LicensePage), findsOneWidget);
   });
 
+  testWidgets('the settings sheet scrolls so bottom items are reachable',
+      (tester) async {
+    // Deliberately SHORT screen so the settings list exceeds the sheet height.
+    tester.view.physicalSize = const Size(400, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(_page());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+
+    // The last item must be scroll-reachable — ensureVisible throws if the
+    // sheet has no Scrollable (the pre-fix bug: content clipped at the bottom).
+    await tester.ensureVisible(find.text('evcc-Nightly installieren'));
+    await tester.pumpAndSettle();
+    expect(find.text('evcc-Nightly installieren'), findsOneWidget);
+  });
+
   testWidgets('the ⋮ menu opens the Pi setup guide', (tester) async {
     useTallScreen(tester);
     await tester.pumpWidget(_page());

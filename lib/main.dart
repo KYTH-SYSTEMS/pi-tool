@@ -575,8 +575,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true, // don't clip the profile list when there are many Pis
       builder: (ctx) => SafeArea(
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -636,6 +638,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               },
             ),
           ],
+        ),
         ),
       ),
     );
@@ -2584,16 +2587,22 @@ class _UpdaterPageState extends State<UpdaterPage>
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      // Scrollable + full-height allowed, so the (tall) list isn't clipped at
+      // the bottom and the port field stays above the keyboard.
+      isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Einstellungen',
-                    style: Theme.of(ctx).textTheme.titleMedium),
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Einstellungen',
+                        style: Theme.of(ctx).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -2673,7 +2682,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                     _scheduleSave();
                   },
                 ),
-              ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -2963,14 +2974,16 @@ class _UpdaterPageState extends State<UpdaterPage>
       backgroundColor:
           Theme.of(context).brightness == Brightness.dark ? kCard : null,
       showDragHandle: true,
+      isScrollControlled: true, // don't clip the (up to ~10) service tiles
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
-              child: Text('Dienst hinzufügen',
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
+                child: Text('Dienst hinzufügen',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             ),
             const Padding(
@@ -2993,6 +3006,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 },
               ),
           ],
+          ),
         ),
       ),
     );
