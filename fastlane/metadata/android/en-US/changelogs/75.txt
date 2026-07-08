@@ -1,0 +1,11 @@
+Pi-Tool is a cockpit for your Raspberry Pi (four tabs: Services, Automation, Terminal, Files).
+
+• Services: detect, install and update evcc, Pi-hole, Home Assistant, Grafana, InfluxDB, Mosquitto – plus the whole system
+• Remote access: set up Raspberry Pi Connect and Tailscale (adopt the tailnet IP with one tap)
+• Files: your Pi's file browser – browse, preview, upload from the phone, delete
+• Automation: scheduled updates + health alerts (push via ntfy) – run as systemd timers on the Pi
+• Backups (create & restore), console (history + quick commands), config editor, cleanup
+• Built-in "set up your Pi" guide (Raspberry Pi Imager) for beginners
+• Multiple Pi profiles, biometric lock, SSH key auth
+
+Unofficial tool, not affiliated with evcc or Pi-hole.

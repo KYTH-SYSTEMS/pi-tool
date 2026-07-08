@@ -1,12 +1,16 @@
-# Pi-Tool (inoffiziell) — evcc · Pi-hole · System
+# Pi-Tool (inoffiziell) — Raspberry-Pi-Cockpit
 
 Schlanke **Android-App** (clean minimal, Hell/Dunkel/System), die deine
-**self-hosted Dienste auf dem Raspberry Pi per Knopfdruck via SSH
-aktualisiert und installiert** — und ihre Web-Oberfläche öffnet. „Verbindung
-testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
-[evcc](https://evcc.io), **Pi-hole** und das **ganze System** (alle Pakete via
-`apt full-upgrade`). IP + Pi-Zugang eintragen, tippen, fertig. Verteilung als
-**APK über GitHub Releases**.
+**self-hosted Dienste auf dem Raspberry Pi per SSH** installiert, aktualisiert,
+sichert und überwacht — plus **Fernzugriff** einrichten und **Dateien** verwalten.
+Ein **Cockpit mit vier Tabs** (Dienste · Automatik · Terminal · Dateien):
+„Verbindung herstellen" erkennt automatisch, was läuft, und zeigt pro Dienst eine
+Karte — [evcc](https://evcc.io), Pi-hole, Home Assistant, Grafana, InfluxDB,
+Mosquitto und das **ganze System** (alle Pakete via `apt full-upgrade`). IP +
+Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases**.
+
+> Noch **kein Pi**? Die App hat eine eingebaute Schritt-für-Schritt-Anleitung
+> („Pi einrichten", per Raspberry Pi Imager: SSH + Benutzer + WLAN).
 
 > ⚠️ Hinweis: Die App führt mit deinem eingegebenen Passwort `sudo`-Befehle
 > (`apt`, `pihole`, `systemctl`, ggf. `docker compose`) auf dem Pi aus. Nutze
@@ -18,6 +22,11 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
 
 ## Funktionen
 
+- **Cockpit mit vier Tabs** — unten umschaltbar: **Dienste** (Karten + „+ Dienst
+  hinzufügen"), **Automatik** (geplante Updates + Health-Alerts), **Terminal**
+  (Konsole) und **Dateien** (Datei-Browser). Der aktive Pi steht oben in der
+  Leiste (antippen zum Umschalten/Hinzufügen/Umbenennen). Eine laufende Aktion
+  wird auf jedem Tab als Fortschrittsleiste mit „Abbrechen" angezeigt.
 - **Dienste auto-erkennen** — „Verbindung herstellen" findet evcc, Pi-hole,
   Home Assistant und das System in *einer* SSH-Sitzung und zeigt pro Dienst eine
   Karte (Status, Version, Aktualisieren/Installieren, „Oberfläche öffnen").
@@ -36,9 +45,25 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
   nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,
   InfluxDB, Mosquitto) und installiert den gewählten (experimentell). So bleibt
   die Übersicht schlank, egal wie viele Dienste unterstützt werden.
+- **Fernzugriff einrichten** — **Raspberry Pi Connect** (offiziell, ab Raspberry
+  Pi OS Bookworm; per Link mit der Raspberry Pi ID anmelden) und **Tailscale**
+  (VPN/Mesh, per Login-Link verbinden). Beides installieren/verbinden/trennen
+  direkt in der App; die Tailnet-IP (100.x) lässt sich mit einem Tap ins
+  Host-Feld übernehmen — so erreichst du den Pi von überall.
+- **Automatik** (läuft autonom auf dem Pi, **kein** Handy-Hintergrunddienst) —
+  **geplante Updates** per systemd-Timer (mit evcc-Sicherung + Selbstheilung) und
+  **Health-Alerts** als Push via [ntfy](https://ntfy.sh) bei voller Platte,
+  totem Dienst, Hitze oder anstehenden Updates.
+- **Dateien** — der Datei-Browser deines Pi im eigenen Tab: Ordner durchsuchen,
+  Dateien ansehen (Vorschau), **vom Handy hochladen** und löschen — alles über die
+  normale SSH-Sitzung, ohne SFTP-Server.
+- **Config-Editor** — Konfigdateien (z. B. `evcc.yaml`) direkt in der App
+  bearbeiten; gespeichert wird **atomar mit automatischem Backup**.
 - **Konsole** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
-  unterstützt, das Pi-Passwort wird sicher via stdin gepiped), Ausgabe live.
-  Auf eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
+  unterstützt, das Pi-Passwort wird sicher via stdin gepiped), Ausgabe live, mit
+  **Verlauf + Schnellbefehlen**. Interaktive Programme (htop, Editoren, `-f`)
+  bekommen einen Hinweis mit Alternative statt eines kryptischen Fehlers. Auf
+  eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB oder ≥90 % belegt) warnt sie, bevor
@@ -75,8 +100,8 @@ testen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte:
 - **Mehrere Pi-Profile** — pro Pi ein benanntes Profil, schnell umschaltbar.
 - **SSH-Key- oder Passwort-Login**, **App-Sperre** (Biometrie/PIN),
   **stable/nightly**-Kanal, **Update-Verlauf**, **In-App-Update-Hinweis**.
-- **Dienst-/System-Aktionen:** evcc-Dienst neustarten, Pi neustarten, `systemctl
-  status` ansehen, Live-Log teilen.
+- **Dienst-/System-Aktionen:** evcc-Dienst neustarten, Pi neustarten,
+  Terminal-Log teilen.
 
 ## Was die App macht
 

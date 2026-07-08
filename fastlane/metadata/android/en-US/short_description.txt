@@ -1,1 +1,1 @@
-Update/install evcc, Pi-hole & the whole Pi over SSH, in one tap.
+Manage your Raspberry Pi's services over SSH: update, back up, remote access.

@@ -1,22 +1,27 @@
-Pi-Tool updates and installs self-hosted services on your Raspberry Pi over SSH, with a single tap. "Connect" auto-detects what's running and shows a card per service. Unofficial, not affiliated with evcc or Pi-hole.
+Pi-Tool installs, updates, backs up and monitors self-hosted services on your Raspberry Pi over SSH, with a single tap. Plus set up remote access and manage files. A cockpit with four tabs (Services, Automation, Terminal, Files); "Connect" auto-detects what's running and shows a card per service. Unofficial, not affiliated with evcc or Pi-hole.
 
 Services:
 * evcc – update (apt or Docker, auto-detected), install, live status, dry-run, restart service, open web UI
 * Pi-hole – update (pihole -up), rebuild blocklists, restart DNS, install (experimental), open /admin
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
 * Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI (Grafana/InfluxDB)
-* "Add service" – every not-yet-installed service (evcc, Pi-hole, Home Assistant, Grafana, InfluxDB, Mosquitto) in one picker; the main screen shows only what's actually running
-* Console – run your own commands directly on the Pi over SSH (sudo supported), live output
+* Raspberry Pi Connect – official remote access (Raspberry Pi OS Bookworm+): install, sign in via link, toggle on/off, open web
+* Tailscale – VPN/mesh: install, connect via login link, adopt the tailnet IP into the host field with one tap
+* "Add service" – every not-yet-installed service in one picker; the main screen shows only what's actually running
 * System (whole Pi) – update all packages (apt full-upgrade), reboot, health readout (temperature, disk, RAM, uptime) with a low-disk warning
 
 Features:
+* Cockpit with four tabs; the active Pi sits on top and is tappable (switch/add/rename)
 * Auto-detects all services in one SSH session
+* Files: your Pi's file browser – browse, preview, upload from the phone, delete
+* Config editor: edit config files (e.g. evcc.yaml) in-app, atomic with a backup
 * Backups incl. in-app restore & management: evcc (config + DB), Pi-hole (Teleporter) and Home Assistant (/config); automatic rotation
 * System cleanup: free disk space (apt, unused Docker images, journal)
-* Scheduled automatic updates (on-Pi systemd timer; backs up evcc + self-heals)
-* Backup before the evcc update (config + database), optional
+* Automation on the Pi: scheduled updates (systemd timer, backs up evcc + self-heals) and health alerts pushed via ntfy (full disk, dead service, heat, updates)
+* Console: run your own commands over SSH (sudo supported) with history + quick commands
+* Built-in "set up your Pi" guide (Raspberry Pi Imager: SSH, user, Wi-Fi) for beginners
 * Multiple Pi profiles, quick switching
-* Connect with green/red status
+* Connect with green/red status; a running action can be cancelled
 
 Security & privacy:
 * Credentials stay encrypted on device (Android Keystore)

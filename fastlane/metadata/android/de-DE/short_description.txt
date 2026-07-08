@@ -1,1 +1,1 @@
-evcc, Pi-hole & den ganzen Pi per SSH aktualisieren/installieren.
+Raspberry-Pi-Dienste per SSH verwalten: aktualisieren, sichern, Fernzugriff.
