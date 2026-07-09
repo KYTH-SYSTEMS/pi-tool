@@ -884,6 +884,12 @@ class EvccUpdater {
           log('Verbinde mit Tailscale …');
           final r = await runner.run(installShellCommand,
               stdin: '${config.password}\n$tailscaleUpScript\n');
+          // A rejected sudo password yields no login URL — don't report that as
+          // "already connected"; surface it as a real auth error.
+          if (isSudoPasswordFailure('${r.stdout}\n${r.stderr}')) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
           return parseTailscaleAuthUrl(r.stdout);
         },
       );
@@ -906,6 +912,10 @@ class EvccUpdater {
             if (t.isNotEmpty) log(t);
           });
           final out = '${r.stdout}${r.stderr}'.trim();
+          if (isSudoPasswordFailure(out)) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
           if (out.isNotEmpty) log(out);
         },
       );

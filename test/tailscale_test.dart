@@ -7,13 +7,16 @@ void main() {
       expect(tailscaleInstallScript, contains('tailscale.com/install.sh'));
       expect(tailscaleInstallScript, contains('TAILSCALE_INSTALLED'));
     });
-    test('up runs detached so the SSH call cannot hang', () {
+    test('up runs detached (setsid) into a mktemp file, not a fixed /tmp path',
+        () {
       expect(tailscaleUpScript, contains('tailscale up'));
       expect(tailscaleUpScript, contains('setsid'));
+      expect(tailscaleUpScript, contains('mktemp')); // no predictable root temp
+      expect(tailscaleUpScript, isNot(contains('/tmp/pi-tool-tailscale')));
     });
-    test('down/logout run via sudo', () {
-      expect(tailscaleDownCommand, contains('sudo -S'));
-      expect(tailscaleLogoutCommand, contains('sudo -S'));
+    test('down/logout run via sudo with LC_ALL=C (localized sudo detection)', () {
+      expect(tailscaleDownCommand, contains('LC_ALL=C sudo -S'));
+      expect(tailscaleLogoutCommand, contains('LC_ALL=C sudo -S'));
     });
   });
 

@@ -746,6 +746,57 @@ void main() {
     expect(find.textContaining('Verbindung OK'), findsNothing); // gone on switch
   });
 
+  testWidgets('Dateien tab re-lists after switching Pi (no stale listing)',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'piA.txt', isDir: false)];
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [
+            Profile(name: 'A', host: '1.1.1.1', password: 'pw'),
+            Profile(name: 'B', host: '2.2.2.2', password: 'pw'),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: u,
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+    expect(find.text('piA.txt'), findsOneWidget);
+
+    u.dirEntries = const [(name: 'piB.txt', isDir: false)];
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('B'));
+    await tester.pumpAndSettle();
+
+    // Auto-re-listed for Pi B — the old Pi's entry must not linger.
+    expect(find.text('piB.txt'), findsOneWidget);
+    expect(find.text('piA.txt'), findsNothing);
+  });
+
+  testWidgets('Dateien tab: upload rejects a file over the size limit',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
+    final picker = _FakeFilePicker(
+        (name: 'big.bin', bytes: Uint8List(kFileUploadLimit + 1)));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(u.uploadedTo, isEmpty); // rejected before hitting the Pi
+    expect(find.textContaining('zu groß'), findsWidgets);
+  });
+
   testWidgets('Dateien tab: free user sees the Pro placeholder', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];

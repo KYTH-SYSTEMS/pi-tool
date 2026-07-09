@@ -88,6 +88,7 @@ class _TestButton extends StatelessWidget {
 /// at once.
 class _FilesView extends StatefulWidget {
   const _FilesView({
+    super.key,
     required this.startPath,
     required this.onList,
     required this.onOpenFile,

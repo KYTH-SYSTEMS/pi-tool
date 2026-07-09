@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:evcc_updater/src/alerts.dart';
@@ -732,6 +733,90 @@ void main() {
       expect(path, contains('homeassistant-backup'));
       final stdin = runner.stdinByCommand[installShellCommand]!;
       expect(stdin, contains("-C '/opt/homeassistant/config'"));
+    });
+  });
+
+  group('EvccUpdater file browser writes', () {
+    test('uploadFile pipes the password first and needs the UPLOAD_OK marker',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('UPLOAD_OK\n')],
+      });
+      await _updaterWith(runner).uploadFile(
+          config: _config,
+          path: '/etc/x.yaml',
+          bytes: Uint8List.fromList([1, 2, 3]),
+          onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, startsWith('sekret\n')); // password only via stdin
+      expect(stdin, contains('base64 -d')); // the upload script ran
+    });
+
+    test('uploadFile throws when the UPLOAD_OK marker is missing (exit 0)',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('done, but no marker\n')],
+      });
+      await expectLater(
+        _updaterWith(runner).uploadFile(
+            config: _config,
+            path: '/etc/x.yaml',
+            bytes: Uint8List(1),
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('deleteRemotePath pipes the password on stdin', () async {
+      final cmd = buildDeleteCommand(path: '/tmp/x', isDir: false);
+      final runner = FakeSshRunner({cmd: [_r('')]});
+      await _updaterWith(runner).deleteRemotePath(
+          config: _config, path: '/tmp/x', isDir: false, onLog: (_) {});
+      expect(runner.stdinByCommand[cmd], 'sekret\n');
+    });
+
+    test('deleteRemotePath maps a rejected sudo password to UpdateErrorKind.sudo',
+        () async {
+      final cmd = buildDeleteCommand(path: '/tmp/x', isDir: false);
+      final runner = FakeSshRunner({
+        cmd: [_r('sudo: 1 incorrect password attempt', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner).deleteRemotePath(
+            config: _config, path: '/tmp/x', isDir: false, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
+    });
+  });
+
+  group('EvccUpdater tailscale', () {
+    test('tailscaleUp throws sudo on a rejected password (no false success)',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('', stderr: 'sudo: 1 incorrect password attempt', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).tailscaleUp(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
+    });
+
+    test('tailscaleSet(logout) throws sudo on a rejected password', () async {
+      final runner = FakeSshRunner({
+        tailscaleLogoutCommand: [
+          _r('sudo: 1 incorrect password attempt', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .tailscaleSet(config: _config, logout: true, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
     });
   });
 

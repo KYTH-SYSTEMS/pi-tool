@@ -17,17 +17,23 @@ echo TAILSCALE_INSTALLED
 /// DETACHED (setsid + &) so the SSH call returns, wait briefly, print the log
 /// so the app can read the URL out. Runs as root (via the sudo shell).
 const String tailscaleUpScript = '''
-setsid tailscale up >/tmp/pi-tool-tailscale 2>&1 &
+f=\$(mktemp)
+setsid tailscale up >"\$f" 2>&1 &
 sleep 5
-cat /tmp/pi-tool-tailscale 2>/dev/null
+cat "\$f" 2>/dev/null
+rm -f "\$f"
 ''';
 
 /// No-sudo probe: status + the tailnet IPv4.
 const String tailscaleStatusCommand =
     'tailscale status 2>&1; tailscale ip -4 2>/dev/null';
 
-const String tailscaleDownCommand = "sudo -S -p '' tailscale down 2>&1";
-const String tailscaleLogoutCommand = "sudo -S -p '' tailscale logout 2>&1";
+// LC_ALL=C so isSudoPasswordFailure (English-only) can detect a rejected
+// password on a localized Pi.
+const String tailscaleDownCommand =
+    "LC_ALL=C sudo -S -p '' tailscale down 2>&1";
+const String tailscaleLogoutCommand =
+    "LC_ALL=C sudo -S -p '' tailscale logout 2>&1";
 
 /// The `https://login.tailscale.com/…` auth URL from `tailscale up` output.
 String? parseTailscaleAuthUrl(String out) =>

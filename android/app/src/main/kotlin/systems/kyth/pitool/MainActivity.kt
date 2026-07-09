@@ -17,6 +17,9 @@ class MainActivity : FlutterFragmentActivity() {
     // lives in the app — not a plugin — so it uses the project's own Kotlin/AGP
     // and avoids the plugin version/KGP incompatibilities that broke file_picker.
     private val channelName = "pi_tool/filepicker"
+    // Reject oversized files natively BEFORE reading them into memory, so a huge
+    // pick can't OOM/ANR the app (Dart's kFileUploadLimit is 8 MB too).
+    private val maxUploadBytes = 8L * 1024 * 1024
     private var pending: MethodChannel.Result? = null
     private lateinit var picker: ActivityResultLauncher<Array<String>>
 
@@ -37,6 +40,11 @@ class MainActivity : FlutterFragmentActivity() {
                 return@registerForActivityResult
             }
             try {
+                val size = querySize(uri)
+                if (size != null && size > maxUploadBytes) {
+                    res?.error("too_large", "Datei zu groß (max 8 MB).", null)
+                    return@registerForActivityResult
+                }
                 val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 if (bytes == null) {
                     res?.success(null)
@@ -58,7 +66,14 @@ class MainActivity : FlutterFragmentActivity() {
                         result.error("busy", "A pick is already in progress", null)
                     } else {
                         pending = result
-                        picker.launch(arrayOf("*/*"))
+                        // On launch failure, don't leave `pending` set (that would
+                        // wedge every future pick with "busy") and fail the call.
+                        try {
+                            picker.launch(arrayOf("*/*"))
+                        } catch (e: Exception) {
+                            pending = null
+                            result.error("launch_failed", e.message, null)
+                        }
                     }
                 } else {
                     result.notImplemented()
@@ -75,5 +90,14 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         return name
+    }
+
+    private fun querySize(uri: Uri): Long? {
+        var size: Long? = null
+        contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(OpenableColumns.SIZE)
+            if (idx >= 0 && c.moveToFirst() && !c.isNull(idx)) size = c.getLong(idx)
+        }
+        return size
     }
 }

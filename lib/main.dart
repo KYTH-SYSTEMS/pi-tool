@@ -449,6 +449,8 @@ class _UpdaterPageState extends State<UpdaterPage>
               const SizedBox(height: 10),
               for (final f in const [
                 'Backups sichern, wiederherstellen & verwalten',
+                'Automatik – geplante Updates & Health-Alerts',
+                'Dateien – durchsuchen, hochladen & löschen',
                 'Konsole – eigene Befehle auf dem Pi',
                 'Mehrere Pis (Profile) verwalten',
                 'Aufräumen – Speicher freigeben',
@@ -1434,12 +1436,19 @@ class _UpdaterPageState extends State<UpdaterPage>
       _snack('Datei zu groß (max ${kFileUploadLimit ~/ (1024 * 1024)} MB).');
       return false;
     }
-    final target = joinRemotePath(dir, picked.name);
+    // Use only the basename — a hostile document provider could put `../` in the
+    // display name and (as root) `mv` the file outside the browsed directory.
+    final safeName = picked.name.split(RegExp(r'[\\/]')).last.trim();
+    if (safeName.isEmpty || safeName == '.' || safeName == '..') {
+      _snack('Ungültiger Dateiname.');
+      return false;
+    }
+    final target = joinRemotePath(dir, safeName);
     try {
-      _snack('Lädt „${picked.name}" hoch …');
+      _snack('Lädt „$safeName" hoch …');
       await _updater.uploadFile(
           config: c, path: target, bytes: picked.bytes, onLog: _appendLog);
-      if (mounted) _snack('Hochgeladen: ${picked.name}');
+      if (mounted) _snack('Hochgeladen: $safeName');
     } catch (_) {
       if (mounted) _snack('Hochladen fehlgeschlagen (Rechte?).');
     }
@@ -3783,6 +3792,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       );
     }
     return _FilesView(
+      // Rebuild (→ re-list) when the target Pi changes, so a profile switch or
+      // host edit can't leave the previous Pi's listing + _path in place (which
+      // would make the next upload/delete hit the new Pi at the old path).
+      key: ValueKey('$_activeIndex:${_host.text.trim()}:${_port.text.trim()}'),
       startPath: '/home',
       onList: _filesList,
       onOpenFile: _filesOpen,

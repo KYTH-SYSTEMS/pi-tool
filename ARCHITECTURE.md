@@ -14,7 +14,7 @@ App-ID: `systems.kyth.pitool`.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ UI-Shell        main.dart + ui_widgets.dart (part) + splash  │  Cockpit, 3 Tabs
+│ UI-Shell        main.dart + ui_widgets.dart (part) + splash  │  Cockpit, 4 Tabs
 ├─────────────────────────────────────────────────────────────┤
 │ Orchestrierung  evcc_updater.dart (EvccUpdater)              │  1 Verbindung / Aktion
 │                 ↕ SshRunner-Seam                             │
@@ -203,7 +203,9 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   nur sudo (Key-Modus).
 - **`entitlement.dart`** — **schlafendes Freemium**: `DormantEntitlement` = jeder
   ist Pro (Sideload-Nutzer verlieren nichts vor dem Play-Launch). Pro-Features:
-  `backups`, `console`, `cleanup`, `multiPi` (+ 1-Profil-Limit). Echte Play-
+  `backups`, `console`, `cleanup`, `multiPi`, `automation` (geplante Updates +
+  Health-Alerts), `files` (Dateien-Tab) (+ 1-Profil-Limit); die Paywall-Liste in
+  `_showPaywall` muss dazu passen. Echte Play-
   Billing-Impl wird später hinter `EntitlementService` gesteckt. Gate-Punkte nie
   mit `!isPro` inlinen — immer über den Seam / `_proGate`.
 - **`update_check.dart`** — Self-Update-Check (nur Sideload-Kanal) + evcc-/HA-

@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.37.0': [
+    'Robustheit aus einem kompletten App-Audit: Tailscale meldet ein falsches '
+        'Passwort jetzt korrekt (statt „verbunden"), der Dateien-Tab lädt beim '
+        'Pi-Wechsel automatisch neu, der Upload prüft die Dateigröße schon vorab, '
+        'und Passwort-Fehler werden auch auf deutschsprachigen Pis sauber erkannt.',
+  ],
   '0.36.0': [
     'Dateien hochladen ist da: im Dateien-Tab oben rechts auf das Upload-Symbol '
         'tippen, eine Datei vom Handy wählen — sie landet im gerade geöffneten '

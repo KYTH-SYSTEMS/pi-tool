@@ -42,7 +42,9 @@ String buildUploadScript({required String path, required String base64Content}) 
 /// Deletes a file (`rm -f`) or directory (`rm -rf`) as root. `--` stops option
 /// parsing and the path is single-quoted.
 String buildDeleteCommand({required String path, required bool isDir}) =>
-    "sudo -S -p '' rm -${isDir ? 'rf' : 'f'} -- ${shSingleQuote(path)}";
+    // LC_ALL=C so isSudoPasswordFailure can flag a rejected password (localized
+    // Pis print a translated sudo error otherwise).
+    "LC_ALL=C sudo -S -p '' rm -${isDir ? 'rf' : 'f'} -- ${shSingleQuote(path)}";
 
 /// One directory entry.
 typedef DirEntry = ({String name, bool isDir});

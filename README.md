@@ -66,7 +66,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
-  und Uptime; bei knappem Speicher (<1 GB oder ≥90 % belegt) warnt sie, bevor
+  und Uptime; bei knappem Speicher (<1 GB frei — oder ≥90 % belegt **und**
+  zugleich <5 GB frei) warnt sie, bevor
   ein Update daran scheitert.
 - **Probelauf** (`--dry-run`) — zeigt gefahrlos, ob ein Update verfügbar ist.
 - **Backup vor Update** — sichert vor einem apt-Update automatisch `evcc.yaml` +
@@ -223,7 +224,8 @@ Android-Toolchain** nötig.
 - Trigger: Push auf `main` (baut + testet) und Tag `v*` (baut + signiert +
   legt ein **Release mit `app-release.apk`** an).
 - Schritte: `flutter pub get` → `flutter analyze` → `flutter test` →
-  `flutter build apk --release` (arm64), signiert mit einem Release-Keystore aus
+  `flutter build apk --release --target-platform android-arm64,android-arm`
+  (**fat APK**: arm64 + armeabi-v7a), signiert mit einem Release-Keystore aus
   den Repo-Secrets. Zusätzlich entsteht ein **`.aab`** für den Play Store.
 
 ### Ein neues Release veröffentlichen

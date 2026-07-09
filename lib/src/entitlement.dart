@@ -5,8 +5,10 @@
 library;
 
 /// The features behind the Pro unlock. Everything not listed here stays free
-/// (connect, detect, status, updates, install, live status, reboot, web UIs).
-enum ProFeature { backups, console, cleanup, multiPi }
+/// (connect, detect, status, MANUAL updates, install, live status, reboot, web
+/// UIs). `automation` = scheduled auto-updates + health alerts; `files` = the
+/// Dateien tab (browse/upload/delete).
+enum ProFeature { backups, console, cleanup, multiPi, automation, files }
 
 /// Whether [feature] is locked for a user with entitlement [isPro]. (All Pro
 /// features gate identically today; the enum keeps a single source of truth for

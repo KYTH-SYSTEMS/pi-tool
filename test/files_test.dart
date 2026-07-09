@@ -30,9 +30,9 @@ void main() {
 
     test('delete: file rm -f, dir rm -rf, both -- and quoted', () {
       expect(buildDeleteCommand(path: '/tmp/a', isDir: false),
-          "sudo -S -p '' rm -f -- '/tmp/a'");
+          "LC_ALL=C sudo -S -p '' rm -f -- '/tmp/a'");
       expect(buildDeleteCommand(path: '/tmp/d', isDir: true),
-          "sudo -S -p '' rm -rf -- '/tmp/d'");
+          "LC_ALL=C sudo -S -p '' rm -rf -- '/tmp/d'");
       expect(buildDeleteCommand(path: "/x';reboot;'", isDir: false),
           contains(r"'\''"));
     });

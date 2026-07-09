@@ -111,7 +111,7 @@ void main() {
   group('config read/write', () {
     test('read cats the path as root, shell-quoted', () {
       expect(buildConfigReadCommand('/etc/evcc.yaml'),
-          "sudo -S -p '' cat '/etc/evcc.yaml'");
+          "LC_ALL=C sudo -S -p '' cat '/etc/evcc.yaml'");
       final bad = buildConfigReadCommand("/etc/x';reboot;'");
       expect(bad, contains(r"'\''"));
     });

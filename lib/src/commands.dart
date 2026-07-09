@@ -645,7 +645,9 @@ const String detectShellCommand = 'LC_ALL=C bash -s';
 
 /// Reads a config file as root (many live under /etc, root-owned).
 String buildConfigReadCommand(String path) =>
-    "sudo -S -p '' cat ${shSingleQuote(path)}";
+    // LC_ALL=C so a rejected sudo password is detected (isSudoPasswordFailure is
+    // English-only) instead of falling through to "file missing/no rights".
+    "LC_ALL=C sudo -S -p '' cat ${shSingleQuote(path)}";
 
 /// Root script that backs the current [path] up (under /var/backups/pi-tool),
 /// then overwrites it with [base64Content]. Base64 sidesteps ALL shell-quoting
