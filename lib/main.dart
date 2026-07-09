@@ -2799,6 +2799,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                       _CardAction('Backup wiederherstellen',
                           () => _proGate(_restoreBackup), pro: true),
                     ],
+                    _CardAction('Offizielle evcc-App',
+                        () => _openUrl(kEvccPlayStoreUrl)),
                   ]
                 : const [],
           ));
@@ -3560,16 +3562,6 @@ class _UpdaterPageState extends State<UpdaterPage>
               alignment: WrapAlignment.center,
               spacing: 8,
               children: [
-                TextButton.icon(
-                  onPressed: _openEvccUi,
-                  icon: const Icon(Icons.open_in_browser, size: 18),
-                  label: const Text('evcc-Oberfläche öffnen'),
-                ),
-                TextButton.icon(
-                  onPressed: () => _openUrl(kEvccPlayStoreUrl),
-                  icon: const Icon(Icons.shop_outlined, size: 18),
-                  label: const Text('Offizielle evcc-App'),
-                ),
                 TextButton.icon(
                   onPressed: () => _openUrl(kReleasesUrl),
                   icon: const Icon(Icons.history, size: 18),

@@ -1310,6 +1310,19 @@ void main() {
     expect(find.textContaining('charging started'), findsOneWidget);
   });
 
+  testWidgets('evcc ⋮ links the official evcc app', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    // Moved out of the footer into the evcc card's ⋮ menu.
+    expect(find.text('Offizielle evcc-App'), findsOneWidget);
+  });
+
   testWidgets('Automatik → Health-Alerts: enable installs with the topic',
       (tester) async {
     useTallScreen(tester);
