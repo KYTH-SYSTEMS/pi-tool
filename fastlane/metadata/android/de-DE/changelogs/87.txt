@@ -1,0 +1,1 @@
+Mehr Platz auf der Startseite: die Fußzeile (Version, Rechtliches) ist nicht mehr fest angepinnt, sondern hängt jetzt unten an der Dienste-Liste — der Hauptbereich bekommt die volle Höhe.

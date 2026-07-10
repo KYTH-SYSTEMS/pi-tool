@@ -13,6 +13,11 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.43.1': [
+    'Mehr Platz auf der Startseite: die Fußzeile (Version, Rechtliches) ist '
+        'nicht mehr fest angepinnt, sondern hängt jetzt unten an der Liste — der '
+        'Dienste-Bereich bekommt die volle Höhe.',
+  ],
   '0.43.0': [
     'Feinschliff am Marken-Look: der „KYTH."-Schriftzug erscheint jetzt in der '
         'echten Hausschrift (Bricolage Grotesque, mitgeliefert) mit dem grün '

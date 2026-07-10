@@ -3702,9 +3702,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 index: _tab,
                 children: [
                   // ---- Tab 0: Dienste ----
-                  Column(children: [
-                    Expanded(
-                      child: ListView(
+                  ListView(
           padding: const EdgeInsets.all(16),
           children: [
             // App-Update-Hinweis immer ganz oben.
@@ -3783,14 +3781,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                     minimumSize: const Size.fromHeight(48)),
               ),
             ],
-          ],
-                      ),
-                    ),
-                    // Legal / Version an den unteren Rand des Tabs gepinnt — nicht
-                    // direkt unter den „Tippe …"-Hinweis, wenn noch keine Karten da
-                    // sind.
+                    // Legal / Version am Ende der Kartenliste — scrollt mit dem
+                    // Inhalt mit, statt fix Platz vom Hauptbereich zu nehmen.
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                      padding: const EdgeInsets.fromLTRB(0, 8, 0, 2),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -3852,7 +3846,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                         ],
                       ),
                     ),
-                  ]),
+                  ],
+                  ),
                   // ---- Tab 1: Automatik ----
                   _automatikTab(theme),
                   // ---- Tab 2: Terminal ----

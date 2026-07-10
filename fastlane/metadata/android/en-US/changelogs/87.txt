@@ -1,0 +1,1 @@
+More room on the home screen: the footer (version, legal) is no longer pinned — it now sits at the end of the services list, so the main area gets the full height.
