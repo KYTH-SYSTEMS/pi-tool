@@ -1517,7 +1517,7 @@ class _DisclaimerScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '© 2026 KYTH. Systems UG (haftungsbeschränkt) i.G.',
+                        '© 2026 KYTH. Systems UG (haftungsbeschränkt)',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),

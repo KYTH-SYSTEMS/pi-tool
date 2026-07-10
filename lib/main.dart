@@ -2758,7 +2758,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             size: 56, chevronColor: Theme.of(context).colorScheme.onSurface),
       ),
       applicationLegalese:
-          '© 2026 KYTH. Systems UG (haftungsbeschränkt) i.G.',
+          '© 2026 KYTH. Systems UG (haftungsbeschränkt)',
     );
   }
 

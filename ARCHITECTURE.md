@@ -349,7 +349,9 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Deklaration Pflicht), `launch-kit.md`, `izzyondroid-rfp.md`.
 - `docs/**` — GitHub-Pages: Landing + `privacy.html` + `impressum.html` (URLs im
   Play-Listing verankert — nicht umbenennen; kein Google-Fonts/Tracking).
-- **Launch liegt bis zum HRB auf Eis** (Haftung, UG i.G.).
+- **HRB eingetragen** (2026: Amtsgericht Nürnberg, HRB 46313) — die UG ist keine
+  „i.G." mehr, die Haftungsbeschränkung greift. Der Launch-Blocker „Haftung"
+  ist damit weg; Impressum/Datenschutz führen HRB + Registergericht.
 
 ## Ein neuen Dienst hinzufügen (Kurzrezept)
 
