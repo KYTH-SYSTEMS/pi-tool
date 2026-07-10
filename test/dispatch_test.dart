@@ -1928,4 +1928,51 @@ void main() {
 
     expect(find.textContaining('Keine SSH-Geräte'), findsOneWidget);
   });
+
+  testWidgets(
+      'Multi-Pi overview probes every profile and shows traffic-light status',
+      (tester) async {
+    useTallScreen(tester);
+    // System card reports a pending update → the reachable Pi should be flagged.
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+          id: 'system',
+          name: 'System (Pi)',
+          installed: true,
+          active: true,
+          updateAvailable: true,
+          updateKnown: true,
+          health: '48 Grad · 12% belegt',
+        ),
+      ];
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [
+            Profile(name: 'Wohnzimmer', host: '10.0.0.5', password: 'pw'),
+            Profile(name: 'Keller'), // no host → unreachable (red)
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: u,
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The overview entry only appears with more than one profile.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alle Pis (Überblick)'));
+    await tester.pumpAndSettle();
+
+    // Both profiles listed; the reachable one flags its update, the host-less
+    // one is reported unreachable — fail-soft, not an exception.
+    expect(find.text('Wohnzimmer'), findsOneWidget);
+    expect(find.text('Keller'), findsOneWidget);
+    expect(find.textContaining('Updates verfügbar'), findsWidgets);
+    expect(find.textContaining('Kein Host'), findsOneWidget);
+  });
 }

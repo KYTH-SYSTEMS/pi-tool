@@ -268,6 +268,16 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Server-Icon — *keine* Farbe, die wie Status-LED wirkt); pro Zeile ⋮
   (umbenennen/löschen). Wechsel ruft `_resetDetectionForNewPi()` (nichts leckt
   zwischen Pis).
+- **Multi-Pi-Überblick:** `_MultiPiDashboardPage` (in `ui_widgets.dart`) zeigt
+  eine Ampel-Zeile pro Profil (grün / amber = Updates·Warnung / rot = nicht
+  erreichbar). `_showMultiPiDashboard` friert die Profil-Liste ein (aktives
+  Profil aus den Live-Controllern via `_currentProfile()`) und übergibt
+  `_probePi`. Die Page **probt sequenziell** (`_probePi` baut per
+  `_configForProfile` eine `SshConfig` — `port` ist String → `int.tryParse`,
+  `pi`-Default — und ruft `detectServices`), **fail-soft** (jeder Fehler →
+  `reachable:false`, kein Abbruch der übrigen), abbrechbar durch Verlassen der
+  Page (`_cancelled`), mit Refresh-Action. Eintrag im ⋮-Menü nur bei
+  `_profiles.length > 1`, Pro-gated (`ProFeature.multiPi` via `_proGate`).
 - **Karten:** nicht-installierte Dienste (außer `system`) werden zu
   `_AddableService`-Picker-Einträgen, nie Karten. `_ServiceCard`-⋮ hat stabiles
   `ValueKey('menu-${id}')`. Pro-Aktionen zeigen Free-Nutzern ein Schloss, der Tap

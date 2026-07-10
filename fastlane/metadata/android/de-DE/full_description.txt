@@ -20,7 +20,7 @@ Funktionen:
 * Automatik auf dem Pi: geplante Updates (systemd-Timer, evcc-Sicherung + Selbstheilung) und Health-Alerts als Push via ntfy (volle Platte, toter Dienst, Hitze, Updates)
 * Konsole: eigene Befehle per SSH absetzen (sudo unterstützt) mit Verlauf + Schnellbefehlen
 * Eingebaute Anleitung „Pi einrichten" (Raspberry Pi Imager: SSH, Benutzer, WLAN) für Einsteiger
-* Mehrere Pi-Profile, schnell umschaltbar; verschlüsselter Export/Import für den Gerätewechsel
+* Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel (erreichbar/Updates/Warnung); verschlüsselter Export/Import für den Gerätewechsel
 * Verbindung herstellen mit grün/rot-Status; laufende Aktion abbrechbar
 
 Sicherheit & Datenschutz:

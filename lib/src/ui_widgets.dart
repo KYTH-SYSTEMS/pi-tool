@@ -392,6 +392,114 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   }
 }
 
+/// One Pi's status in the multi-Pi overview.
+typedef PiSnapshot = ({
+  bool reachable,
+  bool updates,
+  bool warning,
+  String detail,
+});
+
+/// Multi-Pi overview: a traffic-light row per profile. Probes each Pi
+/// sequentially (fail-soft) so one unreachable Pi doesn't block the rest.
+class _MultiPiDashboardPage extends StatefulWidget {
+  const _MultiPiDashboardPage({required this.profiles, required this.probe});
+  final List<Profile> profiles;
+  final Future<PiSnapshot> Function(Profile) probe;
+
+  @override
+  State<_MultiPiDashboardPage> createState() => _MultiPiDashboardPageState();
+}
+
+class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
+  final Map<int, PiSnapshot> _results = {};
+  int _probing = -1;
+  bool _cancelled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _run();
+  }
+
+  @override
+  void dispose() {
+    _cancelled = true; // stop probing further Pis once we leave the page
+    super.dispose();
+  }
+
+  Future<void> _run() async {
+    setState(() {
+      _results.clear();
+      _cancelled = false;
+    });
+    for (var i = 0; i < widget.profiles.length; i++) {
+      if (_cancelled || !mounted) return;
+      setState(() => _probing = i);
+      final snap = await widget.probe(widget.profiles[i]);
+      if (_cancelled || !mounted) return;
+      setState(() {
+        _results[i] = snap;
+        _probing = -1;
+      });
+    }
+  }
+
+  Color _colorFor(BuildContext ctx, PiSnapshot s) {
+    final cs = Theme.of(ctx).colorScheme;
+    if (!s.reachable) return cs.error;
+    if (s.warning || s.updates) return Colors.amber.shade700;
+    return kGreen;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final done = _results.length == widget.profiles.length;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Alle Pis'),
+        actions: [
+          IconButton(
+            tooltip: 'Aktualisieren',
+            onPressed: done ? _run : null,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: ListView.builder(
+        itemCount: widget.profiles.length,
+        itemBuilder: (ctx, i) {
+          final p = widget.profiles[i];
+          final snap = _results[i];
+          final subtitle = snap == null
+              ? (i == _probing ? 'Prüfe …' : 'Wartet …')
+              : [
+                  if (snap.updates) 'Updates verfügbar',
+                  snap.detail,
+                ].where((s) => s.isNotEmpty).join('  ·  ');
+          return ListTile(
+            leading: snap == null
+                ? (i == _probing
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Icon(Icons.circle_outlined,
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant))
+                : Icon(Icons.circle, color: _colorFor(ctx, snap)),
+            title: Text(p.name),
+            subtitle: Text(subtitle,
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+            trailing: (snap?.updates ?? false)
+                ? const Icon(Icons.system_update, size: 18)
+                : null,
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// Beginner guide: set up a fresh Pi with Raspberry Pi Imager so this app can
 /// connect (enable SSH + user/password + WiFi via the Imager's advanced options).
 class _SetupGuidePage extends StatelessWidget {

@@ -1,0 +1,1 @@
+New: "All Pis (overview)". If you keep several profiles, the app now probes each Pi one by one from the ⋮ menu and shows a traffic light — green (all good), amber (updates or a warning), red (unreachable). You instantly see which Pi needs attention. Fail-soft: one unreachable Pi never blocks the others.

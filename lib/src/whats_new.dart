@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.42.0': [
+    'Alle Pis auf einen Blick: hast du mehrere Profile, gibt es oben rechts im '
+        '⋮-Menü jetzt „Alle Pis (Überblick)" — eine Ampel-Liste, die jeden Pi der '
+        'Reihe nach prüft und grün (alles gut), amber (Updates oder Warnung) oder '
+        'rot (nicht erreichbar) anzeigt. So siehst du sofort, welcher Pi '
+        'Aufmerksamkeit braucht.',
+  ],
   '0.41.0': [
     'Profile mitnehmen: In den Einstellungen kannst du jetzt alle Pi-Profile '
         '(inkl. Zugangsdaten) als **verschlüsselte** Datei exportieren und auf '

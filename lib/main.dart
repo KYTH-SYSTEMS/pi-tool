@@ -898,6 +898,64 @@ class _UpdaterPageState extends State<UpdaterPage>
     return port;
   }
 
+  /// Builds an SshConfig from a stored [Profile] (not the live controllers) —
+  /// used by the multi-Pi overview to probe every profile.
+  SshConfig _configForProfile(Profile p) => SshConfig(
+        host: p.host.trim(),
+        port: int.tryParse(p.port.trim()) ?? 22,
+        username: p.username.trim().isEmpty ? 'pi' : p.username.trim(),
+        password: p.password,
+        privateKey: p.authMode == AuthMode.key ? p.privateKey : '',
+        keyPassphrase: p.authMode == AuthMode.key ? p.keyPassphrase : '',
+        timeout: const Duration(seconds: 12),
+      );
+
+  /// Connects to one Pi and summarises its System card (fail-soft). Used by the
+  /// multi-Pi overview.
+  Future<PiSnapshot> _probePi(Profile p) async {
+    if (p.host.trim().isEmpty) {
+      return (
+        reachable: false,
+        updates: false,
+        warning: false,
+        detail: 'Kein Host eingetragen'
+      );
+    }
+    try {
+      final services = await _updater
+          .detectServices(config: _configForProfile(p), onLog: (_) {});
+      ServiceStatus? sys;
+      for (final s in services) {
+        if (s.id == 'system') sys = s;
+      }
+      return (
+        reachable: true,
+        updates: sys?.updateAvailable ?? false,
+        warning: sys?.healthWarning ?? false,
+        detail: (sys?.health.isNotEmpty ?? false) ? sys!.health : 'erreichbar',
+      );
+    } catch (_) {
+      return (
+        reachable: false,
+        updates: false,
+        warning: false,
+        detail: 'Nicht erreichbar'
+      );
+    }
+  }
+
+  void _showMultiPiDashboard() {
+    // Capture the active profile's live edits so the overview probes what's on
+    // screen, not a stale copy.
+    final profiles = [..._profiles];
+    if (_activeIndex < profiles.length) {
+      profiles[_activeIndex] = _currentProfile();
+    }
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => _MultiPiDashboardPage(profiles: profiles, probe: _probePi),
+    ));
+  }
+
   SshConfig _configFor(int port) => SshConfig(
         host: _host.text.trim(),
         port: port,
@@ -3565,6 +3623,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _openSetupGuide();
                 case 'find':
                   _findPi();
+                case 'dashboard':
+                  _proGate(_showMultiPiDashboard);
                 case 'share':
                   _shareLog();
                 case 'history':
@@ -3593,6 +3653,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                   value: 'find',
                   enabled: !_busy,
                   child: const Text('Pi im WLAN suchen')),
+              if (_profiles.length > 1)
+                PopupMenuItem(
+                    value: 'dashboard',
+                    enabled: !_busy,
+                    child: const Text('Alle Pis (Überblick)')),
               const PopupMenuItem(value: 'share', child: Text('Log teilen')),
               const PopupMenuItem(value: 'history', child: Text('Verlauf')),
               const PopupMenuDivider(),

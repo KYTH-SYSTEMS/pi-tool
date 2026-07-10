@@ -1,0 +1,1 @@
+Neu: „Alle Pis (Überblick)". Hast du mehrere Profile, prüft die App über das ⋮-Menü jeden Pi der Reihe nach und zeigt eine Ampel — grün (alles gut), amber (Updates oder Warnung), rot (nicht erreichbar). So siehst du sofort, welcher Pi Aufmerksamkeit braucht. Fail-soft: ein nicht erreichbarer Pi blockiert die anderen nicht.
