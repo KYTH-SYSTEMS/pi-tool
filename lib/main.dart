@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'dart:io' show Directory, File;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart'
+    show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemNavigator;
+import 'package:flutter/services.dart' show SystemNavigator, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
@@ -19,6 +21,7 @@ import 'src/file_pick.dart';
 import 'src/files.dart';
 import 'src/profile_transfer.dart';
 import 'src/kyth_splash.dart';
+import 'src/kyth_wordmark.dart';
 import 'src/whats_new.dart';
 import 'src/evcc_api.dart';
 import 'src/evcc_updater.dart';
@@ -36,6 +39,13 @@ import 'src/update_check.dart';
 part 'src/ui_widgets.dart';
 
 void main() {
+  // Attribute the bundled Bricolage Grotesque (SIL OFL) on the licenses page.
+  // Lazy: the asset is only read when the user opens that page — nothing runs
+  // in the startup path.
+  LicenseRegistry.addLicense(() async* {
+    final ofl = await rootBundle.loadString('assets/fonts/OFL.txt');
+    yield LicenseEntryWithLineBreaks(const ['Bricolage Grotesque'], ofl);
+  });
   runApp(const EvccPiToolApp());
 }
 
@@ -54,6 +64,8 @@ const kKythUrl = 'https://www.kyth.systems';
 const kSupportEmail = 'support@kyth.systems';
 
 /// Drives MaterialApp.themeMode; updated from the loaded setting + the picker.
+/// Light and system modes are supported; only the lock/fingerprint screen is
+/// pinned dark (it follows the dark splash video) — see [_LockScreen].
 final ValueNotifier<ThemeMode> themeModeNotifier =
     ValueNotifier<ThemeMode>(ThemeMode.system);
 
@@ -3803,13 +3815,27 @@ class _UpdaterPageState extends State<UpdaterPage>
                           const SizedBox(height: 6),
                           InkWell(
                             onTap: () => _openUrl(kKythUrl),
-                            child: Text(
-                              _appVersion.isEmpty
-                                  ? 'by KYTH. Systems'
-                                  : 'Pi-Tool v$_appVersion · by KYTH. Systems',
+                            child: Text.rich(
+                              TextSpan(
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                    color:
+                                        theme.colorScheme.onSurfaceVariant),
+                                children: [
+                                  TextSpan(
+                                      text: _appVersion.isEmpty
+                                          ? 'by '
+                                          : 'Pi-Tool v$_appVersion · by '),
+                                  WidgetSpan(
+                                    alignment: PlaceholderAlignment.middle,
+                                    child: KythWordmark(
+                                        fontSize: 12,
+                                        product: 'Systems',
+                                        color: theme
+                                            .colorScheme.onSurfaceVariant),
+                                  ),
+                                ],
+                              ),
                               textAlign: TextAlign.center,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant),
                             ),
                           ),
                           Wrap(

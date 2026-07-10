@@ -1,6 +1,7 @@
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/authenticator.dart';
 import 'package:evcc_updater/src/evcc_api.dart';
+import 'package:evcc_updater/src/kyth_wordmark.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
@@ -152,8 +153,9 @@ void main() {
     await tester.scrollUntilVisible(version, 300,
         scrollable: find.byType(Scrollable).first);
     expect(version, findsOneWidget);
-    // Dezentes KYTH-Branding + die kleinen Legal-Links in der Fußzeile.
-    expect(find.textContaining('by KYTH.'), findsOneWidget);
+    // Dezentes KYTH-Branding (Wortmarke) + die kleinen Legal-Links in der Fußzeile.
+    expect(find.textContaining('by '), findsWidgets);
+    expect(find.byType(KythWordmark), findsOneWidget);
     expect(find.text('Datenschutz'), findsOneWidget);
     expect(find.text('Open-Source-Lizenzen'), findsOneWidget);
   });
@@ -472,5 +474,29 @@ void main() {
     expect(find.byIcon(Icons.bolt), findsNothing);
     // Main UI must be hidden behind the lock.
     expect(find.text('evcc aktualisieren'), findsNothing);
+  });
+
+  testWidgets('the lock/fingerprint screen stays dark under a light app theme',
+      (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'Standard')],
+      activeIndex: 0,
+      lockEnabled: true,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      // Light app theme — the lock screen must NOT follow it (it sits right
+      // after the dark splash video).
+      theme: ThemeData(brightness: Brightness.light),
+      home: UpdaterPage(
+        store: store,
+        updateChecker: _noUpdateChecker,
+        authenticator: _DenyAuth(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final ctx = tester.element(find.byKey(const Key('promptMark')));
+    expect(Theme.of(ctx).brightness, Brightness.dark);
   });
 }

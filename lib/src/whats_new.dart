@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.43.0': [
+    'Feinschliff am Marken-Look: der „KYTH."-Schriftzug erscheint jetzt in der '
+        'echten Hausschrift (Bricolage Grotesque, mitgeliefert) mit dem grün '
+        'leuchtenden Schlusspunkt — passend zur Website. Rein optisch, keine '
+        'Funktionsänderung.',
+  ],
   '0.42.0': [
     'Alle Pis auf einen Blick: hast du mehrere Profile, gibt es oben rechts im '
         '⋮-Menü jetzt „Alle Pis (Überblick)" — eine Ampel-Liste, die jeden Pi der '

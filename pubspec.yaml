@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.42.0+85
+version: 0.43.0+86
 
 environment:
   sdk: ^3.12.2
@@ -83,6 +83,14 @@ flutter:
 
   assets:
     - assets/kyth-splash.mp4
+    - assets/fonts/OFL.txt # bundled so the SIL OFL shows on the licenses page
+
+  # KYTH corporate wordmark font (variable, OFL — bundled, no Google-Fonts call).
+  # Rendered via the KythWordmark widget; weight axis driven by FontVariation.
+  fonts:
+    - family: Bricolage Grotesque
+      fonts:
+        - asset: assets/fonts/BricolageGrotesque.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -37,9 +37,10 @@ class _TestButton extends StatelessWidget {
 
     if (testing) {
       icon = const SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2));
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
       label = 'Verbinde …';
       fg = cs.onSurfaceVariant;
       border = cs.outlineVariant;
@@ -166,10 +167,11 @@ class _FilesViewState extends State<_FilesView> {
           child: Row(
             children: [
               Expanded(
-                child: Text(_path,
-                    overflow: TextOverflow.ellipsis,
-                    style:
-                        const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                child: Text(
+                  _path,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
               ),
               IconButton(
                 tooltip: 'Aktualisieren',
@@ -181,8 +183,8 @@ class _FilesViewState extends State<_FilesView> {
                 onPressed: busy
                     ? null
                     : () => _work(() async {
-                          if (await widget.onUpload(_path)) await _load(_path);
-                        }),
+                        if (await widget.onUpload(_path)) await _load(_path);
+                      }),
                 icon: const Icon(Icons.upload_file),
               ),
             ],
@@ -193,52 +195,58 @@ class _FilesViewState extends State<_FilesView> {
           child: _loading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
-                  ? Center(child: Text(_error!))
-                  : ListView(
-                      children: [
-                        if (!atRoot)
-                          ListTile(
-                            leading: const Icon(Icons.arrow_upward),
-                            title: const Text('..'),
-                            onTap: busy
-                                ? null
-                                : () => _load(parentRemotePath(_path)),
-                          ),
-                        if (entries.isEmpty && !atRoot)
-                          const ListTile(
-                              enabled: false, title: Text('— leer —')),
-                        for (final e in entries)
-                          ListTile(
-                            leading: Icon(e.isDir
-                                ? Icons.folder
-                                : Icons.insert_drive_file_outlined),
-                            title: Text(e.name),
-                            onTap: busy
-                                ? null
-                                : e.isDir
-                                    ? () => _load(joinRemotePath(_path, e.name))
-                                    : () => _work(() => widget.onOpenFile(
-                                        joinRemotePath(_path, e.name))),
-                            trailing: PopupMenuButton<String>(
-                              enabled: !busy,
-                              tooltip: 'Aktionen',
-                              onSelected: (v) {
-                                if (v == 'delete') {
-                                  _work(() async {
-                                    if (await widget.onDelete(e, _path)) {
-                                      await _load(_path);
-                                    }
-                                  });
+              ? Center(child: Text(_error!))
+              : ListView(
+                  children: [
+                    if (!atRoot)
+                      ListTile(
+                        leading: const Icon(Icons.arrow_upward),
+                        title: const Text('..'),
+                        onTap: busy
+                            ? null
+                            : () => _load(parentRemotePath(_path)),
+                      ),
+                    if (entries.isEmpty && !atRoot)
+                      const ListTile(enabled: false, title: Text('— leer —')),
+                    for (final e in entries)
+                      ListTile(
+                        leading: Icon(
+                          e.isDir
+                              ? Icons.folder
+                              : Icons.insert_drive_file_outlined,
+                        ),
+                        title: Text(e.name),
+                        onTap: busy
+                            ? null
+                            : e.isDir
+                            ? () => _load(joinRemotePath(_path, e.name))
+                            : () => _work(
+                                () => widget.onOpenFile(
+                                  joinRemotePath(_path, e.name),
+                                ),
+                              ),
+                        trailing: PopupMenuButton<String>(
+                          enabled: !busy,
+                          tooltip: 'Aktionen',
+                          onSelected: (v) {
+                            if (v == 'delete') {
+                              _work(() async {
+                                if (await widget.onDelete(e, _path)) {
+                                  await _load(_path);
                                 }
-                              },
-                              itemBuilder: (_) => [
-                                const PopupMenuItem(
-                                    value: 'delete', child: Text('Löschen')),
-                              ],
+                              });
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Löschen'),
                             ),
-                          ),
-                      ],
-                    ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
         ),
       ],
     );
@@ -270,10 +278,12 @@ class _AlertsSheet extends StatefulWidget {
 }
 
 class _AlertsSheetState extends State<_AlertsSheet> {
-  late final TextEditingController _serverCtrl =
-      TextEditingController(text: widget.initialServer);
-  late final TextEditingController _topicCtrl =
-      TextEditingController(text: widget.initialTopic);
+  late final TextEditingController _serverCtrl = TextEditingController(
+    text: widget.initialServer,
+  );
+  late final TextEditingController _topicCtrl = TextEditingController(
+    text: widget.initialTopic,
+  );
 
   @override
   void dispose() {
@@ -282,8 +292,9 @@ class _AlertsSheetState extends State<_AlertsSheet> {
     super.dispose();
   }
 
-  String get _server =>
-      _serverCtrl.text.trim().isEmpty ? 'https://ntfy.sh' : _serverCtrl.text.trim();
+  String get _server => _serverCtrl.text.trim().isEmpty
+      ? 'https://ntfy.sh'
+      : _serverCtrl.text.trim();
 
   @override
   Widget build(BuildContext context) {
@@ -292,26 +303,33 @@ class _AlertsSheetState extends State<_AlertsSheet> {
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 4,
-            bottom: 20 + MediaQuery.of(context).viewInsets.bottom),
+          left: 20,
+          right: 20,
+          top: 4,
+          bottom: 20 + MediaQuery.of(context).viewInsets.bottom,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Health-Alerts', style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
-            const Text('Der Pi meldet sich per Push (via ntfy), wenn die Platte '
-                'vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates '
-                'anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.'),
+            const Text(
+              'Der Pi meldet sich per Push (via ntfy), wenn die Platte '
+              'vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates '
+              'anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.',
+            ),
             const SizedBox(height: 6),
             InkWell(
               onTap: widget.onOpenNtfy,
-              child: Text('So funktioniert ntfy (App installieren, Thema '
-                  'abonnieren) →',
-                  style: TextStyle(
-                      color: theme.colorScheme.primary, fontSize: 13)),
+              child: Text(
+                'So funktioniert ntfy (App installieren, Thema '
+                'abonnieren) →',
+                style: TextStyle(
+                  color: theme.colorScheme.primary,
+                  fontSize: 13,
+                ),
+              ),
             ),
             const SizedBox(height: 12),
             Text(
@@ -319,8 +337,9 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                   ? 'Aktuell aktiv · letzte Prüfung: ${status.lastCheck ?? '—'}'
                   : 'Aktuell aus.',
               style: TextStyle(
-                  color: status.enabled ? kGreen : null,
-                  fontWeight: FontWeight.w600),
+                color: status.enabled ? kGreen : null,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -355,11 +374,15 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                         widget.onSnack('Bitte ein ntfy-Thema eingeben.');
                         return;
                       }
-                      Navigator.pop(context,
-                          (enable: true, server: _server, topic: topic));
+                      Navigator.pop(context, (
+                        enable: true,
+                        server: _server,
+                        topic: topic,
+                      ));
                     },
-                    child:
-                        Text(status.enabled ? 'Aktualisieren' : 'Einschalten'),
+                    child: Text(
+                      status.enabled ? 'Aktualisieren' : 'Einschalten',
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -380,8 +403,11 @@ class _AlertsSheetState extends State<_AlertsSheet> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton(
-                  onPressed: () => Navigator.pop(
-                      context, (enable: false, server: '', topic: '')),
+                  onPressed: () => Navigator.pop(context, (
+                    enable: false,
+                    server: '',
+                    topic: '',
+                  )),
                   child: const Text('Ausschalten'),
                 ),
               ),
@@ -480,16 +506,22 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
           return ListTile(
             leading: snap == null
                 ? (i == _probing
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : Icon(Icons.circle_outlined,
-                        color: Theme.of(ctx).colorScheme.onSurfaceVariant))
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          Icons.circle_outlined,
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        ))
                 : Icon(Icons.circle, color: _colorFor(ctx, snap)),
             title: Text(p.name),
-            subtitle: Text(subtitle,
-                maxLines: 2, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             trailing: (snap?.updates ?? false)
                 ? const Icon(Icons.system_update, size: 18)
                 : null,
@@ -510,35 +542,45 @@ class _SetupGuidePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     Widget bullet(String t) => Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('•  '),
-            Expanded(child: Text(t)),
-          ]),
-        );
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('•  '),
+          Expanded(child: Text(t)),
+        ],
+      ),
+    );
     Widget step(int n, String title, Widget body) => Padding(
-          padding: const EdgeInsets.only(bottom: 20),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            CircleAvatar(
-              radius: 14,
-              backgroundColor: kGreen,
-              child: Text('$n',
-                  style: const TextStyle(
-                      color: kBlack, fontWeight: FontWeight.bold)),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 4),
-                  body,
-                ],
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: kGreen,
+            child: Text(
+              '$n',
+              style: const TextStyle(
+                color: kBlack,
+                fontWeight: FontWeight.bold,
               ),
             ),
-          ]),
-        );
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                body,
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
 
     return Scaffold(
       appBar: AppBar(title: const Text('Pi einrichten')),
@@ -555,57 +597,80 @@ class _SetupGuidePage extends StatelessWidget {
           step(
             1,
             'Imager installieren',
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Lade den „Raspberry Pi Imager" auf deinen Computer '
-                  'und starte ihn. Steck die SD-Karte des Pi in den Rechner.'),
-              const SizedBox(height: 6),
-              OutlinedButton.icon(
-                onPressed: onDownloadImager,
-                icon: const Icon(Icons.download, size: 18),
-                label: const Text('Raspberry Pi Imager laden'),
-              ),
-            ]),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Lade den „Raspberry Pi Imager" auf deinen Computer '
+                  'und starte ihn. Steck die SD-Karte des Pi in den Rechner.',
+                ),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                  onPressed: onDownloadImager,
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Raspberry Pi Imager laden'),
+                ),
+              ],
+            ),
           ),
           step(
             2,
             'System wählen',
-            const Text('Wähle dein Pi-Modell, dann „Raspberry Pi OS Lite '
-                '(64-Bit)" (ohne Desktop – schlank und ideal für Pi-Tool) und '
-                'die SD-Karte.'),
+            const Text(
+              'Wähle dein Pi-Modell, dann „Raspberry Pi OS Lite '
+              '(64-Bit)" (ohne Desktop – schlank und ideal für Pi-Tool) und '
+              'die SD-Karte.',
+            ),
           ),
           step(
             3,
             '⚙️ Erweiterte Optionen (wichtig!)',
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Vor dem Schreiben auf das Zahnrad ⚙ bzw. '
-                  '„Einstellungen bearbeiten" tippen und setzen:'),
-              bullet('SSH aktivieren (mit Passwort-Anmeldung)'),
-              bullet('Benutzername + Passwort – die trägst du gleich in '
-                  'Pi-Tool ein'),
-              bullet('Hostname, z. B. „wohnzimmer-pi" (erreichbar als '
-                  'wohnzimmer-pi.local)'),
-              bullet('WLAN: Netzwerkname, Passwort und Land – oder ein '
-                  'LAN-Kabel nutzen'),
-            ]),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Vor dem Schreiben auf das Zahnrad ⚙ bzw. '
+                  '„Einstellungen bearbeiten" tippen und setzen:',
+                ),
+                bullet('SSH aktivieren (mit Passwort-Anmeldung)'),
+                bullet(
+                  'Benutzername + Passwort – die trägst du gleich in '
+                  'Pi-Tool ein',
+                ),
+                bullet(
+                  'Hostname, z. B. „wohnzimmer-pi" (erreichbar als '
+                  'wohnzimmer-pi.local)',
+                ),
+                bullet(
+                  'WLAN: Netzwerkname, Passwort und Land – oder ein '
+                  'LAN-Kabel nutzen',
+                ),
+              ],
+            ),
           ),
           step(
             4,
             'Schreiben & starten',
-            const Text('SD-Karte beschreiben, in den Pi stecken, Strom '
-                'anschließen. Der erste Start dauert 1–2 Minuten.'),
+            const Text(
+              'SD-Karte beschreiben, in den Pi stecken, Strom '
+              'anschließen. Der erste Start dauert 1–2 Minuten.',
+            ),
           ),
           step(
             5,
             'In Pi-Tool verbinden',
-            const Text('Oben den Pi wählen/anlegen, als Host „<hostname>.local" '
-                'eintragen (oder „Pi im WLAN suchen"), Benutzer + Passwort aus '
-                'Schritt 3 – dann „Verbindung herstellen". Fertig.'),
+            const Text(
+              'Oben den Pi wählen/anlegen, als Host „<hostname>.local" '
+              'eintragen (oder „Pi im WLAN suchen"), Benutzer + Passwort aus '
+              'Schritt 3 – dann „Verbindung herstellen". Fertig.',
+            ),
           ),
           Text(
             'Tipp: Klappt „.local" nicht, nutze „Pi im WLAN suchen" oder die IP '
             'aus deinem Router.',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -624,8 +689,9 @@ class _ConfigEditorPage extends StatefulWidget {
 }
 
 class _ConfigEditorPageState extends State<_ConfigEditorPage> {
-  late final TextEditingController _c =
-      TextEditingController(text: widget.initial);
+  late final TextEditingController _c = TextEditingController(
+    text: widget.initial,
+  );
   @override
   void dispose() {
     _c.dispose();
@@ -691,8 +757,10 @@ class _AutomationTile extends StatelessWidget {
       color: dark ? kCard : cs.surfaceContainerHighest,
       child: ListTile(
         leading: Icon(icon, color: _themeGreen(dark)),
-        title: Text(title,
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+        ),
         subtitle: Text(subtitle),
         trailing: locked
             ? Icon(Icons.lock_outline, size: 18, color: cs.onSurfaceVariant)
@@ -715,8 +783,13 @@ class _CardAction {
 /// One entry in the "Dienst hinzufügen" picker: a not-yet-installed service and
 /// how to install it (bespoke evcc/Pi-hole/HA flow, or a generic apt install).
 class _AddableService {
-  const _AddableService(this.name, this.icon, this.onAdd,
-      {this.subtitle, this.enabled = true});
+  const _AddableService(
+    this.name,
+    this.icon,
+    this.onAdd, {
+    this.subtitle,
+    this.enabled = true,
+  });
   final String name;
   final IconData icon;
   final VoidCallback onAdd;
@@ -754,10 +827,10 @@ class _ServiceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final mono = Theme.of(context)
-        .textTheme
-        .bodySmall
-        ?.copyWith(fontFamily: 'monospace', color: cs.onSurfaceVariant);
+    final mono = Theme.of(context).textTheme.bodySmall?.copyWith(
+      fontFamily: 'monospace',
+      color: cs.onSurfaceVariant,
+    );
 
     // Known up to date → show a disabled "Aktuell ✓" instead of "Aktualisieren"
     // (a forced update stays available via the ⋮ menu). When currency is
@@ -806,17 +879,21 @@ class _ServiceCard extends StatelessWidget {
               Icon(icon, size: 20, color: cs.onSurfaceVariant),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(status.name,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 15)),
+                child: Text(
+                  status.name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
               ),
               Icon(Icons.circle, size: 10, color: led),
               const SizedBox(width: 6),
               Text(
                 status.installed
                     ? (status.updateAvailable
-                        ? 'Update'
-                        : (status.active ? 'aktiv' : 'inaktiv'))
+                          ? 'Update'
+                          : (status.active ? 'aktiv' : 'inaktiv'))
                     : 'nicht installiert',
                 style: TextStyle(color: ledText, fontSize: 12),
               ),
@@ -838,8 +915,11 @@ class _ServiceCard extends StatelessWidget {
                                 children: [
                                   Expanded(child: Text(actions[i].label)),
                                   const SizedBox(width: 8),
-                                  Icon(Icons.lock_outline,
-                                      size: 15, color: cs.onSurfaceVariant),
+                                  Icon(
+                                    Icons.lock_outline,
+                                    size: 15,
+                                    color: cs.onSurfaceVariant,
+                                  ),
                                 ],
                               )
                             : Text(actions[i].label),
@@ -850,13 +930,15 @@ class _ServiceCard extends StatelessWidget {
                 const SizedBox(width: 8),
             ],
           ),
-          if (status.installed && (status.version != null || status.detail.isNotEmpty))
+          if (status.installed &&
+              (status.version != null || status.detail.isNotEmpty))
             Padding(
               padding: const EdgeInsets.only(left: 30, bottom: 6),
               child: Text(
-                [status.version, status.detail]
-                    .where((s) => s != null && s.isNotEmpty)
-                    .join('  ·  '),
+                [
+                  status.version,
+                  status.detail,
+                ].where((s) => s != null && s.isNotEmpty).join('  ·  '),
                 style: mono,
               ),
             ),
@@ -880,16 +962,21 @@ class _ServiceCard extends StatelessWidget {
                   child: upToDate
                       ? OutlinedButton.icon(
                           onPressed: null,
-                          icon: Icon(Icons.check_circle_outline,
-                              size: 18, color: okGreen),
+                          icon: Icon(
+                            Icons.check_circle_outline,
+                            size: 18,
+                            color: okGreen,
+                          ),
                           label: const Text('Aktuell'),
                           style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(42)),
+                            minimumSize: const Size.fromHeight(42),
+                          ),
                         )
                       : OutlinedButton(
                           onPressed: enabled ? onPrimary : null,
                           style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(42)),
+                            minimumSize: const Size.fromHeight(42),
+                          ),
                           child: Text(primaryLabel),
                         ),
                 ),
@@ -995,17 +1082,18 @@ class _ConnectionCard extends StatelessWidget {
             SegmentedButton<AuthMode>(
               segments: const [
                 ButtonSegment(
-                    value: AuthMode.password,
-                    label: Text('Passwort'),
-                    icon: Icon(Icons.password)),
+                  value: AuthMode.password,
+                  label: Text('Passwort'),
+                  icon: Icon(Icons.password),
+                ),
                 ButtonSegment(
-                    value: AuthMode.key,
-                    label: Text('SSH-Key'),
-                    icon: Icon(Icons.vpn_key_outlined)),
+                  value: AuthMode.key,
+                  label: Text('SSH-Key'),
+                  icon: Icon(Icons.vpn_key_outlined),
+                ),
               ],
               selected: {authMode},
-              onSelectionChanged:
-                  enabled ? (s) => onAuthMode(s.first) : null,
+              onSelectionChanged: enabled ? (s) => onAuthMode(s.first) : null,
             ),
             if (keyMode) ...[
               TextField(
@@ -1048,8 +1136,7 @@ class _ConnectionCard extends StatelessWidget {
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
                   onPressed: onToggleObscure,
-                  icon: Icon(
-                      obscure ? Icons.visibility : Icons.visibility_off),
+                  icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
                   tooltip: obscure ? 'Anzeigen' : 'Verbergen',
                 ),
               ),
@@ -1074,8 +1161,9 @@ class _NameDialog extends StatefulWidget {
 }
 
 class _NameDialogState extends State<_NameDialog> {
-  late final TextEditingController _ctrl =
-      TextEditingController(text: widget.initial);
+  late final TextEditingController _ctrl = TextEditingController(
+    text: widget.initial,
+  );
 
   @override
   void dispose() {
@@ -1095,8 +1183,9 @@ class _NameDialogState extends State<_NameDialog> {
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _ctrl.text),
           child: const Text('OK'),
@@ -1110,8 +1199,11 @@ class _NameDialogState extends State<_NameDialog> {
 /// controllers are disposed after the dialog closes. With [confirm] it requires
 /// a matching second entry (min length enforced) before enabling OK.
 class _PassphraseDialog extends StatefulWidget {
-  const _PassphraseDialog(
-      {required this.title, required this.body, required this.confirm});
+  const _PassphraseDialog({
+    required this.title,
+    required this.body,
+    required this.confirm,
+  });
   final String title;
   final String body;
   final bool confirm;
@@ -1145,7 +1237,8 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
 
   bool get _valid =>
       _ctrl.text.isNotEmpty &&
-      (!widget.confirm || (_ctrl.text.length >= _minLen && _ctrl2.text == _ctrl.text));
+      (!widget.confirm ||
+          (_ctrl.text.length >= _minLen && _ctrl2.text == _ctrl.text));
 
   @override
   Widget build(BuildContext context) {
@@ -1164,7 +1257,9 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
             autocorrect: false,
             enableSuggestions: false,
             onChanged: (_) => setState(() {}),
-            onSubmitted: _valid ? (_) => Navigator.pop(context, _ctrl.text) : null,
+            onSubmitted: _valid
+                ? (_) => Navigator.pop(context, _ctrl.text)
+                : null,
             decoration: InputDecoration(
               labelText: 'Passphrase',
               errorText: _error,
@@ -1182,16 +1277,18 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
               autocorrect: false,
               enableSuggestions: false,
               onChanged: (_) => setState(() {}),
-              decoration:
-                  const InputDecoration(labelText: 'Passphrase wiederholen'),
+              decoration: const InputDecoration(
+                labelText: 'Passphrase wiederholen',
+              ),
             ),
           ],
         ],
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Abbrechen')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
         FilledButton(
           onPressed: _valid ? () => Navigator.pop(context, _ctrl.text) : null,
           child: const Text('OK'),
@@ -1219,8 +1316,10 @@ class _PromptMark extends StatelessWidget {
       width: size,
       height: size * (432 / 446),
       child: CustomPaint(
-          painter: _PromptMarkPainter(
-              chevronColor: chevronColor ?? const Color(0xFFE8EDE9))),
+        painter: _PromptMarkPainter(
+          chevronColor: chevronColor ?? const Color(0xFFE8EDE9),
+        ),
+      ),
     );
   }
 }
@@ -1255,8 +1354,7 @@ class _PromptMarkPainter extends CustomPainter {
       ..lineTo(36, 396);
     canvas.drawPath(path, chevron);
 
-    canvas.drawCircle(
-        const Offset(384, 216), 62, Paint()..color = kGreen);
+    canvas.drawCircle(const Offset(384, 216), 62, Paint()..color = kGreen);
   }
 
   @override
@@ -1271,29 +1369,53 @@ class _LockScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBlack,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const _PromptMark(key: Key('promptMark'), size: 76),
-            const SizedBox(height: 12),
-            const Text('Pi-Tool',
+    // Pinned dark regardless of the app theme: this is the first screen after
+    // the dark splash video, so it must not flash a light background. Forcing
+    // the whole dark ThemeData (not just the scaffold colour) keeps the unlock
+    // button and every default consistent.
+    return Theme(
+      data: _buildTheme(Brightness.dark),
+      child: Scaffold(
+        backgroundColor: kBlack,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const _PromptMark(key: Key('promptMark'), size: 76),
+              const SizedBox(height: 12),
+              const Text(
+                'Pi-Tool',
                 style: TextStyle(
-                    fontSize: 22, fontWeight: FontWeight.w800, color: kGreen)),
-            const SizedBox(height: 2),
-            const Text('by KYTH. Systems',
-                style: TextStyle(color: Colors.white38, fontSize: 12)),
-            const SizedBox(height: 6),
-            const Text('Gesperrt', style: TextStyle(color: Colors.white54)),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: onUnlock,
-              icon: const Icon(Icons.lock_open),
-              label: const Text('Entsperren'),
-            ),
-          ],
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: kGreen,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'by ',
+                    style: TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                  const KythWordmark(
+                    fontSize: 12,
+                    product: 'Systems',
+                    background: Brightness.dark,
+                  ), // lock screen is always dark
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text('Gesperrt', style: TextStyle(color: Colors.white54)),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onUnlock,
+                icon: const Icon(Icons.lock_open),
+                label: const Text('Entsperren'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1317,15 +1439,15 @@ class _DisclaimerScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     Widget bullet(String s) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('•  '),
-              Expanded(child: Text(s)),
-            ],
-          ),
-        );
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('•  '),
+          Expanded(child: Text(s)),
+        ],
+      ),
+    );
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -1336,10 +1458,15 @@ class _DisclaimerScreen extends StatelessWidget {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  _PromptMark(size: 26, chevronColor: theme.colorScheme.onSurface),
+                  _PromptMark(
+                    size: 26,
+                    chevronColor: theme.colorScheme.onSurface,
+                  ),
                   const SizedBox(width: 10),
-                  Text('Willkommen bei Pi-Tool',
-                      style: theme.textTheme.titleLarge),
+                  Text(
+                    'Willkommen bei Pi-Tool',
+                    style: theme.textTheme.titleLarge,
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -1355,23 +1482,36 @@ class _DisclaimerScreen extends StatelessWidget {
                         'sowie frei eingegebene Konsolen-Befehle.',
                       ),
                       const SizedBox(height: 14),
-                      Text('Mit „Akzeptieren" bestätigst du:',
-                          style: theme.textTheme.titleSmall),
+                      Text(
+                        'Mit „Akzeptieren" bestätigst du:',
+                        style: theme.textTheme.titleSmall,
+                      ),
                       const SizedBox(height: 10),
-                      bullet('Du bist berechtigt, die Zielgeräte zu verwalten, '
-                          'und nutzt Pi-Tool auf eigene Verantwortung.'),
-                      bullet('KYTH. Systems übernimmt keine Haftung für Schäden '
-                          'an System, Daten oder Hardware.'),
-                      bullet('Deine Zugangsdaten bleiben verschlüsselt auf dem '
-                          'Gerät — keine Cloud, keine Weitergabe, kein Tracking.'),
-                      bullet('Pi-Tool ist ein inoffizielles Werkzeug und nicht '
-                          'mit evcc oder Pi-hole verbunden.'),
+                      bullet(
+                        'Du bist berechtigt, die Zielgeräte zu verwalten, '
+                        'und nutzt Pi-Tool auf eigene Verantwortung.',
+                      ),
+                      bullet(
+                        'KYTH. Systems übernimmt keine Haftung für Schäden '
+                        'an System, Daten oder Hardware.',
+                      ),
+                      bullet(
+                        'Deine Zugangsdaten bleiben verschlüsselt auf dem '
+                        'Gerät — keine Cloud, keine Weitergabe, kein Tracking.',
+                      ),
+                      bullet(
+                        'Pi-Tool ist ein inoffizielles Werkzeug und nicht '
+                        'mit evcc oder Pi-hole verbunden.',
+                      ),
                       const SizedBox(height: 4),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: TextButton.icon(
                           onPressed: onPrivacy,
-                          icon: const Icon(Icons.privacy_tip_outlined, size: 18),
+                          icon: const Icon(
+                            Icons.privacy_tip_outlined,
+                            size: 18,
+                          ),
                           label: const Text('Datenschutzerklärung'),
                         ),
                       ),
@@ -1379,7 +1519,8 @@ class _DisclaimerScreen extends StatelessWidget {
                       Text(
                         '© 2026 KYTH. Systems UG (haftungsbeschränkt) i.G.',
                         style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant),
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -1388,8 +1529,9 @@ class _DisclaimerScreen extends StatelessWidget {
               const SizedBox(height: 12),
               FilledButton(
                 onPressed: onAccept,
-                style:
-                    FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(50),
+                ),
                 child: const Text('Akzeptieren und starten'),
               ),
               const SizedBox(height: 6),
@@ -1425,10 +1567,14 @@ class _StatusBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(ok ? Icons.check_circle_outline : Icons.error_outline,
-              color: fg),
+          Icon(
+            ok ? Icons.check_circle_outline : Icons.error_outline,
+            color: fg,
+          ),
           const SizedBox(width: 8),
-          Expanded(child: Text(message, style: TextStyle(color: fg))),
+          Expanded(
+            child: Text(message, style: TextStyle(color: fg)),
+          ),
         ],
       ),
     );
@@ -1574,25 +1720,40 @@ class _ApiStatusSheet extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.bolt,
-                  color: _themeGreen(theme.brightness == Brightness.dark)),
+              Icon(
+                Icons.bolt,
+                color: _themeGreen(theme.brightness == Brightness.dark),
+              ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(s.siteTitle ?? 'evcc-Status',
-                    style: theme.textTheme.titleMedium),
+                child: Text(
+                  s.siteTitle ?? 'evcc-Status',
+                  style: theme.textTheme.titleMedium,
+                ),
               ),
               if (s.version != null)
-                Text('v${s.version}',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                Text(
+                  'v${s.version}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 8),
-          _metric(ctx, Icons.solar_power_outlined, 'PV-Erzeugung',
-              formatPower(s.pvPower)),
+          _metric(
+            ctx,
+            Icons.solar_power_outlined,
+            'PV-Erzeugung',
+            formatPower(s.pvPower),
+          ),
           _metric(ctx, Icons.swap_vert, 'Netz', formatPower(s.gridPower)),
-          _metric(ctx, Icons.home_outlined, 'Hausverbrauch',
-              formatPower(s.homePower)),
+          _metric(
+            ctx,
+            Icons.home_outlined,
+            'Hausverbrauch',
+            formatPower(s.homePower),
+          ),
           if (s.batteryConfigured)
             _metric(
               ctx,
@@ -1607,9 +1768,12 @@ class _ApiStatusSheet extends StatelessWidget {
             for (final lp in s.loadpoints) _loadpoint(ctx, lp),
           ],
           const SizedBox(height: 8),
-          Text('Live aus der evcc-Web-API (nur Anzeige).',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          Text(
+            'Live aus der evcc-Web-API (nur Anzeige).',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
         ],
       ),
     );
@@ -1634,9 +1798,11 @@ class _ApiStatusSheet extends StatelessWidget {
     final theme = Theme.of(ctx);
     final bits = <String>[];
     if (lp.mode != null) bits.add('Modus ${lp.mode}');
-    bits.add(lp.charging
-        ? 'lädt ${formatPower(lp.chargePower)}'
-        : (lp.connected ? 'verbunden' : 'frei'));
+    bits.add(
+      lp.charging
+          ? 'lädt ${formatPower(lp.chargePower)}'
+          : (lp.connected ? 'verbunden' : 'frei'),
+    );
     if (lp.vehicleSoc != null) bits.add('Fahrzeug ${lp.vehicleSoc!.round()} %');
     return ListTile(
       contentPadding: EdgeInsets.zero,

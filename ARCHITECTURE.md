@@ -252,6 +252,11 @@ sich `kGreen/kBlack/kCard` ohne Re-Import — nicht in einen Import „aufräume
 Splash-Ersatz) → `_locked` (Lock-Screen) → `!_disclaimerAccepted`
 (Ablehnen = App beenden) → einmaliges „Was ist neu?" (post-frame) → Shell.
 
+**Theme:** Hell/System/Dunkel wählbar (`themeModeNotifier`, „Design"-Umschalter).
+**Ausnahme:** der `_LockScreen` (Fingerprint-Startscreen direkt nach dem dunklen
+Splash-Video) ist per `Theme(data: _buildTheme(Brightness.dark))`-Wrapper **fest
+dunkel** — unabhängig vom App-Theme, damit kein heller Blitz erscheint.
+
 **Aktions-Protokoll (jede der ~30 Aktionen):**
 `if (_busy) return;` → `_prepare()` (validieren → `SshConfig` bauen →
 `_lastConfig` merken → persistieren → `_beginBusy()` setzt `_busy` synchron,
@@ -303,6 +308,19 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   terminal" — die Konsole hat kein PTY.
 - **`kyth_splash.dart`**: `splashDoneNotifier` (default `true`, damit Tests/Hot-
   Reload nie blockieren); der Lock wartet darauf, bevor die Biometrie kommt.
+- **`kyth_wordmark.dart`** — `KythWordmark`, die Corporate-Wortmarke nach Spec
+  (`KYTH-Wortmarke.md`): `KYTH` in **Bricolage Grotesque** ExtraBold (Variable-
+  Font, gebündelt unter `assets/fonts/`, OFL — kein Google-Fonts-Call; Gewicht
+  via `FontVariation('wght', …)`), enges Basis-Kerning mit extra-engem **Y-T**,
+  optionalem Produktwort in 400 (un-verengt) und **grünem Glow-Punkt**. Kerning
+  ist pro Glyph als trailing `letterSpacing` (em×fontSize) kodiert; das H trägt
+  +0.04em als „margin-left" des Punkts. Glow nur auf dunklem Grund (hell:
+  Buchstaben `#0A0A0B`, Punkt bleibt grün, kein Shadow). **Der Punkt nutzt das
+  App-Grün `#1FD65F`** (bewusste Angleichung an `kGreen` statt Spec-`#22C55E`,
+  Eigentümer-Entscheidung 2026-07), damit App, Launcher-Icon und Marke ein Grün
+  teilen. Eingesetzt in den zwei **Marken-Credits** (Lock-Screen, Footer-Link);
+  Legal-/Copyright-Prosa bleibt bewusst Fließtext. OFL-Lizenz wird lazy über
+  `LicenseRegistry` (in `main()`) auf der Lizenzseite ausgewiesen.
 
 ## 8. Tests & CI
 
