@@ -132,6 +132,80 @@ void main() {
     });
   });
 
+  group('storage health (SD-Karte)', () {
+    test('probe reads mounts without sudo and counts kernel I/O errors', () {
+      expect(systemStorageCommand, contains('/proc/mounts'));
+      expect(systemStorageCommand, contains('journalctl -k'));
+      expect(systemStorageCommand, isNot(contains('sudo')));
+      expect(systemStorageCommand, contains('|| true')); // batch-safe
+    });
+
+    test('healthy rw mounts + zero errors → no warning', () {
+      const out = '/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n'
+          '/dev/mmcblk0p1 /boot/firmware vfat rw,relatime 0 0\n'
+          '0\n';
+      final s = parseStorageHealth(out);
+      expect(s.readOnlyMount, isNull);
+      expect(s.kernelErrors, 0);
+      expect(s.warning, isFalse);
+    });
+
+    test('read-only root is flagged (SD card likely failing)', () {
+      const out = '/dev/mmcblk0p2 / ext4 ro,noatime 0 0\n'
+          '/dev/mmcblk0p1 /boot/firmware vfat rw 0 0\n'
+          '0\n';
+      final s = parseStorageHealth(out);
+      expect(s.readOnlyMount, '/');
+      expect(s.warning, isTrue);
+    });
+
+    test('ro must match the option, not a substring (errors=remount-ro)', () {
+      const out =
+          '/dev/mmcblk0p2 / ext4 rw,noatime,errors=remount-ro 0 0\n0\n';
+      final s = parseStorageHealth(out);
+      expect(s.readOnlyMount, isNull); // "remount-ro" is not the ro option
+      expect(s.warning, isFalse);
+    });
+
+    test('many kernel I/O errors warn even when mounts look fine', () {
+      const out = '/dev/mmcblk0p2 / ext4 rw 0 0\n17\n';
+      final s = parseStorageHealth(out);
+      expect(s.kernelErrors, 17);
+      expect(s.warning, isTrue);
+    });
+
+    test('a few transient errors do not warn', () {
+      const out = '/dev/mmcblk0p2 / ext4 rw 0 0\n2\n';
+      expect(parseStorageHealth(out).warning, isFalse);
+    });
+
+    test('missing count (no journalctl) → unknown, no warning', () {
+      const out = '/dev/mmcblk0p2 / ext4 rw 0 0\n';
+      final s = parseStorageHealth(out);
+      expect(s.kernelErrors, isNull);
+      expect(s.warning, isFalse);
+    });
+
+    test('empty/garbage output stays silent', () {
+      expect(parseStorageHealth('').warning, isFalse);
+      expect(parseStorageHealth('bash: no such file\n').warning, isFalse);
+    });
+
+    test('SystemHealth surfaces the SD warning in the summary', () {
+      const h = SystemHealth(
+        storage: (readOnlyMount: '/', kernelErrors: 0),
+      );
+      expect(h.summary, contains('SD-Karte prüfen'));
+      expect(h.warning, isTrue);
+    });
+
+    test('SystemHealth.warning also covers lowDisk (existing behaviour)', () {
+      const h = SystemHealth(
+          disk: DiskUsage(totalMb: 30000, availableMb: 500, usedPercent: 98));
+      expect(h.warning, isTrue);
+    });
+  });
+
   group('parseAptUpgrades', () {
     test('lists the packages a full-upgrade simulation would upgrade', () {
       const out = 'Reading package lists...\n'

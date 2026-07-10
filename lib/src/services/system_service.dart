@@ -26,6 +26,48 @@ const String systemDiskCommand = 'df -P -BM /';
 /// a German-locale Pi would otherwise print "Speicher:" and break the parser.
 const String systemMemCommand = 'LC_ALL=C free -m';
 
+/// SD-card health probe (no sudo): the mount options of / and /boot (a failing
+/// SD card typically forces a read-only remount) + a count of I/O-ish errors in
+/// the kernel log. `journalctl -k` works for the default pi user (adm group);
+/// `|| true` keeps the detection batch alive when grep counts zero (exit 1).
+const String systemStorageCommand =
+    "grep -E ' / | /boot' /proc/mounts 2>/dev/null; "
+    "journalctl -k --no-pager -q 2>/dev/null | "
+    "grep -icE 'i/o error|ext4-fs error|mmc[0-9]+: error' || true";
+
+/// Result of [parseStorageHealth]: the read-only-remounted mount (null = none)
+/// and the kernel-log I/O error count (null = unknown).
+typedef StorageHealth = ({String? readOnlyMount, int? kernelErrors});
+
+extension StorageHealthWarning on StorageHealth {
+  /// A read-only root is the classic dying-SD symptom; a handful of transient
+  /// I/O errors (USB hiccups) is tolerated before warning.
+  bool get warning => readOnlyMount != null || (kernelErrors ?? 0) >= 5;
+}
+
+/// Parses [systemStorageCommand] output: `/proc/mounts` lines for `/`
+/// (+`/boot*`) and a trailing bare-integer error count. Tolerant of garbage —
+/// anything unparseable simply yields no data (no warning).
+StorageHealth parseStorageHealth(String out) {
+  String? roMount;
+  int? errors;
+  for (final raw in out.split('\n')) {
+    final l = raw.trim();
+    if (l.isEmpty) continue;
+    final f = l.split(RegExp(r'\s+'));
+    if (f.length >= 4 && f[1] == '/') {
+      // Only the ROOT mount: a deliberately read-only /boot is a known
+      // hardening practice and must not false-positive. The ro OPTION, not a
+      // substring ("errors=remount-ro" must not match).
+      if (f[3].split(',').contains('ro')) roMount = '/';
+      continue;
+    }
+    final n = int.tryParse(l);
+    if (n != null) errors = n; // the trailing count line
+  }
+  return (readOnlyMount: roMount, kernelErrors: errors);
+}
+
 final _vcgenTemp = RegExp(r"temp=([\d.]+)'?C");
 
 /// Parses [systemTempCommand] output: either `temp=48.3'C` (vcgencmd) or a
@@ -101,8 +143,10 @@ class SystemHealth {
   final DiskUsage? disk;
   final int? memAvailableMb;
   final String? uptime;
+  final StorageHealth? storage;
 
-  const SystemHealth({this.tempC, this.disk, this.memAvailableMb, this.uptime});
+  const SystemHealth(
+      {this.tempC, this.disk, this.memAvailableMb, this.uptime, this.storage});
 
   /// Low on disk — updates may fail. "Will the update fit" is an absolute
   /// question, so the percent test is gated on little absolute room too: a
@@ -112,9 +156,18 @@ class SystemHealth {
       (disk!.availableMb < 1024 ||
           (disk!.usedPercent >= 90 && disk!.availableMb < 5120));
 
+  /// Any reason the System card should show the warning tint: low disk or SD
+  /// trouble (read-only root / kernel I/O errors).
+  bool get warning => lowDisk || (storage?.warning ?? false);
+
   /// Compact one-liner, e.g. "48.3°C · 16.1 GB frei · RAM 240 MB frei · up 5 days".
   String get summary {
     final parts = <String>[
+      if (storage?.warning ?? false)
+        storage!.readOnlyMount != null
+            ? '⚠ SD-Karte prüfen: Dateisystem nur-lesend!'
+            : '⚠ SD-Karte prüfen: ${storage!.kernelErrors} I/O-Fehler im '
+                'Kernel-Log',
       if (lowDisk) '⚠ Speicher fast voll',
       if (tempC != null) '${tempC!.toStringAsFixed(1)}°C',
       if (disk != null)

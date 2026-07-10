@@ -1,0 +1,3 @@
+Neu: SD-Karten-Gesundheitscheck – die System-Karte (und die Health-Alerts) warnen bei nur-lesend gewordenem Dateisystem oder gehäuften I/O-Fehlern im Kernel-Log, den klassischen Anzeichen einer sterbenden SD-Karte.
+
+Außerdem: aufgeräumte Startseite (Changelog/Update-Check im Menü, Legal-Links klein unten), destruktive Aktionen rot markiert, deutsche System-Dialoge, robustere Fehlererkennung auf deutschsprachigen Pis.

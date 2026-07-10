@@ -383,6 +383,7 @@ class EvccUpdater {
           ('DISK', systemDiskCommand),
           ('MEM', systemMemCommand),
           ('UPTIME', systemUptimeCommand),
+          ('STORAGE', systemStorageCommand),
         ];
         final batch = await runner.run(detectShellCommand,
             stdin: '${buildDetectBatch(probes)}\n');
@@ -537,6 +538,7 @@ class EvccUpdater {
           disk: parseDiskUsage(sec['DISK'] ?? ''),
           memAvailableMb: parseMemAvailableMb(sec['MEM'] ?? ''),
           uptime: (sec['UPTIME'] ?? '').trim(),
+          storage: parseStorageHealth(sec['STORAGE'] ?? ''),
         );
         out.add(ServiceStatus(
           id: 'system',
@@ -548,7 +550,7 @@ class EvccUpdater {
           updateKnown: aptKnown,
           detail: pendingCount > 0 ? '$pendingCount Updates verfügbar' : 'aktuell',
           health: health.summary,
-          healthWarning: health.lowDisk,
+          healthWarning: health.warning,
         ));
 
         log('Erkannt: ${out.where((s) => s.installed).map((s) => s.name).join(', ')}.');

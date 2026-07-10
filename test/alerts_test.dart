@@ -19,6 +19,15 @@ void main() {
     test('only alerts on a CHANGE (debounced via a state file, no spam)', () {
       expect(s, contains('/var/lib/pi-tool/alerts.last'));
     });
+    test('checks for dying-SD symptoms (ro root + kernel I/O errors)', () {
+      expect(s, contains('/proc/mounts')); // read-only-remount check
+      expect(s, contains('nur-lesend'));
+      expect(s, contains('journalctl -k')); // kernel-log error count
+      expect(s, contains('I/O-Fehler'));
+      // Runtime expansion, not install-time: the vars stay escaped in the
+      // quoted heredoc (the Dart string carries them as literal $ for sh).
+      expect(s, contains(r'$ioerr'));
+    });
     test('single-quotes a hostile topic (no injection)', () {
       final bad = buildAlertsInstallScript(
           ntfyServer: 'https://ntfy.sh', ntfyTopic: "x';reboot;'");

@@ -1,0 +1,3 @@
+New: SD-card health check – the System card (and the health alerts) now warn about a read-only filesystem or piling kernel-log I/O errors, the classic symptoms of a dying SD card.
+
+Also: cleaned-up start page (changelog/update check in the menu, small legal links at the bottom), destructive actions marked red, German system dialogs, more robust error detection on German-locale Pis.

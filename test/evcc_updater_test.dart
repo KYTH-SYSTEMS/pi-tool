@@ -1399,6 +1399,25 @@ void main() {
       expect(sys.health, contains('Speicher fast voll'));
     });
 
+    test('System card warns on a read-only root (dying SD card)', () async {
+      final runner = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n')],
+        _svc: [_r('active\n')],
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+        systemPendingCommand: [_r('0 upgraded, 0 newly installed.')],
+        systemStorageCommand: [
+          _r('/dev/mmcblk0p2 / ext4 ro,noatime 0 0\n0\n')
+        ],
+      });
+
+      final list =
+          await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      final sys = list.firstWhere((s) => s.id == 'system');
+      expect(sys.healthWarning, isTrue);
+      expect(sys.health, contains('SD-Karte prüfen'));
+      expect(sys.health, contains('nur-lesend'));
+    });
+
     test('detects an installed Grafana (card only when installed)', () async {
       final runner = FakeSshRunner({
         _vQuery: [_r('installed 0.310.0\n')],

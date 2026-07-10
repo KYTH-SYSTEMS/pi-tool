@@ -42,6 +42,11 @@ if [ -r /sys/class/thermal/thermal_zone0/temp ]; then
   t=\$(( \$(cat /sys/class/thermal/thermal_zone0/temp) / 1000 ))
   [ "\$t" -ge 75 ] && problems="\$problems"'\\n'"Temperatur: \${t} Grad"
 fi
+# Dying-SD symptoms: a read-only-remounted root, or piling I/O errors in the
+# kernel log. /proc/mounts always lists rw/ro as the FIRST option.
+grep -qE '^\\S+ / \\S+ ro[, ]' /proc/mounts && problems="\$problems"'\\n'"SD-Karte: Dateisystem nur-lesend"
+ioerr=\$(journalctl -k --no-pager -q 2>/dev/null | grep -icE 'i/o error|ext4-fs error|mmc[0-9]+: error')
+[ -n "\$ioerr" ] && [ "\$ioerr" -ge 5 ] && problems="\$problems"'\\n'"SD-Karte: \$ioerr I/O-Fehler im Kernel-Log"
 for s in evcc pihole-FTL grafana-server influxdb mosquitto; do
   if systemctl is-enabled "\$s" >/dev/null 2>&1; then
     [ "\$(systemctl is-active "\$s" 2>/dev/null)" != "active" ] && problems="\$problems"'\\n'"Dienst aus: \$s"

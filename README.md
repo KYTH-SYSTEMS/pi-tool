@@ -67,8 +67,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB frei — oder ≥90 % belegt **und**
-  zugleich <5 GB frei) warnt sie, bevor
-  ein Update daran scheitert.
+  zugleich <5 GB frei) warnt sie, bevor ein Update daran scheitert.
+- **SD-Karten-Check** — warnt bei den klassischen Anzeichen einer sterbenden
+  SD-Karte: nur-lesend gewordenes Root-Dateisystem oder gehäufte I/O-Fehler im
+  Kernel-Log. Fließt auch in die Health-Alerts ein (Push via ntfy).
 - **Probelauf** (`--dry-run`) — zeigt gefahrlos, ob ein Update verfügbar ist.
 - **Backup vor Update** — sichert vor einem apt-Update automatisch `evcc.yaml` +
   die Datenbank als zeitgestempeltes Archiv auf dem Pi (abschaltbar); schlägt es

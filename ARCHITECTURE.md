@@ -147,6 +147,11 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
 - **`system_service.dart`** — „System (Pi)"-Karte. `systemPendingCommand`
   simuliert `apt-get -s full-upgrade` (muss zur echten Aktion passen).
   `lowDisk` gate auf *absoluten* freien Platz (1-TB-Disk bei 94% warnt nicht).
+  **SD-Gesundheit:** `systemStorageCommand` (no-sudo Probe: /proc/mounts +
+  `journalctl -k`-Fehlerzählung) → `parseStorageHealth` → `StorageHealth`
+  (`warning` = Root nur-lesend ODER ≥5 Kernel-I/O-Fehler; nur `/` zählt —
+  ein bewusst read-only /boot darf nicht false-positiven). Fließt in
+  `SystemHealth.warning`/`summary` und den Alerts-Wrapper ein.
 - **`pi_connect.dart`** — Raspberry Pi Connect (Bookworm+). **User-Service**:
   jeder Befehl mit `XDG_RUNTIME_DIR=/run/user/$(id -u)`, **nie sudo**. `signin`
   läuft **detached** (`setsid … &`, sleep, cat) — sonst hängt der SSH-Call. Doku

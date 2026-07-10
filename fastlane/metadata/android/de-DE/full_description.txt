@@ -8,7 +8,7 @@ Dienste:
 * Raspberry Pi Connect – offizieller Fernzugriff (ab Raspberry Pi OS Bookworm): installieren, per Link anmelden, an/aus schalten, Web öffnen
 * Tailscale – VPN/Mesh: installieren, per Login-Link verbinden, Tailnet-IP mit einem Tap ins Host-Feld übernehmen
 * „Dienst hinzufügen" – alle noch nicht installierten Dienste an einer Stelle; der Hauptbildschirm zeigt nur, was wirklich läuft
-* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), Pi neustarten, Gesundheits-Anzeige (Temperatur, Speicher, RAM, Uptime) mit Warnung bei knappem Speicher
+* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), Pi neustarten, Gesundheits-Anzeige (Temperatur, Speicher, RAM, Uptime) mit Warnung bei knappem Speicher und SD-Karten-Check (nur-lesendes Dateisystem, I/O-Fehler)
 
 Funktionen:
 * Cockpit mit vier Tabs; der aktive Pi steht oben und ist antippbar (umschalten/hinzufügen/umbenennen)

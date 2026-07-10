@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.39.0': [
+    'SD-Karten-Gesundheitscheck: die System-Karte warnt jetzt, wenn das '
+        'Dateisystem nur-lesend geworden ist oder sich I/O-Fehler im Kernel-Log '
+        'häufen — die klassischen Anzeichen einer sterbenden SD-Karte, bevor '
+        'der Pi ausfällt. Auch die Health-Alerts prüfen das mit (dafür einmal '
+        'Health-Alerts aus- und wieder einschalten).',
+  ],
   '0.38.0': [
     'Aufgeräumte Startseite: „Changelog" und „Auf Update prüfen" sind jetzt oben '
         'rechts im ⋮-Menü; Datenschutz, Impressum und Open-Source-Lizenzen stehen '
