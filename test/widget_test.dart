@@ -268,6 +268,10 @@ void main() {
     await tester.ensureVisible(find.text('evcc-Nightly installieren'));
     await tester.pumpAndSettle();
     expect(find.text('evcc-Nightly installieren'), findsOneWidget);
+
+    // Support entry (mailto support@kyth.systems) lives at the sheet's bottom.
+    await tester.ensureVisible(find.text('Support kontaktieren'));
+    expect(find.text('support@kyth.systems'), findsOneWidget);
   });
 
   testWidgets('the ⋮ menu opens the Pi setup guide', (tester) async {

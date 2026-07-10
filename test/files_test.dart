@@ -28,6 +28,20 @@ void main() {
       expect(s, isNot(contains('\n;reboot;')));
     });
 
+    test('download: size probe + base64 stream, quoted, no sudo needed', () {
+      // Backups are world-readable (0644) by design — no sudo, no password.
+      expect(buildFileSizeCommand('/var/backups/pi-tool/a.tar.gz'),
+          "wc -c < '/var/backups/pi-tool/a.tar.gz'");
+      expect(buildDownloadFileCommand('/var/backups/pi-tool/a.tar.gz'),
+          "base64 -- '/var/backups/pi-tool/a.tar.gz'");
+      expect(buildFileSizeCommand("/x';reboot;'"), contains(r"'\''"));
+      expect(buildDownloadFileCommand("/x';reboot;'"), contains(r"'\''"));
+    });
+
+    test('download limit bounds the transfer (48 MB)', () {
+      expect(kBackupDownloadLimit, 48 * 1024 * 1024);
+    });
+
     test('delete: file rm -f, dir rm -rf, both -- and quoted', () {
       expect(buildDeleteCommand(path: '/tmp/a', isDir: false),
           "LC_ALL=C sudo -S -p '' rm -f -- '/tmp/a'");

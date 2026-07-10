@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Directory, File;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator;
@@ -48,6 +50,7 @@ const kImpressumUrl = 'https://profex1337.github.io/evcc-pi-tool/impressum.html'
 const kReleasesUrl = 'https://github.com/profex1337/evcc-pi-tool/releases';
 const kImagerUrl = 'https://www.raspberrypi.com/software/';
 const kKythUrl = 'https://www.kyth.systems';
+const kSupportEmail = 'support@kyth.systems';
 
 /// Drives MaterialApp.themeMode; updated from the loaded setting + the picker.
 final ValueNotifier<ThemeMode> themeModeNotifier =
@@ -117,6 +120,7 @@ class UpdaterPage extends StatefulWidget {
     this.entitlement,
     this.keepAlive,
     this.filePicker,
+    this.fileSaver,
   });
 
   final AppConfigStore? store;
@@ -148,6 +152,10 @@ class UpdaterPage extends StatefulWidget {
   /// so widget tests supply bytes without a platform channel.
   final FilePickerService? filePicker;
 
+  /// Saves downloaded bytes to the phone (default: temp file + share sheet).
+  /// Injectable so widget tests record instead of hitting platform channels.
+  final Future<void> Function(String name, Uint8List bytes)? fileSaver;
+
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
 }
@@ -174,6 +182,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.entitlement ?? const DormantEntitlement();
   late final FilePickerService _filePicker =
       widget.filePicker ?? const ChannelFilePicker();
+  late final Future<void> Function(String name, Uint8List bytes) _fileSaver =
+      widget.fileSaver ?? _saveAndShareBytes;
   final HistoryStore _historyStore = HistoryStore();
 
   final _host = TextEditingController();
@@ -1217,6 +1227,23 @@ class _UpdaterPageState extends State<UpdaterPage>
     final choice = await _pickServiceBackup(serviceName, backups!);
     if (choice == null || !mounted) return;
     final (action, path) = choice;
+    if (action == 'download') {
+      _beginBusy();
+      await _guard(() async {
+        final bytes = await _updater.downloadFile(
+            config: config, path: path, onLog: _appendLog);
+        if (!mounted) return;
+        final name = path.split('/').last;
+        await _fileSaver(name, bytes);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Backup heruntergeladen: $name';
+          _statusOk = true;
+        });
+        _addHistory('$serviceName-Backup aufs Handy geladen ($name).');
+      }, backgroundMessage: 'Backup wird heruntergeladen …');
+      return;
+    }
     if (action == 'delete') {
       if (!await _confirm('Backup löschen?',
           'Löscht das $serviceName-Backup (${_backupLabel(path)}) endgültig '
@@ -1294,10 +1321,20 @@ class _UpdaterPageState extends State<UpdaterPage>
                 subtitle: Text(b,
                     style: const TextStyle(
                         fontFamily: 'monospace', fontSize: 11)),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  tooltip: 'Backup löschen',
-                  onPressed: () => Navigator.pop(ctx, ('delete', b)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.download_outlined),
+                      tooltip: 'Aufs Handy laden',
+                      onPressed: () => Navigator.pop(ctx, ('download', b)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Backup löschen',
+                      onPressed: () => Navigator.pop(ctx, ('delete', b)),
+                    ),
+                  ],
                 ),
                 onTap: () => Navigator.pop(ctx, ('restore', b)),
               ),
@@ -2087,6 +2124,24 @@ class _UpdaterPageState extends State<UpdaterPage>
     SharePlus.instance.share(ShareParams(text: _log.join('\n')));
   }
 
+  /// Opens the mail app with a pre-filled support address + subject (version
+  /// included, so support mails carry the app version automatically).
+  void _contactSupport() {
+    final subject = Uri.encodeComponent(_appVersion.isEmpty
+        ? 'Pi-Tool – Support'
+        : 'Pi-Tool v$_appVersion – Support');
+    _openUrl('mailto:$kSupportEmail?subject=$subject');
+  }
+
+  /// Default [UpdaterPage.fileSaver]: writes [bytes] into the app's temp dir
+  /// (dart:io — on Android that's the app cache, no plugin needed) and opens
+  /// the share sheet, so the user can save to Dateien/Drive/etc.
+  Future<void> _saveAndShareBytes(String name, Uint8List bytes) async {
+    final f = File('${Directory.systemTemp.path}/$name');
+    await f.writeAsBytes(bytes, flush: true);
+    await SharePlus.instance.share(ShareParams(files: [XFile(f.path)]));
+  }
+
   /// Read-only live status straight from evcc's Web-API (no SSH, no creds).
   void _showApiStatus() {
     final host = _host.text.trim();
@@ -2653,6 +2708,17 @@ class _UpdaterPageState extends State<UpdaterPage>
                     setState(() => _channel = v ? 'unstable' : 'stable');
                     setSheet(() {});
                     _scheduleSave();
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.support_agent),
+                  title: const Text('Support kontaktieren'),
+                  subtitle: const Text(kSupportEmail),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _contactSupport();
                   },
                 ),
                   ],

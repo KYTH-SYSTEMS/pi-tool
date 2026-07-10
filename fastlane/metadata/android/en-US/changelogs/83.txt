@@ -1,0 +1,3 @@
+New: download backups to your phone – "Manage backups" now has a download button per backup; the archive lands on your phone via the share sheet (Files, Drive, …). Your backup now survives an SD-card death.
+
+Also: "Contact support" in the settings (opens your mail app) and the SD-card health check from the previous update.

@@ -13,6 +13,14 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.40.0': [
+    'Backups aufs Handy laden: in „Backups verwalten" gibt es jetzt einen '
+        'Download-Knopf pro Backup — das Archiv landet über den Teilen-Dialog '
+        'auf dem Handy (Dateien, Drive, …). So überlebt dein Backup auch einen '
+        'SD-Karten-Tod.',
+    'Support: in den Einstellungen gibt es jetzt „Support kontaktieren" — '
+        'öffnet deine Mail-App mit unserer Support-Adresse.',
+  ],
   '0.39.0': [
     'SD-Karten-Gesundheitscheck: die System-Karte warnt jetzt, wenn das '
         'Dateisystem nur-lesend geworden ist oder sich I/O-Fehler im Kernel-Log '

@@ -790,6 +790,69 @@ void main() {
     });
   });
 
+  group('EvccUpdater.downloadFile', () {
+    final sizeCmd = buildFileSizeCommand('/var/backups/pi-tool/a.tar.gz');
+    final dlCmd = buildDownloadFileCommand('/var/backups/pi-tool/a.tar.gz');
+
+    test('checks the size first, then transfers base64 and verifies length',
+        () async {
+      final bytes = [1, 2, 3, 4, 5];
+      final runner = FakeSshRunner({
+        sizeCmd: [_r('5\n')],
+        dlCmd: [_r('${base64.encode(bytes)}\n')],
+      });
+      final out = await _updaterWith(runner).downloadFile(
+          config: _config,
+          path: '/var/backups/pi-tool/a.tar.gz',
+          onLog: (_) {});
+      expect(out, bytes);
+    });
+
+    test('aborts BEFORE transferring when the file exceeds the limit',
+        () async {
+      final runner = FakeSshRunner({
+        sizeCmd: [_r('${kBackupDownloadLimit + 1}\n')],
+      });
+      await expectLater(
+        _updaterWith(runner).downloadFile(
+            config: _config,
+            path: '/var/backups/pi-tool/a.tar.gz',
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('zu groß'))),
+      );
+      expect(runner.commandsRun, isNot(contains(dlCmd))); // never streamed
+    });
+
+    test('a truncated transfer (length mismatch) is an error, not silent data',
+        () async {
+      final runner = FakeSshRunner({
+        sizeCmd: [_r('10\n')], // 10 bytes expected …
+        dlCmd: [_r('${base64.encode([1, 2, 3])}\n')], // … only 3 arrived
+      });
+      await expectLater(
+        _updaterWith(runner).downloadFile(
+            config: _config,
+            path: '/var/backups/pi-tool/a.tar.gz',
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('a missing file (no size) is a clear error', () async {
+      final runner = FakeSshRunner({
+        sizeCmd: [_r('', stderr: 'wc: no such file', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner).downloadFile(
+            config: _config,
+            path: '/var/backups/pi-tool/a.tar.gz',
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+  });
+
   group('EvccUpdater tailscale', () {
     test('tailscaleUp throws sudo on a rejected password (no false success)',
         () async {

@@ -39,6 +39,19 @@ String buildUploadScript({required String path, required String base64Content}) 
       'echo UPLOAD_OK\n';
 }
 
+/// Max bytes for a backup download to the phone — bounds the transient base64
+/// string held in memory during the transfer.
+const int kBackupDownloadLimit = 48 * 1024 * 1024;
+
+/// File size in bytes (no sudo — the backup archives are world-readable 0644
+/// by design, see the backup scripts).
+String buildFileSizeCommand(String path) => 'wc -c < ${shSingleQuote(path)}';
+
+/// Streams a whole file base64-encoded (no sudo). The caller checks the size
+/// via [buildFileSizeCommand] BEFORE running this ([kBackupDownloadLimit]).
+String buildDownloadFileCommand(String path) =>
+    'base64 -- ${shSingleQuote(path)}';
+
 /// Deletes a file (`rm -f`) or directory (`rm -rf`) as root. `--` stops option
 /// parsing and the path is single-quoted.
 String buildDeleteCommand({required String path, required bool isDir}) =>

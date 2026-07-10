@@ -1,0 +1,3 @@
+Neu: Backups aufs Handy laden – in „Backups verwalten" gibt es einen Download-Knopf pro Backup; das Archiv landet über den Teilen-Dialog auf dem Handy (Dateien, Drive, …). So überlebt dein Backup auch einen SD-Karten-Tod.
+
+Außerdem: „Support kontaktieren" in den Einstellungen (öffnet die Mail-App) und der SD-Karten-Gesundheitscheck aus dem letzten Update.

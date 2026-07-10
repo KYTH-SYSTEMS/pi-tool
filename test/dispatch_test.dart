@@ -330,6 +330,19 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       deletedPaths.add(path);
 
+  final downloadedPaths = <String>[];
+  Uint8List downloadBytes = Uint8List(0);
+
+  @override
+  Future<Uint8List> downloadFile({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async {
+    downloadedPaths.add(path);
+    return downloadBytes;
+  }
+
   @override
   Future<Uint8List> readFileBytes({
     required SshConfig config,
@@ -571,7 +584,8 @@ void main() {
           Future<String?> Function()? haLatest,
           EntitlementService? entitlement,
           KeepAliveService? keepAlive,
-          FilePickerService? filePicker}) =>
+          FilePickerService? filePicker,
+          Future<void> Function(String name, Uint8List bytes)? fileSaver}) =>
       MaterialApp(
         home: UpdaterPage(
           store: _FakeStore(_ready),
@@ -582,6 +596,7 @@ void main() {
           entitlement: entitlement,
           keepAlive: keepAlive,
           filePicker: filePicker,
+          fileSaver: fileSaver,
         ),
       );
 
@@ -1513,6 +1528,41 @@ void main() {
     expect(u.deletedBackups,
         ['/var/backups/pi-tool/pihole-backup-20260706-090000.zip']);
     expect(u.restoredPihole, isEmpty);
+  });
+
+  testWidgets('backup manager: download icon fetches + hands off to the saver',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            version: 'v6.0.4',
+            active: true),
+      ]
+      ..serviceBackups = const [
+        '/var/backups/pi-tool/pihole-backup-20260706-090000.zip'
+      ]
+      ..downloadBytes = Uint8List.fromList([9, 9, 9]);
+    final saved = <(String, int)>[];
+    await tester.pumpWidget(page(u,
+        fileSaver: (name, bytes) async => saved.add((name, bytes.length))));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.download_outlined));
+    await tester.pumpAndSettle();
+
+    expect(u.downloadedPaths,
+        ['/var/backups/pi-tool/pihole-backup-20260706-090000.zip']);
+    expect(saved, [('pihole-backup-20260706-090000.zip', 3)]);
+    expect(u.restoredPihole, isEmpty); // tap on the icon must not restore
   });
 
   testWidgets('console history: a run command is persisted and re-offered',

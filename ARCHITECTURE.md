@@ -178,7 +178,12 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Limit gegen OOM bei riesigen Dateien). **Löschen** (`buildDeleteCommand`,
   `rm -f`/`-rf` mit `--` + Quoting) und **Upload** (`buildUploadScript`, base64 →
   atomar `mv -f`, Marker `UPLOAD_OK`, Limit `kFileUploadLimit` 8 MB, via
-  `EvccUpdater.uploadFile`) laufen als Root.
+  `EvccUpdater.uploadFile`) laufen als Root. **Download**
+  (`EvccUpdater.downloadFile`, ohne sudo — Backups sind bewusst 0644): erst
+  `buildFileSizeCommand` (Abbruch VOR dem Transfer bei > `kBackupDownloadLimit`
+  48 MB), dann `buildDownloadFileCommand` (base64) mit Längen-Verifikation
+  (Truncation = Fehler). Aufs Handy via `fileSaver`-Seam (Default: Temp-Datei
+  über dart:io + share_plus-Teilen-Dialog — kein path_provider nötig).
 - **`file_pick.dart` + native `MainActivity`** — lokale Dateiauswahl fürs Upload.
   **Bewusst KEIN Picker-Plugin:** `file_picker` bringt sein eigenes altes
   Kotlin-Gradle-Plugin mit und scheitert am AGP-9-/Built-in-Kotlin-Setup (und es

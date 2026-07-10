@@ -83,6 +83,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   Verwalten direkt in der App** (Pi-hole-Import via `pihole-FTL --teleporter`,
   nur v6; HA: Container stoppen → entpacken → starten). Automatische Rotation:
   die letzten 5 Backups je Dienst bleiben.
+- **Backups aufs Handy** — jedes Backup lässt sich aus der Verwaltung
+  herunterladen und per Teilen-Dialog sichern (Dateien, Drive, …) — so
+  überleben Backups auch einen SD-Karten-Ausfall.
 - **Aufräumen** — die System-Karte gibt Speicher frei (apt autoremove/clean,
   ungenutzte Docker-Images, Journal >7 Tage) und zeigt, wie viel frei wurde.
 - **„Aktuell"-Anzeige** — bei evcc/Pi-hole/System zeigt die Karte „Aktuell", wenn
@@ -193,7 +196,8 @@ Einstellungen lässt sich vorab der **nightly-Kanal** (unstable) wählen.
 Mehrere Pis verwaltest du über die **Profilleiste** oben (umschalten, anlegen,
 umbenennen, löschen). In den **Einstellungen** (⋮-Menü): App-Sperre per
 Biometrie/PIN, Status beim Start prüfen, HTTPS + Port der evcc-Oberfläche,
-Design (System/Hell/Dunkel), nightly-Kanal.
+Design (System/Hell/Dunkel), nightly-Kanal, **Support kontaktieren**
+(support@kyth.systems).
 
 Alle Eingaben werden **verschlüsselt im Android Keystore** gespeichert
 (`flutter_secure_storage`) und automatisch gesichert — einmal eintragen, danach

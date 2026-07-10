@@ -15,7 +15,7 @@ Funktionen:
 * Auto-Erkennung aller Dienste in einer SSH-Sitzung
 * Dateien: Datei-Browser deines Pi – durchsuchen, ansehen, vom Handy hochladen, löschen
 * Config-Editor: Konfigdateien (z. B. evcc.yaml) direkt bearbeiten, atomar mit Backup
-* Backups inkl. Wiederherstellen & Verwalten in der App: evcc (Config + DB), Pi-hole (Teleporter) und Home Assistant (/config); automatische Rotation
+* Backups inkl. Wiederherstellen & Verwalten in der App: evcc (Config + DB), Pi-hole (Teleporter) und Home Assistant (/config); automatische Rotation; aufs Handy herunterladen (Teilen-Dialog)
 * System aufräumen: Speicher freigeben (apt, ungenutzte Docker-Images, Journal)
 * Automatik auf dem Pi: geplante Updates (systemd-Timer, evcc-Sicherung + Selbstheilung) und Health-Alerts als Push via ntfy (volle Platte, toter Dienst, Hitze, Updates)
 * Konsole: eigene Befehle per SSH absetzen (sudo unterstützt) mit Verlauf + Schnellbefehlen

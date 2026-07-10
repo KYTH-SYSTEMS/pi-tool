@@ -1057,6 +1057,47 @@ class EvccUpdater {
     );
   }
 
+  /// Downloads a (world-readable) file — e.g. a backup archive — to raw bytes.
+  /// The size is checked FIRST so an oversized file never starts transferring,
+  /// and the decoded length is verified afterwards (truncation = error).
+  Future<Uint8List> downloadFile({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<Uint8List>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Lade herunter: $path …');
+          final s = await runner.run(buildFileSizeCommand(path));
+          final size = int.tryParse(s.stdout.trim());
+          if (size == null) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Datei nicht gefunden oder nicht lesbar.');
+          }
+          if (size > kBackupDownloadLimit) {
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'Datei zu groß (${(size / (1024 * 1024)).ceil()} MB, max '
+                '${kBackupDownloadLimit ~/ (1024 * 1024)} MB).');
+          }
+          final r = await runner.run(buildDownloadFileCommand(path));
+          final Uint8List bytes;
+          try {
+            bytes = base64.decode(r.stdout.replaceAll(RegExp(r'\s'), ''));
+          } catch (_) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Übertragung fehlgeschlagen (keine gültigen Daten).');
+          }
+          if (bytes.length != size) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Übertragung unvollständig – bitte erneut versuchen.');
+          }
+          return bytes;
+        },
+      );
+
   /// Deletes a remote file or directory (root). No marker — a clean exit with no
   /// sudo rejection is success.
   Future<void> deleteRemotePath({
