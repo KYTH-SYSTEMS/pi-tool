@@ -24,7 +24,7 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 
 - **Cockpit mit vier Tabs** — unten umschaltbar: **Dienste** (Karten + „+ Dienst
   hinzufügen"), **Automatik** (geplante Updates + Health-Alerts), **Terminal**
-  (Konsole) und **Dateien** (Datei-Browser). Der aktive Pi steht oben in der
+  (eigene Befehle) und **Dateien** (Datei-Browser). Der aktive Pi steht oben in der
   Leiste (antippen zum Umschalten/Hinzufügen/Umbenennen). Eine laufende Aktion
   wird auf jedem Tab als Fortschrittsleiste mit „Abbrechen" angezeigt.
 - **Dienste auto-erkennen** — „Verbindung herstellen" findet evcc, Pi-hole,
@@ -59,7 +59,7 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   normale SSH-Sitzung, ohne SFTP-Server.
 - **Config-Editor** — Konfigdateien (z. B. `evcc.yaml`) direkt in der App
   bearbeiten; gespeichert wird **atomar mit automatischem Backup**.
-- **Konsole** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
+- **Terminal** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
   unterstützt, das Pi-Passwort wird sicher via stdin gepiped), Ausgabe live, mit
   **Verlauf + Schnellbefehlen**. Interaktive Programme (htop, Editoren, `-f`)
   bekommen einen Hinweis mit Alternative statt eines kryptischen Fehlers. Auf

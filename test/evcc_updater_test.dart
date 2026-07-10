@@ -1198,9 +1198,12 @@ void main() {
   });
 
   group('EvccUpdater.runConsoleCommand', () {
+    // The exec is wrapped to cap output: `{ <cmd> ; } 2>&1 | head -c 262144`.
+    String capped(String inner) => '{ $inner ; } 2>&1 | head -c 262144';
+
     test('runs a plain command, echoes it and streams the output', () async {
       final runner = FakeSshRunner({
-        'df -h': [_r('Filesystem Size\n/dev/root 30G\n')],
+        capped('df -h'): [_r('Filesystem Size\n/dev/root 30G\n')],
       });
       final logs = <String>[];
       final out = await _updaterWith(runner)
@@ -1210,7 +1213,7 @@ void main() {
     });
 
     test('pipes the Pi password for a sudo command', () async {
-      const exec = "sudo -S -p '' systemctl restart evcc";
+      final exec = capped("sudo -S -p '' systemctl restart evcc");
       final runner = FakeSshRunner({exec: [_r('')]});
       await _updaterWith(runner).runConsoleCommand(
           config: _config,
@@ -1220,7 +1223,7 @@ void main() {
     });
 
     test('a rejected sudo password surfaces as a sudo error', () async {
-      const exec = "sudo -S -p '' apt-get update";
+      final exec = capped("sudo -S -p '' apt-get update");
       final runner = FakeSshRunner({
         exec: [_r('sudo: 1 incorrect password attempt', exitCode: 1)],
       });

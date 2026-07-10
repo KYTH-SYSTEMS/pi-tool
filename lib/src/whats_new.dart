@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.38.0': [
+    'Aufgeräumte Startseite: „Changelog" und „Auf Update prüfen" sind jetzt oben '
+        'rechts im ⋮-Menü; Datenschutz, Impressum und Open-Source-Lizenzen stehen '
+        'klein ganz unten unter der Version. Dazu diverse Robustheit aus dem '
+        'Audit (destruktive Aktionen rot, deutsche System-Dialoge, gedeckelte '
+        'Log-/Terminal-Ausgabe).',
+  ],
   '0.37.0': [
     'Robustheit aus einem kompletten App-Audit: Tailscale meldet ein falsches '
         'Passwort jetzt korrekt (statt „verbunden"), der Dateien-Tab lädt beim '

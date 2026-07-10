@@ -126,15 +126,15 @@ void main() {
     expect(find.byType(TextField), findsNWidgets(4));
     expect(find.text('Konsole'), findsNothing);
 
-    // The Terminal tab reveals the console + its input.
+    // The Terminal tab reveals the console + its input (heading matches the nav).
     await tester.tap(find.byIcon(Icons.terminal_outlined));
     await tester.pumpAndSettle();
-    expect(find.text('Konsole'), findsOneWidget);
+    expect(find.text('Terminal'), findsNWidgets(2)); // nav + heading
+    expect(find.byKey(const Key('consoleField')), findsOneWidget);
     expect(find.byType(TextField), findsNWidgets(1));
   });
 
-  testWidgets('footer shows the app version + an "Auf Update prüfen" button',
-      (tester) async {
+  testWidgets('footer shows the app version + KYTH branding', (tester) async {
     PackageInfo.setMockInitialValues(
       appName: 'Pi-Tool',
       packageName: 'systems.kyth.pitool',
@@ -148,16 +148,17 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(TextButton, 'Auf Update prüfen'), findsOneWidget);
     final version = find.textContaining('Pi-Tool v0.21.2');
     await tester.scrollUntilVisible(version, 300,
         scrollable: find.byType(Scrollable).first);
     expect(version, findsOneWidget);
-    // Dezentes KYTH-Branding in der Fußzeile.
+    // Dezentes KYTH-Branding + die kleinen Legal-Links in der Fußzeile.
     expect(find.textContaining('by KYTH.'), findsOneWidget);
+    expect(find.text('Datenschutz'), findsOneWidget);
+    expect(find.text('Open-Source-Lizenzen'), findsOneWidget);
   });
 
-  testWidgets('"Auf Update prüfen" reports up to date on the current version',
+  testWidgets('⋮ → "Auf Update prüfen" reports up to date on the current version',
       (tester) async {
     PackageInfo.setMockInitialValues(
       appName: 'Pi-Tool',
@@ -172,10 +173,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    final btn = find.widgetWithText(TextButton, 'Auf Update prüfen');
-    await tester.scrollUntilVisible(btn, 300,
-        scrollable: find.byType(Scrollable).first);
-    await tester.tap(btn);
+    await tester.tap(find.byType(PopupMenuButton<String>)); // top-right ⋮
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Auf Update prüfen'));
     await tester.pump(); // kick off the async check
     await tester.pump(const Duration(milliseconds: 300)); // resolve + snackbar
     expect(find.text('Aktuell – du hast die neueste Version (v0.21.2).'),

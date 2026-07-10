@@ -1867,8 +1867,12 @@ class EvccUpdater {
         body: (runner, log) async {
           log('\$ $command');
           final prep = buildConsoleExec(command);
+          // Cap output server-side so a high-volume command (or a runaway like
+          // `cat /dev/urandom`) can't exhaust memory — head closing the pipe
+          // also stops the producer.
+          final exec = '{ ${prep.exec} ; } 2>&1 | head -c 262144';
           final result = await runner.run(
-            prep.exec,
+            exec,
             stdin: prep.sudo ? '${config.password}\n' : null,
             onOutput: (chunk) {
               final t = chunk.trimRight();

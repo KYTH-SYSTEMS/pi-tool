@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator;
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -88,6 +89,11 @@ class EvccPiToolApp extends StatelessWidget {
         themeMode: mode,
         theme: _buildTheme(Brightness.light),
         darkTheme: _buildTheme(Brightness.dark),
+        // German-first UI: render framework strings (copy/paste menus, dialogs,
+        // the license page) in German too.
+        locale: const Locale('de'),
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        supportedLocales: const [Locale('de'), Locale('en')],
         home: const KythSplashGate(child: UpdaterPage()),
       ),
     );
@@ -451,7 +457,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 'Backups sichern, wiederherstellen & verwalten',
                 'Automatik – geplante Updates & Health-Alerts',
                 'Dateien – durchsuchen, hochladen & löschen',
-                'Konsole – eigene Befehle auf dem Pi',
+                'Terminal – eigene Befehle auf dem Pi',
                 'Mehrere Pis (Profile) verwalten',
                 'Aufräumen – Speicher freigeben',
               ])
@@ -695,6 +701,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       'Profil „$name" löschen?',
       'Entfernt das Profil samt gespeicherter Zugangsdaten und SSH-Key. '
           'Das kann nicht rückgängig gemacht werden.',
+      destructive: true,
     )) {
       return;
     }
@@ -879,9 +886,15 @@ class _UpdaterPageState extends State<UpdaterPage>
     // busy during the fetch/confirm so all action buttons disable — otherwise
     // the network await opens a window for double-taps / concurrent SSH ops.
     if (!dryRun) {
-      setState(() => _busy = true);
+      // Show the running bar during the (network) fetch so the disabled UI has
+      // feedback; clear it again before the confirm dialog opens.
+      setState(() {
+        _busy = true;
+        _busyMessage = 'evcc-Release wird geladen …';
+      });
       final rel = await _fetchEvccRelease();
       if (!mounted) return;
+      setState(() => _busyMessage = null);
       // Always warn when full-upgrade is on (it touches ALL packages, not just
       // evcc) — even if the release-notes fetch failed.
       final warn = _fullUpgrade
@@ -1074,6 +1087,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (!await _confirm(
       'Pi neu starten?',
       'Startet den Raspberry Pi neu. Die Verbindung bricht dabei kurz ab.',
+      destructive: true,
     )) {
       return;
     }
@@ -1205,7 +1219,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (action == 'delete') {
       if (!await _confirm('Backup löschen?',
           'Löscht das $serviceName-Backup (${_backupLabel(path)}) endgültig '
-          'vom Pi.')) {
+          'vom Pi.', destructive: true)) {
         return;
       }
       _beginBusy();
@@ -1467,6 +1481,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           ? 'Löscht den Ordner samt Inhalt. Das kann nicht rückgängig gemacht '
               'werden.'
           : 'Das kann nicht rückgängig gemacht werden.',
+      destructive: true,
     )) {
       return false;
     }
@@ -1607,10 +1622,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     _beginBusy();
     await _guard(() async {
       if (choice.enable) {
-        setState(() {
-          _alertsServer = choice.server;
-          _alertsTopic = choice.topic;
-        });
+        // Plain field writes (not rendered directly) — no setState needed, so no
+        // setState-after-unmount risk across the awaits below.
+        _alertsServer = choice.server;
+        _alertsTopic = choice.topic;
         _persistSettings();
         await _updater.enableAlerts(
             config: config,
@@ -2482,10 +2497,19 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   // ---- helpers -------------------------------------------------------------
 
+  static const _kMaxLogLines = 2000;
+
   void _appendLog(String line) {
     if (!mounted) return;
     // Defense in depth: redact the live password from anything we log.
-    setState(() => _log.add(redactPassword(line, _password.text)));
+    setState(() {
+      _log.add(redactPassword(line, _password.text));
+      // Cap the buffer so a very chatty command can't grow it (and the log
+      // view's render cost) without bound.
+      if (_log.length > _kMaxLogLines) {
+        _log.removeRange(0, _log.length - _kMaxLogLines);
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_logScroll.hasClients) {
         _logScroll.jumpTo(_logScroll.position.maxScrollExtent);
@@ -2514,7 +2538,9 @@ class _UpdaterPageState extends State<UpdaterPage>
     }
   }
 
-  Future<bool> _confirm(String title, String body) async {
+  Future<bool> _confirm(String title, String body,
+      {String confirmLabel = 'Weiter', bool destructive = false}) async {
+    final cs = Theme.of(context).colorScheme;
     final r = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2527,7 +2553,13 @@ class _UpdaterPageState extends State<UpdaterPage>
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Weiter'),
+            // Destructive actions get an error-coloured button + an explicit verb
+            // so they're clearly distinct from a neutral "Weiter".
+            style: destructive
+                ? FilledButton.styleFrom(
+                    backgroundColor: cs.error, foregroundColor: cs.onError)
+                : null,
+            child: Text(confirmLabel),
           ),
         ],
       ),
@@ -2590,6 +2622,37 @@ class _UpdaterPageState extends State<UpdaterPage>
     Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => _SetupGuidePage(onDownloadImager: () => _openUrl(kImagerUrl)),
     ));
+  }
+
+  // Small, muted footer link (Datenschutz/Impressum/Lizenzen) shown under the
+  // version line.
+  Widget _legalLink(String label, VoidCallback onTap) {
+    final theme = Theme.of(context);
+    return TextButton(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
+        minimumSize: Size.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        foregroundColor: theme.colorScheme.onSurfaceVariant,
+        textStyle: theme.textTheme.bodySmall,
+      ),
+      child: Text(label),
+    );
+  }
+
+  void _showLicenses() {
+    showLicensePage(
+      context: context,
+      applicationName: 'Pi-Tool (inoffiziell)',
+      applicationIcon: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: _PromptMark(
+            size: 56, chevronColor: Theme.of(context).colorScheme.onSurface),
+      ),
+      applicationLegalese:
+          '© 2026 KYTH. Systems UG (haftungsbeschränkt) i.G.',
+    );
   }
 
   void _openSettings() {
@@ -3438,6 +3501,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _shareLog();
                 case 'history':
                   _showHistory();
+                case 'checkUpdate':
+                  _checkUpdatesNow();
+                case 'changelog':
+                  _openUrl(kReleasesUrl);
                 case 'settings':
                   _openSettings();
               }
@@ -3461,6 +3528,9 @@ class _UpdaterPageState extends State<UpdaterPage>
               const PopupMenuItem(value: 'share', child: Text('Log teilen')),
               const PopupMenuItem(value: 'history', child: Text('Verlauf')),
               const PopupMenuDivider(),
+              const PopupMenuItem(
+                  value: 'checkUpdate', child: Text('Auf Update prüfen')),
+              const PopupMenuItem(value: 'changelog', child: Text('Changelog')),
               const PopupMenuItem(
                   value: 'settings', child: Text('Einstellungen')),
             ],
@@ -3566,50 +3636,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                     minimumSize: const Size.fromHeight(48)),
               ),
             ],
-            const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              children: [
-                TextButton.icon(
-                  onPressed: () => _openUrl(kReleasesUrl),
-                  icon: const Icon(Icons.history, size: 18),
-                  label: const Text('Changelog'),
-                ),
-                TextButton.icon(
-                  onPressed: _checkUpdatesNow,
-                  icon: const Icon(Icons.system_update, size: 18),
-                  label: const Text('Auf Update prüfen'),
-                ),
-                TextButton.icon(
-                  onPressed: () => _openUrl(kPrivacyUrl),
-                  icon: const Icon(Icons.privacy_tip_outlined, size: 18),
-                  label: const Text('Datenschutz'),
-                ),
-                TextButton.icon(
-                  onPressed: () => _openUrl(kImpressumUrl),
-                  icon: const Icon(Icons.info_outline, size: 18),
-                  label: const Text('Impressum'),
-                ),
-                TextButton.icon(
-                  onPressed: () => showLicensePage(
-                    context: context,
-                    applicationName: 'Pi-Tool (inoffiziell)',
-                    applicationIcon: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: _PromptMark(
-                          size: 56,
-                          chevronColor: theme.colorScheme.onSurface),
-                    ),
-                    applicationLegalese:
-                        '© 2026 KYTH. Systems UG (haftungsbeschränkt) i.G.',
-                  ),
-                  icon: const Icon(Icons.description_outlined, size: 18),
-                  label: const Text('Open-Source-Lizenzen'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 20),
             Text(
               'Nutzung auf eigene Gefahr. Wir übernehmen keine Haftung für '
               'Schäden an System, Daten oder Hardware.',
@@ -3635,6 +3662,15 @@ class _UpdaterPageState extends State<UpdaterPage>
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 4),
+            Wrap(
+              alignment: WrapAlignment.center,
+              children: [
+                _legalLink('Datenschutz', () => _openUrl(kPrivacyUrl)),
+                _legalLink('Impressum', () => _openUrl(kImpressumUrl)),
+                _legalLink('Open-Source-Lizenzen', _showLicenses),
+              ],
+            ),
+            const SizedBox(height: 8),
           ],
                   ),
                   // ---- Tab 1: Automatik ----
@@ -3717,7 +3753,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Widget _terminalTab(ThemeData theme) => ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('Konsole', style: theme.textTheme.titleSmall),
+          Text('Terminal', style: theme.textTheme.titleSmall),
           const SizedBox(height: 4),
           _LogView(lines: _log, controller: _logScroll),
           const SizedBox(height: 8),
