@@ -218,6 +218,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `_showPaywall` muss dazu passen. Echte Play-
   Billing-Impl wird später hinter `EntitlementService` gesteckt. Gate-Punkte nie
   mit `!isPro` inlinen — immer über den Seam / `_proGate`.
+- **`profile_transfer.dart`** — verschlüsselter Profil-Export/-Import (Gerätewechsel):
+  die AppConfig-JSON wird mit **AES-256-GCM** unter einem **PBKDF2-HMAC-SHA256**-
+  Schlüssel (aus einer User-Passphrase) versiegelt. Rein Dart (`cryptography`,
+  kein Native-Plugin, nichts im Startpfad). Enthält Zugangsdaten → authentifizierte
+  Verschlüsselung + bewusst langsame KDF (`kExportKdfIterations`); Import cappt die
+  Iterationen (`_kMaxKdfIterations`) gegen DoS-Dateien. UI in den Einstellungen,
+  Export via `fileSaver`-Seam, Import via SAF-Picker.
 - **`update_check.dart`** — Self-Update-Check (nur Sideload-Kanal) + evcc-/HA-
   Versionsproben, alle fail-soft (Fehler → null). `isNewerVersion` numerisch.
 - **`evcc_api.dart`** — read-only `GET /api/state`. `followRedirects = false`

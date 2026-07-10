@@ -1,0 +1,1 @@
+New: profile export/import for moving to a new phone. In the settings you can export all Pi profiles (incl. credentials) as a passphrase-encrypted file (AES-256-GCM) and import them on a new device. Without your passphrase the file is worthless.

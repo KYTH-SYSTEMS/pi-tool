@@ -998,6 +998,101 @@ class _NameDialogState extends State<_NameDialog> {
   }
 }
 
+/// Passphrase prompt for the encrypted profile export/import. Own State so the
+/// controllers are disposed after the dialog closes. With [confirm] it requires
+/// a matching second entry (min length enforced) before enabling OK.
+class _PassphraseDialog extends StatefulWidget {
+  const _PassphraseDialog(
+      {required this.title, required this.body, required this.confirm});
+  final String title;
+  final String body;
+  final bool confirm;
+
+  @override
+  State<_PassphraseDialog> createState() => _PassphraseDialogState();
+}
+
+class _PassphraseDialogState extends State<_PassphraseDialog> {
+  final _ctrl = TextEditingController();
+  final _ctrl2 = TextEditingController();
+  bool _obscure = true;
+  static const _minLen = 6;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _ctrl2.dispose();
+    super.dispose();
+  }
+
+  String? get _error {
+    if (widget.confirm && _ctrl.text.length < _minLen) {
+      return 'Mindestens $_minLen Zeichen.';
+    }
+    if (widget.confirm && _ctrl2.text.isNotEmpty && _ctrl2.text != _ctrl.text) {
+      return 'Die Passphrasen stimmen nicht überein.';
+    }
+    return null;
+  }
+
+  bool get _valid =>
+      _ctrl.text.isNotEmpty &&
+      (!widget.confirm || (_ctrl.text.length >= _minLen && _ctrl2.text == _ctrl.text));
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.body),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            obscureText: _obscure,
+            autocorrect: false,
+            enableSuggestions: false,
+            onChanged: (_) => setState(() {}),
+            onSubmitted: _valid ? (_) => Navigator.pop(context, _ctrl.text) : null,
+            decoration: InputDecoration(
+              labelText: 'Passphrase',
+              errorText: _error,
+              suffixIcon: IconButton(
+                icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                onPressed: () => setState(() => _obscure = !_obscure),
+              ),
+            ),
+          ),
+          if (widget.confirm) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: _ctrl2,
+              obscureText: _obscure,
+              autocorrect: false,
+              enableSuggestions: false,
+              onChanged: (_) => setState(() {}),
+              decoration:
+                  const InputDecoration(labelText: 'Passphrase wiederholen'),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen')),
+        FilledButton(
+          onPressed: _valid ? () => Navigator.pop(context, _ctrl.text) : null,
+          child: const Text('OK'),
+        ),
+      ],
+    );
+  }
+}
+
 /// The app's brand mark: a shell prompt `>` with the green KYTH cursor dot.
 /// Mirrors the launcher icon (assets/icon) so in-app branding matches.
 class _PromptMark extends StatelessWidget {

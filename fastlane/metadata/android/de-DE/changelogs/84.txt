@@ -1,0 +1,1 @@
+Neu: Profil-Export/-Import für den Gerätewechsel. In den Einstellungen exportierst du alle Pi-Profile (inkl. Zugangsdaten) als passphrase-verschlüsselte Datei (AES-256-GCM) und importierst sie auf einem neuen Handy. Ohne deine Passphrase ist die Datei wertlos.

@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.41.0': [
+    'Profile mitnehmen: In den Einstellungen kannst du jetzt alle Pi-Profile '
+        '(inkl. Zugangsdaten) als **verschlüsselte** Datei exportieren und auf '
+        'einem neuen Handy importieren — geschützt durch eine Passphrase, die '
+        'nur du kennst. Perfekt für den Gerätewechsel.',
+  ],
   '0.40.0': [
     'Backups aufs Handy laden: in „Backups verwalten" gibt es jetzt einen '
         'Download-Knopf pro Backup — das Archiv landet über den Teilen-Dialog '

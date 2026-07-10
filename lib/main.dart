@@ -17,6 +17,7 @@ import 'src/commands.dart';
 import 'src/entitlement.dart';
 import 'src/file_pick.dart';
 import 'src/files.dart';
+import 'src/profile_transfer.dart';
 import 'src/kyth_splash.dart';
 import 'src/whats_new.dart';
 import 'src/evcc_api.dart';
@@ -430,6 +431,76 @@ class _UpdaterPageState extends State<UpdaterPage>
     _persistSettings();
   }
 
+  // ---- profile export / import (encrypted, for a phone change) ----
+
+  /// Exports ALL profiles + settings as a passphrase-encrypted file and hands
+  /// it to the share sheet. The file contains credentials — hence the explicit
+  /// warning + authenticated encryption (see profile_transfer.dart).
+  Future<void> _exportProfiles() async {
+    final pass = await _promptPassphrase(
+      'Profile exportieren',
+      'Die Datei enthält deine Pi-Zugangsdaten (Passwörter/SSH-Keys) — '
+          'verschlüsselt. Wähle eine Passphrase; ohne sie ist die Datei wertlos.',
+      confirm: true,
+    );
+    if (pass == null || !mounted) return;
+    try {
+      final envelope =
+          await encryptProfileExport(encodeAppConfig(_currentConfig()), pass);
+      if (!mounted) return;
+      await _fileSaver('pi-tool-profile.pitool',
+          Uint8List.fromList(utf8.encode(envelope)));
+      if (mounted) _snack('Export erstellt — sicher aufbewahren.');
+    } catch (_) {
+      if (mounted) _snack('Export fehlgeschlagen.');
+    }
+  }
+
+  /// Imports profiles from an exported file (SAF picker → passphrase → merge).
+  Future<void> _importProfiles() async {
+    if (_busy) return;
+    _suppressLock = true;
+    PickedFile? picked;
+    try {
+      picked = await _filePicker.pick();
+    } catch (_) {
+      if (mounted) _snack('Dateiauswahl fehlgeschlagen.');
+      return;
+    } finally {
+      _suppressLock = false;
+    }
+    if (picked == null || !mounted) return;
+    final pass = await _promptPassphrase('Profile importieren',
+        'Passphrase der Export-Datei eingeben.');
+    if (pass == null || !mounted) return;
+    try {
+      final json =
+          await decryptProfileExport(utf8.decode(picked.bytes), pass);
+      final cfg = parseAppConfig(json);
+      if (cfg.profiles.isEmpty) {
+        _snack('Datei enthält keine Profile.');
+        return;
+      }
+      if (!await _confirm('Importieren?',
+          '${cfg.profiles.length} Profil(e) werden zu deinen vorhandenen '
+              'hinzugefügt.')) {
+        return;
+      }
+      setState(() {
+        _profiles = [..._profiles, ...cfg.profiles];
+        _activeIndex = _profiles.length - cfg.profiles.length; // first imported
+        _applyProfile(_profiles[_activeIndex]);
+        _resetDetectionForNewPi();
+      });
+      _persistSettings();
+      _snack('${cfg.profiles.length} Profil(e) importiert.');
+    } on ProfileTransferException catch (e) {
+      if (mounted) _snack(e.message);
+    } catch (_) {
+      if (mounted) _snack('Import fehlgeschlagen.');
+    }
+  }
+
   /// Runs [action] for Pro users; otherwise opens the paywall. The single gate
   /// every Pro feature routes through.
   void _proGate(VoidCallback action) {
@@ -745,6 +816,16 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
     return (name != null && name.trim().isNotEmpty) ? name.trim() : null;
   }
+
+  /// Passphrase dialog. [confirm] adds a second field (for export, to avoid a
+  /// typo locking the user out of their own file).
+  Future<String?> _promptPassphrase(String title, String body,
+          {bool confirm = false}) =>
+      showDialog<String>(
+        context: context,
+        builder: (ctx) =>
+            _PassphraseDialog(title: title, body: body, confirm: confirm),
+      );
 
   Future<void> _checkForUpdate() async {
     try {
@@ -2708,6 +2789,26 @@ class _UpdaterPageState extends State<UpdaterPage>
                     setState(() => _channel = v ? 'unstable' : 'stable');
                     setSheet(() {});
                     _scheduleSave();
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.upload_file_outlined),
+                  title: const Text('Profile exportieren'),
+                  subtitle: const Text('Verschlüsselte Datei (Handy-Wechsel)'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _exportProfiles();
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.download_outlined),
+                  title: const Text('Profile importieren'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _importProfiles();
                   },
                 ),
                 const Divider(),

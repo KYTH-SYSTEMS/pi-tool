@@ -20,7 +20,7 @@ Features:
 * Automation on the Pi: scheduled updates (systemd timer, backs up evcc + self-heals) and health alerts pushed via ntfy (full disk, dead service, heat, updates)
 * Console: run your own commands over SSH (sudo supported) with history + quick commands
 * Built-in "set up your Pi" guide (Raspberry Pi Imager: SSH, user, Wi-Fi) for beginners
-* Multiple Pi profiles, quick switching
+* Multiple Pi profiles, quick switching; encrypted export/import for moving to a new phone
 * Connect with green/red status; a running action can be cancelled
 
 Security & privacy:

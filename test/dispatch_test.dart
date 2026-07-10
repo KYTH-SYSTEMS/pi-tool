@@ -748,6 +748,22 @@ void main() {
     expect(find.text('Entsperren'), findsNothing); // and it did NOT re-lock
   });
 
+  testWidgets('Einstellungen offers profile export + import', (tester) async {
+    // The crypto round-trip is covered in profile_transfer_test; here we just
+    // confirm the two entry points are wired into the settings sheet.
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile exportieren'));
+    expect(find.text('Profile exportieren'), findsOneWidget);
+    expect(find.text('Profile importieren'), findsOneWidget);
+  });
+
   testWidgets('switching tabs clears the stale connection banner',
       (tester) async {
     useTallScreen(tester);

@@ -104,6 +104,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   einen Vordergrunddienst weiter, auch wenn du die App in den Hintergrund legst
   oder den Bildschirm ausschaltest (Benachrichtigung „Pi-Tool …").
 - **Mehrere Pi-Profile** — pro Pi ein benanntes Profil, schnell umschaltbar.
+- **Profil-Export/-Import** — alle Profile (inkl. Zugangsdaten) als
+  **passphrase-verschlüsselte** Datei (AES-256-GCM) sichern und auf einem neuen
+  Handy importieren. Für den Gerätewechsel.
 - **SSH-Key- oder Passwort-Login**, **App-Sperre** (Biometrie/PIN),
   **stable/nightly**-Kanal, **Update-Verlauf**, **In-App-Update-Hinweis**.
 - **Dienst-/System-Aktionen:** evcc-Dienst neustarten, Pi neustarten,
