@@ -192,8 +192,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   MethodChannel `pi_tool/filepicker`) → nutzt das projekteigene Kotlin/AGP.
   `FilePickerService`-Seam (`ChannelFilePicker` real, injizierbar für Tests).
 - **`notifications.dart`** — **schlafender**, plugin-freier Kern für
-  Update-Benachrichtigungen; bewusst *nicht* verdrahtet (v0.20.0-Lektion — kein
-  ungetesteter Native-Code im Startpfad).
+  Update-Benachrichtigungen (`summarizeUpdates` + geseamter `UpdateCheckRunner`);
+  bewusst **dauerhaft nicht** als Android-Hintergrunddienst verdrahtet. Grund:
+  Update-Push existiert bereits architekturkonform — der On-Pi-Health-Alert-Timer
+  pusht „N Updates verfuegbar" via ntfy (`alerts.dart`). Ein Android-Background-
+  Check wäre redundant **und** verstieße gegen die „kein Android-Hintergrunddienst
+  für Automatik"-Invariante (v0.20.0-Lektion). Der Kern bleibt getestete Reserve
+  für künftige *Vordergrund*-Nutzung.
 
 > **Heredoc-Regel für On-Pi-Skripte:** Dart-`$var` interpoliert *vor* der Shell;
 > Dart-`\$` wird literales `$` für die Shell. Alles, was zur Shell-Laufzeit

@@ -1,8 +1,13 @@
 /// Update-notification logic: a pure summariser + a seamed check runner.
 ///
-/// Kept plugin-free and fully unit-tested. The platform glue (a scheduler +
-/// a notification plugin) is intentionally NOT wired yet — it needs on-device
-/// validation before shipping. This decidable core is ready for that.
+/// Kept plugin-free and fully unit-tested. The platform glue (an Android
+/// background scheduler + a notification plugin) is **deliberately not wired**,
+/// and stays that way: update-push already ships the architecturally-correct
+/// way — the on-Pi health-alert systemd timer pushes "N Updates verfuegbar" via
+/// ntfy (see `alerts.dart`). An Android background service would (a) duplicate
+/// that, and (b) violate the "kein Android-Hintergrunddienst für Automatik"
+/// invariant (the v0.20.0 crash lesson). This decidable core is kept as a
+/// tested reserve for any future *foreground* use (e.g. the multi-Pi overview).
 library;
 
 import 'profiles.dart';
