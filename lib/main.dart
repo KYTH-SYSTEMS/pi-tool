@@ -1672,120 +1672,20 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<({bool enable, String server, String topic})?> _showAlertsSheet(
       AlertsStatus status, SshConfig config) {
-    final serverCtrl = TextEditingController(text: _alertsServer);
-    final topicCtrl = TextEditingController(text: _alertsTopic);
     return showModalBottomSheet<({bool enable, String server, String topic})>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-        padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 4,
-            bottom: 20 + MediaQuery.of(ctx).viewInsets.bottom),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Health-Alerts', style: Theme.of(ctx).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            const Text('Der Pi meldet sich per Push (via ntfy), wenn die Platte '
-                'vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates '
-                'anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.'),
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: () => _openUrl('https://ntfy.sh'),
-              child: Text('So funktioniert ntfy (App installieren, Thema '
-                  'abonnieren) →',
-                  style: TextStyle(
-                      color: Theme.of(ctx).colorScheme.primary, fontSize: 13)),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              status.enabled
-                  ? 'Aktuell aktiv · letzte Prüfung: ${status.lastCheck ?? '—'}'
-                  : 'Aktuell aus.',
-              style: TextStyle(
-                  color: status.enabled ? kGreen : null,
-                  fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: topicCtrl,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: 'ntfy-Thema (Topic)',
-                hintText: 'z. B. mein-pi-a7Xk',
-                helperText: 'Frei wählbar, aber schwer erratbar wählen.',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: serverCtrl,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: 'ntfy-Server',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () {
-                      final topic = topicCtrl.text.trim();
-                      if (topic.isEmpty) {
-                        _snack('Bitte ein ntfy-Thema eingeben.');
-                        return;
-                      }
-                      Navigator.pop(ctx, (
-                        enable: true,
-                        server: serverCtrl.text.trim().isEmpty
-                            ? 'https://ntfy.sh'
-                            : serverCtrl.text.trim(),
-                        topic: topic
-                      ));
-                    },
-                    child: Text(status.enabled ? 'Aktualisieren' : 'Einschalten'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: () {
-                    final topic = topicCtrl.text.trim();
-                    if (topic.isEmpty) {
-                      _snack('Bitte ein ntfy-Thema eingeben.');
-                      return;
-                    }
-                    _sendTestAlert(
-                        config,
-                        serverCtrl.text.trim().isEmpty
-                            ? 'https://ntfy.sh'
-                            : serverCtrl.text.trim(),
-                        topic);
-                  },
-                  child: const Text('Test'),
-                ),
-              ],
-            ),
-            if (status.enabled)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: () => Navigator.pop(ctx,
-                      (enable: false, server: '', topic: '')),
-                  child: const Text('Ausschalten'),
-                ),
-              ),
-          ],
-        ),
-      ),
+      // A StatefulWidget owns the two text controllers so they're disposed only
+      // after the sheet fully closes (disposing them in a finally right after
+      // the future resolves used them during the dismiss animation).
+      builder: (ctx) => _AlertsSheet(
+        status: status,
+        initialServer: _alertsServer,
+        initialTopic: _alertsTopic,
+        onOpenNtfy: () => _openUrl('https://ntfy.sh'),
+        onSnack: _snack,
+        onTest: (server, topic) => _sendTestAlert(config, server, topic),
       ),
     );
   }

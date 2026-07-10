@@ -245,6 +245,153 @@ class _FilesViewState extends State<_FilesView> {
   }
 }
 
+/// Health-Alerts config sheet. A StatefulWidget so its two text controllers are
+/// disposed in [State.dispose] — i.e. only after the sheet's close animation
+/// finishes (disposing them right after showModalBottomSheet resolves would use
+/// them mid-animation → "used after dispose").
+class _AlertsSheet extends StatefulWidget {
+  const _AlertsSheet({
+    required this.status,
+    required this.initialServer,
+    required this.initialTopic,
+    required this.onOpenNtfy,
+    required this.onSnack,
+    required this.onTest,
+  });
+  final AlertsStatus status;
+  final String initialServer;
+  final String initialTopic;
+  final VoidCallback onOpenNtfy;
+  final void Function(String message) onSnack;
+  final void Function(String server, String topic) onTest;
+
+  @override
+  State<_AlertsSheet> createState() => _AlertsSheetState();
+}
+
+class _AlertsSheetState extends State<_AlertsSheet> {
+  late final TextEditingController _serverCtrl =
+      TextEditingController(text: widget.initialServer);
+  late final TextEditingController _topicCtrl =
+      TextEditingController(text: widget.initialTopic);
+
+  @override
+  void dispose() {
+    _serverCtrl.dispose();
+    _topicCtrl.dispose();
+    super.dispose();
+  }
+
+  String get _server =>
+      _serverCtrl.text.trim().isEmpty ? 'https://ntfy.sh' : _serverCtrl.text.trim();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final status = widget.status;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 4,
+            bottom: 20 + MediaQuery.of(context).viewInsets.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Health-Alerts', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 8),
+            const Text('Der Pi meldet sich per Push (via ntfy), wenn die Platte '
+                'vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates '
+                'anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.'),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: widget.onOpenNtfy,
+              child: Text('So funktioniert ntfy (App installieren, Thema '
+                  'abonnieren) →',
+                  style: TextStyle(
+                      color: theme.colorScheme.primary, fontSize: 13)),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              status.enabled
+                  ? 'Aktuell aktiv · letzte Prüfung: ${status.lastCheck ?? '—'}'
+                  : 'Aktuell aus.',
+              style: TextStyle(
+                  color: status.enabled ? kGreen : null,
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _topicCtrl,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'ntfy-Thema (Topic)',
+                hintText: 'z. B. mein-pi-a7Xk',
+                helperText: 'Frei wählbar, aber schwer erratbar wählen.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _serverCtrl,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'ntfy-Server',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () {
+                      final topic = _topicCtrl.text.trim();
+                      if (topic.isEmpty) {
+                        widget.onSnack('Bitte ein ntfy-Thema eingeben.');
+                        return;
+                      }
+                      Navigator.pop(context,
+                          (enable: true, server: _server, topic: topic));
+                    },
+                    child:
+                        Text(status.enabled ? 'Aktualisieren' : 'Einschalten'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: () {
+                    final topic = _topicCtrl.text.trim();
+                    if (topic.isEmpty) {
+                      widget.onSnack('Bitte ein ntfy-Thema eingeben.');
+                      return;
+                    }
+                    widget.onTest(_server, topic);
+                  },
+                  child: const Text('Test'),
+                ),
+              ],
+            ),
+            if (status.enabled)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(
+                      context, (enable: false, server: '', topic: '')),
+                  child: const Text('Ausschalten'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Beginner guide: set up a fresh Pi with Raspberry Pi Imager so this app can
 /// connect (enable SSH + user/password + WiFi via the Imager's advanced options).
 class _SetupGuidePage extends StatelessWidget {
