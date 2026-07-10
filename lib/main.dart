@@ -47,6 +47,7 @@ const kPrivacyUrl = 'https://profex1337.github.io/evcc-pi-tool/privacy.html';
 const kImpressumUrl = 'https://profex1337.github.io/evcc-pi-tool/impressum.html';
 const kReleasesUrl = 'https://github.com/profex1337/evcc-pi-tool/releases';
 const kImagerUrl = 'https://www.raspberrypi.com/software/';
+const kKythUrl = 'https://www.kyth.systems';
 
 /// Drives MaterialApp.themeMode; updated from the loaded setting + the picker.
 final ValueNotifier<ThemeMode> themeModeNotifier =
@@ -3457,7 +3458,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                 index: _tab,
                 children: [
                   // ---- Tab 0: Dienste ----
-                  ListView(
+                  Column(children: [
+                    Expanded(
+                      child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
             // App-Update-Hinweis immer ganz oben.
@@ -3536,43 +3539,62 @@ class _UpdaterPageState extends State<UpdaterPage>
                     minimumSize: const Size.fromHeight(48)),
               ),
             ],
-            const SizedBox(height: 20),
-            Text(
-              'Nutzung auf eigene Gefahr. Wir übernehmen keine Haftung für '
-              'Schäden an System, Daten oder Hardware.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Inoffizielles Tool, nicht mit evcc oder Pi-hole verbunden.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant
-                      .withValues(alpha: 0.7)),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _appVersion.isEmpty
-                  ? 'by KYTH. Systems'
-                  : 'Pi-Tool v$_appVersion · by KYTH. Systems',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 4),
-            Wrap(
-              alignment: WrapAlignment.center,
-              children: [
-                _legalLink('Datenschutz', () => _openUrl(kPrivacyUrl)),
-                _legalLink('Impressum', () => _openUrl(kImpressumUrl)),
-                _legalLink('Open-Source-Lizenzen', _showLicenses),
-              ],
-            ),
-            const SizedBox(height: 8),
           ],
-                  ),
+                      ),
+                    ),
+                    // Legal / Version an den unteren Rand des Tabs gepinnt — nicht
+                    // direkt unter den „Tippe …"-Hinweis, wenn noch keine Karten da
+                    // sind.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Divider(height: 1),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Nutzung auf eigene Gefahr. Wir übernehmen keine '
+                            'Haftung für Schäden an System, Daten oder Hardware.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Inoffizielles Tool, nicht mit evcc oder Pi-hole '
+                            'verbunden.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant
+                                    .withValues(alpha: 0.7)),
+                          ),
+                          const SizedBox(height: 6),
+                          InkWell(
+                            onTap: () => _openUrl(kKythUrl),
+                            child: Text(
+                              _appVersion.isEmpty
+                                  ? 'by KYTH. Systems'
+                                  : 'Pi-Tool v$_appVersion · by KYTH. Systems',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant),
+                            ),
+                          ),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            children: [
+                              _legalLink(
+                                  'Datenschutz', () => _openUrl(kPrivacyUrl)),
+                              _legalLink(
+                                  'Impressum', () => _openUrl(kImpressumUrl)),
+                              _legalLink(
+                                  'Open-Source-Lizenzen', _showLicenses),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ]),
                   // ---- Tab 1: Automatik ----
                   _automatikTab(theme),
                   // ---- Tab 2: Terminal ----
