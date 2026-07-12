@@ -90,19 +90,28 @@ Org-Konto (spart 14 Tage + das Organisieren von 12 Testern).
 
 ---
 
-## 7. F-Droid — der schnellste kostenlose Reichweiten-Kanal
+## 7. F-Droid — Reichweiten-Kanal (Strategie nach IzzyOnDroid-Absage)
 Unsere App ist FOSS (MIT), **ohne** proprietäre/Google-Bibliotheken (kein Firebase/GMS,
-kein Tracking) → F-Droid-tauglich.
+kein Tracking) → technisch F-Droid-tauglich.
 
-**Empfohlen zuerst: IzzyOnDroid (IoD).** Ein beliebtes F-Droid-kompatibles Repo, das die
-**signierte APK direkt aus den GitHub-Releases** zieht und unsere fastlane-Metadaten nutzt —
-**kein Build-Rezept nötig.**
-- **[DU]** „Request for Packaging" im IzzyOnDroid-Tracker stellen (GitLab: `IzzyOnDroid/repo`),
-  Repo-URL angeben. Er prüft automatisch auf Tracker (exodus) — bei uns sauber.
-- Voraussetzung erfüllt: APK in GitHub-Releases ✓, Tags ✓, fastlane-Metadaten ✓.
+> **IzzyOnDroid: ABGELEHNT (2026-07-12).** Grund: „the level of LLM assistance used in
+> this application exceeds our acceptable thresholds" — Verstoß gegen die *App Inclusion
+> AI Policy* von IzzyOnDroid. Wir hatten die (überwiegende) KI-Entwicklung **ehrlich
+> deklariert**; das war richtig. IzzyOnDroid ist damit als Kanal **zu**. **Nicht** durch
+> Herunterspielen der KI-Nutzung erneut einreichen (unehrlich + Reputationsrisiko).
 
-**Später optional: offizielles F-Droid-Repo.** Baut aus dem Quellcode (Flutter wird unterstützt,
-Rezept aber fummeliger). Mehr Aufwand → erst nach dem Start angehen, wenn gewünscht.
+**Wichtig: Das betrifft NUR IzzyOnDroid.** Google Play hat **keine** KI-Assistenz-Policy →
+der Play-Launch ist voll intakt.
+
+**Verbleibende F-Droid-Optionen (ohne IzzyOnDroids KI-Gate):**
+- **Eigenes F-Droid-Repo (empfohlen, volle Kontrolle):** Wir hosten ein F-Droid-kompatibles
+  Repo (`fdroidserver`), das die signierte APK aus den GitHub-Releases zieht. Nutzer fügen
+  unsere Repo-URL im F-Droid-Client hinzu. Kein Gatekeeper. → mittlerer Setup-Aufwand.
+- **Offizielles F-Droid-Repo:** baut aus dem Quellcode (RFP bei `gitlab.com/fdroid/rfp`).
+  Ob F-Droid-Main dieselbe KI-Haltung hat wie IzzyOnDroid, ist **unklar** — vor Aufwand
+  erst prüfen. Reproducible-Build-Rezept nötig (fummeliger).
+- **Direkt-APK (schon live):** die signierte `app-release.apk` an jedem GitHub-Release —
+  sideloadbar, sofort.
 
 ---
 
@@ -111,7 +120,8 @@ Rezept aber fummeliger). Mehr Aufwand → erst nach dem Start angehen, wenn gew�
 - [ ] D-U-N-S-Nummer beantragen (kritischer Pfad, bis ~30 Tage)
 - [ ] Google-Play-Konto (KYTH-Org) + Identitätsprüfung (mit HRB 46313)
 - [x] öffentliche Kontakt-E-Mail festgelegt: support@kyth.systems
-- [ ] Screenshots aufnehmen (Emulator/Gerät)
+- [x] Screenshots erstellt (2026-07-12) — 5 Stück, gerendert über Test-Fakes (kein echter
+      Pi), in `fastlane/…/{de-DE,en-US}/images/phoneScreenshots/1–5.png` (1080×2160, ≤2:1)
 
 **[DU] — in der Play Console**
 - [ ] Store-Eintrag füllen (Texte aus `fastlane/…` übernehmen oder via `fastlane supply`)
@@ -122,7 +132,8 @@ Rezept aber fummeliger). Mehr Aufwand → erst nach dem Start angehen, wenn gew�
 - [ ] Kein Closed Test nötig (Org-Konto) → direkt zur Produktion einreichen
 
 **[DU] — F-Droid**
-- [x] IzzyOnDroid „Request for Packaging" eingereicht (2026-07-12, Codeberg-Tracker)
+- [x] ~~IzzyOnDroid RFP~~ **ABGELEHNT (KI-Policy, 2026-07-12)** — siehe §7; Kanal zu
+- [ ] Entscheidung: eigenes F-Droid-Repo hosten? (volle Kontrolle, ohne KI-Gate)
 
 **[ICH] — erledigt / auf Zuruf**
 - [x] fastlane-Metadaten (Titel, Kurz-/Langbeschreibung, Changelog, Icon, Feature-Grafik)

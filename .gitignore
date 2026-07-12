@@ -48,3 +48,6 @@ app.*.map.json
 key.properties
 *.jks
 *.keystore
+
+# Generated store screenshots (intermediate; final copies live in fastlane)
+test/shots/
