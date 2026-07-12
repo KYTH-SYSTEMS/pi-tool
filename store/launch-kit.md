@@ -131,9 +131,10 @@ der Play-Launch ist voll intakt.
 - [ ] signiertes **AAB** (CI-Artefakt vom `v*`-Release) in den Produktions-Track hochladen
 - [ ] Kein Closed Test nötig (Org-Konto) → direkt zur Produktion einreichen
 
-**[DU] — F-Droid**
-- [x] ~~IzzyOnDroid RFP~~ **ABGELEHNT (KI-Policy, 2026-07-12)** — siehe §7; Kanal zu
-- [ ] Entscheidung: eigenes F-Droid-Repo hosten? (volle Kontrolle, ohne KI-Gate)
+**F-Droid — ENTSCHIEDEN: nicht weiterverfolgen (2026-07-12)**
+- [x] ~~IzzyOnDroid RFP~~ **ABGELEHNT (KI-Policy)** — siehe §7; Kanal zu
+- [x] Eigenes F-Droid-Repo: **NEIN** (Entscheidung Stefan) — Fokus liegt auf Google Play.
+      Direkt-APK an den GitHub-Releases bleibt als Sideload-Kanal bestehen.
 
 **[ICH] — erledigt / auf Zuruf**
 - [x] fastlane-Metadaten (Titel, Kurz-/Langbeschreibung, Changelog, Icon, Feature-Grafik)
