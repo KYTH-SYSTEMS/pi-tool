@@ -3,11 +3,16 @@
 **HRB-unabhängig:** IzzyOnDroid zieht die signierte APK direkt aus den GitHub-Releases.
 Kein Entwicklerkonto, keine D-U-N-S, kein Handelsregister nötig.
 
-## So einstellen
-1. GitLab-Account anlegen (falls nicht vorhanden): https://gitlab.com
-2. Neues Issue im IzzyOnDroid-Tracker: **https://gitlab.com/IzzyOnDroid/repo/-/issues/new**
-   → Vorlage „Request for Packaging (RFP)" wählen.
-3. Untenstehenden Text einfügen und abschicken.
+## So einstellen (Stand 2026: Prozess von GitLab → **Codeberg** umgezogen!)
+> Der alte GitLab-Tracker (`gitlab.com/IzzyOnDroid/repo`) ist **archiviert** — dort NICHT mehr
+> einreichen. Aufnahme-Anfragen laufen jetzt über Codeberg.
+
+1. **Codeberg-Account** anlegen (kostenlos): https://codeberg.org
+2. Kurz die **App Inclusion Policy** überfliegen: https://izzyondroid.org/docs/ → „App Inclusion Policy".
+   (Wir erfüllen sie — siehe „Voraussetzungen" unten.)
+3. **Neues Issue** im Tracker öffnen: **https://codeberg.org/IzzyOnDroid/repodata/issues** → „New Issue"
+   → falls eine Inclusion-/RFP-Vorlage angeboten wird, diese wählen.
+4. Untenstehenden Text einfügen (bzw. damit die Vorlagenfelder ausfüllen) und abschicken.
 
 ## Voraussetzungen — bei uns alle erfüllt ✅
 - FOSS-Lizenz: **MIT** (`LICENSE` im Repo)
@@ -38,6 +43,9 @@ user's own Pi.
 
 ## Danach
 - IzzyOnDroid prüft (u. a. exodus-Scan) und nimmt die App auf; Updates zieht er
-  künftig automatisch aus neuen GitHub-Releases.
+  künftig automatisch aus neuen GitHub-Releases (per `v*`-Tag).
+- Beim ersten Einpflegen wird euer **APK-Signaturschlüssel gepinnt** — künftige
+  Updates müssen mit **demselben** Keystore signiert sein (bei uns automatisch über
+  den CI-Keystore — also nie verlieren/wechseln).
 - Nutzer fügen einfach das IzzyOnDroid-Repo in ihrem F-Droid-Client hinzu und
   finden „Pi-Tool".
