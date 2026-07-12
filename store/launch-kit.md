@@ -11,8 +11,8 @@ Legende: **[DU]** = nur du kannst es (Konto, Zahlung, Gerät) · **[ICH]** = mac
 - **[DU] Google-Play-Developer-Konto** als Organisation (KYTH. Systems UG). Einmalig 25 $.
   Org-Konten brauchen eine **D-U-N-S-Nummer** + Identitätsprüfung → **Tage bis Wochen**.
   Jetzt anstoßen, läuft parallel zu allem anderen. (D-U-N-S kostenlos bei Dun & Bradstreet.)
-- **[DU] Kontakt-E-Mail** festlegen, die öffentlich im Eintrag steht (z. B. eine KYTH-Adresse,
-  nicht zwingend die private).
+- **[x] Öffentliche Kontakt-E-Mail: `support@kyth.systems`** (festgelegt 2026-07) — kommt ins
+  Play-„Contact details"-Feld. Deckt sich mit dem In-App-„Support kontaktieren" (`kSupportEmail`).
 
 ---
 
@@ -68,12 +68,15 @@ kein Standort-Teilen). Ergebnis: **USK 0 / PEGI 3 / „Ab 0"**.
 
 ---
 
-## 5. Closed Testing (Pflicht vor Produktion)
-Neue Konten müssen vor der Produktion einen **geschlossenen Test mit ≥ 12 Testern über
-14 Tage** laufen lassen.
-- **[DU]** Closed-Testing-Track anlegen, AAB/APK hochladen, Opt-in-Link teilen.
-- **[DU]** 12 Tester finden — ideal aus der **evcc-Community** (Forum/Discord) + Freunde/Bekannte.
-- Nach 14 Tagen aktiver Teilnahme → Freischaltung für Produktion beantragen.
+## 5. Closed Testing — für unser ORG-Konto NICHT nötig
+Der Pflicht-Test (≥ 12 opted-in Tester über 14 Tage) gilt **nur für PERSONAL-Konten**, die
+**nach dem 13.11.2023** angelegt wurden. **Organisations-Konten (= unsere KYTH. Systems UG)
+sind davon befreit** und dürfen direkt in die Produktion — genau das ist der Hauptgrund fürs
+Org-Konto (spart 14 Tage + das Organisieren von 12 Testern).
+- Voraussetzung: die **D-U-N-S-verifizierte Organisation** (siehe §0). Danach: AAB in den
+  Produktions-Track, Review abwarten, live.
+- (Google-Policy-Stand 2026 — der Testzwang wurde am 11.12.2024 von 20 auf 12 Tester gesenkt,
+  Org-Konten bleiben ausgenommen. Beim Einrichten in der Console kurz gegenprüfen.)
 
 ---
 
@@ -105,10 +108,9 @@ Rezept aber fummeliger). Mehr Aufwand → erst nach dem Start angehen, wenn gew�
 
 ## 8. Checkliste
 **[DU] — Vorlauf, jetzt starten**
-- [ ] D-U-N-S-Nummer beantragen
-- [ ] Google-Play-Konto (KYTH-Org) + Identitätsprüfung
-- [ ] öffentliche Kontakt-E-Mail festlegen
-- [ ] 12 Tester organisieren (evcc-Community)
+- [ ] D-U-N-S-Nummer beantragen (kritischer Pfad, bis ~30 Tage)
+- [ ] Google-Play-Konto (KYTH-Org) + Identitätsprüfung (mit HRB 46313)
+- [x] öffentliche Kontakt-E-Mail festgelegt: support@kyth.systems
 - [ ] Screenshots aufnehmen (Emulator/Gerät)
 
 **[DU] — in der Play Console**
@@ -116,8 +118,8 @@ Rezept aber fummeliger). Mehr Aufwand → erst nach dem Start angehen, wenn gew�
 - [ ] Data Safety = „no data collected/shared" (siehe §2)
 - [ ] Content Rating (alles Nein → USK 0)
 - [ ] Zielgruppe 18+, keine Ads, kostenlos
-- [ ] Closed Test starten (12/14)
-- [ ] nach 14 Tagen: Produktion beantragen
+- [ ] signiertes **AAB** (CI-Artefakt vom `v*`-Release) in den Produktions-Track hochladen
+- [ ] Kein Closed Test nötig (Org-Konto) → direkt zur Produktion einreichen
 
 **[DU] — F-Droid**
 - [ ] IzzyOnDroid „Request for Packaging" stellen
