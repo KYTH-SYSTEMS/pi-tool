@@ -122,7 +122,7 @@ Rezept aber fummeliger). Mehr Aufwand → erst nach dem Start angehen, wenn gew�
 - [ ] Kein Closed Test nötig (Org-Konto) → direkt zur Produktion einreichen
 
 **[DU] — F-Droid**
-- [ ] IzzyOnDroid „Request for Packaging" stellen
+- [x] IzzyOnDroid „Request for Packaging" eingereicht (2026-07-12, Codeberg-Tracker)
 
 **[ICH] — erledigt / auf Zuruf**
 - [x] fastlane-Metadaten (Titel, Kurz-/Langbeschreibung, Changelog, Icon, Feature-Grafik)
