@@ -24,6 +24,7 @@ import 'src/profile_transfer.dart';
 import 'src/security_check.dart';
 import 'src/ssh_keys.dart';
 import 'src/storage_explorer.dart';
+import 'src/systemd_services.dart';
 import 'src/kyth_splash.dart';
 import 'src/kyth_wordmark.dart';
 import 'src/whats_new.dart';
@@ -3385,6 +3386,24 @@ class _UpdaterPageState extends State<UpdaterPage>
               _CardAction('Pi herunterfahren', _shutdown, destructive: true),
             ],
           ));
+        case 'adguard':
+        case 'nodered':
+        case 'zigbee2mqtt':
+          // Detected systemd services (not app-installed): manage only —
+          // restart, open web, logs. No apt update path.
+          cards.add(_ServiceCard(
+            isPro: _isPro,
+            status: s,
+            icon: _serviceIcon(s.id),
+            enabled: !_busy,
+            primaryLabel: 'Neustart',
+            onPrimary: () => _restartSystemdService(s),
+            onOpenWeb:
+                s.webPort != null ? () => _openServiceWeb(s.webPort!) : null,
+            actions: [
+              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
+            ],
+          ));
         default:
           // Generic apt service (Grafana, InfluxDB, …): update via apt,
           // optional web UI. Only ever emitted when installed.
@@ -3798,9 +3817,40 @@ class _UpdaterPageState extends State<UpdaterPage>
         return Icons.storage;
       case 'mosquitto':
         return Icons.sensors;
+      case 'adguard':
+        return Icons.shield_outlined;
+      case 'nodered':
+        return Icons.hub_outlined;
+      case 'zigbee2mqtt':
+        return Icons.settings_input_antenna;
       default:
         return Icons.apps;
     }
+  }
+
+  /// Restarts a detected systemd service (AdGuard Home, Node-RED, Zigbee2MQTT).
+  Future<void> _restartSystemdService(ServiceStatus s) async {
+    if (_busy) return;
+    SystemdService? svc;
+    for (final x in knownSystemdServices) {
+      if (x.id == s.id) svc = x;
+    }
+    if (svc == null) return;
+    final unit = svc.unit;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _restartSystemdService(s);
+    await _guard(() async {
+      await _updater.restartSystemdUnit(
+          config: config, unit: unit, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = '${s.name} neu gestartet.';
+        _statusOk = true;
+      });
+      _addHistory('${s.name} neu gestartet.');
+      await _refreshServices(config);
+    }, backgroundMessage: '${s.name} wird neu gestartet …');
   }
 
   /// Update a generic apt service card (Grafana, InfluxDB, …).

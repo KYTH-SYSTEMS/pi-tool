@@ -37,6 +37,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 - **Home Assistant** — als **Docker-Container** installieren (installiert bei
   Bedarf zuerst Docker, experimentell) und aktualisieren (Image-Pull + Neuanlage,
   Daten im `/config`-Volume bleiben erhalten), Web-UI auf Port 8123 öffnen.
+- **AdGuard Home, Node-RED & Zigbee2MQTT** — werden erkannt, wenn sie als
+  systemd-Dienst laufen: eigene Karte mit Weboberfläche öffnen, Logs und
+  Neustart. (Installation überlässt die App bewusst dir.)
 - **Grafana, InfluxDB & Mosquitto** — werden automatisch erkannt, wenn per apt
   installiert: eigene Karte mit Update (apt `--only-upgrade`) und Web-UI
   (Grafana :3000, InfluxDB v2 :8086; Mosquitto ist ein MQTT-Broker ohne Web-UI).

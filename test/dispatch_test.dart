@@ -141,6 +141,15 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       shutdownCalls++;
 
+  final restartedUnits = <String>[];
+  @override
+  Future<void> restartSystemdUnit({
+    required SshConfig config,
+    required String unit,
+    required void Function(String line) onLog,
+  }) async =>
+      restartedUnits.add(unit);
+
   List<DockerContainer> containers = const [];
   final restartedContainers = <String>[];
   @override
@@ -2138,6 +2147,29 @@ void main() {
     // Live off → cancels the timer (no lingering timers at test end).
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('erkannter systemd-Dienst (AdGuard Home) → Karte + Neustart',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'adguard',
+            name: 'AdGuard Home',
+            installed: true,
+            active: true,
+            detail: 'systemd · Dienst aktiv',
+            webPort: 3000),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.text('AdGuard Home'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Neustart'));
+    await tester.pumpAndSettle();
+    expect(u.restartedUnits, contains('AdGuardHome'));
   });
 
   testWidgets('System-Karte → Docker-Container: Liste + Neustart',

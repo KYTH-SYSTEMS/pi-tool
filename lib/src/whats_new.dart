@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.50.0': [
+    'Mehr Dienste erkannt: Wenn du AdGuard Home, Node-RED oder Zigbee2MQTT auf '
+        'dem Pi hast, erscheinen sie jetzt als eigene Karten — mit Weboberfläche '
+        'öffnen, Logs ansehen und Neustart. (Die Installation überlässt die App '
+        'bewusst dir; erkannt und verwaltet werden sie automatisch.)',
+  ],
   '0.49.0': [
     'Docker-Übersicht: „Docker-Container" (System-Karte) zeigt alle Container '
         '(laufend und gestoppt) mit Status und Image. Pro Container kannst du '

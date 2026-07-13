@@ -1,0 +1,1 @@
+Newly detected services: AdGuard Home, Node-RED and Zigbee2MQTT now get their own card once they run on the Pi — open the web UI, view logs, and restart. The app deliberately leaves installation to you (their installers are project-specific); detection and management are automatic.

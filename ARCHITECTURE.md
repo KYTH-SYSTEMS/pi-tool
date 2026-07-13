@@ -201,6 +201,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   umgestellt/persistiert (Marker-Disziplin: kein falscher „Erfolg"); lehnt der
   Pi den Key ab, bleibt das Profil auf Passwort mit klarer Meldung. Passwort
   bleibt für sudo. Privater Key nur in `FlutterSecureStorage`, nie geloggt.
+- **`systemd_services.dart`** — extra **erkannte** systemd-Dienste (AdGuard Home,
+  Node-RED, Zigbee2MQTT): `SystemdService`-Deskriptoren + `parseSystemdState`
+  (`systemctl show -p LoadState -p ActiveState` → installed/active). Detection
+  fügt pro Dienst eine `SYSD:<unit>`-Probe in den Batch; erkannte Dienste werden
+  Karten (Web öffnen / Logs / `restartSystemdUnit`). **Bewusst KEIN Install** —
+  die Installer sind projektspezifisch (curl|sh); die App erkennt + verwaltet
+  nur. Log-Unit-Mapping in `buildServiceLogsCommand` (`adguard`→`AdGuardHome`).
 - **`docker_containers.dart`** — Container-Übersicht. `dockerPsSudoCommand`
   (`docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}'`, sudo)
   + `parseDockerPs` (Pipe-Format wie die evcc-Docker-Probe; Fehler-/Daemon-Zeilen

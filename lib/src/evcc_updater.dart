@@ -24,6 +24,7 @@ import 'services/pi_service.dart';
 import 'services/pihole_service.dart';
 import 'services/system_service.dart';
 import 'settings_store.dart';
+import 'systemd_services.dart';
 import 'ssh_runner.dart';
 
 /// Categories of failure surfaced to the user with a clear message.
@@ -382,6 +383,8 @@ class EvccUpdater {
           ('TAILSCALE', tailscaleStatusCommand),
           ('APTSVC', aptServicesQuery),
           for (final u in units) ('UNIT:$u', 'systemctl is-active $u'),
+          for (final svc in knownSystemdServices)
+            ('SYSD:${svc.unit}', systemdStateCommand(svc.unit)),
           ('OS', systemOsCommand),
           ('TEMP', systemTempCommand),
           ('DISK', systemDiskCommand),
@@ -496,6 +499,21 @@ class EvccUpdater {
                 ? null
                 : svc.webPort,
             aptPackage: pkg,
+          ));
+        }
+
+        // ---- extra systemd services (AdGuard Home, Node-RED, Zigbee2MQTT) ----
+        // Detected + managed only (their installers are bespoke — no install).
+        for (final svc in knownSystemdServices) {
+          final st = parseSystemdState(sec['SYSD:${svc.unit}'] ?? '');
+          if (!st.installed) continue;
+          out.add(ServiceStatus(
+            id: svc.id,
+            name: svc.name,
+            installed: true,
+            active: st.active,
+            detail: 'systemd · Dienst ${st.active ? 'aktiv' : 'inaktiv'}',
+            webPort: svc.webPort,
           ));
         }
 
@@ -2009,6 +2027,33 @@ class EvccUpdater {
           );
         }
         log('Öffentlicher Schlüssel installiert.');
+      },
+    );
+  }
+
+  /// Restarts a systemd unit (sudo). Non-zero exit surfaces an error.
+  Future<void> restartSystemdUnit({
+    required SshConfig config,
+    required String unit,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Starte $unit neu …');
+        final r = await runner.run(
+            'LC_ALL=C sudo -S systemctl restart ${shSingleQuote(unit)}',
+            stdin: '${config.password}\n');
+        final combined = '${r.stdout}\n${r.stderr}';
+        if (isSudoPasswordFailure(combined)) {
+          throw const EvccUpdateException(UpdateErrorKind.sudo,
+              'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+        }
+        if (r.exitCode != 0) {
+          throw EvccUpdateException(UpdateErrorKind.unknown,
+              'Neustart von $unit fehlgeschlagen. Details im Log.');
+        }
       },
     );
   }

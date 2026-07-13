@@ -1,0 +1,1 @@
+Neu erkannte Dienste: AdGuard Home, Node-RED und Zigbee2MQTT bekommen jetzt eine eigene Karte, sobald sie auf dem Pi laufen — mit Weboberfläche öffnen, Logs ansehen und Neustart. Die Installation überlässt die App bewusst dir (die Installer sind projektspezifisch); erkannt und verwaltet werden sie automatisch.

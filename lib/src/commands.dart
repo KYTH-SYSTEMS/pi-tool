@@ -713,8 +713,10 @@ echo CONFIG_SAVED
   const units = {
     'pihole': 'pihole-FTL',
     'grafana': 'grafana-server',
+    'adguard': 'AdGuardHome',
   };
-  final unit = units[id] ?? id; // evcc, influxdb, mosquitto use their id
+  // evcc, influxdb, mosquitto, nodered, zigbee2mqtt already match their unit.
+  final unit = units[id] ?? id;
   return (
     command: "sudo -S -p '' journalctl -u $unit -n 200 --no-pager 2>&1",
     sudo: true,
