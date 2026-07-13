@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.49.0': [
+    'Docker-Übersicht: „Docker-Container" (System-Karte) zeigt alle Container '
+        '(laufend und gestoppt) mit Status und Image. Pro Container kannst du '
+        'neustarten und die Logs ansehen — praktisch, wenn du mehr als die '
+        'bekannten Dienste per Docker betreibst.',
+  ],
   '0.48.0': [
     'Speicherplatz-Explorer: „Speicherplatz analysieren" (System-Karte) zeigt, '
         'was den Platz frisst — die größten Ordner und Dateien, nach Größe '

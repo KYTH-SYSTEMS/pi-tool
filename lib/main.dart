@@ -16,6 +16,7 @@ import 'src/authenticator.dart';
 import 'src/alerts.dart';
 import 'src/auto_update.dart';
 import 'src/commands.dart';
+import 'src/docker_containers.dart';
 import 'src/entitlement.dart';
 import 'src/file_pick.dart';
 import 'src/files.dart';
@@ -1336,6 +1337,47 @@ class _UpdaterPageState extends State<UpdaterPage>
         });
       }
     }, backgroundMessage: 'SSH-Key wird eingerichtet …');
+  }
+
+  Future<void> _dockerContainers() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _dockerContainers;
+    List<DockerContainer>? list;
+    await _guard(() async {
+      list =
+          await _updater.dockerContainers(config: config, onLog: _appendLog);
+    }, backgroundMessage: 'Docker-Container werden gelesen …');
+    if (!mounted || list == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => _DockerSheet(
+        initial: list!,
+        refresh: () =>
+            _updater.dockerContainers(config: config, onLog: (_) {}),
+        onRestart: (name) => _updater.restartDockerContainer(
+            config: config, name: name, onLog: _appendLog),
+        onLogs: (name) async {
+          final logs = await _updater.fetchDockerLogs(
+              config: config, name: name, onLog: (_) {});
+          if (!mounted) return;
+          await showModalBottomSheet<void>(
+            context: context,
+            showDragHandle: true,
+            isScrollControlled: true,
+            builder: (_) => _LiveLogSheet(
+              title: 'Logs: $name',
+              initial: logs,
+              fetch: () => _updater.fetchDockerLogs(
+                  config: config, name: name, onLog: (_) {}),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _storageExplorer() async {
@@ -3338,6 +3380,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction('Sicherheits-Check', _securityCheck),
               _CardAction('Speicherplatz analysieren', _storageExplorer),
+              _CardAction('Docker-Container', _dockerContainers),
               _CardAction('Pi neu starten', _reboot),
               _CardAction('Pi herunterfahren', _shutdown, destructive: true),
             ],

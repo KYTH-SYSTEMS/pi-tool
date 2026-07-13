@@ -73,6 +73,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   Ports. Zeigt nur an und empfiehlt — ändert nichts.
 - **Speicherplatz-Explorer** — „Was frisst meinen Platz?": größte Ordner/Dateien
   nach Größe, zum Reinzoomen antippbar.
+- **Docker-Übersicht** — alle Container (laufend/gestoppt) mit Status + Image;
+  pro Container neustarten und Logs ansehen.
 - **Live-Logs** — die Log-Ansicht hat einen „Live"-Schalter, der die Ausgabe
   alle paar Sekunden neu lädt (Polling, kein Hintergrunddienst).
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM

@@ -1,0 +1,1 @@
+Neu: Docker-Übersicht — „Docker-Container" (System-Karte) listet alle Container (laufend und gestoppt) mit Status und Image. Pro Container kannst du neustarten und die letzten Logs ansehen. Praktisch, wenn du neben den bekannten Diensten weitere Container per Docker betreibst.

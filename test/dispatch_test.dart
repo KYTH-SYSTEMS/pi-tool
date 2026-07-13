@@ -15,6 +15,7 @@ import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
+import 'package:evcc_updater/src/docker_containers.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/storage_explorer.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
@@ -139,6 +140,29 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       shutdownCalls++;
+
+  List<DockerContainer> containers = const [];
+  final restartedContainers = <String>[];
+  @override
+  Future<List<DockerContainer>> dockerContainers({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      containers;
+  @override
+  Future<void> restartDockerContainer({
+    required SshConfig config,
+    required String name,
+    required void Function(String line) onLog,
+  }) async =>
+      restartedContainers.add(name);
+  @override
+  Future<String> fetchDockerLogs({
+    required SshConfig config,
+    required String name,
+    required void Function(String line) onLog,
+  }) async =>
+      'docker logs of $name';
 
   List<DiskEntry> disk = const [];
   @override
@@ -2114,6 +2138,49 @@ void main() {
     // Live off → cancels the timer (no lingering timers at test end).
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('System-Karte → Docker-Container: Liste + Neustart',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..containers = const [
+        (
+          name: 'evcc',
+          state: 'running',
+          status: 'Up 2 hours',
+          image: 'evcc/evcc:latest'
+        ),
+        (
+          name: 'pihole',
+          state: 'exited',
+          status: 'Exited (0)',
+          image: 'pihole/pihole'
+        ),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Docker-Container'));
+    await tester.pumpAndSettle();
+    expect(find.text('evcc'), findsOneWidget);
+    expect(find.text('pihole'), findsOneWidget);
+
+    // Restart evcc via its row menu.
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, 'evcc'),
+        matching: find.byType(PopupMenuButton<String>)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Neustart'));
+    await tester.pumpAndSettle();
+    expect(u.restartedContainers, contains('evcc'));
   });
 
   testWidgets('System-Karte → Speicherplatz zeigt die größten Posten',

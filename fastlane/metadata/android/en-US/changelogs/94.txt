@@ -1,0 +1,1 @@
+New: Docker overview — "Docker containers" (System card) lists all containers (running and stopped) with their status and image. For each container you can restart it and view its recent logs. Handy when you run more than the known services via Docker.

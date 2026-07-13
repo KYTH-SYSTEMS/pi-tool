@@ -201,6 +201,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   umgestellt/persistiert (Marker-Disziplin: kein falscher „Erfolg"); lehnt der
   Pi den Key ab, bleibt das Profil auf Passwort mit klarer Meldung. Passwort
   bleibt für sudo. Privater Key nur in `FlutterSecureStorage`, nie geloggt.
+- **`docker_containers.dart`** — Container-Übersicht. `dockerPsSudoCommand`
+  (`docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}'`, sudo)
+  + `parseDockerPs` (Pipe-Format wie die evcc-Docker-Probe; Fehler-/Daemon-Zeilen
+  ohne Pipe → leer). `buildDockerRestartCommand`/`buildDockerLogsCommand`
+  (Name shell-gequotet). `EvccUpdater.dockerContainers/restartDockerContainer/
+  fetchDockerLogs`; `_DockerSheet` (Liste + pro Container Neustart/Logs → nutzt
+  `_LiveLogSheet`). System-Karten-Aktion; leer, wenn Docker fehlt.
 - **`storage_explorer.dart`** — „Was frisst meinen Platz?". `buildStorageProbe`
   = sudo `du -x -b -d1` (Unterordner) + `find -maxdepth 1 -type f` (Dateien) in
   Markern; `parseStorageBreakdown` → nach Größe sortierte `DiskEntry`s (Query-

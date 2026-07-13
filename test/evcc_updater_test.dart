@@ -7,6 +7,7 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:evcc_updater/src/alerts.dart';
 import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
+import 'package:evcc_updater/src/docker_containers.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
@@ -1341,6 +1342,31 @@ void main() {
       await expectLater(
         _updaterWith(runner)
             .installSshKey(config: _config, publicKeyLine: line, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+  });
+
+  group('EvccUpdater docker', () {
+    test('dockerContainers parses the ps output', () async {
+      final runner = FakeSshRunner({
+        dockerPsSudoCommand: [_r('evcc|running|Up 2 hours|evcc/evcc\n')],
+      });
+      final r = await _updaterWith(runner)
+          .dockerContainers(config: _config, onLog: (_) {});
+      expect(r.single.name, 'evcc');
+      expect(r.single.state, 'running');
+    });
+
+    test('restartDockerContainer surfaces a non-zero exit', () async {
+      final runner = FakeSshRunner({
+        buildDockerRestartCommand('x'): [
+          _r('', stderr: 'No such container: x', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .restartDockerContainer(config: _config, name: 'x', onLog: (_) {}),
         throwsA(isA<EvccUpdateException>()),
       );
     });

@@ -8,6 +8,7 @@ import 'package:dartssh2/dartssh2.dart';
 import 'alerts.dart';
 import 'auto_update.dart';
 import 'commands.dart';
+import 'docker_containers.dart';
 import 'files.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
@@ -2008,6 +2009,71 @@ class EvccUpdater {
           );
         }
         log('Öffentlicher Schlüssel installiert.');
+      },
+    );
+  }
+
+  /// Lists all Docker containers (running + stopped). Empty if Docker isn't
+  /// installed; a rejected sudo password is surfaced.
+  Future<List<DockerContainer>> dockerContainers({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<List<DockerContainer>>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Lese Docker-Container …');
+        final r =
+            await runner.run(dockerPsSudoCommand, stdin: '${config.password}\n');
+        if (isSudoPasswordFailure('${r.stdout}\n${r.stderr}')) {
+          throw const EvccUpdateException(UpdateErrorKind.sudo,
+              'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+        }
+        return parseDockerPs(r.stdout);
+      },
+    );
+  }
+
+  /// Restarts one container by name (sudo). Non-zero exit surfaces an error.
+  Future<void> restartDockerContainer({
+    required SshConfig config,
+    required String name,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Starte Container $name neu …');
+        final r = await runner.run(buildDockerRestartCommand(name),
+            stdin: '${config.password}\n');
+        final combined = '${r.stdout}\n${r.stderr}';
+        if (isSudoPasswordFailure(combined)) {
+          throw const EvccUpdateException(UpdateErrorKind.sudo,
+              'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+        }
+        if (r.exitCode != 0) {
+          throw EvccUpdateException(UpdateErrorKind.unknown,
+              'Neustart von $name fehlgeschlagen. Details im Log.');
+        }
+      },
+    );
+  }
+
+  /// Last 200 log lines of a container.
+  Future<String> fetchDockerLogs({
+    required SshConfig config,
+    required String name,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<String>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        final r = await runner.run(buildDockerLogsCommand(name),
+            stdin: '${config.password}\n');
+        return '${r.stdout}${r.stderr}';
       },
     );
   }

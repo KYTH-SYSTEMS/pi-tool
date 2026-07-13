@@ -522,6 +522,121 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
   }
 }
 
+/// Docker container overview: one row per container (state dot, status, image)
+/// with restart + logs actions. Each level/refresh is fetched on demand.
+class _DockerSheet extends StatefulWidget {
+  const _DockerSheet({
+    required this.initial,
+    required this.refresh,
+    required this.onRestart,
+    required this.onLogs,
+  });
+  final List<DockerContainer> initial;
+  final Future<List<DockerContainer>> Function() refresh;
+  final Future<void> Function(String name) onRestart;
+  final Future<void> Function(String name) onLogs;
+
+  @override
+  State<_DockerSheet> createState() => _DockerSheetState();
+}
+
+class _DockerSheetState extends State<_DockerSheet> {
+  late List<DockerContainer> _list = widget.initial;
+  bool _busy = false;
+
+  Future<void> _reload() async {
+    setState(() => _busy = true);
+    try {
+      final l = await widget.refresh();
+      if (mounted) setState(() => _list = l);
+    } catch (_) {
+      // keep the last list
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _run(Future<void> Function() body) async {
+    setState(() => _busy = true);
+    try {
+      await body();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.8,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('Docker-Container',
+                      style: Theme.of(context).textTheme.titleMedium),
+                ),
+                if (_busy)
+                  const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                IconButton(
+                  tooltip: 'Aktualisieren',
+                  onPressed: _busy ? null : _reload,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: _list.isEmpty
+                ? const Center(
+                    child: Text('Keine Container (oder Docker nicht installiert).'))
+                : ListView.builder(
+                    itemCount: _list.length,
+                    itemBuilder: (_, i) {
+                      final c = _list[i];
+                      final running = c.state == 'running';
+                      return ListTile(
+                        leading: Icon(Icons.circle,
+                            size: 12,
+                            color: running ? kGreen : cs.onSurfaceVariant),
+                        title: Text(c.name),
+                        subtitle: Text('${c.status}\n${c.image}',
+                            maxLines: 2, overflow: TextOverflow.ellipsis),
+                        isThreeLine: true,
+                        trailing: PopupMenuButton<String>(
+                          enabled: !_busy,
+                          onSelected: (v) {
+                            if (v == 'restart') {
+                              _run(() => widget.onRestart(c.name))
+                                  .then((_) => _reload());
+                            } else if (v == 'logs') {
+                              _run(() => widget.onLogs(c.name));
+                            }
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                                value: 'restart', child: Text('Neustart')),
+                            PopupMenuItem(value: 'logs', child: Text('Logs')),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Service-log sheet with an optional **Live** mode: while on, it re-fetches the
 /// log tail every few seconds (journalctl-follow-ish via polling — no PTY, no
 /// background service). The timer is cancelled on dispose.
