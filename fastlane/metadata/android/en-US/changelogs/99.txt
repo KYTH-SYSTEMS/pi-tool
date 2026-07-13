@@ -1,0 +1,1 @@
+Remote access in the right place: "Open remote access: Tailscale" now lives in the ⋮ menu at the top right — reachable exactly when you're away and NOT connected to the Pi. The app remembers your Pi's tailnet IP (100.x), pre-fills it as the host and opens the Tailscale app so you can switch on the VPN.

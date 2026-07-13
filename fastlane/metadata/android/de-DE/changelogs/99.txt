@@ -1,0 +1,1 @@
+Fernzugriff jetzt am richtigen Ort: „Fernzugriff: Tailscale öffnen" liegt jetzt im ⋮-Menü oben rechts — erreichbar genau dann, wenn du unterwegs und NICHT mit dem Pi verbunden bist. Die App merkt sich die Tailnet-IP (100.x) deines Pi, setzt sie als Host und öffnet die Tailscale-App zum VPN-Einschalten.

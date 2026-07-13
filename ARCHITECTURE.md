@@ -246,7 +246,12 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `ChannelAppLauncher` über MethodChannel `pi_tool/launcher`): öffnet eine andere
   installierte App per `getLaunchIntentForPackage` (Play-Store-URL-Fallback via
   `ACTION_VIEW`). Für den **Tailscale-Fernzugriff-Helfer** (`_remoteAccessViaTailscale`):
-  Tailnet-IP als Host vorbelegen + Tailscale-App öffnen. **Android lässt keine App
+  Tailnet-IP als Host vorbelegen + Tailscale-App öffnen. **Liegt im ⋮-App-Bar-Menü**
+  (nur wenn `_tailscaleIp` bekannt), NICHT auf der Tailscale-Karte — Fernzugriff
+  ist genau dann sinnvoll, wenn man NICHT verbunden ist; die Karte ist offline
+  unerreichbar. Die zuletzt gesehene Tailnet-IP wird pro Profil persistiert
+  (`Profile.tailscaleIp`, von `_rememberTailscaleIp` bei Detection gesetzt), damit
+  der Helfer den Host auch offline vorbelegen kann. **Android lässt keine App
   ein fremdes/System-VPN selbst einschalten** — bewusst KEIN eigener VPN-Client
   (v0.20.0-Native-Lektion). Manifest: `<queries><package com.tailscale.ipn>` für
   Package-Sichtbarkeit (Android 11+). Seam injizierbar für Tests.

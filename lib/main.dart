@@ -224,6 +224,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   final _consoleInput = TextEditingController(); // free-form command entry
 
   bool _fullUpgrade = false;
+  String _tailscaleIp = ''; // remembered 100.x tailnet IP of the active Pi
   bool _obscure = true;
   bool _busy = false;
   AuthMode _authMode = AuthMode.password;
@@ -392,6 +393,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     _keyPassphrase.text = p.keyPassphrase;
     _authMode = p.authMode;
     _fullUpgrade = p.fullUpgrade;
+    _tailscaleIp = p.tailscaleIp;
   }
 
   /// Switching to another Pi: drop everything tied to the previous host so
@@ -429,7 +431,24 @@ class _UpdaterPageState extends State<UpdaterPage>
         privateKey: _privateKey.text,
         keyPassphrase: _keyPassphrase.text,
         fullUpgrade: _fullUpgrade,
+        tailscaleIp: _tailscaleIp,
       );
+
+  /// Remembers the Pi's Tailscale tailnet IP from a detection, so the remote-
+  /// access helper can pre-fill it as host later even when offline. Call inside
+  /// a setState (updates the field) — it persists the change (debounced).
+  void _rememberTailscaleIp(List<ServiceStatus> services) {
+    for (final s in services) {
+      if (s.id == 'tailscale' &&
+          s.active &&
+          (s.version ?? '').startsWith('100.') &&
+          s.version != _tailscaleIp) {
+        _tailscaleIp = s.version!;
+        _scheduleSave();
+        return;
+      }
+    }
+  }
 
   AppConfig _currentConfig() {
     final profiles = [..._profiles];
@@ -1204,6 +1223,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (!mounted) return;
       setState(() {
         _services = services;
+        _rememberTailscaleIp(services);
         final found =
             services.where((s) => s.installed).map((s) => s.name).join(', ');
         _statusMessage = 'Verbindung OK – erkannt: $found.';
@@ -2943,6 +2963,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (mounted) {
         setState(() {
           _services = reconciled;
+          _rememberTailscaleIp(reconciled);
           _connectionOk = true; // a successful detect proves the Pi is reachable
         });
       }
@@ -3515,12 +3536,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ? () => _openUrl('https://login.tailscale.com/admin/machines')
                 : null,
             actions: [
-              if (up && s.version != null) ...[
-                _CardAction('Fernzugriff: Handy-VPN öffnen',
-                    () => _remoteAccessViaTailscale(s.version!)),
+              if (up && s.version != null)
                 _CardAction('Diese IP als Host übernehmen (${s.version})',
                     () => _useTailscaleIp(s.version!)),
-              ],
               _CardAction('Abmelden', () => _tailscaleSet(logout: true)),
             ],
           ));
@@ -3953,7 +3971,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Tailscale app so the user can enable the phone-side VPN (Android won't let
   /// us toggle it ourselves). Play Store fallback if Tailscale isn't installed.
   Future<void> _remoteAccessViaTailscale(String tailnetIp) async {
-    if (tailnetIp.trim().isNotEmpty) {
+    final hasIp = tailnetIp.trim().isNotEmpty;
+    if (hasIp) {
       setState(() {
         _host.text = tailnetIp.trim();
         _tab = 0;
@@ -3966,11 +3985,15 @@ class _UpdaterPageState extends State<UpdaterPage>
           'https://play.google.com/store/apps/details?id=com.tailscale.ipn',
     );
     if (!mounted) return;
-    _snack(opened
-        ? 'Tailscale geöffnet – dort das VPN aktivieren, dann hier „Verbindung '
-            'herstellen" (Host ist auf $tailnetIp gesetzt).'
-        : 'Tailscale-App nicht installiert – im Play Store installieren, dann '
-            'erneut versuchen.');
+    _snack(!opened
+        ? 'Tailscale-App nicht installiert – im Play Store installieren, dann '
+            'erneut versuchen.'
+        : hasIp
+            ? 'Tailscale geöffnet – dort das VPN aktivieren, dann „Verbindung '
+                'herstellen" (Host ist auf $tailnetIp gesetzt).'
+            : 'Tailscale geöffnet – VPN aktivieren. Tipp: einmal zuhause '
+                'verbinden und „Diese IP als Host übernehmen", dann klappt der '
+                'Fernzugriff künftig automatisch.');
   }
 
   Future<void> _installAptService(AptService service) async {
@@ -4146,6 +4169,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _openSetupGuide();
                 case 'sshkey':
                   _setupSshKey();
+                case 'remote':
+                  _remoteAccessViaTailscale(_tailscaleIp);
                 case 'find':
                   _findPi();
                 case 'dashboard':
@@ -4184,6 +4209,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                     value: 'sshkey',
                     enabled: !_busy,
                     child: const Text('SSH-Key einrichten')),
+              // Reachable even when NOT connected (that's the whole point of
+              // remote access). Shown for Pis where Tailscale was seen before.
+              if (_tailscaleIp.isNotEmpty)
+                const PopupMenuItem(
+                    value: 'remote',
+                    child: Text('Fernzugriff: Tailscale öffnen')),
               PopupMenuItem(
                   value: 'find',
                   enabled: !_busy,

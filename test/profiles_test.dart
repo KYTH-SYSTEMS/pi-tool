@@ -7,7 +7,12 @@ void main() {
     test('round-trips profiles + globals', () {
       const cfg = AppConfig(
         profiles: [
-          Profile(name: 'Zuhause', host: '192.168.178.64', authMode: AuthMode.key, privateKey: 'KEY'),
+          Profile(
+              name: 'Zuhause',
+              host: '192.168.178.64',
+              authMode: AuthMode.key,
+              privateKey: 'KEY',
+              tailscaleIp: '100.64.1.5'),
           Profile(name: 'Eltern', host: '10.0.0.5', fullUpgrade: true),
         ],
         activeIndex: 1,
@@ -36,6 +41,7 @@ void main() {
       expect(back.profiles[0].name, 'Zuhause');
       expect(back.profiles[0].authMode, AuthMode.key);
       expect(back.profiles[0].privateKey, 'KEY');
+      expect(back.profiles[0].tailscaleIp, '100.64.1.5');
       expect(back.profiles[1].fullUpgrade, isTrue);
       expect(back.activeIndex, 1);
       expect(back.active.name, 'Eltern');

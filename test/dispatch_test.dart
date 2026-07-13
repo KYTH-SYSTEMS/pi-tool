@@ -2249,8 +2249,8 @@ void main() {
   });
 
   testWidgets(
-      'Tailscale → „Fernzugriff: Handy-VPN öffnen" öffnet die App + setzt die IP',
-      (tester) async {
+      '⋮ → „Fernzugriff: Tailscale öffnen" (verfügbar OHNE Verbindung) öffnet die '
+      'App + setzt die gemerkte Tailnet-IP', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
       ..services = const [
@@ -2271,16 +2271,18 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
+    // Connect once (at home) → the Pi's tailnet IP is remembered.
     await detect(tester);
 
-    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    // The remote-access entry lives in the ⋮ menu — reachable without a live
+    // connection, which is the whole point of remote access.
+    await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Fernzugriff: Handy-VPN öffnen'));
+    await tester.tap(find.text('Fernzugriff: Tailscale öffnen'));
     await tester.pumpAndSettle();
 
-    // The Tailscale app is launched, and the Pi's tailnet IP is pre-filled.
     expect(launcher.opened, contains('com.tailscale.ipn'));
-    expect(find.text('100.64.1.5'), findsWidgets);
+    expect(find.text('100.64.1.5'), findsWidgets); // host pre-filled
   });
 
   testWidgets('erkannter systemd-Dienst (AdGuard Home) → Karte + Neustart',

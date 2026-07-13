@@ -48,10 +48,11 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,
   InfluxDB, Mosquitto) und installiert den gewählten (experimentell). So bleibt
   die Übersicht schlank, egal wie viele Dienste unterstützt werden.
-- **Fernzugriff mit einem Tap (Tailscale)** — „Fernzugriff: Handy-VPN öffnen"
-  setzt die Tailnet-IP (100.x) des Pi als Host und öffnet die Tailscale-App zum
-  VPN-Einschalten. (Android erlaubt keiner App, ein fremdes VPN selbst zu
-  aktivieren — daher öffnen statt schalten.)
+- **Fernzugriff mit einem Tap (Tailscale)** — im ⋮-Menü liegt „Fernzugriff:
+  Tailscale öffnen" (erreichbar, wenn du unterwegs und nicht verbunden bist): es
+  setzt die zuletzt gemerkte Tailnet-IP (100.x) des Pi als Host und öffnet die
+  Tailscale-App zum VPN-Einschalten. (Android erlaubt keiner App, ein fremdes VPN
+  selbst zu aktivieren — daher öffnen statt schalten.)
 - **Fernzugriff einrichten** — **Raspberry Pi Connect** (offiziell, ab Raspberry
   Pi OS Bookworm; per Link mit der Raspberry Pi ID anmelden) und **Tailscale**
   (VPN/Mesh, per Login-Link verbinden). Beides installieren/verbinden/trennen

@@ -17,6 +17,10 @@ class Profile {
   final String keyPassphrase;
   final bool fullUpgrade;
 
+  /// Last-seen Tailscale tailnet IP (100.x) of this Pi, remembered so the
+  /// remote-access helper can pre-fill it as host even when NOT connected.
+  final String tailscaleIp;
+
   const Profile({
     required this.name,
     this.host = '',
@@ -27,9 +31,10 @@ class Profile {
     this.privateKey = '',
     this.keyPassphrase = '',
     this.fullUpgrade = false,
+    this.tailscaleIp = '',
   });
 
-  Profile copyWith({String? name}) => Profile(
+  Profile copyWith({String? name, String? tailscaleIp}) => Profile(
         name: name ?? this.name,
         host: host,
         port: port,
@@ -39,6 +44,7 @@ class Profile {
         privateKey: privateKey,
         keyPassphrase: keyPassphrase,
         fullUpgrade: fullUpgrade,
+        tailscaleIp: tailscaleIp ?? this.tailscaleIp,
       );
 
   Map<String, dynamic> toJson() => {
@@ -51,6 +57,7 @@ class Profile {
         'privateKey': privateKey,
         'keyPassphrase': keyPassphrase,
         'fullUpgrade': fullUpgrade,
+        'tailscaleIp': tailscaleIp,
       };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -63,6 +70,7 @@ class Profile {
         privateKey: (j['privateKey'] ?? '').toString(),
         keyPassphrase: (j['keyPassphrase'] ?? '').toString(),
         fullUpgrade: j['fullUpgrade'] == true,
+        tailscaleIp: (j['tailscaleIp'] ?? '').toString(),
       );
 }
 

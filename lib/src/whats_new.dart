@@ -13,13 +13,21 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.53.1': [
+    'Fernzugriff jetzt am richtigen Ort: „Fernzugriff: Tailscale öffnen" liegt '
+        'jetzt im ⋮-Menü oben rechts — also genau dann erreichbar, wenn du '
+        'unterwegs und NICHT mit dem Pi verbunden bist (dafür ist Fernzugriff ja '
+        'da). Die App merkt sich die Tailnet-IP (100.x) deines Pi vom letzten '
+        'Mal, setzt sie als Host und öffnet die Tailscale-App zum VPN-Einschalten. '
+        'Danach nur noch „Verbindung herstellen".',
+  ],
   '0.53.0': [
-    'Fernzugriff mit einem Tap: Auf der Tailscale-Karte (wenn verbunden) gibt es '
-        'jetzt „Fernzugriff: Handy-VPN öffnen" — das setzt die Tailnet-IP (100.x) '
-        'deines Pi als Host und öffnet die Tailscale-App, damit du dort das VPN '
-        'einschaltest. Danach nur noch „Verbindung herstellen" und du bist von '
-        'überall auf dem Pi. (Die App kann das Handy-VPN aus Android-Gründen '
-        'nicht selbst einschalten — nur die Tailscale-App öffnen.)',
+    'Fernzugriff mit einem Tap: über „Fernzugriff: Tailscale öffnen" setzt die '
+        'App die Tailnet-IP (100.x) deines Pi als Host und öffnet die '
+        'Tailscale-App, damit du dort das VPN einschaltest. Danach nur noch '
+        '„Verbindung herstellen" und du bist von überall auf dem Pi. (Die App '
+        'kann das Handy-VPN aus Android-Gründen nicht selbst einschalten — nur '
+        'die Tailscale-App öffnen.)',
   ],
   '0.52.0': [
     'Alle Pis auf einmal aktualisieren: Im „Alle Pis"-Überblick gibt es jetzt '
