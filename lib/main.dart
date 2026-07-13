@@ -965,6 +965,17 @@ class _UpdaterPageState extends State<UpdaterPage>
     }
   }
 
+  /// Runs a system update (apt full-upgrade) on one profile's Pi. Fail-soft:
+  /// returns false on any error so the multi-Pi bulk update can carry on.
+  Future<bool> _updatePiSystem(Profile p) async {
+    try {
+      await _updater.upgradeSystem(config: _configForProfile(p), onLog: (_) {});
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   void _showMultiPiDashboard() {
     // Capture the active profile's live edits so the overview probes what's on
     // screen, not a stale copy.
@@ -973,7 +984,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       profiles[_activeIndex] = _currentProfile();
     }
     Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => _MultiPiDashboardPage(profiles: profiles, probe: _probePi),
+      builder: (_) => _MultiPiDashboardPage(
+          profiles: profiles, probe: _probePi, update: _updatePiSystem),
     ));
   }
 

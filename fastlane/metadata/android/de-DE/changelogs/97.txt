@@ -1,0 +1,1 @@
+Neu: Alle Pis auf einmal aktualisieren. Im „Alle Pis"-Überblick (⋮-Menü) gibt es jetzt oben rechts einen Update-Knopf — er spielt nacheinander auf jedem erreichbaren Pi mit ausstehenden Updates das System-Update ein. Fail-soft (ein Fehler stoppt die übrigen nicht), mit Fortschritt pro Zeile.

@@ -124,7 +124,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 - **Alle Pis auf einen Blick** — „Alle Pis (Überblick)" im ⋮-Menü (ab zwei
   Profilen) prüft jeden Pi der Reihe nach und zeigt eine Ampel: grün (alles gut),
   amber (Updates/Warnung), rot (nicht erreichbar). Fail-soft — ein toter Pi
-  blockiert die anderen nicht.
+  blockiert die anderen nicht. **Alle auf einmal aktualisieren** per Update-Knopf
+  (nacheinander, fail-soft, Fortschritt pro Zeile).
 - **Profil-Export/-Import** — alle Profile (inkl. Zugangsdaten) als
   **passphrase-verschlüsselte** Datei (AES-256-GCM) sichern und auf einem neuen
   Handy importieren. Für den Gerätewechsel.

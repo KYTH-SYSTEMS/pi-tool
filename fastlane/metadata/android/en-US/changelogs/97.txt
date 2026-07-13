@@ -1,0 +1,1 @@
+New: update all Pis at once. The "All Pis" overview (⋮ menu) now has an update button top-right — it installs the system update on each reachable Pi with pending updates, one after another. Fail-soft (one failure doesn't stop the rest), with per-row progress.

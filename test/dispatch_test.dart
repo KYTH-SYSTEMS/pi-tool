@@ -2086,6 +2086,43 @@ void main() {
     expect(find.textContaining('Kein Host'), findsOneWidget);
   });
 
+  testWidgets('Multi-Pi: „Alle aktualisieren" aktualisiert jeden Pi mit Updates',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            updateAvailable: true,
+            updateKnown: true),
+      ];
+    final store = _FakeStore(const AppConfig(
+      profiles: [
+        Profile(name: 'A', host: '1.1.1.1', password: 'pw'),
+        Profile(name: 'B', host: '2.2.2.2', password: 'pw'),
+      ],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+          store: store, updater: u, updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alle Pis (Überblick)'));
+    await tester.pumpAndSettle();
+
+    // Both reachable with updates → the bulk action appears; run it.
+    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 2); // one per Pi, sequential + fail-soft
+  });
+
   testWidgets('⋮ → Pi herunterfahren confirms, then powers the Pi off',
       (tester) async {
     useTallScreen(tester);

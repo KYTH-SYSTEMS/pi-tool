@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.52.0': [
+    'Alle Pis auf einmal aktualisieren: Im „Alle Pis"-Überblick gibt es jetzt '
+        'oben rechts einen Update-Knopf — er spielt nacheinander auf jedem '
+        'erreichbaren Pi mit ausstehenden Updates das System-Update ein. '
+        'Fail-soft (ein Fehler stoppt die anderen nicht), Fortschritt pro Zeile.',
+  ],
   '0.51.0': [
     'Geplante Backups: Im Automatik-Tab kannst du jetzt nächtliche Backups '
         'einrichten — evcc (Konfig + Daten) und Pi-hole (Teleporter) werden '

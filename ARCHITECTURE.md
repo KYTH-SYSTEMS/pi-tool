@@ -347,6 +347,10 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   `reachable:false`, kein Abbruch der übrigen), abbrechbar durch Verlassen der
   Page (`_cancelled`), mit Refresh-Action. Eintrag im ⋮-Menü nur bei
   `_profiles.length > 1`, Pro-gated (`ProFeature.multiPi` via `_proGate`).
+  **Bulk-Update:** App-Leisten-Knopf „Alle aktualisieren" iteriert sequenziell
+  über die erreichbaren Pis MIT Updates (`update`-Callback = `_updatePiSystem` →
+  `upgradeSystem` pro Profil), **fail-soft** (ein Fehler stoppt die übrigen
+  nicht), Status pro Zeile, danach Re-Probe.
 - **Karten:** nicht-installierte Dienste (außer `system`) werden zu
   `_AddableService`-Picker-Einträgen, nie Karten. `_ServiceCard`-⋮ hat stabiles
   `ValueKey('menu-${id}')`. Pro-Aktionen zeigen Free-Nutzern ein Schloss, der Tap

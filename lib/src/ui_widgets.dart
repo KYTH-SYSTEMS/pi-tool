@@ -800,9 +800,17 @@ typedef PiSnapshot = ({
 /// Multi-Pi overview: a traffic-light row per profile. Probes each Pi
 /// sequentially (fail-soft) so one unreachable Pi doesn't block the rest.
 class _MultiPiDashboardPage extends StatefulWidget {
-  const _MultiPiDashboardPage({required this.profiles, required this.probe});
+  const _MultiPiDashboardPage({
+    required this.profiles,
+    required this.probe,
+    required this.update,
+  });
   final List<Profile> profiles;
   final Future<PiSnapshot> Function(Profile) probe;
+
+  /// Runs a system update on one Pi; returns true on success. Sequenced by the
+  /// page across all reachable Pis with pending updates (fail-soft).
+  final Future<bool> Function(Profile) update;
 
   @override
   State<_MultiPiDashboardPage> createState() => _MultiPiDashboardPageState();
@@ -810,7 +818,10 @@ class _MultiPiDashboardPage extends StatefulWidget {
 
 class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
   final Map<int, PiSnapshot> _results = {};
+  final Map<int, bool> _updateResult = {}; // index → succeeded?
   int _probing = -1;
+  int _updating = -1;
+  bool _bulkRunning = false;
   bool _cancelled = false;
 
   @override
@@ -849,55 +860,112 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
     return kGreen;
   }
 
+  /// Indices of reachable Pis that have pending updates.
+  List<int> get _updatable => [
+        for (var i = 0; i < widget.profiles.length; i++)
+          if ((_results[i]?.reachable ?? false) && (_results[i]?.updates ?? false))
+            i
+      ];
+
+  /// Sequentially updates every reachable Pi with pending updates. Fail-soft:
+  /// one Pi's failure doesn't stop the rest; cancellable by leaving the page.
+  Future<void> _updateAll() async {
+    setState(() {
+      _bulkRunning = true;
+      _updateResult.clear();
+    });
+    for (final i in _updatable) {
+      if (_cancelled || !mounted) break;
+      setState(() => _updating = i);
+      bool ok;
+      try {
+        ok = await widget.update(widget.profiles[i]);
+      } catch (_) {
+        ok = false;
+      }
+      if (!mounted) return;
+      setState(() {
+        _updateResult[i] = ok;
+        _updating = -1;
+      });
+    }
+    if (!mounted) return;
+    setState(() => _bulkRunning = false);
+    // Re-probe so the traffic lights reflect the new state.
+    if (!_cancelled) await _run();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final done = _results.length == widget.profiles.length;
+    final cs = Theme.of(context).colorScheme;
+    final probed = _results.length == widget.profiles.length;
+    final idle = probed && !_bulkRunning && _probing == -1;
+    const spinner = SizedBox(
+        width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2));
     return Scaffold(
       appBar: AppBar(
         title: const Text('Alle Pis'),
         actions: [
+          if (_updatable.isNotEmpty)
+            IconButton(
+              tooltip: 'Alle mit Updates aktualisieren',
+              onPressed: idle ? _updateAll : null,
+              icon: const Icon(Icons.system_update),
+            ),
           IconButton(
-            tooltip: 'Aktualisieren',
-            onPressed: done ? _run : null,
+            tooltip: 'Neu prüfen',
+            onPressed: idle ? _run : null,
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: ListView.builder(
-        itemCount: widget.profiles.length,
-        itemBuilder: (ctx, i) {
-          final p = widget.profiles[i];
-          final snap = _results[i];
-          final subtitle = snap == null
-              ? (i == _probing ? 'Prüfe …' : 'Wartet …')
-              : [
-                  if (snap.updates) 'Updates verfügbar',
-                  snap.detail,
-                ].where((s) => s.isNotEmpty).join('  ·  ');
-          return ListTile(
-            leading: snap == null
-                ? (i == _probing
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(
-                          Icons.circle_outlined,
-                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                        ))
-                : Icon(Icons.circle, color: _colorFor(ctx, snap)),
-            title: Text(p.name),
-            subtitle: Text(
-              subtitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+      body: Column(
+        children: [
+          if (_bulkRunning) const LinearProgressIndicator(),
+          Expanded(
+            child: ListView.builder(
+              itemCount: widget.profiles.length,
+              itemBuilder: (ctx, i) {
+                final p = widget.profiles[i];
+                final snap = _results[i];
+                final upd = _updateResult[i];
+                Widget leading;
+                String subtitle;
+                if (_updating == i) {
+                  leading = spinner;
+                  subtitle = 'Aktualisiert …';
+                } else if (upd != null) {
+                  leading = Icon(upd ? Icons.check_circle : Icons.error,
+                      color: upd ? kGreen : cs.error);
+                  subtitle = upd ? 'Aktualisiert' : 'Update fehlgeschlagen';
+                } else if (snap == null) {
+                  leading = i == _probing
+                      ? spinner
+                      : Icon(Icons.circle_outlined,
+                          color: cs.onSurfaceVariant);
+                  subtitle = i == _probing ? 'Prüfe …' : 'Wartet …';
+                } else {
+                  leading = Icon(Icons.circle, color: _colorFor(ctx, snap));
+                  subtitle = [
+                    if (snap.updates) 'Updates verfügbar',
+                    snap.detail,
+                  ].where((s) => s.isNotEmpty).join('  ·  ');
+                }
+                return ListTile(
+                  leading: leading,
+                  title: Text(p.name),
+                  subtitle:
+                      Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  trailing: (_updating != i &&
+                          upd == null &&
+                          (snap?.updates ?? false))
+                      ? const Icon(Icons.system_update, size: 18)
+                      : null,
+                );
+              },
             ),
-            trailing: (snap?.updates ?? false)
-                ? const Icon(Icons.system_update, size: 18)
-                : null,
-          );
-        },
+          ),
+        ],
       ),
     );
   }
