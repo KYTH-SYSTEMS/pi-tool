@@ -12,6 +12,7 @@ import 'files.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
 import 'parsing.dart';
+import 'security_check.dart';
 import 'services/apt_services.dart';
 import 'services/homeassistant_service.dart';
 import 'services/pi_connect.dart';
@@ -1982,6 +1983,33 @@ class EvccUpdater {
   /// Powers the Pi off. Like [reboot], the SSH connection drops as a result and
   /// that is treated as success; a rejected sudo password (no disconnect) is
   /// reported. Unlike a reboot, the Pi stays OFF until physically powered on.
+  /// Read-only security audit: runs [buildSecurityProbe] (sudo, no mutation) and
+  /// returns the parsed findings. A rejected sudo password is surfaced.
+  Future<List<SecurityFinding>> runSecurityCheck({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<List<SecurityFinding>>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Prüfe Sicherheitseinstellungen …');
+        final result = await runner.run(
+          buildSecurityProbe(),
+          stdin: '${config.password}\n',
+        );
+        final combined = '${result.stdout}\n${result.stderr}';
+        if (isSudoPasswordFailure(combined)) {
+          throw const EvccUpdateException(
+            UpdateErrorKind.sudo,
+            'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
+          );
+        }
+        return parseSecurityReport(result.stdout);
+      },
+    );
+  }
+
   Future<void> shutdown({
     required SshConfig config,
     required void Function(String line) onLog,

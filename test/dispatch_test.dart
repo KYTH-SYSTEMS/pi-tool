@@ -15,6 +15,7 @@ import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
+import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
@@ -137,6 +138,14 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       shutdownCalls++;
+
+  List<SecurityFinding> securityFindings = const [];
+  @override
+  Future<List<SecurityFinding>> runSecurityCheck({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      securityFindings;
 
   final aptUpdates = <String>[]; // packages updated via updateAptPackage
   final aptInstalls = <String>[]; // service ids installed via installAptService
@@ -2002,6 +2011,40 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Herunterfahren'));
     await tester.pumpAndSettle();
     expect(u.shutdownCalls, 1);
+  });
+
+  testWidgets('System-Karte → Sicherheits-Check zeigt die Ampel-Befunde',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..securityFindings = const [
+        (
+          title: 'SSH-Root-Login',
+          level: SecurityLevel.warn,
+          detail: 'Root darf sich per SSH anmelden.'
+        ),
+        (
+          title: 'Offene Ports',
+          level: SecurityLevel.info,
+          detail: 'Lauschende TCP-Ports: 22'
+        ),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sicherheits-Check'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('SSH-Root-Login'), findsOneWidget);
+    expect(find.text('Offene Ports'), findsOneWidget);
+    expect(find.textContaining('1 Warnung'), findsOneWidget);
   });
 
   testWidgets('console sheet: eigene Schnellbefehle anlegen und löschen',

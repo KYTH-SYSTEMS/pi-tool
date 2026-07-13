@@ -188,6 +188,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   UTF-8-Umlaute zählen nicht) + `kFileEditLimit` (256 KB) entscheiden, ob die
   Vorschau einen „Bearbeiten"-Knopf zeigt; der reicht an den bestehenden
   Config-Editor weiter (atomarer Write + Backup, sudo-fähig).
+- **`security_check.dart`** — Nur-Lesen-Audit. `buildSecurityProbe` = **ein**
+  `sudo sh -c`-Probe (Skript via `shSingleQuote` sicher gequotet) mit Section-
+  Markern (`__SEC_SSHD__/UNATT/F2B/PORTS__`); `parseSecurityReport` macht daraus
+  fünf Ampel-`SecurityFinding`s (SSH-Root-Login, Passwort-Login, Auto-Updates,
+  fail2ban, offene Ports). **Nichts wird verändert**; Unbekanntes degradiert zu
+  `info` (nie falsches ok/warn). `EvccUpdater.runSecurityCheck` orchestriert;
+  `_SecurityReportSheet` rendert (System-Karten-Aktion).
 - **`file_pick.dart` + native `MainActivity`** — lokale Dateiauswahl fürs Upload.
   **Bewusst KEIN Picker-Plugin:** `file_picker` bringt sein eigenes altes
   Kotlin-Gradle-Plugin mit und scheitert am AGP-9-/Built-in-Kotlin-Setup (und es

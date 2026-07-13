@@ -20,6 +20,7 @@ import 'src/entitlement.dart';
 import 'src/file_pick.dart';
 import 'src/files.dart';
 import 'src/profile_transfer.dart';
+import 'src/security_check.dart';
 import 'src/kyth_splash.dart';
 import 'src/kyth_wordmark.dart';
 import 'src/whats_new.dart';
@@ -1268,6 +1269,25 @@ class _UpdaterPageState extends State<UpdaterPage>
       });
       _addHistory('Pi-Neustart ausgelöst.');
     });
+  }
+
+  Future<void> _securityCheck() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _securityCheck;
+    List<SecurityFinding>? findings;
+    await _guard(() async {
+      findings =
+          await _updater.runSecurityCheck(config: config, onLog: _appendLog);
+    }, backgroundMessage: 'Sicherheits-Check läuft …');
+    if (!mounted || findings == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => _SecurityReportSheet(findings: findings!),
+    );
   }
 
   Future<void> _shutdown() async {
@@ -3248,6 +3268,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 _CardAction('Trotzdem aktualisieren', _upgradeSystem),
               _CardAction('Aufräumen (Speicher freigeben)',
                   () => _proGate(_cleanupSystem), pro: true),
+              _CardAction('Sicherheits-Check', _securityCheck),
               _CardAction('Pi neu starten', _reboot),
               _CardAction('Pi herunterfahren', _shutdown, destructive: true),
             ],

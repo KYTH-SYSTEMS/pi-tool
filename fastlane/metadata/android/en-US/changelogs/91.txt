@@ -1,0 +1,1 @@
+New: Security check (System card). A read-only audit with a traffic light — SSH root login, password vs. key login, automatic security updates (unattended-upgrades), fail2ban and open ports. The app only reports and recommends; it changes nothing.

@@ -10,6 +10,7 @@ import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
+import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/pi_connect.dart';
@@ -1317,6 +1318,35 @@ void main() {
           runErrors: {rebootCommand: const SocketException('closed')});
       // A real reboot drops the SSH connection — must NOT be reported as an error.
       await _updaterWith(runner).reboot(config: _config, onLog: (_) {});
+    });
+  });
+
+  group('EvccUpdater.runSecurityCheck', () {
+    test('parses a hardened Pi (no warnings) from the probe', () async {
+      final runner = FakeSshRunner({
+        buildSecurityProbe(): [
+          _r('__SEC_SSHD__\npermitrootlogin no\npasswordauthentication no\n'
+              '__SEC_UNATT__\nenabled\nactive\n__SEC_F2B__\nactive\n'
+              '__SEC_PORTS__\n0.0.0.0:22\n')
+        ],
+      });
+      final r = await _updaterWith(runner)
+          .runSecurityCheck(config: _config, onLog: (_) {});
+      expect(r, hasLength(5));
+      expect(r.any((f) => f.level == SecurityLevel.warn), isFalse);
+    });
+
+    test('reports a rejected sudo password', () async {
+      final runner = FakeSshRunner({
+        buildSecurityProbe(): [
+          _r('', stderr: 'sudo: 1 incorrect password attempt', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).runSecurityCheck(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
     });
   });
 

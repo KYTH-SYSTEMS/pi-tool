@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.46.0': [
+    'Sicherheits-Check: Die System-Karte hat jetzt einen „Sicherheits-Check" — '
+        'eine reine Nur-Lesen-Prüfung mit Ampel: SSH-Root-Login, Passwort- vs. '
+        'Key-Login, automatische Sicherheitsupdates, fail2ban und offene Ports. '
+        'Die App zeigt nur an und empfiehlt — geändert wird nichts.',
+  ],
   '0.45.0': [
     'Dateien bearbeiten: Tippst du im Dateien-Tab auf eine Textdatei, gibt es '
         'jetzt „Bearbeiten" — die Datei öffnet sich im Editor und wird atomar '

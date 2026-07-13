@@ -418,6 +418,57 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   }
 }
 
+/// Read-only security-audit result sheet: one traffic-light row per finding.
+class _SecurityReportSheet extends StatelessWidget {
+  const _SecurityReportSheet({required this.findings});
+  final List<SecurityFinding> findings;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    (IconData, Color) visual(SecurityLevel l) => switch (l) {
+          SecurityLevel.ok => (Icons.check_circle, kGreen),
+          SecurityLevel.warn => (Icons.warning_amber_rounded, cs.error),
+          SecurityLevel.info => (Icons.info_outline, cs.onSurfaceVariant),
+        };
+    final warnings = findings.where((f) => f.level == SecurityLevel.warn).length;
+    return SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        children: [
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text('Sicherheits-Check',
+                style: Theme.of(context).textTheme.titleMedium),
+            subtitle: Text(warnings == 0
+                ? 'Keine Warnungen — sieht gut aus.'
+                : '$warnings ${warnings == 1 ? 'Warnung' : 'Warnungen'} gefunden.'),
+          ),
+          const Divider(height: 1),
+          for (final f in findings)
+            Builder(builder: (context) {
+              final (icon, color) = visual(f.level);
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                leading: Icon(icon, color: color),
+                title: Text(f.title),
+                subtitle: Text(f.detail),
+              );
+            }),
+          const SizedBox(height: 4),
+          Text(
+            'Nur-Lesen-Prüfung — die App ändert nichts. Empfehlungen kannst du '
+            'über die Konsole umsetzen.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// One Pi's status in the multi-Pi overview.
 typedef PiSnapshot = ({
   bool reachable,
