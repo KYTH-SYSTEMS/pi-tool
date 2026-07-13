@@ -4267,12 +4267,29 @@ class _UpdaterPageState extends State<UpdaterPage>
                   value: 'setup', child: Text('Pi einrichten')),
               // SSH-Key setup is per-Pi, not global: it lives inline in the
               // connection form (tap the SSH-Key segment), not in this menu.
-              // Reachable even when NOT connected (that's the whole point of
-              // remote access). Shown for Pis where Tailscale was seen before.
-              if (_tailscaleIp.isNotEmpty)
-                const PopupMenuItem(
-                    value: 'remote',
-                    child: Text('Fernzugriff: Tailscale öffnen')),
+              // Always listed so the feature is discoverable and the menu stays
+              // predictable; reachable even when NOT connected (the whole point
+              // of remote access). Disabled with a hint until the app has learned
+              // this Pi's Tailscale IP (one connection at home populates it).
+              PopupMenuItem(
+                  value: 'remote',
+                  enabled: _tailscaleIp.isNotEmpty,
+                  child: _tailscaleIp.isNotEmpty
+                      ? const Text('Fernzugriff: Tailscale öffnen')
+                      : Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Fernzugriff: Tailscale öffnen'),
+                            Text(
+                              'Einmal mit dem Pi verbinden, um die Tailscale-IP '
+                              'zu holen',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: theme.colorScheme.onSurfaceVariant),
+                            ),
+                          ],
+                        )),
               // The undo for the switch above: once the host is a tailnet
               // address, offer a one-tap way back to the remembered home/LAN
               // address (e.g. when you're back on the local network).

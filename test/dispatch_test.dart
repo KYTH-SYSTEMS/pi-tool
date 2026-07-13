@@ -2302,6 +2302,39 @@ void main() {
   });
 
   testWidgets(
+      '⋮: „Fernzugriff: Tailscale öffnen" ist immer sichtbar, aber ohne bekannte '
+      'IP deaktiviert (auffindbar, kein toter Klick)', (tester) async {
+    useTallScreen(tester);
+    final launcher = _FakeLauncher();
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+        store: _FakeStore(_ready), // no tailscaleIp remembered yet
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+        appLauncher: launcher,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+
+    // Discoverable even before any Tailscale IP is known …
+    expect(find.text('Fernzugriff: Tailscale öffnen'), findsOneWidget);
+    // … but disabled, so a tap does nothing (no app opened).
+    final item = tester.widget<PopupMenuItem<String>>(
+      find.ancestor(
+        of: find.text('Fernzugriff: Tailscale öffnen'),
+        matching: find.byType(PopupMenuItem<String>),
+      ),
+    );
+    expect(item.enabled, isFalse);
+    await tester.tap(find.text('Fernzugriff: Tailscale öffnen'));
+    await tester.pumpAndSettle();
+    expect(launcher.opened, isEmpty);
+  });
+
+  testWidgets(
       '⋮ → „Zurück auf Heim-IP" stellt nach dem Fernzugriff die LAN-IP wieder her',
       (tester) async {
     useTallScreen(tester);

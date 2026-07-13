@@ -253,7 +253,8 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   installierte App per `getLaunchIntentForPackage` (Play-Store-URL-Fallback via
   `ACTION_VIEW`). Für den **Tailscale-Fernzugriff-Helfer** (`_remoteAccessViaTailscale`):
   Tailnet-IP als Host vorbelegen + Tailscale-App öffnen. **Liegt im ⋮-App-Bar-Menü**
-  (nur wenn `_tailscaleIp` bekannt), NICHT auf der Tailscale-Karte — Fernzugriff
+  (IMMER gelistet für vorhersehbare Menüstruktur; deaktiviert mit Hinweis, solange
+  `_tailscaleIp` unbekannt ist), NICHT auf der Tailscale-Karte — Fernzugriff
   ist genau dann sinnvoll, wenn man NICHT verbunden ist; die Karte ist offline
   unerreichbar. Die zuletzt gesehene Tailnet-IP wird pro Profil persistiert
   (`Profile.tailscaleIp`, von `_rememberTailscaleIp` bei Detection gesetzt), damit

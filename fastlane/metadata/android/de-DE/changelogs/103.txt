@@ -1,0 +1,1 @@
+Fernzugriff leichter zu finden: „Fernzugriff: Tailscale öffnen" steht jetzt immer im ⋮-Menü — ausgegraut mit Hinweis, solange die App die Tailscale-IP deines Pi noch nicht kennt (einmal verbinden genügt). So ist die Funktion auffindbar und das Menü bleibt vorhersehbar.

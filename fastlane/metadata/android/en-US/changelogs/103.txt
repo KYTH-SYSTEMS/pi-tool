@@ -1,0 +1,1 @@
+Remote access easier to find: "Open remote access: Tailscale" now always sits in the ⋮ menu — greyed out with a hint until the app knows your Pi's Tailscale IP (just connect once). The feature is discoverable and the menu stays predictable.

@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.55.1': [
+    'Fernzugriff leichter zu finden: „Fernzugriff: Tailscale öffnen" steht jetzt '
+        'immer im ⋮-Menü — ausgegraut mit Hinweis, solange die App die '
+        'Tailscale-IP deines Pi noch nicht kennt (einmal verbinden genügt). So '
+        'ist die Funktion auffindbar und das Menü bleibt vorhersehbar.',
+  ],
   '0.55.0': [
     'Fernzugriff robuster: Verbindest du dich über einen Tailscale-MagicDNS-Namen '
         '(*.ts.net), wird deine Heim-IP nicht mehr versehentlich überschrieben — '
