@@ -13,6 +13,15 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.45.0': [
+    'Dateien bearbeiten: Tippst du im Dateien-Tab auf eine Textdatei, gibt es '
+        'jetzt „Bearbeiten" — die Datei öffnet sich im Editor und wird atomar '
+        'mit automatischer Sicherung gespeichert (wie schon beim Config-Editor). '
+        'Binärdateien bleiben schreibgeschützt.',
+    'Eigene Schnellbefehle: In der Konsole kannst du über „Eigene Befehle" '
+        'eigene Kommandos anlegen und wieder löschen — sie stehen dann dauerhaft '
+        'neben den vorgefertigten Schnellbefehlen.',
+  ],
   '0.44.0': [
     'Pi herunterfahren: Neben „Pi neu starten" gibt es jetzt „Pi herunterfahren" '
         '(System-Karte und ⋮-Menü). Achtung — der Pi bleibt danach AUS und ist '

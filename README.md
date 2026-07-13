@@ -55,13 +55,15 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   **Health-Alerts** als Push via [ntfy](https://ntfy.sh) bei voller Platte,
   totem Dienst, Hitze oder anstehenden Updates.
 - **Dateien** — der Datei-Browser deines Pi im eigenen Tab: Ordner durchsuchen,
-  Dateien ansehen (Vorschau), **vom Handy hochladen** und löschen — alles über die
-  normale SSH-Sitzung, ohne SFTP-Server.
+  Dateien ansehen (Vorschau), **Textdateien direkt bearbeiten** (atomar mit
+  Backup; Binärdateien bleiben schreibgeschützt), **vom Handy hochladen** und
+  löschen — alles über die normale SSH-Sitzung, ohne SFTP-Server.
 - **Config-Editor** — Konfigdateien (z. B. `evcc.yaml`) direkt in der App
   bearbeiten; gespeichert wird **atomar mit automatischem Backup**.
 - **Terminal** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
   unterstützt, das Pi-Passwort wird sicher via stdin gepiped), Ausgabe live, mit
-  **Verlauf + Schnellbefehlen**. Interaktive Programme (htop, Editoren, `-f`)
+  **Verlauf + Schnellbefehlen** (vorgefertigt **und eigene** anlegbar).
+  Interaktive Programme (htop, Editoren, `-f`)
   bekommen einen Hinweis mit Alternative statt eines kryptischen Fehlers. Auf
   eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten,

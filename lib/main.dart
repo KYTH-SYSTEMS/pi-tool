@@ -229,6 +229,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _lastSeenVersion = ''; // for the "What's New" popup after an update
   bool _whatsNewChecked = false; // one-shot guard for the popup
   List<String> _consoleHistory = []; // recent console commands, newest first
+  List<String> _customCommands = []; // user-defined quick commands
   String _alertsServer = 'https://ntfy.sh'; // Health-Alerts ntfy destination
   String _alertsTopic = '';
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
@@ -324,6 +325,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _disclaimerAccepted = cfg.disclaimerAccepted;
       _lastSeenVersion = cfg.lastSeenVersion;
       _consoleHistory = List.of(cfg.consoleHistory);
+      _customCommands = List.of(cfg.customCommands);
       _alertsServer = cfg.alertsNtfyServer;
       _alertsTopic = cfg.alertsNtfyTopic;
       _applyProfile(cfg.active);
@@ -432,6 +434,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       disclaimerAccepted: _disclaimerAccepted,
       lastSeenVersion: _lastSeenVersion,
       consoleHistory: _consoleHistory,
+      customCommands: _customCommands,
       alertsNtfyServer: _alertsServer,
       alertsNtfyTopic: _alertsTopic,
     );
@@ -1722,11 +1725,64 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (!mounted) return;
       final text = utf8.decode(bytes, allowMalformed: true);
       final name = path.split('/').last;
-      await _showLogSheet('Datei: $name',
-          text.length > 100000 ? '${text.substring(0, 100000)}\n…' : text);
+      // Text files of editable size get an "Bearbeiten" affordance that hands
+      // off to the atomic config editor (backup + marker write, sudo-capable).
+      final editable =
+          isProbablyTextFile(bytes) && bytes.length <= kFileEditLimit;
+      final edit = await _showFilePreview('Datei: $name',
+          text.length > 100000 ? '${text.substring(0, 100000)}\n…' : text,
+          editable: editable);
+      if (edit == true && mounted) await _editConfig(path, name);
     } catch (_) {
       if (mounted) _snack('Datei konnte nicht geladen werden.');
     }
+  }
+
+  /// Preview sheet for a remote file. Resolves to true if the user chose
+  /// "Bearbeiten" (only offered when [editable]).
+  Future<bool?> _showFilePreview(String header, String content,
+      {required bool editable}) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SizedBox(
+        height: MediaQuery.of(ctx).size.height * 0.78,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 8, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(header,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(ctx).textTheme.titleMedium),
+                  ),
+                  if (editable)
+                    TextButton.icon(
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Bearbeiten'),
+                      onPressed: () => Navigator.pop(ctx, true),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  content.trim().isEmpty ? 'Leere Datei.' : content,
+                  style:
+                      const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ---- config editor (read → edit → save with backup) ----
@@ -2469,13 +2525,37 @@ class _UpdaterPageState extends State<UpdaterPage>
     'journalctl -n 50 --no-pager',
   ];
 
-  /// Bottom sheet with quick commands + the recent-command history. Tapping an
-  /// entry fills the input (deliberately does NOT auto-run it).
+  /// Prompts for a new custom quick command and persists it. Returns inside
+  /// [setSheet] so the open sheet updates in place.
+  Future<void> _addCustomCommand(StateSetter setSheet) async {
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (ctx) => const _NameDialog(
+        title: 'Eigenen Schnellbefehl anlegen',
+        initial: '',
+        label: 'Befehl',
+        hint: 'z. B. vcgencmd measure_temp',
+        confirmLabel: 'Speichern',
+        fieldKey: Key('customCommandField'),
+        mono: true,
+      ),
+    );
+    final cmd = saved?.trim() ?? '';
+    if (cmd.isEmpty || _customCommands.contains(cmd) || !mounted) return;
+    setState(() => _customCommands = [..._customCommands, cmd]);
+    setSheet(() {});
+    _scheduleSave();
+  }
+
+  /// Bottom sheet with quick commands (built-in + user-defined) + the
+  /// recent-command history. Tapping an entry fills the input (deliberately
+  /// does NOT auto-run it).
   void _showConsoleHistory() {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (ctx) => SafeArea(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => SafeArea(
         child: ListView(
           shrinkWrap: true,
           children: [
@@ -2495,6 +2575,40 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _consoleInput.text = c;
                   Navigator.pop(ctx);
                 },
+              ),
+            ListTile(
+              dense: true,
+              title: Text('Eigene Befehle',
+                  style: Theme.of(ctx).textTheme.titleSmall),
+              trailing: IconButton(
+                key: const Key('addCustomCommand'),
+                tooltip: 'Eigenen Befehl anlegen',
+                icon: const Icon(Icons.add, size: 20),
+                onPressed: () => _addCustomCommand(setSheet),
+              ),
+            ),
+            for (final c in _customCommands)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.star_outline, size: 18),
+                title: Text(c,
+                    style: const TextStyle(
+                        fontFamily: 'monospace', fontSize: 13)),
+                onTap: () {
+                  _consoleInput.text = c;
+                  Navigator.pop(ctx);
+                },
+                trailing: IconButton(
+                  key: ValueKey('delCustom-$c'),
+                  tooltip: 'Entfernen',
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () {
+                    setState(() => _customCommands =
+                        _customCommands.where((x) => x != c).toList());
+                    setSheet(() {});
+                    _scheduleSave();
+                  },
+                ),
               ),
             if (_consoleHistory.isNotEmpty) ...[
               const Divider(),
@@ -2527,6 +2641,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             ],
           ],
         ),
+      ),
       ),
     );
   }

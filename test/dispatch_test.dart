@@ -2003,4 +2003,76 @@ void main() {
     await tester.pumpAndSettle();
     expect(u.shutdownCalls, 1);
   });
+
+  testWidgets('console sheet: eigene Schnellbefehle anlegen und löschen',
+      (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+      customCommands: ['vcgencmd measure_temp'],
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+          store: store,
+          updater: FakeEvccUpdater(),
+          updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+    await goTerminal(tester);
+
+    await tester.tap(find.byIcon(Icons.history).first);
+    await tester.pumpAndSettle();
+    // The stored custom command is offered under „Eigene Befehle".
+    expect(find.text('Eigene Befehle'), findsOneWidget);
+    expect(find.text('vcgencmd measure_temp'), findsOneWidget);
+
+    // Add a new one via the + dialog → persisted (debounced save).
+    await tester.tap(find.byKey(const Key('addCustomCommand')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const Key('customCommandField')), 'ls -la /etc');
+    await tester.tap(find.widgetWithText(FilledButton, 'Speichern'));
+    await tester.pumpAndSettle();
+    expect(find.text('ls -la /etc'), findsOneWidget); // sheet updates in place
+    await tester.pump(const Duration(seconds: 1));
+    expect(store.saved.customCommands, contains('ls -la /etc'));
+
+    // Delete the stored one via its row delete icon.
+    await tester
+        .tap(find.byKey(const ValueKey('delCustom-vcgencmd measure_temp')));
+    await tester.pumpAndSettle();
+    expect(find.text('vcgencmd measure_temp'), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+    expect(store.saved.customCommands, isNot(contains('vcgencmd measure_temp')));
+  });
+
+  testWidgets(
+      'Dateien tab: Textdatei-Vorschau bietet Bearbeiten → atomarer Editor; '
+      'Binärdatei nicht', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'notes.txt', isDir: false)]
+      ..fileBytes = Uint8List.fromList('hallo welt\n'.codeUnits);
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.text('notes.txt'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bearbeiten'));
+    await tester.pumpAndSettle();
+    // The atomic config editor opens, loaded via readConfigFile (sudo-capable).
+    expect(find.text(u.configText), findsOneWidget);
+    // Leave the editor again (no save).
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    // A binary file (NUL byte) must NOT offer editing.
+    u.fileBytes = Uint8List.fromList([104, 105, 0, 1, 2]);
+    await tester.tap(find.text('notes.txt'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bearbeiten'), findsNothing);
+  });
 }

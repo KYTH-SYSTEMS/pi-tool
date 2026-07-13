@@ -3,7 +3,27 @@
 /// Pure command builders, listing parser and path helpers (unit-testable).
 library;
 
+import 'dart:typed_data';
+
 import 'commands.dart' show shSingleQuote;
+
+/// Max bytes for in-app editing of a file from the browser — keeps the editor
+/// and the base64 write payload bounded (config-sized files, not logs/dumps).
+const int kFileEditLimit = 256 * 1024;
+
+/// Cheap text-vs-binary heuristic for the file browser's edit affordance:
+/// a NUL byte or a high ratio of control bytes (outside tab/newline/CR) means
+/// binary. UTF-8 multi-byte sequences (umlauts) pass untouched — only C0
+/// control bytes count against the file.
+bool isProbablyTextFile(Uint8List bytes) {
+  if (bytes.isEmpty) return true;
+  var control = 0;
+  for (final b in bytes) {
+    if (b == 0) return false; // NUL never appears in text files
+    if (b < 0x20 && b != 0x09 && b != 0x0A && b != 0x0D) control++;
+  }
+  return control / bytes.length < 0.05;
+}
 
 /// Lists a directory (sudo, so root-only paths work too). `-p` marks dirs with
 /// a trailing slash, `-A` shows dotfiles but not `.`/`..`.

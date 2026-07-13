@@ -184,6 +184,10 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   48 MB), dann `buildDownloadFileCommand` (base64) mit Längen-Verifikation
   (Truncation = Fehler). Aufs Handy via `fileSaver`-Seam (Default: Temp-Datei
   über dart:io + share_plus-Teilen-Dialog — kein path_provider nötig).
+  **Bearbeiten:** `isProbablyTextFile` (NUL-Byte oder >5 % C0-Control = binär;
+  UTF-8-Umlaute zählen nicht) + `kFileEditLimit` (256 KB) entscheiden, ob die
+  Vorschau einen „Bearbeiten"-Knopf zeigt; der reicht an den bestehenden
+  Config-Editor weiter (atomarer Write + Backup, sudo-fähig).
 - **`file_pick.dart` + native `MainActivity`** — lokale Dateiauswahl fürs Upload.
   **Bewusst KEIN Picker-Plugin:** `file_picker` bringt sein eigenes altes
   Kotlin-Gradle-Plugin mit und scheitert am AGP-9-/Built-in-Kotlin-Setup (und es
@@ -208,7 +212,8 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
 ## 6. State & Infrastruktur
 
 - **`profiles.dart`** — `Profile` (ein Pi) + `AppConfig` (Profil-Liste + alle
-  globalen Settings). `parseAppConfig` ist tolerant (jeder Decode-Fehler →
+  globalen Settings, u. a. `consoleHistory` und `customCommands` = eigene
+  Konsolen-Schnellbefehle). `parseAppConfig` ist tolerant (jeder Decode-Fehler →
   `AppConfig.initial`). `backupBeforeUpdate` default **ON** (`!= false`).
   `AppConfigStore` (Key `app_config_v1`) migriert einmalig aus den 14 Legacy-Flat-
   Keys und **löscht sie danach** (kein Klartext-Credential-Rest). Alles

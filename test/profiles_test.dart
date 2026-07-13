@@ -22,6 +22,7 @@ void main() {
         disclaimerAccepted: true,
         lastSeenVersion: '0.20.0',
         consoleHistory: ['df -h', 'docker ps'],
+        customCommands: ['vcgencmd measure_temp', 'ls -la /etc'],
       );
 
       final back = parseAppConfig(encodeAppConfig(cfg));
@@ -30,6 +31,7 @@ void main() {
       expect(back.disclaimerAccepted, isTrue);
       expect(back.lastSeenVersion, '0.20.0');
       expect(back.consoleHistory, ['df -h', 'docker ps']);
+      expect(back.customCommands, ['vcgencmd measure_temp', 'ls -la /etc']);
       expect(back.profiles.length, 2);
       expect(back.profiles[0].name, 'Zuhause');
       expect(back.profiles[0].authMode, AuthMode.key);

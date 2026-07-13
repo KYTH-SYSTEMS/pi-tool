@@ -1,7 +1,37 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:evcc_updater/src/files.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('isProbablyTextFile', () {
+    test('plain ASCII and UTF-8 (umlauts) count as text', () {
+      expect(isProbablyTextFile(Uint8List.fromList(utf8.encode('hello\nwelt'))),
+          isTrue);
+      expect(
+          isProbablyTextFile(
+              Uint8List.fromList(utf8.encode('grün änderte Größe'))),
+          isTrue);
+    });
+
+    test('a NUL byte marks the file as binary', () {
+      expect(isProbablyTextFile(Uint8List.fromList([104, 105, 0, 104])),
+          isFalse);
+    });
+
+    test('an empty file is editable text', () {
+      expect(isProbablyTextFile(Uint8List(0)), isTrue);
+    });
+
+    test('a PNG header is binary (high control-byte ratio)', () {
+      expect(
+          isProbablyTextFile(Uint8List.fromList(
+              [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01])),
+          isFalse);
+    });
+  });
+
   group('commands', () {
     test('list + read are sudo and shell-quoted', () {
       expect(buildListDirCommand('/etc'), "sudo -S -p '' ls -1Ap '/etc' 2>&1");

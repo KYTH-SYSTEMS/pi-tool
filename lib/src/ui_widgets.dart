@@ -1160,10 +1160,23 @@ class _ConnectionCard extends StatelessWidget {
 /// Dialog that owns its text controller (disposed via its own State lifecycle,
 /// so it isn't used-after-dispose during the dialog's exit animation).
 class _NameDialog extends StatefulWidget {
-  const _NameDialog({required this.title, required this.initial});
+  const _NameDialog({
+    required this.title,
+    required this.initial,
+    this.label = 'Name',
+    this.confirmLabel = 'OK',
+    this.hint,
+    this.fieldKey,
+    this.mono = false,
+  });
 
   final String title;
   final String initial;
+  final String label;
+  final String confirmLabel;
+  final String? hint;
+  final Key? fieldKey;
+  final bool mono; // monospace field (e.g. a shell command)
 
   @override
   State<_NameDialog> createState() => _NameDialogState();
@@ -1185,9 +1198,14 @@ class _NameDialogState extends State<_NameDialog> {
     return AlertDialog(
       title: Text(widget.title),
       content: TextField(
+        key: widget.fieldKey,
         controller: _ctrl,
         autofocus: true,
-        decoration: const InputDecoration(labelText: 'Name'),
+        style: widget.mono
+            ? const TextStyle(fontFamily: 'monospace', fontSize: 14)
+            : null,
+        decoration: InputDecoration(
+            labelText: widget.label, hintText: widget.hint),
         onSubmitted: (v) => Navigator.pop(context, v),
       ),
       actions: [
@@ -1197,7 +1215,7 @@ class _NameDialogState extends State<_NameDialog> {
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _ctrl.text),
-          child: const Text('OK'),
+          child: Text(widget.confirmLabel),
         ),
       ],
     );

@@ -1,0 +1,1 @@
+New: edit files directly — tap a text file in the Files tab, choose "Edit"; it is saved atomically with an automatic backup. Binary files stay read-only. Also: create and delete your own quick commands in the console (persisted, shown next to the built-in ones).

@@ -1,0 +1,1 @@
+Neu: Dateien direkt bearbeiten — im Dateien-Tab auf eine Textdatei tippen, „Bearbeiten" wählen; sie wird atomar mit automatischer Sicherung gespeichert. Binärdateien bleiben schreibgeschützt. Außerdem: eigene Schnellbefehle in der Konsole anlegen und löschen (dauerhaft gespeichert, neben den vorgefertigten Befehlen).
