@@ -53,6 +53,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   (VPN/Mesh, per Login-Link verbinden). Beides installieren/verbinden/trennen
   direkt in der App; die Tailnet-IP (100.x) lässt sich mit einem Tap ins
   Host-Feld übernehmen — so erreichst du den Pi von überall.
+- **Geplante Backups** — nächtliche evcc- + Pi-hole-Sicherung mit Rotation als
+  On-Pi-systemd-Timer (Pro).
 - **Automatik** (läuft autonom auf dem Pi, **kein** Handy-Hintergrunddienst) —
   **geplante Updates** per systemd-Timer (mit evcc-Sicherung + Selbstheilung) und
   **Health-Alerts** als Push via [ntfy](https://ntfy.sh) bei voller Platte,

@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.51.0': [
+    'Geplante Backups: Im Automatik-Tab kannst du jetzt nächtliche Backups '
+        'einrichten — evcc (Konfig + Daten) und Pi-hole (Teleporter) werden '
+        'automatisch gesichert, mit Rotation (alte Backups werden aufgeräumt). '
+        'Läuft als Timer auf dem Pi, kein Hintergrunddienst auf dem Handy.',
+  ],
   '0.50.0': [
     'Mehr Dienste erkannt: Wenn du AdGuard Home, Node-RED oder Zigbee2MQTT auf '
         'dem Pi hast, erscheinen sie jetzt als eigene Karten — mit Weboberfläche '

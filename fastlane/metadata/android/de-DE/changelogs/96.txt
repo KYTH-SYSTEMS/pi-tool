@@ -1,0 +1,1 @@
+Neu: Geplante Backups (Automatik-Tab). Der Pi sichert künftig selbst — evcc (Konfiguration + Daten) und Pi-hole (Teleporter), sofern vorhanden — täglich zur gewählten Uhrzeit, mit Rotation (du legst fest, wie viele Sicherungen behalten werden). Läuft als systemd-Timer auf dem Pi, kein Hintergrunddienst auf dem Handy. Pro-Feature.

@@ -13,6 +13,7 @@ import 'files.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
 import 'parsing.dart';
+import 'scheduled_backup.dart';
 import 'security_check.dart';
 import 'ssh_keys.dart';
 import 'storage_explorer.dart';
@@ -1302,6 +1303,56 @@ class EvccUpdater {
         body: (runner, log) async {
           final r = await runner.run(autoUpdateStatusCommand);
           return parseAutoUpdateStatus(r.stdout);
+        },
+      );
+
+  /// Installs the scheduled-backup timer (evcc + Pi-hole, rotation). Root.
+  Future<void> enableScheduledBackup({
+    required SshConfig config,
+    required String onCalendar,
+    required int keep,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Richte geplante Backups ein …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildScheduledBackupInstallScript(
+                  onCalendar: onCalendar, keep: keep),
+              successMarker: 'BACKUP_TIMER_INSTALLED',
+              failMsg: 'Einrichten der geplanten Backups fehlgeschlagen');
+        },
+      );
+
+  /// Removes the scheduled-backup timer again. Root.
+  Future<void> disableScheduledBackup({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Deaktiviere geplante Backups …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildScheduledBackupRemoveScript(),
+              successMarker: 'BACKUP_TIMER_REMOVED',
+              failMsg: 'Entfernen der geplanten Backups fehlgeschlagen');
+        },
+      );
+
+  Future<ScheduledBackupStatus> readScheduledBackupStatus({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<ScheduledBackupStatus>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final r = await runner.run(scheduledBackupStatusCommand);
+          return parseScheduledBackupStatus(r.stdout);
         },
       );
 

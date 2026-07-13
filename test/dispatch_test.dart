@@ -16,6 +16,7 @@ import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/docker_containers.dart';
+import 'package:evcc_updater/src/scheduled_backup.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/storage_explorer.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
@@ -140,6 +141,35 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       shutdownCalls++;
+
+  ScheduledBackupStatus scheduledBackupStatus =
+      (enabled: false, nextRun: null, lastResult: null);
+  String? scheduledBackupOnCal;
+  int? scheduledBackupKeep;
+  bool scheduledBackupDisabled = false;
+  @override
+  Future<ScheduledBackupStatus> readScheduledBackupStatus({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      scheduledBackupStatus;
+  @override
+  Future<void> enableScheduledBackup({
+    required SshConfig config,
+    required String onCalendar,
+    required int keep,
+    required void Function(String line) onLog,
+  }) async {
+    scheduledBackupOnCal = onCalendar;
+    scheduledBackupKeep = keep;
+  }
+
+  @override
+  Future<void> disableScheduledBackup({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      scheduledBackupDisabled = true;
 
   final restartedUnits = <String>[];
   @override
@@ -2147,6 +2177,27 @@ void main() {
     // Live off → cancels the timer (no lingering timers at test end).
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('Automatik → Geplante Backups: Einschalten installiert den Timer',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byType(NavigationBar), matching: find.text('Automatik')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Geplante Backups'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    // The timer is installed with a daily schedule + a keep count.
+    expect(u.scheduledBackupOnCal, isNotNull);
+    expect(u.scheduledBackupOnCal, contains(':00:00'));
+    expect(u.scheduledBackupKeep, 7);
   });
 
   testWidgets('erkannter systemd-Dienst (AdGuard Home) → Karte + Neustart',

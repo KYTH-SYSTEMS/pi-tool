@@ -31,9 +31,15 @@ mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 ts=\$(date '+%Y-%m-%d %H:%M:%S')
 was=\$(systemctl is-active evcc 2>/dev/null)
 if dpkg-query -W evcc >/dev/null 2>&1; then
-  tar -czf "/var/backups/pi-tool/autoupdate-evcc-\$(date +%Y%m%d-%H%M%S).tar.gz" \\
-    /etc/evcc.yaml /var/lib/evcc 2>/dev/null || true
-  ls -1t /var/backups/pi-tool/autoupdate-evcc-* 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
+  # Atomic: a failed/partial tar must not become the newest file and evict a
+  # good pre-upgrade backup on rotation.
+  bout="/var/backups/pi-tool/autoupdate-evcc-\$(date +%Y%m%d-%H%M%S).tar.gz"
+  if tar -czf "\$bout.part" /etc/evcc.yaml /var/lib/evcc 2>/dev/null; then
+    mv "\$bout.part" "\$bout"
+    ls -1t /var/backups/pi-tool/autoupdate-evcc-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
+  else
+    rm -f "\$bout.part"
+  fi
 fi
 apt-get update >/dev/null 2>&1
 # Unattended: never block on a dpkg conffile prompt (would hang forever holding

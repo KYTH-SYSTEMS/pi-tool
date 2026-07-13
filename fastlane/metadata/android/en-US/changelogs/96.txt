@@ -1,0 +1,1 @@
+New: scheduled backups (Automation tab). The Pi now backs itself up — evcc (config + data) and Pi-hole (teleporter), if present — daily at your chosen time, with rotation (you choose how many backups to keep). Runs as a systemd timer on the Pi, no background service on the phone. Pro feature.

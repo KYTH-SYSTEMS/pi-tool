@@ -21,6 +21,7 @@ import 'src/entitlement.dart';
 import 'src/file_pick.dart';
 import 'src/files.dart';
 import 'src/profile_transfer.dart';
+import 'src/scheduled_backup.dart';
 import 'src/security_check.dart';
 import 'src/ssh_keys.dart';
 import 'src/storage_explorer.dart';
@@ -2255,6 +2256,141 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
   }
 
+  Future<void> _configureScheduledBackup() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _configureScheduledBackup;
+    ScheduledBackupStatus? status;
+    await _guard(() async {
+      status = await _updater.readScheduledBackupStatus(
+          config: config, onLog: _appendLog);
+    });
+    if (!mounted || status == null) return;
+    final choice = await _showScheduledBackupSheet(status!);
+    if (choice == null || !mounted) return;
+
+    _beginBusy();
+    await _guard(() async {
+      if (choice.enable) {
+        final onCal = scheduledBackupOnCalendar(hour: choice.hour);
+        await _updater.enableScheduledBackup(
+            config: config, onCalendar: onCal, keep: choice.keep, onLog: _appendLog);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Geplante Backups aktiv.';
+          _statusOk = true;
+        });
+        _addHistory('Geplante Backups eingerichtet ($onCal, ${choice.keep}×).');
+      } else {
+        await _updater.disableScheduledBackup(config: config, onLog: _appendLog);
+        if (!mounted) return;
+        setState(() {
+          _statusMessage = 'Geplante Backups deaktiviert.';
+          _statusOk = true;
+        });
+        _addHistory('Geplante Backups deaktiviert.');
+      }
+    },
+        backgroundMessage: choice.enable
+            ? 'Richte geplante Backups ein …'
+            : 'Deaktiviere geplante Backups …');
+  }
+
+  Future<({bool enable, int hour, int keep})?> _showScheduledBackupSheet(
+      ScheduledBackupStatus status) {
+    var hour = 3;
+    var keep = 7;
+    return showModalBottomSheet<({bool enable, int hour, int keep})>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Geplante Backups',
+                    style: Theme.of(ctx).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                const Text('Der Pi sichert künftig selbst evcc (Konfig + Daten) '
+                    'und Pi-hole (Teleporter), sofern vorhanden — mit Rotation. '
+                    'Läuft als systemd-Timer auf dem Pi.'),
+                const SizedBox(height: 12),
+                Text(
+                  status.enabled
+                      ? 'Aktuell aktiv · nächste: ${status.nextRun ?? '—'}'
+                      : 'Aktuell aus.',
+                  style: TextStyle(
+                      color: status.enabled ? kGreen : null,
+                      fontWeight: FontWeight.w600),
+                ),
+                if (status.lastResult != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('Zuletzt: ${status.lastResult}',
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 12)),
+                  ),
+                const Divider(height: 24),
+                Row(
+                  children: [
+                    const Text('Uhrzeit:  '),
+                    DropdownButton<int>(
+                      value: hour,
+                      items: [
+                        for (var h = 0; h < 24; h++)
+                          DropdownMenuItem(
+                              value: h,
+                              child: Text(
+                                  '${h.toString().padLeft(2, '0')}:00 Uhr')),
+                      ],
+                      onChanged: (v) => setSheet(() => hour = v ?? 3),
+                    ),
+                    const Spacer(),
+                    const Text('Behalten:  '),
+                    DropdownButton<int>(
+                      value: keep,
+                      items: [
+                        for (final k in [3, 5, 7, 14, 30])
+                          DropdownMenuItem(value: k, child: Text('$k')),
+                      ],
+                      onChanged: (v) => setSheet(() => keep = v ?? 7),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(
+                            ctx, (enable: true, hour: hour, keep: keep)),
+                        child: Text(
+                            status.enabled ? 'Zeitplan ändern' : 'Einschalten'),
+                      ),
+                    ),
+                    if (status.enabled) ...[
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () => Navigator.pop(
+                            ctx, (enable: false, hour: 0, keep: 0)),
+                        child: const Text('Ausschalten'),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ---- Pi-hole + System service actions ----
 
   Future<void> _updatePihole() async {
@@ -4251,6 +4387,13 @@ class _UpdaterPageState extends State<UpdaterPage>
             subtitle: 'Zeitplan-Updates mit evcc-Backup + Selbstheilung',
             locked: !_isPro,
             onTap: () => _proGate(_configureAutoUpdate),
+          ),
+          _AutomationTile(
+            icon: Icons.backup_outlined,
+            title: 'Geplante Backups',
+            subtitle: 'Nächtliche evcc- + Pi-hole-Sicherung mit Rotation',
+            locked: !_isPro,
+            onTap: () => _proGate(_configureScheduledBackup),
           ),
           _AutomationTile(
             icon: Icons.notifications_active_outlined,

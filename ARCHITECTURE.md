@@ -168,6 +168,16 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Wrapper: `DEBIAN_FRONTEND=noninteractive` + `--force-confold` (kein
   conffile-Hänger), sichert evcc vorher, **self-heal** (startet evcc neu falls es
   starb), schreibt Status-Datei. Marker `AUTOUPDATE_INSTALLED/REMOVED`.
+- **`scheduled_backup.dart`** — geplante Backups (`pi-tool-backup.timer`, spiegelt
+  `auto_update.dart`). Wrapper sichert **evcc** (Konfig + `/var/lib/evcc`) und
+  **Pi-hole** (Teleporter `pihole -a -t`/`pihole-FTL --teleporter`), beide
+  presence-gated, mit **Rotation** (`keep` neueste behalten). **Atomar:** tar nach
+  `.part` → `mv` bei Erfolg, Rotation NUR nach Erfolg + spezifischer Glob (ein
+  fehlgeschlagenes tar darf kein gutes Backup verdrängen — Review-Fund; derselbe
+  Härtungsschritt auch in `auto_update.dart`). Quoted `<<'WRAP'`,
+  Status-Datei `/var/lib/pi-tool/backup.status`, Marker `BACKUP_TIMER_INSTALLED/
+  REMOVED` über `_runRootScriptExpectMarker`. Pro-Feature. HA bewusst NICHT im
+  Timer (Docker-/config-Discovery zu fragil für unbeaufsichtigt).
 - **`alerts.dart`** — 30-Min-Health-Check → **ntfy**-Push (backend-frei) bei
   Platte ≥90% / Temp ≥75° / totem Dienst / anstehenden Updates. **Debounce** via
   `alerts.last` (Push nur bei Änderung). **Heredoc-Regel**: ntfy-Server/-Topic
