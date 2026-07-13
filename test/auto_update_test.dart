@@ -23,6 +23,9 @@ void main() {
       expect(s, contains('enable --now pi-tool-autoupdate.timer'));
       expect(s, contains('AUTOUPDATE_INSTALLED'));
     });
+    test('the .timer heredoc is QUOTED (no install-time shell expansion)', () {
+      expect(s, contains("<<'TMR'"));
+    });
     test('the wrapper updates apt, self-heals evcc, and logs a result', () {
       expect(s, contains('apt-get update'));
       expect(s, contains('full-upgrade'));

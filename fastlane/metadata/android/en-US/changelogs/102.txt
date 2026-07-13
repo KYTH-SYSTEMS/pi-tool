@@ -1,0 +1,1 @@
+Remote access more robust: connecting via a Tailscale MagicDNS name (*.ts.net) no longer accidentally overwrites your home IP — "Back to home IP" stays reliable. Hardening: extra safety for the timer scripts generated on the Pi (shell quoting). Polish: the "Restart Pi" dialog is no longer marked red (a reboot doesn't lose data).

@@ -1586,7 +1586,7 @@ class EvccUpdater {
               runner,
               log,
               config,
-              'LC_ALL=C sudo -S apt-get install --only-upgrade -y $package',
+              'LC_ALL=C sudo -S apt-get install --only-upgrade -y ${shSingleQuote(package)}',
               '$package-Update fehlgeschlagen');
           log('$package ist aktuell.');
         },

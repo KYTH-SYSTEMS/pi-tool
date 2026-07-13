@@ -20,6 +20,24 @@ void main() {
     });
   });
 
+  group('isTailnetHost', () {
+    test('numeric CGNAT range (100.x) is a tailnet host', () {
+      expect(isTailnetHost('100.64.1.5'), isTrue);
+      expect(isTailnetHost('100.100.100.100'), isTrue);
+    });
+    test('MagicDNS names (*.ts.net) are tailnet hosts', () {
+      expect(isTailnetHost('raspberrypi.tail1234.ts.net'), isTrue);
+      expect(isTailnetHost('PI.TAIL1234.TS.NET'), isTrue); // case-insensitive
+    });
+    test('LAN IPs and plain hostnames are NOT tailnet hosts', () {
+      expect(isTailnetHost('192.168.178.64'), isFalse);
+      expect(isTailnetHost('10.0.0.5'), isFalse);
+      expect(isTailnetHost('raspberrypi.local'), isFalse);
+      expect(isTailnetHost('100potatoes.example.com'), isFalse); // not 100.
+      expect(isTailnetHost(''), isFalse);
+    });
+  });
+
   group('parseTailscaleAuthUrl', () {
     test('extracts the login URL from up output', () {
       const out = 'To authenticate, visit:\n\n'

@@ -43,6 +43,15 @@ String? parseTailscaleAuthUrl(String out) =>
 String? parseTailscaleIp(String out) =>
     RegExp(r'\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b').firstMatch(out)?.group(0);
 
+/// True when [host] is a Tailscale address — either the numeric CGNAT range
+/// (100.64.0.0/10, recognised by the `100.` prefix) or a MagicDNS name
+/// (`*.ts.net`). Such hosts only route while the tailnet VPN is up, so they must
+/// never be remembered as a Pi's home/LAN address.
+bool isTailnetHost(String host) {
+  final h = host.trim().toLowerCase();
+  return h.startsWith('100.') || h.endsWith('.ts.net');
+}
+
 typedef TailscaleStatus = ({bool installed, bool up, String? ip});
 
 /// Parses [tailscaleStatusCommand] output. "up" = has a tailnet IP.

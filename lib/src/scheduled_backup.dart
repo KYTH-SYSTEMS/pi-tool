@@ -69,7 +69,7 @@ Description=Pi-Tool geplante Backups
 Type=oneshot
 ExecStart=/usr/local/lib/$scheduledBackupUnit.sh
 SVC
-cat > /etc/systemd/system/$scheduledBackupUnit.timer <<TMR
+cat > /etc/systemd/system/$scheduledBackupUnit.timer <<'TMR'
 [Unit]
 Description=Pi-Tool geplante Backups (Timer)
 [Timer]

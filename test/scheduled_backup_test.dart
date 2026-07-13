@@ -20,8 +20,10 @@ void main() {
       expect(s.trimRight(), endsWith('BACKUP_TIMER_INSTALLED'));
     });
 
-    test('the wrapper heredoc is QUOTED (no install-time expansion)', () {
+    test('the wrapper + .timer heredocs are QUOTED (no install-time expansion)',
+        () {
       expect(s, contains("<<'WRAP'"));
+      expect(s, contains("<<'TMR'"));
     });
 
     test('backs up evcc + Pi-hole (presence-gated) with rotation by keep', () {

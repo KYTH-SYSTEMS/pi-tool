@@ -13,6 +13,14 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.55.0': [
+    'Fernzugriff robuster: Verbindest du dich über einen Tailscale-MagicDNS-Namen '
+        '(*.ts.net), wird deine Heim-IP nicht mehr versehentlich überschrieben — '
+        '„Zurück auf Heim-IP" bleibt zuverlässig.',
+    'Härtung & Feinschliff: zusätzliche Absicherung der auf dem Pi erzeugten '
+        'Timer-Skripte (Shell-Quoting), und der „Pi neu starten"-Dialog ist nicht '
+        'mehr rot markiert — ein Neustart löscht keine Daten.',
+  ],
   '0.54.0': [
     'SSH-Key einrichten — jetzt direkt beim Pi: Tippst du im Verbindungsformular '
         'auf „SSH-Key" und hast noch keinen hinterlegt, erscheint dort ein Knopf '

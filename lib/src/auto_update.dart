@@ -62,7 +62,7 @@ Description=Pi-Tool automatische Updates
 Type=oneshot
 ExecStart=/usr/local/lib/$autoUpdateUnit.sh
 SVC
-cat > /etc/systemd/system/$autoUpdateUnit.timer <<TMR
+cat > /etc/systemd/system/$autoUpdateUnit.timer <<'TMR'
 [Unit]
 Description=Pi-Tool automatische Updates (Timer)
 [Timer]

@@ -137,16 +137,22 @@ void main() {
   });
 
   group('buildServiceLogsCommand', () {
-    test('apt/systemd service → journalctl -u <unit>', () {
+    test('apt/systemd service → journalctl -u <unit> (single-quoted)', () {
       final r = buildServiceLogsCommand(id: 'evcc', detail: 'apt · aktiv');
-      expect(r.command, contains('journalctl -u evcc'));
+      expect(r.command, contains("journalctl -u 'evcc'"));
       expect(r.sudo, isTrue);
     });
     test('maps pihole → pihole-FTL and grafana → grafana-server', () {
       expect(buildServiceLogsCommand(id: 'pihole', detail: 'apt').command,
-          contains('journalctl -u pihole-FTL'));
+          contains("journalctl -u 'pihole-FTL'"));
       expect(buildServiceLogsCommand(id: 'grafana', detail: 'apt').command,
-          contains('journalctl -u grafana-server'));
+          contains("journalctl -u 'grafana-server'"));
+    });
+    test('quotes a hostile systemd unit id (unknown id → used verbatim)', () {
+      final r =
+          buildServiceLogsCommand(id: "x';reboot;'", detail: 'apt · aktiv');
+      expect(r.command, contains(r"'\''"));
+      expect(r.command, isNot(contains("journalctl -u x';reboot")));
     });
     test('System card → the whole journal', () {
       final r = buildServiceLogsCommand(id: 'system', detail: '');

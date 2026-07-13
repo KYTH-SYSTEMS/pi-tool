@@ -16,6 +16,9 @@ void main() {
       expect(s, contains('OnCalendar='));
       expect(s, contains('ALERTS_INSTALLED'));
     });
+    test('the .timer heredoc is QUOTED (no install-time shell expansion)', () {
+      expect(s, contains("<<'TMR'"));
+    });
     test('only alerts on a CHANGE (debounced via a state file, no spam)', () {
       expect(s, contains('/var/lib/pi-tool/alerts.last'));
     });

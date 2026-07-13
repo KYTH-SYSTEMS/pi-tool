@@ -1,0 +1,1 @@
+Fernzugriff robuster: über einen Tailscale-MagicDNS-Namen (*.ts.net) wird die Heim-IP nicht mehr versehentlich überschrieben — „Zurück auf Heim-IP" bleibt zuverlässig. Härtung: zusätzliche Absicherung der auf dem Pi erzeugten Timer-Skripte (Shell-Quoting). Feinschliff: der „Pi neu starten"-Dialog ist nicht mehr rot markiert (ein Neustart löscht keine Daten).

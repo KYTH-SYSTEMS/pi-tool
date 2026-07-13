@@ -39,6 +39,7 @@ import 'src/parsing.dart';
 import 'src/profiles.dart';
 import 'src/services/apt_services.dart';
 import 'src/services/pi_service.dart';
+import 'src/services/tailscale.dart';
 import 'src/settings_store.dart';
 import 'src/ssh_runner.dart';
 import 'src/update_check.dart';
@@ -455,11 +456,12 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Remembers the home/LAN address we just connected with, so the user can
   /// switch the host back to it with one tap after using remote access. A
-  /// tailnet IP (100.x) is NOT a home address — that's what [_tailscaleIp] is
-  /// for; anything else (LAN IP or `.local` hostname) counts as home.
+  /// tailnet address (100.x OR a `*.ts.net` MagicDNS name) is NOT a home
+  /// address — that's what [_tailscaleIp] is for; anything else (LAN IP or
+  /// `.local` hostname) counts as home.
   void _rememberLanHost() {
     final host = _host.text.trim();
-    if (host.isNotEmpty && !host.startsWith('100.') && host != _lanHost) {
+    if (host.isNotEmpty && !isTailnetHost(host) && host != _lanHost) {
       _lanHost = host;
       _scheduleSave();
     }
@@ -1314,7 +1316,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (!await _confirm(
       'Pi neu starten?',
       'Startet den Raspberry Pi neu. Die Verbindung bricht dabei kurz ab.',
-      destructive: true,
+      // Not destructive-red: a reboot interrupts service briefly but doesn't
+      // lose data (unlike shutdown/delete). Confirm, but don't alarm.
     )) {
       return;
     }
@@ -1374,8 +1377,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
     _lastConfig = config;
     _persistSettings();
+    _lastAction = _setupSshKey; // set before busy, matching every other handler
     _beginBusy();
-    _lastAction = _setupSshKey;
     final name = _currentProfile().name;
     await _guard(() async {
       final key = await generateSshKey(comment: 'pi-tool@$name');
@@ -3582,7 +3585,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (up && s.version != null)
                 _CardAction('Diese IP als Host übernehmen (${s.version})',
                     () => _useTailscaleIp(s.version!)),
-              _CardAction('Abmelden', () => _tailscaleSet(logout: true)),
+              // "Trennen" (primary) = tailscale down; this is the account-level
+              // logout — labelled distinctly so the two aren't confused.
+              _CardAction(
+                  'Von Tailscale abmelden', () => _tailscaleSet(logout: true)),
             ],
           ));
         case 'system':
@@ -4267,10 +4273,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                 const PopupMenuItem(
                     value: 'remote',
                     child: Text('Fernzugriff: Tailscale öffnen')),
-              // The undo for the switch above: once the host is a tailnet IP,
-              // offer a one-tap way back to the remembered home/LAN address
-              // (e.g. when you're back on the local network).
-              if (_lanHost.isNotEmpty && _host.text.trim().startsWith('100.'))
+              // The undo for the switch above: once the host is a tailnet
+              // address, offer a one-tap way back to the remembered home/LAN
+              // address (e.g. when you're back on the local network).
+              if (_lanHost.isNotEmpty && isTailnetHost(_host.text.trim()))
                 PopupMenuItem(
                     value: 'homeip',
                     child: Text('Zurück auf Heim-IP ($_lanHost)')),

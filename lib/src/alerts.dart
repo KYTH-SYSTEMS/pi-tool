@@ -73,7 +73,7 @@ Description=Pi-Tool Health-Alerts
 Type=oneshot
 ExecStart=/usr/local/lib/$alertsUnit.sh
 SVC
-cat > /etc/systemd/system/$alertsUnit.timer <<TMR
+cat > /etc/systemd/system/$alertsUnit.timer <<'TMR'
 [Unit]
 Description=Pi-Tool Health-Alerts (Timer)
 [Timer]

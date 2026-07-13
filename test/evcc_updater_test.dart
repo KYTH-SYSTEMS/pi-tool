@@ -1691,7 +1691,8 @@ void main() {
     test('updateAptPackage refreshes tolerantly then only-upgrades the package',
         () async {
       const upd = 'LC_ALL=C sudo -S apt-get update -qq';
-      const upg = 'LC_ALL=C sudo -S apt-get install --only-upgrade -y grafana';
+      const upg =
+          "LC_ALL=C sudo -S apt-get install --only-upgrade -y 'grafana'";
       final runner = FakeSshRunner({
         upd: [_r('', stderr: 'Failed to fetch', exitCode: 100)], // tolerated
         upg: [_r('1 upgraded, 0 newly installed', exitCode: 0)],
