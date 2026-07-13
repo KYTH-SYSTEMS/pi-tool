@@ -21,6 +21,11 @@ class Profile {
   /// remote-access helper can pre-fill it as host even when NOT connected.
   final String tailscaleIp;
 
+  /// Last-seen home/LAN address of this Pi (the non-tailnet host used to connect),
+  /// remembered so the user can switch the host back from the tailnet IP to the
+  /// home IP with one tap after using remote access.
+  final String lanHost;
+
   const Profile({
     required this.name,
     this.host = '',
@@ -32,9 +37,11 @@ class Profile {
     this.keyPassphrase = '',
     this.fullUpgrade = false,
     this.tailscaleIp = '',
+    this.lanHost = '',
   });
 
-  Profile copyWith({String? name, String? tailscaleIp}) => Profile(
+  Profile copyWith({String? name, String? tailscaleIp, String? lanHost}) =>
+      Profile(
         name: name ?? this.name,
         host: host,
         port: port,
@@ -45,6 +52,7 @@ class Profile {
         keyPassphrase: keyPassphrase,
         fullUpgrade: fullUpgrade,
         tailscaleIp: tailscaleIp ?? this.tailscaleIp,
+        lanHost: lanHost ?? this.lanHost,
       );
 
   Map<String, dynamic> toJson() => {
@@ -58,6 +66,7 @@ class Profile {
         'keyPassphrase': keyPassphrase,
         'fullUpgrade': fullUpgrade,
         'tailscaleIp': tailscaleIp,
+        'lanHost': lanHost,
       };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -71,6 +80,7 @@ class Profile {
         keyPassphrase: (j['keyPassphrase'] ?? '').toString(),
         fullUpgrade: j['fullUpgrade'] == true,
         tailscaleIp: (j['tailscaleIp'] ?? '').toString(),
+        lanHost: (j['lanHost'] ?? '').toString(),
       );
 }
 

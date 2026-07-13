@@ -2285,6 +2285,49 @@ void main() {
     expect(find.text('100.64.1.5'), findsWidgets); // host pre-filled
   });
 
+  testWidgets(
+      '⋮ → „Zurück auf Heim-IP" stellt nach dem Fernzugriff die LAN-IP wieder her',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.1.5'),
+      ];
+    final launcher = _FakeLauncher();
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+        store: _FakeStore(_ready), // host 192.168.178.64 (LAN)
+        updater: u,
+        updateChecker: _noUpdateChecker,
+        appLauncher: launcher,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    // Connect at home → remembers BOTH the LAN host and the tailnet IP.
+    await detect(tester);
+
+    // Go remote: switch the host to the tailnet IP.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fernzugriff: Tailscale öffnen'));
+    await tester.pumpAndSettle();
+    expect(find.text('100.64.1.5'), findsWidgets); // now on the tailnet IP
+
+    // Back home: one tap restores the remembered LAN address — no re-scan, no
+    // manual retyping. The entry only shows while the host is a tailnet IP.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Zurück auf Heim-IP (192.168.178.64)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('192.168.178.64'), findsWidgets); // host back on LAN
+  });
+
   testWidgets('erkannter systemd-Dienst (AdGuard Home) → Karte + Neustart',
       (tester) async {
     useTallScreen(tester);

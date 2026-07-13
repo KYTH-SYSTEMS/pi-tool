@@ -251,7 +251,10 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   ist genau dann sinnvoll, wenn man NICHT verbunden ist; die Karte ist offline
   unerreichbar. Die zuletzt gesehene Tailnet-IP wird pro Profil persistiert
   (`Profile.tailscaleIp`, von `_rememberTailscaleIp` bei Detection gesetzt), damit
-  der Helfer den Host auch offline vorbelegen kann. **Android lässt keine App
+  der Helfer den Host auch offline vorbelegen kann. Symmetrisch dazu merkt sich
+  `_rememberLanHost` die Heim-/LAN-Adresse (`Profile.lanHost`, jeder Nicht-100.x-
+  Host beim Verbinden) — steht der Host auf einer Tailnet-IP, bietet das ⋮-Menü
+  „Zurück auf Heim-IP" (`_useHomeHost`) als Ein-Tap-Undo. **Android lässt keine App
   ein fremdes/System-VPN selbst einschalten** — bewusst KEIN eigener VPN-Client
   (v0.20.0-Native-Lektion). Manifest: `<queries><package com.tailscale.ipn>` für
   Package-Sichtbarkeit (Android 11+). Seam injizierbar für Tests.

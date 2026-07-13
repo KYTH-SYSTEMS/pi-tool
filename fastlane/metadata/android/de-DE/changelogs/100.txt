@@ -1,0 +1,1 @@
+Zurück auf die Heim-IP mit einem Tap: Warst du über die Tailscale-IP (100.x) verbunden und bist wieder im Heim-WLAN, gibt es im ⋮-Menü jetzt „Zurück auf Heim-IP". Die App merkt sich deine LAN-Adresse automatisch und setzt sie zurück — kein erneutes „Pi suchen" oder Abtippen nötig.

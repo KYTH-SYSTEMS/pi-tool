@@ -225,6 +225,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   bool _fullUpgrade = false;
   String _tailscaleIp = ''; // remembered 100.x tailnet IP of the active Pi
+  String _lanHost = ''; // remembered home/LAN address of the active Pi
   bool _obscure = true;
   bool _busy = false;
   AuthMode _authMode = AuthMode.password;
@@ -394,6 +395,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     _authMode = p.authMode;
     _fullUpgrade = p.fullUpgrade;
     _tailscaleIp = p.tailscaleIp;
+    _lanHost = p.lanHost;
   }
 
   /// Switching to another Pi: drop everything tied to the previous host so
@@ -432,6 +434,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         keyPassphrase: _keyPassphrase.text,
         fullUpgrade: _fullUpgrade,
         tailscaleIp: _tailscaleIp,
+        lanHost: _lanHost,
       );
 
   /// Remembers the Pi's Tailscale tailnet IP from a detection, so the remote-
@@ -447,6 +450,18 @@ class _UpdaterPageState extends State<UpdaterPage>
         _scheduleSave();
         return;
       }
+    }
+  }
+
+  /// Remembers the home/LAN address we just connected with, so the user can
+  /// switch the host back to it with one tap after using remote access. A
+  /// tailnet IP (100.x) is NOT a home address — that's what [_tailscaleIp] is
+  /// for; anything else (LAN IP or `.local` hostname) counts as home.
+  void _rememberLanHost() {
+    final host = _host.text.trim();
+    if (host.isNotEmpty && !host.startsWith('100.') && host != _lanHost) {
+      _lanHost = host;
+      _scheduleSave();
     }
   }
 
@@ -1224,6 +1239,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       setState(() {
         _services = services;
         _rememberTailscaleIp(services);
+        _rememberLanHost();
         final found =
             services.where((s) => s.installed).map((s) => s.name).join(', ');
         _statusMessage = 'Verbindung OK – erkannt: $found.';
@@ -2964,6 +2980,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         setState(() {
           _services = reconciled;
           _rememberTailscaleIp(reconciled);
+          _rememberLanHost();
           _connectionOk = true; // a successful detect proves the Pi is reachable
         });
       }
@@ -3967,6 +3984,18 @@ class _UpdaterPageState extends State<UpdaterPage>
     _snack('Host auf $ip gesetzt – jetzt „Verbindung herstellen".');
   }
 
+  /// The undo for the Tailscale switch: puts the remembered home/LAN address
+  /// back into the host field (used when you're back on the local network).
+  void _useHomeHost() {
+    if (_lanHost.isEmpty) return;
+    setState(() {
+      _host.text = _lanHost;
+      _tab = 0;
+    });
+    _scheduleSave();
+    _snack('Host zurück auf $_lanHost gesetzt – jetzt „Verbindung herstellen".');
+  }
+
   /// One-tap remote access: pre-fills the Pi's tailnet IP as host, then opens the
   /// Tailscale app so the user can enable the phone-side VPN (Android won't let
   /// us toggle it ourselves). Play Store fallback if Tailscale isn't installed.
@@ -4171,6 +4200,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _setupSshKey();
                 case 'remote':
                   _remoteAccessViaTailscale(_tailscaleIp);
+                case 'homeip':
+                  _useHomeHost();
                 case 'find':
                   _findPi();
                 case 'dashboard':
@@ -4215,6 +4246,13 @@ class _UpdaterPageState extends State<UpdaterPage>
                 const PopupMenuItem(
                     value: 'remote',
                     child: Text('Fernzugriff: Tailscale öffnen')),
+              // The undo for the switch above: once the host is a tailnet IP,
+              // offer a one-tap way back to the remembered home/LAN address
+              // (e.g. when you're back on the local network).
+              if (_lanHost.isNotEmpty && _host.text.trim().startsWith('100.'))
+                PopupMenuItem(
+                    value: 'homeip',
+                    child: Text('Zurück auf Heim-IP ($_lanHost)')),
               PopupMenuItem(
                   value: 'find',
                   enabled: !_busy,

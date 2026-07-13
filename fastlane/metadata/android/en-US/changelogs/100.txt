@@ -1,0 +1,1 @@
+Back to the home IP with one tap: after connecting via the Tailscale IP (100.x), once you're back on your home Wi-Fi the ⋮ menu now offers "Back to home IP". The app remembers your LAN address automatically and restores it — no more re-scanning or retyping.

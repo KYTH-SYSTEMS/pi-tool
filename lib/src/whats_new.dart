@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.53.2': [
+    'Zurück auf die Heim-IP mit einem Tap: Wenn du über die Tailscale-IP (100.x) '
+        'verbunden warst und wieder zuhause im WLAN bist, gibt es im ⋮-Menü jetzt '
+        '„Zurück auf Heim-IP" — die App merkt sich deine LAN-Adresse automatisch '
+        'und setzt sie zurück. Kein erneutes „Pi suchen" oder Abtippen mehr.',
+  ],
   '0.53.1': [
     'Fernzugriff jetzt am richtigen Ort: „Fernzugriff: Tailscale öffnen" liegt '
         'jetzt im ⋮-Menü oben rechts — also genau dann erreichbar, wenn du '
