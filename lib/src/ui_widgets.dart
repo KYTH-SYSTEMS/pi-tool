@@ -774,10 +774,14 @@ class _AutomationTile extends StatelessWidget {
 /// One entry in a service card's ⋮ menu. [pro] marks a Pro-only action so the
 /// menu can show a lock for free users (the tap still routes through the gate).
 class _CardAction {
-  const _CardAction(this.label, this.onTap, {this.pro = false});
+  const _CardAction(this.label, this.onTap,
+      {this.pro = false, this.destructive = false});
   final String label;
   final VoidCallback onTap;
   final bool pro;
+
+  /// Renders the menu label in the error colour (e.g. shutdown/reboot).
+  final bool destructive;
 }
 
 /// One entry in the "Dienst hinzufügen" picker: a not-yet-installed service and
@@ -922,7 +926,12 @@ class _ServiceCard extends StatelessWidget {
                                   ),
                                 ],
                               )
-                            : Text(actions[i].label),
+                            : Text(
+                                actions[i].label,
+                                style: actions[i].destructive
+                                    ? TextStyle(color: cs.error)
+                                    : null,
+                              ),
                       ),
                   ],
                 )

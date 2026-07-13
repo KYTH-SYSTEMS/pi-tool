@@ -397,6 +397,11 @@ const String serviceRestartCommand =
 /// Reboots the Pi (needs sudo). The SSH connection drops as a result.
 const String rebootCommand = 'LC_ALL=C sudo -S reboot';
 
+/// Powers the Pi off (needs sudo). The SSH connection drops as a result, and —
+/// unlike [rebootCommand] — the Pi stays off until it is physically powered on
+/// again.
+const String shutdownCommand = 'LC_ALL=C sudo -S poweroff';
+
 /// Builds the ordered update sequence.
 ///
 /// - [fullUpgrade] `false` upgrades only evcc; `true` upgrades the whole system.

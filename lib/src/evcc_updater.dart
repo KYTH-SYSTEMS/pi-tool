@@ -1979,6 +1979,57 @@ class EvccUpdater {
     );
   }
 
+  /// Powers the Pi off. Like [reboot], the SSH connection drops as a result and
+  /// that is treated as success; a rejected sudo password (no disconnect) is
+  /// reported. Unlike a reboot, the Pi stays OFF until physically powered on.
+  Future<void> shutdown({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Fahre den Pi herunter …');
+        log('\$ $shutdownCommand');
+        var combined = '';
+        int? exitCode;
+        var disconnected = false;
+        try {
+          final result = await runner.run(
+            shutdownCommand,
+            stdin: '${config.password}\n',
+            onOutput: (chunk) {
+              final t = chunk.trimRight();
+              if (t.isNotEmpty) log(t);
+            },
+          );
+          combined = '${result.stdout}\n${result.stderr}';
+          exitCode = result.exitCode;
+        } catch (_) {
+          // poweroff drops the SSH connection — expected, treat as success.
+          disconnected = true;
+        }
+        if (isSudoPasswordFailure(combined)) {
+          throw const EvccUpdateException(
+            UpdateErrorKind.sudo,
+            'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
+          );
+        }
+        // A real poweroff either drops the connection (caught above) or returns
+        // exit 0. A non-zero exit WITHOUT a disconnect (e.g. sudoers forbids
+        // `poweroff`) means the Pi did not shut down — surface it.
+        if (!disconnected && exitCode != null && exitCode != 0) {
+          throw EvccUpdateException(
+            UpdateErrorKind.unknown,
+            'Herunterfahren fehlgeschlagen (Exit $exitCode). Details im Log.',
+          );
+        }
+        log('Der Pi fährt herunter – er bleibt aus, bis du ihn wieder einschaltest.');
+      },
+    );
+  }
+
   /// Opens the connection, runs [body], and maps any SSH/IO failure to an
   /// [EvccUpdateException]. The runner is always closed afterwards.
   Future<T> _withConnection<T>({

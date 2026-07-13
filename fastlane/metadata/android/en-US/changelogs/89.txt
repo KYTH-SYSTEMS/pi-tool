@@ -1,0 +1,1 @@
+New: "Shut down Pi" — next to "Restart Pi" (System card + ⋮ menu). It powers the Raspberry Pi off completely; it then stays OFF until you physically switch it on again — so there is a clear confirmation prompt. Also, the GitHub release notes now list the concrete changes of each version.

@@ -105,9 +105,29 @@ jobs:
           path: build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
 
+      # Human-readable release notes: use the curated per-version changelog
+      # (fastlane, DE + EN) as the release body, so each release LISTS its
+      # actual changes instead of only the auto-generated commit list. The
+      # changelog file is named by the Android versionCode (the `+NN` in
+      # pubspec version).
+      - name: Compose release notes from the changelog
+        if: startsWith(github.ref, 'refs/tags/') && env.HAS_KEYSTORE == 'true'
+        run: |
+          CODE="$(grep -m1 '^version:' pubspec.yaml | sed 's/.*+//' | tr -d '[:space:]')"
+          DE="fastlane/metadata/android/de-DE/changelogs/${CODE}.txt"
+          EN="fastlane/metadata/android/en-US/changelogs/${CODE}.txt"
+          {
+            if [ -f "$DE" ]; then echo "## Was ist neu"; echo; cat "$DE"; echo; fi
+            if [ -f "$EN" ]; then echo "## What's new"; echo; cat "$EN"; echo; fi
+          } > RELEASE_NOTES.md
+          echo "---- release notes (versionCode ${CODE}) ----"; cat RELEASE_NOTES.md
+
       - name: Publish Release (on tag)
         if: startsWith(github.ref, 'refs/tags/') && env.HAS_KEYSTORE == 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: build/app/outputs/flutter-apk/app-release.apk
+          # Curated changelog first; the auto-generated commit list is appended
+          # below it (generate_release_notes).
+          body_path: RELEASE_NOTES.md
           generate_release_notes: true

@@ -1,0 +1,1 @@
+Neu: „Pi herunterfahren" — neben „Pi neu starten" (System-Karte + ⋮-Menü). Fährt den Raspberry Pi komplett herunter; er bleibt danach AUS, bis du ihn physisch neu einschaltest — daher eine deutliche Sicherheitsabfrage. Außerdem listen die GitHub-Release-Notes ab sofort die konkreten Änderungen dieser Version auf.

@@ -20,7 +20,10 @@ Nicht nur die interne Referenz — auch die nach außen gerichteten Texte:
 - Entfernte Features auch aus den Docs **löschen** (nicht nur Neues ergänzen).
 - Kleine Bugfixes ohne Nutzer-/Strukturwirkung brauchen kein Doku-Update.
 
-GitHub-Release-Notes generiert die CI automatisch — die nicht von Hand pflegen.
+GitHub-Release-Notes: Die CI nimmt den **fastlane-Changelog** des versionCode als
+Release-Body (darunter die auto-generierte Commit-Liste). Also **immer den
+Changelog `<versionCode>.txt` pflegen** — der landet 1:1 im Release. Die
+Commit-Liste selbst nicht von Hand pflegen.
 
 ## Nicht verhandelbare Invarianten (Details in ARCHITECTURE.md)
 - **Sicherheit:** Pi-Passwörter/Keys niemals in Repo/Logs (redactPassword);

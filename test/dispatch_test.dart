@@ -130,6 +130,14 @@ class FakeEvccUpdater extends EvccUpdater {
   @override
   Future<void> cancel() async => cancelCalls++;
 
+  int shutdownCalls = 0;
+  @override
+  Future<void> shutdown({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      shutdownCalls++;
+
   final aptUpdates = <String>[]; // packages updated via updateAptPackage
   final aptInstalls = <String>[]; // service ids installed via installAptService
   int piholeBackupCalls = 0, haBackupCalls = 0;
@@ -1974,5 +1982,25 @@ void main() {
     expect(find.text('Keller'), findsOneWidget);
     expect(find.textContaining('Updates verfügbar'), findsWidgets);
     expect(find.textContaining('Kein Host'), findsOneWidget);
+  });
+
+  testWidgets('⋮ → Pi herunterfahren confirms, then powers the Pi off',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pi herunterfahren'));
+    await tester.pumpAndSettle();
+
+    // A destructive confirm gates the shutdown — nothing runs until confirmed.
+    expect(find.text('Pi herunterfahren?'), findsOneWidget);
+    expect(u.shutdownCalls, 0);
+    await tester.tap(find.widgetWithText(FilledButton, 'Herunterfahren'));
+    await tester.pumpAndSettle();
+    expect(u.shutdownCalls, 1);
   });
 }

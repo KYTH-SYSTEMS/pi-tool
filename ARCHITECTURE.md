@@ -339,6 +339,12 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   **fat APK** (arm64+armeabi-v7a) + AAB → **Signing-Material löschen, bevor**
   Dritt-Actions laufen → APK-Artefakt + auf `v*`-Tag GitHub-Release. Actions
   SHA-gepinnt, Secret nur im Signing-Step, Tag ohne Keystore = harter Fehler.
+- **Release-Notes:** Der Schritt „Compose release notes" liest den **fastlane-
+  Changelog** des aktuellen versionCode (`fastlane/…/{de-DE,en-US}/changelogs/
+  <code>.txt`, `<code>` = `+NN` aus der pubspec-Version) in `RELEASE_NOTES.md`
+  und übergibt ihn als `body_path`. So **listet jedes Release die konkreten
+  Änderungen** (kuratierter Changelog zuerst, darunter die auto-generierte
+  Commit-Liste). ⇒ Den fastlane-Changelog pro Release **immer** pflegen.
 
 ## 9. Verteilung & Recht
 

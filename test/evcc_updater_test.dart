@@ -1320,6 +1320,40 @@ void main() {
     });
   });
 
+  group('EvccUpdater.shutdown', () {
+    test('treats a dropped connection as success', () async {
+      final runner = FakeSshRunner({},
+          runErrors: {shutdownCommand: const SocketException('closed')});
+      // poweroff drops the SSH connection — must NOT be reported as an error.
+      await _updaterWith(runner).shutdown(config: _config, onLog: (_) {});
+    });
+
+    test('reports failure on a non-zero, non-password exit', () async {
+      final runner = FakeSshRunner({
+        shutdownCommand: [
+          _r('', stderr: 'poweroff: Operation not permitted', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).shutdown(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('reports a rejected sudo password (no disconnect)', () async {
+      final runner = FakeSshRunner({
+        shutdownCommand: [
+          _r('', stderr: 'sudo: 1 incorrect password attempt', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).shutdown(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
+    });
+  });
+
   group('EvccUpdater.cancel', () {
     test('closes the connection and surfaces a cancelled error', () async {
       final runner = _HangingRunner();

@@ -13,6 +13,12 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.44.0': [
+    'Pi herunterfahren: Neben „Pi neu starten" gibt es jetzt „Pi herunterfahren" '
+        '(System-Karte und ⋮-Menü). Achtung — der Pi bleibt danach AUS und ist '
+        'erst wieder erreichbar, wenn du ihn physisch neu einschaltest; deshalb '
+        'kommt eine deutliche Sicherheitsabfrage.',
+  ],
   '0.43.1': [
     'Mehr Platz auf der Startseite: die Fußzeile (Version, Rechtliches) ist '
         'nicht mehr fest angepinnt, sondern hängt jetzt unten an der Liste — der '

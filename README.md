@@ -64,7 +64,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   **Verlauf + Schnellbefehlen**. Interaktive Programme (htop, Editoren, `-f`)
   bekommen einen Hinweis mit Alternative statt eines kryptischen Fehlers. Auf
   eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
-- **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten.
+- **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten,
+  Pi herunterfahren (mit Sicherheitsabfrage — der Pi bleibt danach aus).
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB frei — oder ≥90 % belegt **und**
   zugleich <5 GB frei) warnt sie, bevor ein Update daran scheitert.

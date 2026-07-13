@@ -1267,6 +1267,33 @@ class _UpdaterPageState extends State<UpdaterPage>
     });
   }
 
+  Future<void> _shutdown() async {
+    if (_busy) return;
+    if (!await _confirm(
+      'Pi herunterfahren?',
+      'Fährt den Raspberry Pi komplett herunter. Er bleibt danach AUS und ist '
+          'erst wieder erreichbar, wenn du ihn physisch vom Strom trennst und '
+          'neu einschaltest.',
+      confirmLabel: 'Herunterfahren',
+      destructive: true,
+    )) {
+      return;
+    }
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _shutdown;
+    await _guard(() async {
+      await _updater.shutdown(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage =
+            'Pi wird heruntergefahren – bleibt aus, bis du ihn wieder einschaltest.';
+        _statusOk = true;
+      });
+      _addHistory('Pi heruntergefahren.');
+    });
+  }
+
   /// Lists the evcc backups on the Pi, lets the user pick one, confirms, then
   /// restores it (stops evcc → extract → restart). Backups are made before apt
   /// updates (see the backup-before-update setting).
@@ -3107,6 +3134,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               _CardAction('Aufräumen (Speicher freigeben)',
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction('Pi neu starten', _reboot),
+              _CardAction('Pi herunterfahren', _shutdown, destructive: true),
             ],
           ));
         default:
@@ -3631,6 +3659,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _showApiStatus();
                 case 'reboot':
                   _reboot();
+                case 'shutdown':
+                  _shutdown();
                 case 'setup':
                   _openSetupGuide();
                 case 'find':
@@ -3658,6 +3688,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                   value: 'reboot',
                   enabled: !_busy,
                   child: const Text('Pi neu starten')),
+              PopupMenuItem(
+                  value: 'shutdown',
+                  enabled: !_busy,
+                  child: Text('Pi herunterfahren',
+                      style: TextStyle(color: theme.colorScheme.error))),
               const PopupMenuDivider(),
               const PopupMenuItem(
                   value: 'setup', child: Text('Pi einrichten')),
