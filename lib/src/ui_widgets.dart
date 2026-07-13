@@ -1458,6 +1458,7 @@ class _ConnectionCard extends StatelessWidget {
     required this.enabled,
     required this.onToggleObscure,
     required this.onAuthMode,
+    this.onSetupKey,
   });
 
   final TextEditingController host;
@@ -1471,6 +1472,10 @@ class _ConnectionCard extends StatelessWidget {
   final bool enabled;
   final VoidCallback onToggleObscure;
   final ValueChanged<AuthMode> onAuthMode;
+
+  /// Runs the automatic per-Pi SSH-key setup (generate → install → switch).
+  /// Offered inline while the SSH-Key segment is selected but no key exists yet.
+  final VoidCallback? onSetupKey;
 
   @override
   Widget build(BuildContext context) {
@@ -1544,6 +1549,50 @@ class _ConnectionCard extends StatelessWidget {
               onSelectionChanged: enabled ? (s) => onAuthMode(s.first) : null,
             ),
             if (keyMode) ...[
+              // Per-Pi convenience: while the SSH-Key segment is on but no key
+              // is set yet, offer the automatic setup right here. Rebuilds live
+              // off the key field, so it disappears the moment a key is present
+              // (pasted or freshly generated).
+              if (onSetupKey != null)
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: privateKey,
+                  builder: (context, value, _) {
+                    if (value.text.trim().isNotEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                            color: dark ? Colors.white12 : cs.outlineVariant),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Noch kein Schlüssel?',
+                              style: Theme.of(context).textTheme.labelLarge),
+                          const SizedBox(height: 8),
+                          FilledButton.tonalIcon(
+                            onPressed: enabled ? onSetupKey : null,
+                            icon: const Icon(Icons.vpn_key_outlined, size: 18),
+                            label: const Text('SSH-Key automatisch einrichten'),
+                            style: FilledButton.styleFrom(
+                                minimumSize: const Size.fromHeight(44)),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Erzeugt einen Schlüssel und hinterlegt ihn auf dem '
+                            'Pi — dafür wird einmal dein Passwort gebraucht.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               TextField(
                 controller: privateKey,
                 enabled: enabled,

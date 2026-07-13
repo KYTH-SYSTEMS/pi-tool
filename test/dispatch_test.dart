@@ -2155,16 +2155,20 @@ void main() {
   });
 
   testWidgets(
-      '⋮ → SSH-Key einrichten generiert, installiert und stellt auf Key-Login um',
+      'SSH-Key: der Inline-Button im Formular richtet den Key automatisch ein',
       (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u)); // _ready: password auth, host + pw set
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    // The auto-setup lives per-Pi in the connection form: tapping the SSH-Key
+    // segment (with no key yet) reveals the "automatisch einrichten" button.
+    await tester.tap(find.text('SSH-Key'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('SSH-Key einrichten'));
+    expect(find.text('SSH-Key automatisch einrichten'), findsOneWidget);
+
+    await tester.tap(find.text('SSH-Key automatisch einrichten'));
     await tester.pumpAndSettle();
     expect(find.text('SSH-Key einrichten?'), findsOneWidget); // confirm gate
     await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
@@ -2175,6 +2179,8 @@ void main() {
     expect(u.installedKeys.single, startsWith('ssh-ed25519 '));
     // Only switches after verifying the Pi accepts the key.
     expect(find.textContaining('SSH-Key eingerichtet'), findsWidgets);
+    // A key is set up now → the auto-setup button is gone.
+    expect(find.text('SSH-Key automatisch einrichten'), findsNothing);
   });
 
   testWidgets(
@@ -2185,9 +2191,9 @@ void main() {
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(find.text('SSH-Key'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('SSH-Key einrichten'));
+    await tester.tap(find.text('SSH-Key automatisch einrichten'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
     await tester.pumpAndSettle();
@@ -2195,10 +2201,20 @@ void main() {
     // Key was installed, but the switch is NOT committed (marker discipline).
     expect(u.installedKeys, hasLength(1));
     expect(find.textContaining('bleibt auf Passwort'), findsOneWidget);
-    // The menu still offers SSH-Key setup → profile is still on password auth.
+    // No key committed → the inline setup button is still offered.
+    expect(find.text('SSH-Key automatisch einrichten'), findsOneWidget);
+  });
+
+  testWidgets(
+      '⋮-Menü bietet keine SSH-Key-Einrichtung mehr (pro-Pi im Formular)',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    expect(find.text('SSH-Key einrichten'), findsOneWidget);
+    expect(find.text('SSH-Key einrichten'), findsNothing);
   });
 
   testWidgets('Service-Logs: Live-Modus pollt periodisch nach', (tester) async {

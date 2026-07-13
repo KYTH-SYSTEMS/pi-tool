@@ -211,6 +211,12 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   umgestellt/persistiert (Marker-Disziplin: kein falscher „Erfolg"); lehnt der
   Pi den Key ab, bleibt das Profil auf Passwort mit klarer Meldung. Passwort
   bleibt für sudo. Privater Key nur in `FlutterSecureStorage`, nie geloggt.
+  **Einstiegspunkt ist pro-Pi, nicht global:** ein Inline-Button im
+  `_ConnectionCard`-Key-Panel (sichtbar, solange das SSH-Key-Segment aktiv und
+  noch kein Key hinterlegt ist — `onSetupKey`), NICHT mehr im ⋮-Menü. `_setupSshKey`
+  ist gegen den leeren-Key-Fall abgesichert (baut die Install-Verbindung immer
+  explizit als Passwort-Auth, unabhängig vom gewählten Segment) und idempotent
+  (bricht ab, sobald ein Key vorhanden ist).
 - **`systemd_services.dart`** — extra **erkannte** systemd-Dienste (AdGuard Home,
   Node-RED, Zigbee2MQTT): `SystemdService`-Deskriptoren + `parseSystemdState`
   (`systemctl show -p LoadState -p ActiveState` → installed/active). Detection

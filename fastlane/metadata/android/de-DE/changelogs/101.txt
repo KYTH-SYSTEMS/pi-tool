@@ -1,0 +1,1 @@
+SSH-Key einrichten jetzt direkt beim Pi: Tippst du im Verbindungsformular auf „SSH-Key" und hast noch keinen hinterlegt, erscheint dort „SSH-Key automatisch einrichten". Die App erzeugt den Schlüssel, hinterlegt ihn (einmalig mit deinem Passwort) und stellt das Profil um. Der Menüeintrag ist entfallen — die Einrichtung gehört zum jeweiligen Pi, nicht ins globale Menü.

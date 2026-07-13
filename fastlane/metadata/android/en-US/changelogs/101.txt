@@ -1,0 +1,1 @@
+SSH-key setup now lives with the Pi: tap "SSH-Key" in the connection form and, if none is set yet, an "Set up SSH key automatically" button appears there. The app generates the key, installs it (once, using your password) and switches the profile over. The old ⋮-menu entry is gone — setup belongs to the individual Pi, not the global menu.

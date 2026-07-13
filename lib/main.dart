@@ -1334,8 +1334,23 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _setupSshKey() async {
     if (_busy) return;
-    if (_authMode == AuthMode.key) {
-      _snack('Dieses Profil nutzt bereits einen SSH-Key.');
+    // Idempotent per-Pi: nothing to do once a key is already present (in either
+    // auth mode) — the inline button hides then too.
+    if (_privateKey.text.trim().isNotEmpty) {
+      _snack('Dieses Profil hat bereits einen SSH-Key.');
+      return;
+    }
+    if (_host.text.trim().isEmpty) {
+      _snack('Bitte Host/IP eintragen.');
+      return;
+    }
+    if (_password.text.isEmpty) {
+      _snack('Für die Einrichtung wird einmal dein Pi-Passwort gebraucht.');
+      return;
+    }
+    final port = int.tryParse(_port.text.trim());
+    if (port == null || port <= 0 || port > 65535) {
+      _snack('Port ist ungültig (1–65535).');
       return;
     }
     if (!await _confirm(
@@ -1347,8 +1362,19 @@ class _UpdaterPageState extends State<UpdaterPage>
     )) {
       return;
     }
-    final config = _prepare(); // still password auth at this point
-    if (config == null) return;
+    // The install ALWAYS logs in via password (that's the whole point of the
+    // upgrade), regardless of which auth segment is selected right now.
+    final config = SshConfig(
+      host: _host.text.trim(),
+      port: port,
+      username: _user.text.trim().isEmpty ? 'pi' : _user.text.trim(),
+      password: _password.text,
+      privateKey: '',
+      timeout: const Duration(seconds: 15),
+    );
+    _lastConfig = config;
+    _persistSettings();
+    _beginBusy();
     _lastAction = _setupSshKey;
     final name = _currentProfile().name;
     await _guard(() async {
@@ -4196,8 +4222,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _shutdown();
                 case 'setup':
                   _openSetupGuide();
-                case 'sshkey':
-                  _setupSshKey();
                 case 'remote':
                   _remoteAccessViaTailscale(_tailscaleIp);
                 case 'homeip':
@@ -4235,11 +4259,8 @@ class _UpdaterPageState extends State<UpdaterPage>
               const PopupMenuDivider(),
               const PopupMenuItem(
                   value: 'setup', child: Text('Pi einrichten')),
-              if (_authMode == AuthMode.password)
-                PopupMenuItem(
-                    value: 'sshkey',
-                    enabled: !_busy,
-                    child: const Text('SSH-Key einrichten')),
+              // SSH-Key setup is per-Pi, not global: it lives inline in the
+              // connection form (tap the SSH-Key segment), not in this menu.
               // Reachable even when NOT connected (that's the whole point of
               // remote access). Shown for Pis where Tailscale was seen before.
               if (_tailscaleIp.isNotEmpty)
@@ -4323,6 +4344,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 setState(() => _authMode = m);
                 _scheduleSave();
               },
+              onSetupKey: _setupSshKey,
             ),
             const SizedBox(height: 8),
             // Connect. The cancel affordance lives in the shared running bar

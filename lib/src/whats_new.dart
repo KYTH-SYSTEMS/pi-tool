@@ -13,6 +13,14 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.54.0': [
+    'SSH-Key einrichten — jetzt direkt beim Pi: Tippst du im Verbindungsformular '
+        'auf „SSH-Key" und hast noch keinen hinterlegt, erscheint dort ein Knopf '
+        '„SSH-Key automatisch einrichten". Die App erzeugt den Schlüssel, '
+        'hinterlegt ihn (einmalig mit deinem Passwort) und stellt das Profil um. '
+        'Der Eintrag aus dem ⋮-Menü ist entfallen — die Einrichtung gehört zum '
+        'jeweiligen Pi, nicht ins globale Menü.',
+  ],
   '0.53.2': [
     'Zurück auf die Heim-IP mit einem Tap: Wenn du über die Tailscale-IP (100.x) '
         'verbunden warst und wieder zuhause im WLAN bist, gibt es im ⋮-Menü jetzt '
