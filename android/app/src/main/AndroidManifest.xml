@@ -62,5 +62,8 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- So getLaunchIntentForPackage can see the Tailscale app (Android 11+
+             package visibility) for the one-tap remote-access helper. -->
+        <package android:name="com.tailscale.ipn"/>
     </queries>
 </manifest>

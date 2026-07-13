@@ -13,6 +13,14 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.53.0': [
+    'Fernzugriff mit einem Tap: Auf der Tailscale-Karte (wenn verbunden) gibt es '
+        'jetzt „Fernzugriff: Handy-VPN öffnen" — das setzt die Tailnet-IP (100.x) '
+        'deines Pi als Host und öffnet die Tailscale-App, damit du dort das VPN '
+        'einschaltest. Danach nur noch „Verbindung herstellen" und du bist von '
+        'überall auf dem Pi. (Die App kann das Handy-VPN aus Android-Gründen '
+        'nicht selbst einschalten — nur die Tailscale-App öffnen.)',
+  ],
   '0.52.0': [
     'Alle Pis auf einmal aktualisieren: Im „Alle Pis"-Überblick gibt es jetzt '
         'oben rechts einen Update-Knopf — er spielt nacheinander auf jedem '

@@ -242,6 +242,14 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   fail2ban, offene Ports). **Nichts wird verändert**; Unbekanntes degradiert zu
   `info` (nie falsches ok/warn). `EvccUpdater.runSecurityCheck` orchestriert;
   `_SecurityReportSheet` rendert (System-Karten-Aktion).
+- **`app_launcher.dart` + native `MainActivity`** — `AppLauncher`-Seam (Default
+  `ChannelAppLauncher` über MethodChannel `pi_tool/launcher`): öffnet eine andere
+  installierte App per `getLaunchIntentForPackage` (Play-Store-URL-Fallback via
+  `ACTION_VIEW`). Für den **Tailscale-Fernzugriff-Helfer** (`_remoteAccessViaTailscale`):
+  Tailnet-IP als Host vorbelegen + Tailscale-App öffnen. **Android lässt keine App
+  ein fremdes/System-VPN selbst einschalten** — bewusst KEIN eigener VPN-Client
+  (v0.20.0-Native-Lektion). Manifest: `<queries><package com.tailscale.ipn>` für
+  Package-Sichtbarkeit (Android 11+). Seam injizierbar für Tests.
 - **`file_pick.dart` + native `MainActivity`** — lokale Dateiauswahl fürs Upload.
   **Bewusst KEIN Picker-Plugin:** `file_picker` bringt sein eigenes altes
   Kotlin-Gradle-Plugin mit und scheitert am AGP-9-/Built-in-Kotlin-Setup (und es

@@ -15,6 +15,7 @@ import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
+import 'package:evcc_updater/src/app_launcher.dart';
 import 'package:evcc_updater/src/docker_containers.dart';
 import 'package:evcc_updater/src/scheduled_backup.dart';
 import 'package:evcc_updater/src/security_check.dart';
@@ -68,6 +69,16 @@ class _FakeEntitlement implements EntitlementService {
 
   @override
   Future<bool> restore() async => pro;
+}
+
+class _FakeLauncher implements AppLauncher {
+  final opened = <String>[];
+  bool installed = true; // does openApp find the app?
+  @override
+  Future<bool> openApp(String package, {required String fallbackUrl}) async {
+    opened.add(package);
+    return installed;
+  }
 }
 
 class _FakeStore extends AppConfigStore {
@@ -2235,6 +2246,41 @@ void main() {
     expect(u.scheduledBackupOnCal, isNotNull);
     expect(u.scheduledBackupOnCal, contains(':00:00'));
     expect(u.scheduledBackupKeep, 7);
+  });
+
+  testWidgets(
+      'Tailscale → „Fernzugriff: Handy-VPN öffnen" öffnet die App + setzt die IP',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.1.5'),
+      ];
+    final launcher = _FakeLauncher();
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+        store: _FakeStore(_ready),
+        updater: u,
+        updateChecker: _noUpdateChecker,
+        appLauncher: launcher,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fernzugriff: Handy-VPN öffnen'));
+    await tester.pumpAndSettle();
+
+    // The Tailscale app is launched, and the Pi's tailnet IP is pre-filled.
+    expect(launcher.opened, contains('com.tailscale.ipn'));
+    expect(find.text('100.64.1.5'), findsWidgets);
   });
 
   testWidgets('erkannter systemd-Dienst (AdGuard Home) → Karte + Neustart',

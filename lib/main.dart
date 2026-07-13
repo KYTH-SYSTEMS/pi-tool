@@ -12,6 +12,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'src/app_launcher.dart';
 import 'src/authenticator.dart';
 import 'src/alerts.dart';
 import 'src/auto_update.dart';
@@ -140,6 +141,7 @@ class UpdaterPage extends StatefulWidget {
     this.keepAlive,
     this.filePicker,
     this.fileSaver,
+    this.appLauncher,
   });
 
   final AppConfigStore? store;
@@ -175,6 +177,10 @@ class UpdaterPage extends StatefulWidget {
   /// Injectable so widget tests record instead of hitting platform channels.
   final Future<void> Function(String name, Uint8List bytes)? fileSaver;
 
+  /// Opens another app (Tailscale) for the remote-access helper. Injectable so
+  /// widget tests don't hit the native channel.
+  final AppLauncher? appLauncher;
+
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
 }
@@ -203,6 +209,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.filePicker ?? const ChannelFilePicker();
   late final Future<void> Function(String name, Uint8List bytes) _fileSaver =
       widget.fileSaver ?? _saveAndShareBytes;
+  late final AppLauncher _appLauncher =
+      widget.appLauncher ?? const ChannelAppLauncher();
   final HistoryStore _historyStore = HistoryStore();
 
   final _host = TextEditingController();
@@ -3507,9 +3515,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ? () => _openUrl('https://login.tailscale.com/admin/machines')
                 : null,
             actions: [
-              if (up && s.version != null)
+              if (up && s.version != null) ...[
+                _CardAction('Fernzugriff: Handy-VPN öffnen',
+                    () => _remoteAccessViaTailscale(s.version!)),
                 _CardAction('Diese IP als Host übernehmen (${s.version})',
                     () => _useTailscaleIp(s.version!)),
+              ],
               _CardAction('Abmelden', () => _tailscaleSet(logout: true)),
             ],
           ));
@@ -3936,6 +3947,30 @@ class _UpdaterPageState extends State<UpdaterPage>
     });
     _scheduleSave();
     _snack('Host auf $ip gesetzt – jetzt „Verbindung herstellen".');
+  }
+
+  /// One-tap remote access: pre-fills the Pi's tailnet IP as host, then opens the
+  /// Tailscale app so the user can enable the phone-side VPN (Android won't let
+  /// us toggle it ourselves). Play Store fallback if Tailscale isn't installed.
+  Future<void> _remoteAccessViaTailscale(String tailnetIp) async {
+    if (tailnetIp.trim().isNotEmpty) {
+      setState(() {
+        _host.text = tailnetIp.trim();
+        _tab = 0;
+      });
+      _scheduleSave();
+    }
+    final opened = await _appLauncher.openApp(
+      'com.tailscale.ipn',
+      fallbackUrl:
+          'https://play.google.com/store/apps/details?id=com.tailscale.ipn',
+    );
+    if (!mounted) return;
+    _snack(opened
+        ? 'Tailscale geöffnet – dort das VPN aktivieren, dann hier „Verbindung '
+            'herstellen" (Host ist auf $tailnetIp gesetzt).'
+        : 'Tailscale-App nicht installiert – im Play Store installieren, dann '
+            'erneut versuchen.');
   }
 
   Future<void> _installAptService(AptService service) async {

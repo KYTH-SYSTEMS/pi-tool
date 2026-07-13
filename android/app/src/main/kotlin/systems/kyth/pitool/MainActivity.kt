@@ -1,5 +1,6 @@
 package systems.kyth.pitool
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -74,6 +75,37 @@ class MainActivity : FlutterFragmentActivity() {
                             pending = null
                             result.error("launch_failed", e.message, null)
                         }
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
+
+        // Separate channel: open another installed app (e.g. Tailscale) so the
+        // user can toggle the phone-side VPN. We can only OPEN it — Android
+        // forbids one app from enabling another's VPN. Falls back to a URL
+        // (Play Store) when the app isn't installed.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pi_tool/launcher")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "openApp") {
+                    val pkg = call.argument<String>("package")
+                    val fallbackUrl = call.argument<String>("fallbackUrl")
+                    val launch = pkg?.let { packageManager.getLaunchIntentForPackage(it) }
+                    if (launch != null) {
+                        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(launch)
+                        result.success(true) // the app itself opened
+                    } else if (fallbackUrl != null) {
+                        try {
+                            startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        } catch (_: Exception) {
+                        }
+                        result.success(false) // not installed → fallback used
+                    } else {
+                        result.success(false)
                     }
                 } else {
                     result.notImplemented()
