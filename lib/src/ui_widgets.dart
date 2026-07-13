@@ -418,6 +418,211 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   }
 }
 
+/// "What's eating my disk?" sheet: biggest folders/files at a path, tap a folder
+/// to drill in, an up button to go back. Each level is fetched on demand.
+class _StorageExplorerSheet extends StatefulWidget {
+  const _StorageExplorerSheet({
+    required this.initialPath,
+    required this.initialEntries,
+    required this.fetch,
+  });
+  final String initialPath;
+  final List<DiskEntry> initialEntries;
+  final Future<List<DiskEntry>> Function(String path) fetch;
+
+  @override
+  State<_StorageExplorerSheet> createState() => _StorageExplorerSheetState();
+}
+
+class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
+  late String _path = widget.initialPath;
+  late List<DiskEntry> _entries = widget.initialEntries;
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _load(String path) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final e = await widget.fetch(path);
+      if (!mounted) return;
+      setState(() {
+        _path = path;
+        _entries = e;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Konnte nicht geladen werden (Rechte?).';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final atRoot = _path == '/';
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.8,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: 'Übergeordneter Ordner',
+                  onPressed:
+                      (atRoot || _loading) ? null : () => _load(parentRemotePath(_path)),
+                  icon: const Icon(Icons.arrow_upward),
+                ),
+                Expanded(
+                  child: Text(_path,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontFamily: 'monospace', fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(child: Text(_error!))
+                    : _entries.isEmpty
+                        ? const Center(child: Text('— leer —'))
+                        : ListView.builder(
+                            itemCount: _entries.length,
+                            itemBuilder: (_, i) {
+                              final e = _entries[i];
+                              return ListTile(
+                                dense: true,
+                                leading: Icon(e.isDir
+                                    ? Icons.folder
+                                    : Icons.insert_drive_file_outlined),
+                                title: Text(e.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                trailing: Text(formatBytes(e.bytes),
+                                    style: const TextStyle(
+                                        fontFamily: 'monospace', fontSize: 12)),
+                                onTap: e.isDir ? () => _load(e.path) : null,
+                              );
+                            },
+                          ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Service-log sheet with an optional **Live** mode: while on, it re-fetches the
+/// log tail every few seconds (journalctl-follow-ish via polling — no PTY, no
+/// background service). The timer is cancelled on dispose.
+class _LiveLogSheet extends StatefulWidget {
+  const _LiveLogSheet({
+    required this.title,
+    required this.initial,
+    required this.fetch,
+  });
+  final String title;
+  final String initial;
+  final Future<String> Function() fetch;
+
+  @override
+  State<_LiveLogSheet> createState() => _LiveLogSheetState();
+}
+
+class _LiveLogSheetState extends State<_LiveLogSheet> {
+  late String _logs = widget.initial;
+  bool _live = false;
+  bool _loading = false;
+  Timer? _timer;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _toggleLive(bool on) {
+    setState(() => _live = on);
+    _timer?.cancel();
+    if (on) {
+      _timer = Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
+      _refresh();
+    }
+  }
+
+  Future<void> _refresh() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      final l = await widget.fetch();
+      if (!mounted) return;
+      setState(() {
+        _logs = l;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.8,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(widget.title,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium),
+                ),
+                if (_loading)
+                  const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 8),
+                const Text('Live'),
+                Switch(value: _live, onChanged: _toggleLive),
+                IconButton(
+                  tooltip: 'Aktualisieren',
+                  onPressed: _loading ? null : _refresh,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: SelectableText(
+                _logs.trim().isEmpty ? 'Keine Ausgabe.' : _logs,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Read-only security-audit result sheet: one traffic-light row per finding.
 class _SecurityReportSheet extends StatelessWidget {
   const _SecurityReportSheet({required this.findings});

@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.48.0': [
+    'Speicherplatz-Explorer: „Speicherplatz analysieren" (System-Karte) zeigt, '
+        'was den Platz frisst — die größten Ordner und Dateien, nach Größe '
+        'sortiert. Auf einen Ordner tippen, um hineinzuzoomen.',
+    'Live-Logs: In der Log-Ansicht gibt es jetzt einen „Live"-Schalter — die '
+        'Logs aktualisieren sich dann alle paar Sekunden von selbst.',
+  ],
   '0.47.0': [
     'SSH-Key mit einem Tap: Über „SSH-Key einrichten" (⋮-Menü) erzeugt die App '
         'ein Schlüsselpaar direkt auf dem Handy, hinterlegt den öffentlichen '

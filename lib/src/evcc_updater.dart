@@ -14,6 +14,7 @@ import 'host_key.dart';
 import 'parsing.dart';
 import 'security_check.dart';
 import 'ssh_keys.dart';
+import 'storage_explorer.dart';
 import 'services/apt_services.dart';
 import 'services/homeassistant_service.dart';
 import 'services/pi_connect.dart';
@@ -2007,6 +2008,33 @@ class EvccUpdater {
           );
         }
         log('Öffentlicher Schlüssel installiert.');
+      },
+    );
+  }
+
+  /// Read-only disk-usage analysis of [path] (sudo). Returns the biggest
+  /// subdirectories + files at that level; a rejected sudo password is surfaced.
+  Future<List<DiskEntry>> diskUsage({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<List<DiskEntry>>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Analysiere Speicher in $path …');
+        final r = await runner.run(
+          buildStorageProbe(path),
+          stdin: '${config.password}\n',
+        );
+        if (isSudoPasswordFailure('${r.stdout}\n${r.stderr}')) {
+          throw const EvccUpdateException(
+            UpdateErrorKind.sudo,
+            'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
+          );
+        }
+        return parseStorageBreakdown(r.stdout, queryPath: path);
       },
     );
   }

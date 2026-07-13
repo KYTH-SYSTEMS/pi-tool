@@ -22,6 +22,7 @@ import 'src/files.dart';
 import 'src/profile_transfer.dart';
 import 'src/security_check.dart';
 import 'src/ssh_keys.dart';
+import 'src/storage_explorer.dart';
 import 'src/kyth_splash.dart';
 import 'src/kyth_wordmark.dart';
 import 'src/whats_new.dart';
@@ -1337,6 +1338,32 @@ class _UpdaterPageState extends State<UpdaterPage>
     }, backgroundMessage: 'SSH-Key wird eingerichtet …');
   }
 
+  Future<void> _storageExplorer() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _storageExplorer;
+    const start = '/';
+    List<DiskEntry>? entries;
+    await _guard(() async {
+      entries =
+          await _updater.diskUsage(config: config, path: start, onLog: _appendLog);
+    }, backgroundMessage: 'Speicher wird analysiert …');
+    if (!mounted || entries == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => _StorageExplorerSheet(
+        initialPath: start,
+        initialEntries: entries!,
+        // Drill-down fetches its own levels (like the file browser), quietly.
+        fetch: (p) =>
+            _updater.diskUsage(config: config, path: p, onLog: (_) {}),
+      ),
+    );
+  }
+
   Future<void> _securityCheck() async {
     if (_busy) return;
     final config = _prepare();
@@ -1924,41 +1951,16 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, id: s.id, detail: s.detail, onLog: _appendLog);
     }, backgroundMessage: 'Logs werden geladen …');
     if (!mounted || logs == null) return;
-    await _showLogSheet('Logs: ${s.name}', logs!);
-  }
-
-  /// Scrollable read-only text sheet, reused for service logs and file preview.
-  /// [header] is the full title (caller decides "Logs: …" vs "Datei: …").
-  Future<void> _showLogSheet(String header, String logs) {
-    return showModalBottomSheet<void>(
+    await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (ctx) => SizedBox(
-        height: MediaQuery.of(ctx).size.height * 0.78,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(header,
-                    style: Theme.of(ctx).textTheme.titleMedium),
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(12),
-                child: SelectableText(
-                  logs.trim().isEmpty ? 'Keine Ausgabe.' : logs,
-                  style:
-                      const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                ),
-              ),
-            ),
-          ],
-        ),
+      builder: (_) => _LiveLogSheet(
+        title: 'Logs: ${s.name}',
+        initial: logs!,
+        // Live mode re-polls the tail quietly (no _guard/_busy churn).
+        fetch: () => _updater.fetchServiceLogs(
+            config: config, id: s.id, detail: s.detail, onLog: (_) {}),
       ),
     );
   }
@@ -3335,6 +3337,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               _CardAction('Aufräumen (Speicher freigeben)',
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction('Sicherheits-Check', _securityCheck),
+              _CardAction('Speicherplatz analysieren', _storageExplorer),
               _CardAction('Pi neu starten', _reboot),
               _CardAction('Pi herunterfahren', _shutdown, destructive: true),
             ],

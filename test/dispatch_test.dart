@@ -16,6 +16,7 @@ import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/security_check.dart';
+import 'package:evcc_updater/src/storage_explorer.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
@@ -138,6 +139,15 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       shutdownCalls++;
+
+  List<DiskEntry> disk = const [];
+  @override
+  Future<List<DiskEntry>> diskUsage({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      disk;
 
   List<SecurityFinding> securityFindings = const [];
   @override
@@ -406,6 +416,7 @@ class FakeEvccUpdater extends EvccUpdater {
       savedConfig = content;
 
   String serviceLogs = '-- journal --\n';
+  int logFetches = 0;
 
   @override
   Future<String> fetchServiceLogs({
@@ -413,8 +424,10 @@ class FakeEvccUpdater extends EvccUpdater {
     required String id,
     required String detail,
     required void Function(String line) onLog,
-  }) async =>
-      serviceLogs;
+  }) async {
+    logFetches++;
+    return serviceLogs;
+  }
 
   String? alertsTopic;
   bool alertsDisabled = false;
@@ -2075,6 +2088,63 @@ void main() {
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
     expect(find.text('SSH-Key einrichten'), findsOneWidget);
+  });
+
+  testWidgets('Service-Logs: Live-Modus pollt periodisch nach', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Logs anzeigen'));
+    await tester.pumpAndSettle();
+    final afterOpen = u.logFetches; // initial load
+    expect(find.text('Live'), findsOneWidget);
+
+    // Live on → immediate refresh + a poll after 3s.
+    await tester.tap(find.byType(Switch));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(u.logFetches, greaterThan(afterOpen));
+
+    // Live off → cancels the timer (no lingering timers at test end).
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('System-Karte → Speicherplatz zeigt die größten Posten',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..disk = const [
+        (name: 'var', bytes: 2 * 1024 * 1024 * 1024, isDir: true, path: '/var'),
+        (
+          name: 'huge.img',
+          bytes: 500 * 1024 * 1024,
+          isDir: false,
+          path: '/huge.img'
+        ),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Speicherplatz analysieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('var'), findsOneWidget);
+    expect(find.text('huge.img'), findsOneWidget);
+    expect(find.text('2.0 GB'), findsOneWidget); // human-readable size
   });
 
   testWidgets('System-Karte → Sicherheits-Check zeigt die Ampel-Befunde',

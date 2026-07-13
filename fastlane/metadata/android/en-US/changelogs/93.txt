@@ -1,0 +1,1 @@
+New: storage explorer — "Analyse storage" (System card) shows the biggest folders and files sorted by size; tap a folder to drill in. Also: live logs — in the log view, the "Live" switch refreshes the logs automatically every few seconds.

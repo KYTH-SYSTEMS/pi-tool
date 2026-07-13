@@ -71,6 +71,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 - **Sicherheits-Check** — reine Nur-Lesen-Prüfung mit Ampel: SSH-Root-Login,
   Passwort- vs. Key-Login, automatische Sicherheitsupdates, fail2ban, offene
   Ports. Zeigt nur an und empfiehlt — ändert nichts.
+- **Speicherplatz-Explorer** — „Was frisst meinen Platz?": größte Ordner/Dateien
+  nach Größe, zum Reinzoomen antippbar.
+- **Live-Logs** — die Log-Ansicht hat einen „Live"-Schalter, der die Ausgabe
+  alle paar Sekunden neu lädt (Polling, kein Hintergrunddienst).
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB frei — oder ≥90 % belegt **und**
   zugleich <5 GB frei) warnt sie, bevor ein Update daran scheitert.

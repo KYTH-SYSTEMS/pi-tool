@@ -1,0 +1,1 @@
+Neu: Speicherplatz-Explorer — „Speicherplatz analysieren" (System-Karte) zeigt die größten Ordner und Dateien nach Größe sortiert; auf einen Ordner tippen, um hineinzuzoomen. Außerdem: Live-Logs — in der Log-Ansicht aktualisieren sich die Logs mit dem „Live"-Schalter alle paar Sekunden von selbst.

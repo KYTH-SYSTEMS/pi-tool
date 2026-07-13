@@ -201,6 +201,16 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   umgestellt/persistiert (Marker-Disziplin: kein falscher „Erfolg"); lehnt der
   Pi den Key ab, bleibt das Profil auf Passwort mit klarer Meldung. Passwort
   bleibt für sudo. Privater Key nur in `FlutterSecureStorage`, nie geloggt.
+- **`storage_explorer.dart`** — „Was frisst meinen Platz?". `buildStorageProbe`
+  = sudo `du -x -b -d1` (Unterordner) + `find -maxdepth 1 -type f` (Dateien) in
+  Markern; `parseStorageBreakdown` → nach Größe sortierte `DiskEntry`s (Query-
+  Total verworfen); `formatBytes`-Helper. `EvccUpdater.diskUsage` orchestriert;
+  `_StorageExplorerSheet` (Drill-down, holt jede Ebene selbst). **Achtung:**
+  Namen `parseDiskUsage`/`DiskUsage` gehören zu `system_service.dart` (Root-FS-
+  Health) — NICHT verwechseln, daher der eigene Name.
+- **`_LiveLogSheet`** (`ui_widgets.dart`) — Service-Logs mit „Live"-Schalter:
+  `Timer.periodic` (3 s) re-fetcht `fetchServiceLogs` (Polling, kein PTY/Dienst),
+  Timer wird in `dispose` abgebrochen.
 - **`security_check.dart`** — Nur-Lesen-Audit. `buildSecurityProbe` = **ein**
   `sudo sh -c`-Probe (Skript via `shSingleQuote` sicher gequotet) mit Section-
   Markern (`__SEC_SSHD__/UNATT/F2B/PORTS__`); `parseSecurityReport` macht daraus
