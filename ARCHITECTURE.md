@@ -188,6 +188,19 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   UTF-8-Umlaute zählen nicht) + `kFileEditLimit` (256 KB) entscheiden, ob die
   Vorschau einen „Bearbeiten"-Knopf zeigt; der reicht an den bestehenden
   Config-Editor weiter (atomarer Write + Backup, sudo-fähig).
+- **`ssh_keys.dart`** — **client-seitige** SSH-Key-Erzeugung. `generateSshKey`
+  (Ed25519 via `cryptography`, rein Dart) → privater Key als **openssh-key-v1**-
+  PEM (selbst kodiert; Korrektheit per Round-Trip getestet: `SSHKeyPair.fromPem`
+  lädt ihn) + `authorized_keys`-Zeile. Der **private Key entsteht im Handy und
+  verlässt es nie** — nur der Public Key geht auf den Pi (`buildInstallAuthorizedKeyScript`,
+  idempotent, `~/.ssh` 700/600, Marker `KEY_INSTALLED`, **kein** Root).
+  Kommentar wird sanitisiert (kein `authorized_keys`-Zeilen-Injection).
+  `EvccUpdater.installSshKey` orchestriert; `_setupSshKey` installiert per
+  Passwort-Login und **verifiziert dann End-to-End** (`verifyKeyAuth` öffnet eine
+  Key-only-Verbindung + Marker) — **erst bei Erfolg** wird auf Key-Auth
+  umgestellt/persistiert (Marker-Disziplin: kein falscher „Erfolg"); lehnt der
+  Pi den Key ab, bleibt das Profil auf Passwort mit klarer Meldung. Passwort
+  bleibt für sudo. Privater Key nur in `FlutterSecureStorage`, nie geloggt.
 - **`security_check.dart`** — Nur-Lesen-Audit. `buildSecurityProbe` = **ein**
   `sudo sh -c`-Probe (Skript via `shSingleQuote` sicher gequotet) mit Section-
   Markern (`__SEC_SSHD__/UNATT/F2B/PORTS__`); `parseSecurityReport` macht daraus

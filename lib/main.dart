@@ -21,6 +21,7 @@ import 'src/file_pick.dart';
 import 'src/files.dart';
 import 'src/profile_transfer.dart';
 import 'src/security_check.dart';
+import 'src/ssh_keys.dart';
 import 'src/kyth_splash.dart';
 import 'src/kyth_wordmark.dart';
 import 'src/whats_new.dart';
@@ -1269,6 +1270,71 @@ class _UpdaterPageState extends State<UpdaterPage>
       });
       _addHistory('Pi-Neustart ausgelöst.');
     });
+  }
+
+  Future<void> _setupSshKey() async {
+    if (_busy) return;
+    if (_authMode == AuthMode.key) {
+      _snack('Dieses Profil nutzt bereits einen SSH-Key.');
+      return;
+    }
+    if (!await _confirm(
+      'SSH-Key einrichten?',
+      'Erzeugt ein Schlüsselpaar auf dem Handy, hinterlegt den öffentlichen '
+          'Schlüssel auf dem Pi und stellt dieses Profil auf Key-Login um. Der '
+          'private Schlüssel verlässt das Handy nie; dein Passwort bleibt für '
+          'sudo gespeichert.',
+    )) {
+      return;
+    }
+    final config = _prepare(); // still password auth at this point
+    if (config == null) return;
+    _lastAction = _setupSshKey;
+    final name = _currentProfile().name;
+    await _guard(() async {
+      final key = await generateSshKey(comment: 'pi-tool@$name');
+      await _updater.installSshKey(
+          config: config, publicKeyLine: key.publicKeyLine, onLog: _appendLog);
+      if (!mounted) return;
+      // Prove the Pi ACTUALLY accepts the new key (sshd may forbid pubkey auth,
+      // StrictModes may reject it, …) BEFORE switching — a false "success" that
+      // then breaks the next connect would be worse than staying on password.
+      var keyWorks = false;
+      try {
+        keyWorks = await _updater.verifyKeyAuth(
+          config: SshConfig(
+            host: config.host,
+            port: config.port,
+            username: config.username,
+            password: '',
+            privateKey: key.privateKeyPem,
+          ),
+          onLog: _appendLog,
+        );
+      } catch (_) {
+        keyWorks = false; // auth rejected — handled below, not a hard error
+      }
+      if (!mounted) return;
+      if (keyWorks) {
+        // Switch THIS profile to key auth; keep the password (used for sudo).
+        setState(() {
+          _privateKey.text = key.privateKeyPem;
+          _authMode = AuthMode.key;
+          _statusMessage =
+              'SSH-Key eingerichtet — Login läuft jetzt über den Schlüssel.';
+          _statusOk = true;
+        });
+        _persistSettings();
+        _addHistory('SSH-Key eingerichtet.');
+      } else {
+        setState(() {
+          _statusMessage =
+              'Schlüssel hinterlegt, aber der Key-Login wird vom Pi noch nicht '
+              'akzeptiert — Profil bleibt auf Passwort. (sshd: PubkeyAuthentication?)';
+          _statusOk = false;
+        });
+      }
+    }, backgroundMessage: 'SSH-Key wird eingerichtet …');
   }
 
   Future<void> _securityCheck() async {
@@ -3799,6 +3865,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _shutdown();
                 case 'setup':
                   _openSetupGuide();
+                case 'sshkey':
+                  _setupSshKey();
                 case 'find':
                   _findPi();
                 case 'dashboard':
@@ -3832,6 +3900,11 @@ class _UpdaterPageState extends State<UpdaterPage>
               const PopupMenuDivider(),
               const PopupMenuItem(
                   value: 'setup', child: Text('Pi einrichten')),
+              if (_authMode == AuthMode.password)
+                PopupMenuItem(
+                    value: 'sshkey',
+                    enabled: !_busy,
+                    child: const Text('SSH-Key einrichten')),
               PopupMenuItem(
                   value: 'find',
                   enabled: !_busy,

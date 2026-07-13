@@ -1,0 +1,1 @@
+New: one-tap SSH key. "Set up SSH key" (⋮ menu) generates an Ed25519 key pair right on the phone, installs the public key into ~/.ssh/authorized_keys on the Pi, and switches the profile to key login — much safer than password login. The private key never leaves the phone (only encrypted in the Android Keystore); your password is kept for sudo.

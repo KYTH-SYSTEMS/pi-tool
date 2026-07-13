@@ -13,6 +13,7 @@ import 'dartssh2_runner.dart';
 import 'host_key.dart';
 import 'parsing.dart';
 import 'security_check.dart';
+import 'ssh_keys.dart';
 import 'services/apt_services.dart';
 import 'services/homeassistant_service.dart';
 import 'services/pi_connect.dart';
@@ -1983,6 +1984,51 @@ class EvccUpdater {
   /// Powers the Pi off. Like [reboot], the SSH connection drops as a result and
   /// that is treated as success; a rejected sudo password (no disconnect) is
   /// reported. Unlike a reboot, the Pi stays OFF until physically powered on.
+  /// Installs [publicKeyLine] into the connecting user's `~/.ssh/authorized_keys`
+  /// (no root). The private key stays on the phone; success needs the
+  /// `KEY_INSTALLED` marker (not just exit 0).
+  Future<void> installSshKey({
+    required SshConfig config,
+    required String publicKeyLine,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Installiere den öffentlichen Schlüssel …');
+        final result =
+            await runner.run(buildInstallAuthorizedKeyScript(publicKeyLine));
+        final combined = '${result.stdout}${result.stderr}';
+        if (!combined.contains('KEY_INSTALLED')) {
+          throw const EvccUpdateException(
+            UpdateErrorKind.unknown,
+            'Schlüssel-Installation nicht bestätigt. Details im Log.',
+          );
+        }
+        log('Öffentlicher Schlüssel installiert.');
+      },
+    );
+  }
+
+  /// Opens a throwaway connection using ONLY [config]'s private key and runs a
+  /// marker command — proves the Pi actually accepts the new key BEFORE the UI
+  /// switches a profile to key auth. Returns false (or throws) if key auth is
+  /// rejected; the caller must keep password auth in that case.
+  Future<bool> verifyKeyAuth({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) {
+    return _withConnection<bool>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        final r = await runner.run('echo SSH_KEY_AUTH_OK');
+        return '${r.stdout}${r.stderr}'.contains('SSH_KEY_AUTH_OK');
+      },
+    );
+  }
+
   /// Read-only security audit: runs [buildSecurityProbe] (sudo, no mutation) and
   /// returns the parsed findings. A rejected sudo password is surfaced.
   Future<List<SecurityFinding>> runSecurityCheck({

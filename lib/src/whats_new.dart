@@ -13,6 +13,13 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.47.0': [
+    'SSH-Key mit einem Tap: Über „SSH-Key einrichten" (⋮-Menü) erzeugt die App '
+        'ein Schlüsselpaar direkt auf dem Handy, hinterlegt den öffentlichen '
+        'Schlüssel auf dem Pi und stellt das Profil auf Key-Login um — deutlich '
+        'sicherer als Passwort-Login. Der private Schlüssel verlässt das Handy '
+        'nie; dein Passwort bleibt für sudo gespeichert.',
+  ],
   '0.46.0': [
     'Sicherheits-Check: Die System-Karte hat jetzt einen „Sicherheits-Check" — '
         'eine reine Nur-Lesen-Prüfung mit Ampel: SSH-Root-Login, Passwort- vs. '

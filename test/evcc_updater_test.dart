@@ -11,6 +11,7 @@ import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/security_check.dart';
+import 'package:evcc_updater/src/ssh_keys.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/pi_connect.dart';
@@ -1318,6 +1319,50 @@ void main() {
           runErrors: {rebootCommand: const SocketException('closed')});
       // A real reboot drops the SSH connection — must NOT be reported as an error.
       await _updaterWith(runner).reboot(config: _config, onLog: (_) {});
+    });
+  });
+
+  group('EvccUpdater.installSshKey', () {
+    const line = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 pi-tool';
+    test('succeeds when KEY_INSTALLED is printed', () async {
+      final runner = FakeSshRunner({
+        buildInstallAuthorizedKeyScript(line): [_r('KEY_INSTALLED\n')],
+      });
+      await _updaterWith(runner)
+          .installSshKey(config: _config, publicKeyLine: line, onLog: (_) {});
+    });
+
+    test('throws when the marker is absent (install failed)', () async {
+      final runner = FakeSshRunner({
+        buildInstallAuthorizedKeyScript(line): [
+          _r('', stderr: 'Permission denied', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .installSshKey(config: _config, publicKeyLine: line, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+  });
+
+  group('EvccUpdater.verifyKeyAuth', () {
+    test('true when the key-only connection returns the marker', () async {
+      final runner =
+          FakeSshRunner({'echo SSH_KEY_AUTH_OK': [_r('SSH_KEY_AUTH_OK\n')]});
+      expect(
+        await _updaterWith(runner).verifyKeyAuth(config: _config, onLog: (_) {}),
+        isTrue,
+      );
+    });
+
+    test('throws when key auth is rejected', () async {
+      final runner = FakeSshRunner({},
+          runErrors: {'echo SSH_KEY_AUTH_OK': const SocketException('denied')});
+      await expectLater(
+        _updaterWith(runner).verifyKeyAuth(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
     });
   });
 

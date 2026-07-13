@@ -117,6 +117,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 - **Profil-Export/-Import** — alle Profile (inkl. Zugangsdaten) als
   **passphrase-verschlüsselte** Datei (AES-256-GCM) sichern und auf einem neuen
   Handy importieren. Für den Gerätewechsel.
+- **SSH-Key mit einem Tap** — „SSH-Key einrichten" erzeugt ein Ed25519-Schlüssel-
+  paar **auf dem Handy**, hinterlegt den Public Key in `~/.ssh/authorized_keys`
+  und stellt das Profil auf Key-Login um. Der private Schlüssel verlässt das
+  Handy nie (nur verschlüsselt im Android Keystore).
 - **SSH-Key- oder Passwort-Login**, **App-Sperre** (Biometrie/PIN),
   **stable/nightly**-Kanal, **Update-Verlauf**, **In-App-Update-Hinweis**.
 - **Dienst-/System-Aktionen:** evcc-Dienst neustarten, Pi neustarten,

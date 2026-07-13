@@ -147,6 +147,23 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       securityFindings;
 
+  final installedKeys = <String>[];
+  @override
+  Future<void> installSshKey({
+    required SshConfig config,
+    required String publicKeyLine,
+    required void Function(String line) onLog,
+  }) async =>
+      installedKeys.add(publicKeyLine);
+
+  bool keyAuthOk = true; // does the Pi accept the freshly installed key?
+  @override
+  Future<bool> verifyKeyAuth({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      keyAuthOk;
+
   final aptUpdates = <String>[]; // packages updated via updateAptPackage
   final aptInstalls = <String>[]; // service ids installed via installAptService
   int piholeBackupCalls = 0, haBackupCalls = 0;
@@ -2011,6 +2028,53 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Herunterfahren'));
     await tester.pumpAndSettle();
     expect(u.shutdownCalls, 1);
+  });
+
+  testWidgets(
+      '⋮ → SSH-Key einrichten generiert, installiert und stellt auf Key-Login um',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u)); // _ready: password auth, host + pw set
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SSH-Key einrichten'));
+    await tester.pumpAndSettle();
+    expect(find.text('SSH-Key einrichten?'), findsOneWidget); // confirm gate
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    // A real generated public key was installed on the Pi.
+    expect(u.installedKeys, hasLength(1));
+    expect(u.installedKeys.single, startsWith('ssh-ed25519 '));
+    // Only switches after verifying the Pi accepts the key.
+    expect(find.textContaining('SSH-Key eingerichtet'), findsWidgets);
+  });
+
+  testWidgets(
+      'SSH-Key: wird der Key vom Pi abgelehnt, bleibt das Profil auf Passwort',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..keyAuthOk = false; // sshd rejects pubkey auth
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SSH-Key einrichten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    // Key was installed, but the switch is NOT committed (marker discipline).
+    expect(u.installedKeys, hasLength(1));
+    expect(find.textContaining('bleibt auf Passwort'), findsOneWidget);
+    // The menu still offers SSH-Key setup → profile is still on password auth.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('SSH-Key einrichten'), findsOneWidget);
   });
 
   testWidgets('System-Karte → Sicherheits-Check zeigt die Ampel-Befunde',
