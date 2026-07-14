@@ -120,8 +120,15 @@ der Play-Launch ist voll intakt.
 - [ ] D-U-N-S-Nummer beantragen (kritischer Pfad, bis ~30 Tage)
 - [ ] Google-Play-Konto (KYTH-Org) + Identitätsprüfung (mit HRB 46313)
 - [x] öffentliche Kontakt-E-Mail festgelegt: support@kyth.systems
-- [x] Screenshots erstellt (2026-07-12) — 5 Stück, gerendert über Test-Fakes (kein echter
-      Pi), in `fastlane/…/{de-DE,en-US}/images/phoneScreenshots/1–5.png` (1080×2160, ≤2:1)
+- [x] Screenshots **aufgefrischt (2026-07-14)** — 5 Stück, gerendert über Test-Fakes (kein
+      echter Pi), in `fastlane/…/{de-DE,en-US}/images/phoneScreenshots/1–5.png` (1080×2160, ≤2:1):
+      1 Cockpit (eingeklappte Zugangsdaten-Karte v0.56 + System-Health + evcc), 2 Dienst-Karten
+      (Home Assistant + Tailscale + AdGuard), 3 „Dienst hinzufügen", 4 Automatik (3 Kacheln inkl.
+      Geplante Backups), 5 „Alle Pis"-Ampel (orange/grün). Generator: `test/screenshots.dart`.
+- [x] Voll-Beschreibungen (de/en) **auf v0.56-Funktionsstand gebracht (2026-07-14)**: u. a.
+      Pi herunterfahren, AdGuard/Node-RED/Zigbee2MQTT, Docker-Container, Speicherplatz analysieren,
+      Sicherheits-Check, geplante Backups, Tailscale-Fernzugriff, SSH-Key-Auto-Einrichtung.
+      DE 3967 / EN 3838 Zeichen (< 4000).
 
 **[DU] — in der Play Console**
 - [ ] Store-Eintrag füllen (Texte aus `fastlane/…` übernehmen oder via `fastlane supply`)

@@ -60,6 +60,20 @@ const _richServices = <ServiceStatus>[
       active: true,
       detail: 'Docker · aktiv'),
   ServiceStatus(
+      id: 'tailscale',
+      name: 'Tailscale',
+      installed: true,
+      version: '100.101.102.103',
+      active: true,
+      detail: 'verbunden · Fernzugriff'),
+  ServiceStatus(
+      id: 'adguard',
+      name: 'AdGuard Home',
+      installed: true,
+      version: 'v0.107.68',
+      active: true,
+      detail: 'Dienst aktiv'),
+  ServiceStatus(
       id: 'system',
       name: 'System (Pi)',
       installed: true,
@@ -69,6 +83,28 @@ const _richServices = <ServiceStatus>[
       updateAvailable: true,
       detail: '3 Updates verfügbar',
       health: '48 °C · 62 % frei · 1,4 GB RAM · Up 12 T'),
+];
+
+/// A second Pi that is fully up to date → shows GREEN in the "All Pis" overview,
+/// so the traffic light isn't monotone (the active Pi above has updates = amber).
+const _healthyServices = <ServiceStatus>[
+  ServiceStatus(
+      id: 'evcc',
+      name: 'evcc',
+      installed: true,
+      version: '0.310.0',
+      active: true,
+      updateKnown: true,
+      detail: 'apt · Dienst aktiv'),
+  ServiceStatus(
+      id: 'system',
+      name: 'System (Pi)',
+      installed: true,
+      version: 'Debian 12',
+      active: true,
+      updateKnown: true,
+      detail: 'aktuell',
+      health: '39 °C · 78 % frei · 0,9 GB RAM · Up 43 T'),
 ];
 
 class _ShotUpdater extends EvccUpdater {
@@ -83,6 +119,8 @@ class _ShotUpdater extends EvccUpdater {
     void Function()? onConnected,
   }) async {
     onConnected?.call();
+    // Keller-Pi (…​.51) is up to date; the active Wohnzimmer-Pi has updates.
+    if (config.host.endsWith('.51')) return _healthyServices;
     return _richServices;
   }
 }

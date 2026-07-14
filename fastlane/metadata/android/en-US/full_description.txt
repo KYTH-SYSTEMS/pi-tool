@@ -4,11 +4,13 @@ Services:
 * evcc – update (apt or Docker, auto-detected), install, live status, dry-run, restart service, open web UI
 * Pi-hole – update (pihole -up), rebuild blocklists, restart DNS, install (experimental), open /admin
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
-* Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI (Grafana/InfluxDB)
+* Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI
+* AdGuard Home, Node-RED & Zigbee2MQTT – auto-detected: open the web UI, view logs, restart the service
 * Raspberry Pi Connect – official remote access (Raspberry Pi OS Bookworm+): install, sign in via link, toggle on/off, open web
-* Tailscale – VPN/mesh: install, connect via login link, adopt the tailnet IP into the host field with one tap
+* Tailscale – VPN/mesh: install, connect via login link. One-tap remote access: open the Tailscale app and adopt the remembered tailnet IP as the host – reach your Pi from anywhere; back home, one tap returns to the home IP
+* Docker containers – view running containers and restart them
 * "Add service" – every not-yet-installed service in one picker; the main screen shows only what's actually running
-* System (whole Pi) – update all packages (apt full-upgrade), reboot, health readout (temperature, disk, RAM, uptime) with a low-disk warning and an SD-card check (read-only filesystem, I/O errors)
+* System (whole Pi) – update all packages (apt full-upgrade), reboot or shut down, health readout (temperature, disk, RAM, uptime) with a low-disk warning and an SD-card check (read-only filesystem, I/O errors)
 
 Features:
 * Cockpit with four tabs; the active Pi sits on top and is tappable (switch/add/rename)
@@ -16,9 +18,12 @@ Features:
 * Files: your Pi's file browser – browse, preview, upload from the phone, delete
 * Config editor: edit config files (e.g. evcc.yaml) in-app, atomic with a backup
 * Backups incl. in-app restore & management: evcc (config + DB), Pi-hole (Teleporter) and Home Assistant (/config); automatic rotation; download to the phone (share sheet)
+* Analyze disk usage – the largest directories at a glance
+* Security check – rates your Pi's hardening (SSH configuration, automatic security updates, fail2ban and more) as a traffic light
 * System cleanup: free disk space (apt, unused Docker images, journal)
-* Automation on the Pi: scheduled updates (systemd timer, backs up evcc + self-heals) and health alerts pushed via ntfy (full disk, dead service, heat, updates)
+* Automation on the Pi (systemd timers, no background service on the phone): scheduled updates (with evcc backup + self-heal), scheduled nightly backups (with rotation) and health alerts pushed via ntfy (full disk, dead service, heat, updates)
 * Console: run your own commands over SSH (sudo supported) with history + quick commands
+* Set up an SSH key with one tap: the key is generated on the phone, installed on the Pi and the profile switched to key login
 * Built-in "set up your Pi" guide (Raspberry Pi Imager: SSH, user, Wi-Fi) for beginners
 * Multiple Pi profiles, quick switching; an "All Pis" overview as a traffic light (reachable/updates/warning); encrypted export/import for moving to a new phone
 * Connect with green/red status; a running action can be cancelled
