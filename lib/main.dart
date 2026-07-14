@@ -228,6 +228,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _tailscaleIp = ''; // remembered 100.x tailnet IP of the active Pi
   String _lanHost = ''; // remembered home/LAN address of the active Pi
   bool _obscure = true;
+  bool _connExpanded = true; // connection form collapses once creds are set
   bool _busy = false;
   AuthMode _authMode = AuthMode.password;
   String _uiScheme = 'http';
@@ -397,6 +398,18 @@ class _UpdaterPageState extends State<UpdaterPage>
     _fullUpgrade = p.fullUpgrade;
     _tailscaleIp = p.tailscaleIp;
     _lanHost = p.lanHost;
+    // Collapse the (space-hungry) connection form when this Pi is already set up;
+    // expand it for a fresh/empty profile that still needs input.
+    _connExpanded = !_credsComplete();
+  }
+
+  /// Whether the active profile has enough to connect (host + the secret the
+  /// current auth mode needs). Drives the connection form's collapsed default.
+  bool _credsComplete() {
+    if (_host.text.trim().isEmpty) return false;
+    return _authMode == AuthMode.key
+        ? _privateKey.text.trim().isNotEmpty
+        : _password.text.isNotEmpty;
   }
 
   /// Switching to another Pi: drop everything tied to the previous host so
@@ -1242,6 +1255,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         _services = services;
         _rememberTailscaleIp(services);
         _rememberLanHost();
+        _connExpanded = false; // connected → free up space for the service cards
         final found =
             services.where((s) => s.installed).map((s) => s.name).join(', ');
         _statusMessage = 'Verbindung OK – erkannt: $found.';
@@ -4011,6 +4025,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     setState(() {
       _host.text = ip;
       _tab = 0;
+      _connExpanded = true; // show the changed host so it's not silently swapped
     });
     _scheduleSave();
     _snack('Host auf $ip gesetzt – jetzt „Verbindung herstellen".');
@@ -4023,6 +4038,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     setState(() {
       _host.text = _lanHost;
       _tab = 0;
+      _connExpanded = true; // show the changed host so it's not silently swapped
     });
     _scheduleSave();
     _snack('Host zurück auf $_lanHost gesetzt – jetzt „Verbindung herstellen".');
@@ -4037,6 +4053,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       setState(() {
         _host.text = tailnetIp.trim();
         _tab = 0;
+        _connExpanded = true; // show the changed host so it's not silently swapped
       });
       _scheduleSave();
     }
@@ -4368,6 +4385,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                 _scheduleSave();
               },
               onSetupKey: _setupSshKey,
+              expanded: _connExpanded,
+              onToggleExpanded: () =>
+                  setState(() => _connExpanded = !_connExpanded),
             ),
             const SizedBox(height: 8),
             // Connect. The cancel affordance lives in the shared running bar

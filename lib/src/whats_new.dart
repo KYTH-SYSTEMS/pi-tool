@@ -13,6 +13,14 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.56.0': [
+    'Mehr Platz für das Wesentliche: Die Zugangsdaten-Karte (Host, Benutzer, '
+        'SSH-Key …) klappt jetzt ein, sobald die Daten stehen — und zeigt nur '
+        'noch eine kompakte Zeile („pi@192.168.178.64 · SSH-Key"). Vor allem das '
+        'große SSH-Key-Feld nimmt so keinen Platz mehr weg. Zum Bearbeiten '
+        'einfach auf die Kopfzeile tippen; nach dem Verbinden klappt sie '
+        'automatisch zu.',
+  ],
   '0.55.1': [
     'Fernzugriff leichter zu finden: „Fernzugriff: Tailscale öffnen" steht jetzt '
         'immer im ⋮-Menü — ausgegraut mit Hinweis, solange die App die '

@@ -1458,6 +1458,8 @@ class _ConnectionCard extends StatelessWidget {
     required this.enabled,
     required this.onToggleObscure,
     required this.onAuthMode,
+    required this.expanded,
+    required this.onToggleExpanded,
     this.onSetupKey,
   });
 
@@ -1473,15 +1475,29 @@ class _ConnectionCard extends StatelessWidget {
   final VoidCallback onToggleObscure;
   final ValueChanged<AuthMode> onAuthMode;
 
+  /// Whether the connection fields are shown. Collapsed once credentials are set
+  /// (the big SSH-key PEM field otherwise eats a lot of vertical space).
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
+
   /// Runs the automatic per-Pi SSH-key setup (generate → install → switch).
   /// Offered inline while the SSH-Key segment is selected but no key exists yet.
   final VoidCallback? onSetupKey;
+
+  /// Compact one-line stand-in shown in the header while collapsed.
+  String _summary() {
+    final h = host.text.trim();
+    if (h.isEmpty) return 'Noch nicht eingerichtet';
+    final u = user.text.trim().isEmpty ? 'pi' : user.text.trim();
+    return '$u@$h · ${authMode == AuthMode.key ? 'SSH-Key' : 'Passwort'}';
+  }
 
   @override
   Widget build(BuildContext context) {
     final keyMode = authMode == AuthMode.key;
     final cs = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final textTheme = Theme.of(context).textTheme;
     return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
@@ -1490,15 +1506,58 @@ class _ConnectionCard extends StatelessWidget {
         side: BorderSide(color: dark ? Colors.white10 : cs.outlineVariant),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        child: Column(
-          children: [
-            TextField(
-              controller: host,
-              enabled: enabled,
-              autocorrect: false,
-              keyboardType: TextInputType.url,
+      child: Column(
+        children: [
+          // Tappable header — always visible, toggles the fields below. When
+          // collapsed it shows a compact summary instead of the full form.
+          InkWell(
+            key: const ValueKey('conn-card-header'),
+            onTap: onToggleExpanded,
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 8, expanded ? 4 : 12),
+              child: Row(
+                children: [
+                  Icon(
+                      authMode == AuthMode.key
+                          ? Icons.vpn_key_outlined
+                          : Icons.lock_outline,
+                      size: 20,
+                      color: cs.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Zugangsdaten',
+                            style: textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600)),
+                        if (!expanded)
+                          Text(_summary(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: textTheme.bodySmall
+                                  ?.copyWith(color: cs.onSurfaceVariant)),
+                      ],
+                    ),
+                  ),
+                  Icon(expanded ? Icons.expand_less : Icons.expand_more,
+                      color: cs.onSurfaceVariant),
+                ],
+              ),
+            ),
+          ),
+          if (expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: host,
+                    enabled: enabled,
+                    autocorrect: false,
+                    keyboardType: TextInputType.url,
               decoration: const InputDecoration(
                 labelText: 'Host / IP',
                 hintText: 'z. B. 192.168.178.64 oder Tailscale-IP',
@@ -1638,8 +1697,10 @@ class _ConnectionCard extends StatelessWidget {
                 ),
               ),
             ),
-          ],
-        ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

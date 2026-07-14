@@ -1,0 +1,1 @@
+Mehr Platz für das Wesentliche: Die Zugangsdaten-Karte (Host, Benutzer, SSH-Key …) klappt jetzt ein, sobald die Daten stehen — und zeigt nur noch eine kompakte Zeile („pi@192.168.178.64 · SSH-Key"). Vor allem das große SSH-Key-Feld nimmt so keinen Platz mehr weg. Zum Bearbeiten auf die Kopfzeile tippen; nach dem Verbinden klappt sie automatisch zu.

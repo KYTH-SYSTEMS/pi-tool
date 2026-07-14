@@ -2155,11 +2155,57 @@ void main() {
   });
 
   testWidgets(
+      'Zugangsdaten-Karte startet eingeklappt, wenn die Zugangsdaten vollständig '
+      'sind (spart Platz, v. a. das SSH-Key-Feld)', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater())); // _ready: host + password
+    await tester.pumpAndSettle();
+
+    // Fields are hidden; a compact summary stands in for them.
+    expect(find.text('Host / IP'), findsNothing);
+    expect(find.textContaining('192.168.178.64'), findsWidgets);
+  });
+
+  testWidgets('Tippen auf die Zugangsdaten-Kopfzeile klappt die Felder auf',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    expect(find.text('Host / IP'), findsNothing); // collapsed
+
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    expect(find.text('Host / IP'), findsOneWidget); // expanded
+  });
+
+  testWidgets('Ohne Zugangsdaten startet die Karte aufgeklappt', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'Neu')], // no host, no secret yet
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Host / IP'), findsOneWidget);
+  });
+
+  testWidgets(
       'SSH-Key: der Inline-Button im Formular richtet den Key automatisch ein',
       (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u)); // _ready: password auth, host + pw set
+    await tester.pumpAndSettle();
+
+    // _ready has complete creds → the card starts collapsed; expand it first.
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
     await tester.pumpAndSettle();
 
     // The auto-setup lives per-Pi in the connection form: tapping the SSH-Key
@@ -2191,6 +2237,8 @@ void main() {
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('conn-card-header'))); // expand
+    await tester.pumpAndSettle();
     await tester.tap(find.text('SSH-Key'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('SSH-Key automatisch einrichten'));

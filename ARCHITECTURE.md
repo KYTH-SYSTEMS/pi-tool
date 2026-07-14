@@ -216,7 +216,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   noch kein Key hinterlegt ist — `onSetupKey`), NICHT mehr im ⋮-Menü. `_setupSshKey`
   ist gegen den leeren-Key-Fall abgesichert (baut die Install-Verbindung immer
   explizit als Passwort-Auth, unabhängig vom gewählten Segment) und idempotent
-  (bricht ab, sobald ein Key vorhanden ist).
+  (bricht ab, sobald ein Key vorhanden ist). Die `_ConnectionCard` ist
+  **einklappbar** (`expanded`/`onToggleExpanded`, State `_connExpanded`): Default
+  eingeklappt, sobald `_credsComplete()` (Host + passendes Secret) erfüllt ist,
+  und automatisch nach erfolgreicher Verbindung — so frisst v. a. das große
+  PEM-Feld keinen Platz. Host-wechselnde Aktionen (`_useTailscaleIp`,
+  `_useHomeHost`, `_remoteAccessViaTailscale`) klappen wieder auf, damit der neue
+  Host sichtbar ist. `_connExpanded` ist reine UI-Laufzeit-State, NICHT persistiert.
 - **`systemd_services.dart`** — extra **erkannte** systemd-Dienste (AdGuard Home,
   Node-RED, Zigbee2MQTT): `SystemdService`-Deskriptoren + `parseSystemdState`
   (`systemctl show -p LoadState -p ActiveState` → installed/active). Detection

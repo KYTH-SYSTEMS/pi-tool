@@ -1,0 +1,1 @@
+More room for what matters: the credentials card (host, user, SSH key …) now collapses once the details are filled in, showing just a compact line ("pi@192.168.178.64 · SSH-Key"). The large SSH-key field in particular no longer eats space. Tap the header to edit; it collapses automatically after connecting.
