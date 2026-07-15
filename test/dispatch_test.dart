@@ -728,18 +728,29 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  // Bottom-nav helpers (Dienste = default; Automatik/Terminal are separate tabs).
+  // Bottom-nav helpers (Verwaltung = default; the others are gated behind an
+  // active connection, so connect first if we aren't already).
+  Future<void> ensureConnected(WidgetTester tester) async {
+    if (tester.any(find.byKey(const Key('sessionConnected')))) return;
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pumpAndSettle();
+  }
+
   Future<void> goTerminal(WidgetTester tester) async {
+    await ensureConnected(tester);
     await tester.tap(find.byIcon(Icons.terminal_outlined));
     await tester.pumpAndSettle();
   }
 
   Future<void> goAutomatik(WidgetTester tester) async {
+    await ensureConnected(tester);
     await tester.tap(find.byIcon(Icons.bolt_outlined));
     await tester.pumpAndSettle();
   }
 
   Future<void> goDateien(WidgetTester tester) async {
+    await ensureConnected(tester);
     await tester.tap(find.byIcon(Icons.folder_outlined));
     await tester.pumpAndSettle();
   }
@@ -927,7 +938,9 @@ void main() {
     await tester.tap(find.text('B'));
     await tester.pumpAndSettle();
 
-    // Auto-re-listed for Pi B — the old Pi's entry must not linger.
+    // Switching Pi ends the session + snaps back to Verwaltung; reconnecting and
+    // reopening Dateien lists Pi B fresh — the old Pi's entry must not linger.
+    await goDateien(tester);
     expect(find.text('piB.txt'), findsOneWidget);
     expect(find.text('piA.txt'), findsNothing);
   });
@@ -2297,9 +2310,7 @@ void main() {
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
-    await tester.tap(find.descendant(
-        of: find.byType(NavigationBar), matching: find.text('Automatik')));
-    await tester.pumpAndSettle();
+    await goAutomatik(tester);
 
     await tester.tap(find.text('Geplante Backups'));
     await tester.pumpAndSettle();

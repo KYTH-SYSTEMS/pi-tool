@@ -119,20 +119,20 @@ void main() {
         findsOneWidget); // compact connect button
     expect(find.textContaining('Verbindung herstellen'),
         findsWidgets); // + hint
-    // Bottom-nav cockpit: three tabs.
-    expect(find.text('Dienste'), findsOneWidget);
+    // Bottom-nav cockpit: Verwaltung (tab 0) + the gated tabs.
+    expect(find.text('Verwaltung'), findsOneWidget);
     expect(find.text('Automatik'), findsOneWidget);
     expect(find.text('Terminal'), findsOneWidget);
-    // Dienste tab has the 4 connection fields; the console lives on Terminal.
+    // Verwaltung tab has the 4 connection fields; the console lives on Terminal.
     expect(find.byType(TextField), findsNWidgets(4));
     expect(find.text('Konsole'), findsNothing);
 
-    // The Terminal tab reveals the console + its input (heading matches the nav).
+    // Disconnected: the gated Terminal tab won't open — tapping it hints instead
+    // of switching, so the console field never appears.
     await tester.tap(find.byIcon(Icons.terminal_outlined));
-    await tester.pumpAndSettle();
-    expect(find.text('Terminal'), findsNWidgets(2)); // nav + heading
-    expect(find.byKey(const Key('consoleField')), findsOneWidget);
-    expect(find.byType(TextField), findsNWidgets(1));
+    await tester.pump();
+    expect(find.byKey(const Key('consoleField')), findsNothing);
+    expect(find.textContaining('Zuerst verbinden'), findsWidgets);
   });
 
   testWidgets('footer shows the app version + KYTH branding', (tester) async {
