@@ -40,6 +40,7 @@ import 'src/profiles.dart';
 import 'src/services/apt_services.dart';
 import 'src/services/pi_service.dart';
 import 'src/services/tailscale.dart';
+import 'src/session.dart';
 import 'src/settings_store.dart';
 import 'src/ssh_runner.dart';
 import 'src/update_check.dart';
@@ -251,10 +252,14 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _alertsServer = 'https://ntfy.sh'; // Health-Alerts ntfy destination
   String _alertsTopic = '';
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
-  int _tab = 0; // 0 = Dienste, 1 = Automatik, 2 = Terminal
+  int _tab = 0; // 0 = Verwaltung, 1 = Automatik, 2 = Terminal, 3 = Dateien
   String? _busyMessage; // shown in the shared running bar while _busy
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
+  // Active, validated session to the active Pi (set by an explicit "Verbindung
+  // herstellen"; survives per-action work — NOT reset in _beginBusy). Gates the
+  // Automatik/Terminal/Dateien tabs. In-memory only; never persisted.
+  bool _connected = false;
   List<ServiceStatus> _services = []; // detected services → service cards
   List<Profile> _profiles = [const Profile(name: 'Standard')]; // growable
   int _activeIndex = 0;
@@ -381,8 +386,12 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _invalidateConnTest() {
-    if (_connectionOk != null && mounted) {
-      setState(() => _connectionOk = null);
+    if ((_connectionOk != null || _connected) && mounted) {
+      setState(() {
+        _connectionOk = null;
+        _connected = false; // editing creds invalidates the session
+        if (isGatedTab(_tab)) _tab = tabAfterDisconnect(_tab);
+      });
     }
   }
 
@@ -419,6 +428,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _resetDetectionForNewPi() {
     _services = [];
     _connectionOk = null;
+    _connected = false; // end the session — the new Pi must be connected anew
+    if (isGatedTab(_tab)) _tab = kTabVerwaltung; // snap back off a gated tab
     _setupUrl = null;
     _statusMessage = null;
     _hostKeyIssue = false;
@@ -1096,10 +1107,19 @@ class _UpdaterPageState extends State<UpdaterPage>
       final cancelled = e.kind == UpdateErrorKind.cancelled;
       _appendLog(cancelled ? 'Abgebrochen.' : 'FEHLER: ${e.message}');
       if (!mounted) return;
+      // A connection-class failure means the session is no longer valid — drop
+      // it honestly so the UI doesn't claim "verbunden" for an unreachable Pi.
+      final connectionLost = e.kind == UpdateErrorKind.connection ||
+          e.kind == UpdateErrorKind.auth ||
+          e.kind == UpdateErrorKind.hostKeyChanged;
       setState(() {
         _statusMessage = e.message;
         _statusOk = false;
         _hostKeyIssue = e.kind == UpdateErrorKind.hostKeyChanged;
+        if (connectionLost) {
+          _connected = false;
+          if (isGatedTab(_tab)) _tab = kTabVerwaltung;
+        }
       });
     } catch (e) {
       _appendLog('FEHLER: $e'); // _appendLog redacts the password
@@ -1256,11 +1276,13 @@ class _UpdaterPageState extends State<UpdaterPage>
         _rememberTailscaleIp(services);
         _rememberLanHost();
         _connExpanded = false; // connected → free up space for the service cards
+        _connected = true; // explicit session established → unlock gated tabs
         final found =
             services.where((s) => s.installed).map((s) => s.name).join(', ');
         _statusMessage = 'Verbindung OK – erkannt: $found.';
         _statusOk = true;
       });
+      _appendLog('✓ Verbunden mit ${_host.text.trim()}.');
     });
     // Drive the Test-Button colour from the outcome (success populated the
     // cards; any thrown error set _statusOk=false via _guard).
@@ -4226,6 +4248,14 @@ class _UpdaterPageState extends State<UpdaterPage>
                         style: const TextStyle(
                             fontWeight: FontWeight.w600, fontSize: 13)),
                   ),
+                  if (_connected)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child: Icon(Icons.check_circle,
+                          key: Key('sessionConnected'),
+                          size: 14,
+                          color: Colors.green),
+                    ),
                   Icon(Icons.arrow_drop_down,
                       size: 22, color: theme.colorScheme.onSurfaceVariant),
                 ],
@@ -4519,32 +4549,58 @@ class _UpdaterPageState extends State<UpdaterPage>
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() {
-          _tab = i;
-          // Don't carry a stale result banner (e.g. "Verbindung OK") onto
-          // another tab — file ops don't run through _guard, so it would
-          // otherwise stick on the Dateien/Terminal tabs.
-          _statusMessage = null;
-        }),
-        destinations: const [
-          NavigationDestination(
-              icon: Icon(Icons.dns_outlined),
-              selectedIcon: Icon(Icons.dns),
-              label: 'Dienste'),
-          NavigationDestination(
-              icon: Icon(Icons.bolt_outlined),
-              selectedIcon: Icon(Icons.bolt),
-              label: 'Automatik'),
-          NavigationDestination(
-              icon: Icon(Icons.terminal_outlined),
-              selectedIcon: Icon(Icons.terminal),
-              label: 'Terminal'),
-          NavigationDestination(
-              icon: Icon(Icons.folder_outlined),
-              selectedIcon: Icon(Icons.folder),
-              label: 'Dateien'),
+        onDestinationSelected: (i) {
+          // Gated tabs (Automatik/Terminal/Dateien) stay locked until an
+          // explicit connection exists — tapping one just hints, no switch.
+          if (!tabAllowed(i, connected: _connected)) {
+            _snack('Zuerst verbinden: „Verbindung herstellen" im Tab '
+                'Verwaltung.');
+            return;
+          }
+          setState(() {
+            _tab = i;
+            // Don't carry a stale result banner (e.g. "Verbindung OK") onto
+            // another tab — file ops don't run through _guard, so it would
+            // otherwise stick on the Dateien/Terminal tabs.
+            _statusMessage = null;
+          });
+        },
+        destinations: [
+          const NavigationDestination(
+              icon: Icon(Icons.tune_outlined),
+              selectedIcon: Icon(Icons.tune),
+              label: 'Verwaltung'),
+          _navDest(kTabAutomatik, Icons.bolt_outlined, Icons.bolt, 'Automatik'),
+          _navDest(
+              kTabTerminal, Icons.terminal_outlined, Icons.terminal, 'Terminal'),
+          _navDest(
+              kTabDateien, Icons.folder_outlined, Icons.folder, 'Dateien'),
         ],
       ),
+    );
+  }
+
+  /// A bottom-nav destination that greys out + shows a small lock while the
+  /// session gate blocks it (Automatik/Terminal/Dateien until connected). Kept
+  /// as a NavigationDestination so the label stays findable; the icon is
+  /// wrapped, so `find.byIcon(...)` still resolves it.
+  NavigationDestination _navDest(
+      int index, IconData icon, IconData selected, String label) {
+    final locked = !tabAllowed(index, connected: _connected);
+    Widget wrap(Widget child) => locked
+        ? Opacity(
+            opacity: 0.38,
+            child: Stack(clipBehavior: Clip.none, children: [
+              child,
+              const Positioned(
+                  right: -6, top: -4, child: Icon(Icons.lock, size: 11)),
+            ]),
+          )
+        : child;
+    return NavigationDestination(
+      icon: wrap(Icon(icon)),
+      selectedIcon: wrap(Icon(selected)),
+      label: label,
     );
   }
 

@@ -2308,7 +2308,6 @@ class EvccUpdater {
     void log(String s) => onLog(redactPassword(s, config.password));
 
     try {
-      log('Verbinde mit ${config.username}@${config.host}:${config.port} …');
       await runner.connect();
       // A cancel that arrived during the connect handshake must stop here —
       // before the (possibly destructive) body runs — since closing a not-yet-
