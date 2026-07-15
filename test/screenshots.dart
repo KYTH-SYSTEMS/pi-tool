@@ -12,6 +12,7 @@
 library;
 
 import 'dart:io';
+import 'package:evcc_updater/src/l10n.dart';
 
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
@@ -170,6 +171,9 @@ void main() {
             onPrimary: Colors.black,
             surface: const Color(0xFF0B0E0C));
     return MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

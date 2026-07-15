@@ -1,0 +1,7 @@
+{
+  "@@locale": "en",
+  "settingsLanguageTitle": "Language",
+  "@settingsLanguageTitle": {
+    "description": "Settings section title: the app language selector"
+  }
+}

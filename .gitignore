@@ -51,3 +51,6 @@ key.properties
 
 # Generated store screenshots (intermediate; final copies live in fastlane)
 test/shots/
+
+# Generated l10n (gen-l10n runs on `flutter pub get` via generate: true)
+lib/l10n/app_localizations*.dart

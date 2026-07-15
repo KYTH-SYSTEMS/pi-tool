@@ -1,4 +1,5 @@
 import 'package:evcc_updater/main.dart';
+import 'package:evcc_updater/src/l10n.dart';
 import 'package:evcc_updater/src/authenticator.dart';
 import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:evcc_updater/src/kyth_wordmark.dart';
@@ -44,6 +45,9 @@ final _noUpdateChecker =
     UpdateChecker(getJson: (_) async => <String, dynamic>{});
 
 Widget _page() => MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
     home: UpdaterPage(store: _FakeStore(), updateChecker: _noUpdateChecker));
 
 void main() {
@@ -73,6 +77,9 @@ void main() {
       lastSeenVersion: '0.21.13', // updated FROM this
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -93,6 +100,9 @@ void main() {
       activeIndex: 0,
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -145,6 +155,9 @@ void main() {
     );
     useTallScreen(tester);
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: _FakeStore(), updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -171,6 +184,9 @@ void main() {
     );
     useTallScreen(tester);
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: _FakeStore(), updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -202,6 +218,9 @@ void main() {
     useTallScreen(tester);
     final store = _FakeStore();
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -218,6 +237,9 @@ void main() {
     useTallScreen(tester);
     final store = _FakeStore(); // AppConfig.initial → const profiles list
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -301,6 +323,9 @@ void main() {
       disclaimerAccepted: true,
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -325,6 +350,9 @@ void main() {
       disclaimerAccepted: true,
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
     ));
     await tester.pumpAndSettle();
@@ -351,6 +379,9 @@ void main() {
     useTallScreen(tester);
     final store = _FakeStore();
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: store,
         updateChecker: _noUpdateChecker,
@@ -380,6 +411,9 @@ void main() {
     useTallScreen(tester);
     final store = _FakeStore(); // fresh config → empty host
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: store,
         updateChecker: _noUpdateChecker,
@@ -432,6 +466,9 @@ void main() {
       disclaimerAccepted: true,
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: store,
         updateChecker: _noUpdateChecker,
@@ -459,6 +496,9 @@ void main() {
       lockEnabled: true,
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: store,
         updateChecker: _noUpdateChecker,
@@ -485,6 +525,9 @@ void main() {
       lockEnabled: true,
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       // Light app theme — the lock screen must NOT follow it (it sits right
       // after the dark splash video).
       theme: ThemeData(brightness: Brightness.light),

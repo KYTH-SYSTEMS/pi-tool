@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:evcc_updater/src/l10n.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -708,6 +709,9 @@ void main() {
           FilePickerService? filePicker,
           Future<void> Function(String name, Uint8List bytes)? fileSaver}) =>
       MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
         home: UpdaterPage(
           store: _FakeStore(_ready),
           updater: updater,
@@ -856,6 +860,9 @@ void main() {
       },
     );
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(const AppConfig(
           profiles: [Profile(name: 'S', host: '1.1.1.1', password: 'pw')],
@@ -915,6 +922,9 @@ void main() {
     final u = FakeEvccUpdater()
       ..dirEntries = const [(name: 'piA.txt', isDir: false)];
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(const AppConfig(
           profiles: [
@@ -1012,6 +1022,9 @@ void main() {
       disclaimerAccepted: true,
     );
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(cfg),
         updater: FakeEvccUpdater(),
@@ -2001,6 +2014,9 @@ void main() {
       ..detectError = const EvccUpdateException(
           UpdateErrorKind.hostKeyChanged, 'Host-Key geändert!');
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(cfg),
         updater: u,
@@ -2063,6 +2079,9 @@ void main() {
       (tester) async {
     useTallScreen(tester);
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(_ready),
         updater: FakeEvccUpdater(),
@@ -2098,6 +2117,9 @@ void main() {
         ),
       ];
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(const AppConfig(
           profiles: [
@@ -2149,6 +2171,9 @@ void main() {
       disclaimerAccepted: true,
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
           store: store, updater: u, updateChecker: _noUpdateChecker),
     ));
@@ -2211,6 +2236,9 @@ void main() {
   testWidgets('Ohne Zugangsdaten startet die Karte aufgeklappt', (tester) async {
     useTallScreen(tester);
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(const AppConfig(
           profiles: [Profile(name: 'Neu')], // no host, no secret yet
@@ -2355,6 +2383,9 @@ void main() {
       ];
     final launcher = _FakeLauncher();
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(_ready),
         updater: u,
@@ -2383,6 +2414,9 @@ void main() {
     useTallScreen(tester);
     final launcher = _FakeLauncher();
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(_ready), // no tailscaleIp remembered yet
         updater: FakeEvccUpdater(),
@@ -2425,6 +2459,9 @@ void main() {
       ];
     final launcher = _FakeLauncher();
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(_ready), // host 192.168.178.64 (LAN)
         updater: u,
@@ -2594,6 +2631,9 @@ void main() {
       customCommands: ['vcgencmd measure_temp'],
     ));
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
       home: UpdaterPage(
           store: store,
           updater: FakeEvccUpdater(),
@@ -2645,8 +2685,10 @@ void main() {
     await tester.pumpAndSettle();
     // The atomic config editor opens, loaded via readConfigFile (sudo-capable).
     expect(find.text(u.configText), findsOneWidget);
-    // Leave the editor again (no save).
-    await tester.pageBack();
+    // Leave the editor again (no save). Tap the AppBar back button by type —
+    // tester.pageBack() matches the English 'Back' tooltip, which is now
+    // localized to 'Zurück' under the pinned German test locale.
+    await tester.tap(find.byType(BackButton));
     await tester.pumpAndSettle();
 
     // A binary file (NUL byte) must NOT offer editing.

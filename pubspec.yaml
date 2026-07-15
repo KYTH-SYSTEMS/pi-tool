@@ -80,6 +80,7 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  generate: true # gen-l10n: AppLocalizations from lib/l10n/*.arb
 
   assets:
     - assets/kyth-splash.mp4

@@ -93,6 +93,9 @@ class AppConfig {
   final String uiPort;
   final bool lockEnabled;
   final String themeMode;
+
+  /// UI language: 'system' (follow the device), 'de' or 'en'.
+  final String languageMode;
   final String channel;
   final bool autoCheck;
 
@@ -125,6 +128,7 @@ class AppConfig {
     this.uiPort = '7070',
     this.lockEnabled = false,
     this.themeMode = 'system',
+    this.languageMode = 'system',
     this.channel = 'stable',
     this.autoCheck = false,
     this.backupBeforeUpdate = true,
@@ -153,6 +157,7 @@ class AppConfig {
     String? uiPort,
     bool? lockEnabled,
     String? themeMode,
+    String? languageMode,
     String? channel,
     bool? autoCheck,
     bool? backupBeforeUpdate,
@@ -171,6 +176,7 @@ class AppConfig {
         uiPort: uiPort ?? this.uiPort,
         lockEnabled: lockEnabled ?? this.lockEnabled,
         themeMode: themeMode ?? this.themeMode,
+        languageMode: languageMode ?? this.languageMode,
         channel: channel ?? this.channel,
         autoCheck: autoCheck ?? this.autoCheck,
         backupBeforeUpdate: backupBeforeUpdate ?? this.backupBeforeUpdate,
@@ -190,6 +196,7 @@ class AppConfig {
         'uiPort': uiPort,
         'lockEnabled': lockEnabled,
         'themeMode': themeMode,
+        'languageMode': languageMode,
         'channel': channel,
         'autoCheck': autoCheck,
         'backupBeforeUpdate': backupBeforeUpdate,
@@ -217,6 +224,7 @@ class AppConfig {
       uiPort: (j['uiPort'] ?? '7070').toString(),
       lockEnabled: j['lockEnabled'] == true,
       themeMode: (j['themeMode'] ?? 'system').toString(),
+      languageMode: (j['languageMode'] ?? 'system').toString(),
       channel: (j['channel'] ?? 'stable').toString(),
       autoCheck: j['autoCheck'] == true,
       // Default ON; only an explicit false disables it.

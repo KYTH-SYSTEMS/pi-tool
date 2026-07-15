@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart'
     show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator, rootBundle;
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -34,6 +33,8 @@ import 'src/evcc_api.dart';
 import 'src/evcc_updater.dart';
 import 'src/history.dart';
 import 'src/keep_alive.dart';
+import 'src/l10n.dart';
+import 'src/language.dart';
 import 'src/network_scan.dart';
 import 'src/parsing.dart';
 import 'src/profiles.dart';
@@ -84,6 +85,10 @@ ThemeMode parseThemeMode(String s) => switch (s) {
       _ => ThemeMode.system,
     };
 
+/// Drives the app locale. null = follow the device language (system mode);
+/// otherwise a forced Locale('de')/('en'). See [localeForLanguageMode].
+final ValueNotifier<Locale?> localeNotifier = ValueNotifier<Locale?>(null);
+
 ThemeData _buildTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   final scheme = dark
@@ -109,18 +114,24 @@ class EvccPiToolApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeModeNotifier,
-      builder: (_, mode, _) => MaterialApp(
-        title: 'Pi-Tool',
-        debugShowCheckedModeBanner: false,
-        themeMode: mode,
-        theme: _buildTheme(Brightness.light),
-        darkTheme: _buildTheme(Brightness.dark),
-        // German-first UI: render framework strings (copy/paste menus, dialogs,
-        // the license page) in German too.
-        locale: const Locale('de'),
-        localizationsDelegates: GlobalMaterialLocalizations.delegates,
-        supportedLocales: const [Locale('de'), Locale('en')],
-        home: const KythSplashGate(child: UpdaterPage()),
+      builder: (_, mode, _) => ValueListenableBuilder<Locale?>(
+        valueListenable: localeNotifier,
+        builder: (_, locale, _) => MaterialApp(
+          title: 'Pi-Tool',
+          debugShowCheckedModeBanner: false,
+          themeMode: mode,
+          theme: _buildTheme(Brightness.light),
+          darkTheme: _buildTheme(Brightness.dark),
+          // null → follow the device; else a forced de/en. Framework strings
+          // (copy/paste menus, dialogs, license page) follow the resolved locale.
+          locale: locale,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          // English fallback for any non-German device language.
+          localeResolutionCallback: (device, supported) =>
+              resolveSystemLocale(locale ?? device),
+          home: const KythSplashGate(child: UpdaterPage()),
+        ),
       ),
     );
   }
@@ -242,6 +253,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   // screen. Like _unlocking (which covers the biometric prompt).
   bool _suppressLock = false;
   String _themeMode = 'system';
+  String _languageMode = 'system'; // 'system' | 'de' | 'en'
   String _channel = 'stable';
   bool _backupBeforeUpdate = true;
   bool _disclaimerAccepted = false; // first-run terms accepted
@@ -343,6 +355,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _uiPort.text = cfg.uiPort;
       _lockEnabled = cfg.lockEnabled;
       _themeMode = cfg.themeMode;
+      _languageMode = cfg.languageMode;
       _channel = cfg.channel;
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
       _disclaimerAccepted = cfg.disclaimerAccepted;
@@ -356,6 +369,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _booting = false; // settings + lock state resolved → reveal the UI
     });
     themeModeNotifier.value = parseThemeMode(_themeMode);
+    localeNotifier.value = localeForLanguageMode(_languageMode);
     // Attach auto-save listeners after initial values are set.
     for (final c in _savedControllers) {
       c.addListener(_scheduleSave);
@@ -503,6 +517,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       uiPort: _uiPort.text.trim().isEmpty ? '7070' : _uiPort.text.trim(),
       lockEnabled: _lockEnabled,
       themeMode: _themeMode,
+      languageMode: _languageMode,
       channel: _channel,
       backupBeforeUpdate: _backupBeforeUpdate,
       disclaimerAccepted: _disclaimerAccepted,
@@ -3377,6 +3392,24 @@ class _UpdaterPageState extends State<UpdaterPage>
                   onSelectionChanged: (s) {
                     setState(() => _themeMode = s.first);
                     themeModeNotifier.value = parseThemeMode(s.first);
+                    setSheet(() {});
+                    _scheduleSave();
+                  },
+                ),
+                const SizedBox(height: 16),
+                Text(ctx.l10n.settingsLanguageTitle,
+                    style: Theme.of(ctx).textTheme.labelLarge),
+                const SizedBox(height: 6),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'system', label: Text('System')),
+                    ButtonSegment(value: 'de', label: Text('Deutsch')),
+                    ButtonSegment(value: 'en', label: Text('English')),
+                  ],
+                  selected: {_languageMode},
+                  onSelectionChanged: (s) {
+                    setState(() => _languageMode = s.first);
+                    localeNotifier.value = localeForLanguageMode(s.first);
                     setSheet(() {});
                     _scheduleSave();
                   },
