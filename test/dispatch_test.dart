@@ -1715,6 +1715,23 @@ void main() {
     expect(u.restoredPihole, isEmpty); // tap on the icon must not restore
   });
 
+  testWidgets(
+      'Terminal shows the "✓ Verbunden" confirmation, not the old "Verbinde mit" preamble',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester); // explicit "Verbindung herstellen"
+    await goTerminal(tester); // the log persists across the tab switch
+
+    // The explicit connect logs a single past-tense confirmation; the old
+    // present-tense "Verbinde mit host…" preamble is gone (it used to linger on
+    // the Terminal tab and look like a live connection on app open).
+    expect(find.textContaining('✓ Verbunden'), findsWidgets);
+    expect(find.textContaining('Verbinde mit'), findsNothing);
+  });
+
   testWidgets('console history: a run command is persisted and re-offered',
       (tester) async {
     useTallScreen(tester);
