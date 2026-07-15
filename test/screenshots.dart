@@ -108,8 +108,24 @@ const _healthyServices = <ServiceStatus>[
       health: '39 °C · 78 % frei · 0,9 GB RAM · Up 43 T'),
 ];
 
+/// English detail lines for the English screenshot set (the detail/health text
+/// comes from the Pi and isn't localized by the app, so the fixtures provide it).
+const _richServicesEn = <ServiceStatus>[
+  ServiceStatus(id: 'evcc', name: 'evcc', installed: true, version: '0.310.0', active: true, updateKnown: true, detail: 'apt · service active'),
+  ServiceStatus(id: 'pihole', name: 'Pi-hole', installed: true, version: 'v6.0.4', active: true, detail: 'service active · DNS ok'),
+  ServiceStatus(id: 'homeassistant', name: 'Home Assistant', installed: true, version: '2026.6', active: true, detail: 'Docker · active'),
+  ServiceStatus(id: 'tailscale', name: 'Tailscale', installed: true, version: '100.101.102.103', active: true, detail: 'connected · remote access'),
+  ServiceStatus(id: 'adguard', name: 'AdGuard Home', installed: true, version: 'v0.107.68', active: true, detail: 'service active'),
+  ServiceStatus(id: 'system', name: 'System (Pi)', installed: true, version: 'Debian 12', active: true, updateKnown: true, updateAvailable: true, detail: '3 updates available', health: '48 °C · 62% free · 1.4 GB RAM · Up 12d'),
+];
+const _healthyServicesEn = <ServiceStatus>[
+  ServiceStatus(id: 'evcc', name: 'evcc', installed: true, version: '0.310.0', active: true, updateKnown: true, detail: 'apt · service active'),
+  ServiceStatus(id: 'system', name: 'System (Pi)', installed: true, version: 'Debian 12', active: true, updateKnown: true, detail: 'up to date', health: '39 °C · 78% free · 0.9 GB RAM · Up 43d'),
+];
+
 class _ShotUpdater extends EvccUpdater {
-  _ShotUpdater() : super(runnerFactory: _noRunner);
+  _ShotUpdater([this.lang = 'de']) : super(runnerFactory: _noRunner);
+  final String lang;
   static SshRunner _noRunner(SshConfig c) => throw UnimplementedError();
 
   @override
@@ -120,9 +136,12 @@ class _ShotUpdater extends EvccUpdater {
     void Function()? onConnected,
   }) async {
     onConnected?.call();
+    final en = lang == 'en';
     // Keller-Pi (…​.51) is up to date; the active Wohnzimmer-Pi has updates.
-    if (config.host.endsWith('.51')) return _healthyServices;
-    return _richServices;
+    if (config.host.endsWith('.51')) {
+      return en ? _healthyServicesEn : _healthyServices;
+    }
+    return en ? _richServicesEn : _richServices;
   }
 }
 
@@ -163,7 +182,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  Widget app(EvccUpdater u) {
+  Widget app(EvccUpdater u, {Locale locale = const Locale('de')}) {
     final scheme = ColorScheme.fromSeed(
             seedColor: const Color(0xFF1FD65F), brightness: Brightness.dark)
         .copyWith(
@@ -173,7 +192,7 @@ void main() {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      locale: const Locale('de'),
+      locale: locale,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -190,78 +209,100 @@ void main() {
     );
   }
 
-  Future<void> connect(WidgetTester tester) async {
-    await tester
-        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
-    await tester.pumpAndSettle();
+  // Generate BOTH a German and an English set → shots/de/* and shots/en/*.
+  // Tab switches use icons (locale-independent); button/menu taps use the
+  // per-locale labels below.
+  const sets =
+      <({String lang, String connect, String addService, String allPis})>[
+    (
+      lang: 'de',
+      connect: 'Verbindung herstellen',
+      addService: 'Dienst hinzufügen',
+      allPis: 'Alle Pis (Überblick)'
+    ),
+    (
+      lang: 'en',
+      connect: 'Connect',
+      addService: 'Add service',
+      allPis: 'All Pis (overview)'
+    ),
+  ];
+
+  for (final s in sets) {
+    final loc = Locale(s.lang);
+    final dir = 'shots/${s.lang}';
+
+    Future<void> connect(WidgetTester tester) async {
+      await tester.tap(find.widgetWithText(OutlinedButton, s.connect));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('[${s.lang}] 01 cockpit', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(app(_ShotUpdater(s.lang), locale: loc));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await expectLater(
+          find.byType(MaterialApp), matchesGoldenFile('$dir/01_cockpit.png'));
+    });
+
+    testWidgets('[${s.lang}] 02 services', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(app(_ShotUpdater(s.lang), locale: loc));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -720));
+      await tester.pumpAndSettle();
+      await expectLater(
+          find.byType(MaterialApp), matchesGoldenFile('$dir/02_services.png'));
+    });
+
+    testWidgets('[${s.lang}] 03 add-service picker', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(app(_ShotUpdater(s.lang), locale: loc));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -720));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining(s.addService).first);
+      await tester.pumpAndSettle();
+      await expectLater(
+          find.byType(MaterialApp), matchesGoldenFile('$dir/03_add.png'));
+    });
+
+    testWidgets('[${s.lang}] 04 automatik tab', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(app(_ShotUpdater(s.lang), locale: loc));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await tester.tap(find.byIcon(Icons.bolt_outlined));
+      await tester.pumpAndSettle();
+      await expectLater(
+          find.byType(MaterialApp), matchesGoldenFile('$dir/04_automatik.png'));
+    });
+
+    testWidgets('[${s.lang}] 05 terminal tab', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(app(_ShotUpdater(s.lang), locale: loc));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await tester.tap(find.byIcon(Icons.terminal_outlined));
+      await tester.pumpAndSettle();
+      await expectLater(
+          find.byType(MaterialApp), matchesGoldenFile('$dir/05_terminal.png'));
+    });
+
+    testWidgets('[${s.lang}] 06 multi-pi overview', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(app(_ShotUpdater(s.lang), locale: loc));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(s.allPis));
+      await tester.pumpAndSettle();
+      await expectLater(
+          find.byType(MaterialApp), matchesGoldenFile('$dir/06_multipi.png'));
+    });
   }
-
-  testWidgets('01 cockpit top (connect + status)', (tester) async {
-    phone(tester);
-    await tester.pumpWidget(app(_ShotUpdater()));
-    await tester.pumpAndSettle();
-    await connect(tester);
-    await expectLater(
-        find.byType(MaterialApp), matchesGoldenFile('shots/01_cockpit.png'));
-  });
-
-  testWidgets('02 services (scrolled to cards)', (tester) async {
-    phone(tester);
-    await tester.pumpWidget(app(_ShotUpdater()));
-    await tester.pumpAndSettle();
-    await connect(tester);
-    // Scroll past the connection card so the service cards fill the frame.
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -720));
-    await tester.pumpAndSettle();
-    await expectLater(
-        find.byType(MaterialApp), matchesGoldenFile('shots/02_services.png'));
-  });
-
-  testWidgets('03 add-service picker', (tester) async {
-    phone(tester);
-    await tester.pumpWidget(app(_ShotUpdater()));
-    await tester.pumpAndSettle();
-    await connect(tester);
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -720));
-    await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('Dienst hinzufügen').first);
-    await tester.pumpAndSettle();
-    await expectLater(
-        find.byType(MaterialApp), matchesGoldenFile('shots/03_add.png'));
-  });
-
-  testWidgets('04 automatik tab', (tester) async {
-    phone(tester);
-    await tester.pumpWidget(app(_ShotUpdater()));
-    await tester.pumpAndSettle();
-    await connect(tester);
-    await tester.tap(find.text('Automatik'));
-    await tester.pumpAndSettle();
-    await expectLater(
-        find.byType(MaterialApp), matchesGoldenFile('shots/04_automatik.png'));
-  });
-
-  testWidgets('05 terminal tab', (tester) async {
-    phone(tester);
-    await tester.pumpWidget(app(_ShotUpdater()));
-    await tester.pumpAndSettle();
-    await connect(tester);
-    await tester.tap(find.text('Terminal'));
-    await tester.pumpAndSettle();
-    await expectLater(
-        find.byType(MaterialApp), matchesGoldenFile('shots/05_terminal.png'));
-  });
-
-  testWidgets('06 multi-pi overview', (tester) async {
-    phone(tester);
-    await tester.pumpWidget(app(_ShotUpdater()));
-    await tester.pumpAndSettle();
-    await connect(tester);
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Alle Pis (Überblick)'));
-    await tester.pumpAndSettle();
-    await expectLater(
-        find.byType(MaterialApp), matchesGoldenFile('shots/06_multipi.png'));
-  });
 }
