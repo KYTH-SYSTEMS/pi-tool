@@ -41,24 +41,24 @@ class _TestButton extends StatelessWidget {
         height: 16,
         child: CircularProgressIndicator(strokeWidth: 2),
       );
-      label = 'Verbinde …';
+      label = context.l10n.wConnecting;
       fg = cs.onSurfaceVariant;
       border = cs.outlineVariant;
     } else if (result == true) {
       icon = Icon(Icons.check_circle, size: 18, color: okGreen);
-      label = 'Verbunden';
+      label = context.l10n.wConnected;
       fg = okGreen;
       bg = kGreen.withValues(alpha: dark ? 0.14 : 0.10);
       border = kGreen.withValues(alpha: 0.55);
     } else if (result == false) {
       icon = Icon(Icons.error_outline, size: 18, color: cs.error);
-      label = 'Keine Verbindung';
+      label = context.l10n.wNoConnection;
       fg = cs.error;
       bg = cs.error.withValues(alpha: dark ? 0.14 : 0.08);
       border = cs.error.withValues(alpha: 0.55);
     } else {
       icon = Icon(Icons.wifi_tethering, size: 18, color: cs.onSurfaceVariant);
-      label = 'Verbindung herstellen';
+      label = context.l10n.wConnect;
       fg = cs.onSurfaceVariant;
       border = cs.outlineVariant;
     }
@@ -141,7 +141,7 @@ class _FilesViewState extends State<_FilesView> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Verzeichnis konnte nicht geladen werden.';
+        _error = context.l10n.wDirLoadFailed;
       });
     }
   }
@@ -174,12 +174,12 @@ class _FilesViewState extends State<_FilesView> {
                 ),
               ),
               IconButton(
-                tooltip: 'Aktualisieren',
+                tooltip: context.l10n.wRefresh,
                 onPressed: busy ? null : () => _load(_path),
                 icon: const Icon(Icons.refresh),
               ),
               IconButton(
-                tooltip: 'Datei hochladen',
+                tooltip: context.l10n.wUploadFile,
                 onPressed: busy
                     ? null
                     : () => _work(() async {
@@ -207,7 +207,7 @@ class _FilesViewState extends State<_FilesView> {
                             : () => _load(parentRemotePath(_path)),
                       ),
                     if (entries.isEmpty && !atRoot)
-                      const ListTile(enabled: false, title: Text('— leer —')),
+                      ListTile(enabled: false, title: Text(context.l10n.wEmpty)),
                     for (final e in entries)
                       ListTile(
                         leading: Icon(
@@ -227,7 +227,7 @@ class _FilesViewState extends State<_FilesView> {
                               ),
                         trailing: PopupMenuButton<String>(
                           enabled: !busy,
-                          tooltip: 'Aktionen',
+                          tooltip: context.l10n.wActions,
                           onSelected: (v) {
                             if (v == 'delete') {
                               _work(() async {
@@ -238,9 +238,9 @@ class _FilesViewState extends State<_FilesView> {
                             }
                           },
                           itemBuilder: (_) => [
-                            const PopupMenuItem(
+                            PopupMenuItem(
                               value: 'delete',
-                              child: Text('Löschen'),
+                              child: Text(context.l10n.wDelete),
                             ),
                           ],
                         ),
@@ -312,19 +312,15 @@ class _AlertsSheetState extends State<_AlertsSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Health-Alerts', style: theme.textTheme.titleLarge),
+            Text(context.l10n.wHealthAlertsTitle,
+                style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
-            const Text(
-              'Der Pi meldet sich per Push (via ntfy), wenn die Platte '
-              'vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates '
-              'anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.',
-            ),
+            Text(context.l10n.wAlertsExplain),
             const SizedBox(height: 6),
             InkWell(
               onTap: widget.onOpenNtfy,
               child: Text(
-                'So funktioniert ntfy (App installieren, Thema '
-                'abonnieren) →',
+                context.l10n.wAlertsNtfyLink,
                 style: TextStyle(
                   color: theme.colorScheme.primary,
                   fontSize: 13,
@@ -334,8 +330,8 @@ class _AlertsSheetState extends State<_AlertsSheet> {
             const SizedBox(height: 12),
             Text(
               status.enabled
-                  ? 'Aktuell aktiv · letzte Prüfung: ${status.lastCheck ?? '—'}'
-                  : 'Aktuell aus.',
+                  ? context.l10n.wAlertsActiveSince(status.lastCheck ?? '—')
+                  : context.l10n.wAlertsOff,
               style: TextStyle(
                 color: status.enabled ? kGreen : null,
                 fontWeight: FontWeight.w600,
@@ -346,11 +342,11 @@ class _AlertsSheetState extends State<_AlertsSheet> {
               controller: _topicCtrl,
               autocorrect: false,
               enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: 'ntfy-Thema (Topic)',
-                hintText: 'z. B. mein-pi-a7Xk',
-                helperText: 'Frei wählbar, aber schwer erratbar wählen.',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: context.l10n.wNtfyTopicLabel,
+                hintText: context.l10n.wNtfyTopicHint,
+                helperText: context.l10n.wNtfyTopicHelper,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 10),
@@ -358,9 +354,9 @@ class _AlertsSheetState extends State<_AlertsSheet> {
               controller: _serverCtrl,
               autocorrect: false,
               enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: 'ntfy-Server',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: context.l10n.wNtfyServerLabel,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),
@@ -371,7 +367,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                     onPressed: () {
                       final topic = _topicCtrl.text.trim();
                       if (topic.isEmpty) {
-                        widget.onSnack('Bitte ein ntfy-Thema eingeben.');
+                        widget.onSnack(context.l10n.wEnterNtfyTopic);
                         return;
                       }
                       Navigator.pop(context, (
@@ -381,7 +377,9 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                       ));
                     },
                     child: Text(
-                      status.enabled ? 'Aktualisieren' : 'Einschalten',
+                      status.enabled
+                          ? context.l10n.wAlertsUpdate
+                          : context.l10n.wEnable,
                     ),
                   ),
                 ),
@@ -390,12 +388,12 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                   onPressed: () {
                     final topic = _topicCtrl.text.trim();
                     if (topic.isEmpty) {
-                      widget.onSnack('Bitte ein ntfy-Thema eingeben.');
+                      widget.onSnack(context.l10n.wEnterNtfyTopic);
                       return;
                     }
                     widget.onTest(_server, topic);
                   },
-                  child: const Text('Test'),
+                  child: Text(context.l10n.wTest),
                 ),
               ],
             ),
@@ -408,7 +406,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                     server: '',
                     topic: '',
                   )),
-                  child: const Text('Ausschalten'),
+                  child: Text(context.l10n.wDisable),
                 ),
               ),
           ],
@@ -457,7 +455,7 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Konnte nicht geladen werden (Rechte?).';
+        _error = context.l10n.wLoadFailedPerms;
       });
     }
   }
@@ -474,7 +472,7 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
             child: Row(
               children: [
                 IconButton(
-                  tooltip: 'Übergeordneter Ordner',
+                  tooltip: context.l10n.wParentFolder,
                   onPressed:
                       (atRoot || _loading) ? null : () => _load(parentRemotePath(_path)),
                   icon: const Icon(Icons.arrow_upward),
@@ -495,7 +493,7 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
                 : _error != null
                     ? Center(child: Text(_error!))
                     : _entries.isEmpty
-                        ? const Center(child: Text('— leer —'))
+                        ? Center(child: Text(context.l10n.wEmpty))
                         : ListView.builder(
                             itemCount: _entries.length,
                             itemBuilder: (_, i) {
@@ -577,7 +575,7 @@ class _DockerSheetState extends State<_DockerSheet> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text('Docker-Container',
+                  child: Text(context.l10n.wDockerContainers,
                       style: Theme.of(context).textTheme.titleMedium),
                 ),
                 if (_busy)
@@ -586,7 +584,7 @@ class _DockerSheetState extends State<_DockerSheet> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2)),
                 IconButton(
-                  tooltip: 'Aktualisieren',
+                  tooltip: context.l10n.wRefresh,
                   onPressed: _busy ? null : _reload,
                   icon: const Icon(Icons.refresh),
                 ),
@@ -596,8 +594,7 @@ class _DockerSheetState extends State<_DockerSheet> {
           const Divider(height: 1),
           Expanded(
             child: _list.isEmpty
-                ? const Center(
-                    child: Text('Keine Container (oder Docker nicht installiert).'))
+                ? Center(child: Text(context.l10n.wNoContainers))
                 : ListView.builder(
                     itemCount: _list.length,
                     itemBuilder: (_, i) {
@@ -621,10 +618,13 @@ class _DockerSheetState extends State<_DockerSheet> {
                               _run(() => widget.onLogs(c.name));
                             }
                           },
-                          itemBuilder: (_) => const [
+                          itemBuilder: (_) => [
                             PopupMenuItem(
-                                value: 'restart', child: Text('Neustart')),
-                            PopupMenuItem(value: 'logs', child: Text('Logs')),
+                                value: 'restart',
+                                child: Text(context.l10n.wRestart)),
+                            PopupMenuItem(
+                                value: 'logs',
+                                child: Text(context.l10n.wLogs)),
                           ],
                         ),
                       );
@@ -712,10 +712,10 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2)),
                 const SizedBox(width: 8),
-                const Text('Live'),
+                Text(context.l10n.wLive),
                 Switch(value: _live, onChanged: _toggleLive),
                 IconButton(
-                  tooltip: 'Aktualisieren',
+                  tooltip: context.l10n.wRefresh,
                   onPressed: _loading ? null : _refresh,
                   icon: const Icon(Icons.refresh),
                 ),
@@ -727,7 +727,7 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(12),
               child: SelectableText(
-                _logs.trim().isEmpty ? 'Keine Ausgabe.' : _logs,
+                _logs.trim().isEmpty ? context.l10n.wNoOutput : _logs,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
               ),
             ),
@@ -759,11 +759,11 @@ class _SecurityReportSheet extends StatelessWidget {
         children: [
           ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text('Sicherheits-Check',
+            title: Text(context.l10n.wSecurityCheck,
                 style: Theme.of(context).textTheme.titleMedium),
             subtitle: Text(warnings == 0
-                ? 'Keine Warnungen — sieht gut aus.'
-                : '$warnings ${warnings == 1 ? 'Warnung' : 'Warnungen'} gefunden.'),
+                ? context.l10n.wNoWarnings
+                : context.l10n.wWarningsFound(warnings)),
           ),
           const Divider(height: 1),
           for (final f in findings)
@@ -778,8 +778,7 @@ class _SecurityReportSheet extends StatelessWidget {
             }),
           const SizedBox(height: 4),
           Text(
-            'Nur-Lesen-Prüfung — die App ändert nichts. Empfehlungen kannst du '
-            'über die Konsole umsetzen.',
+            context.l10n.wReadOnlyCheckNote,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: cs.onSurfaceVariant),
           ),
@@ -904,16 +903,16 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
         width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2));
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Alle Pis'),
+        title: Text(context.l10n.wAllPis),
         actions: [
           if (_updatable.isNotEmpty)
             IconButton(
-              tooltip: 'Alle mit Updates aktualisieren',
+              tooltip: context.l10n.wUpdateAllWithUpdates,
               onPressed: idle ? _updateAll : null,
               icon: const Icon(Icons.system_update),
             ),
           IconButton(
-            tooltip: 'Neu prüfen',
+            tooltip: context.l10n.wRecheck,
             onPressed: idle ? _run : null,
             icon: const Icon(Icons.refresh),
           ),
@@ -933,21 +932,23 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                 String subtitle;
                 if (_updating == i) {
                   leading = spinner;
-                  subtitle = 'Aktualisiert …';
+                  subtitle = ctx.l10n.wUpdating;
                 } else if (upd != null) {
                   leading = Icon(upd ? Icons.check_circle : Icons.error,
                       color: upd ? kGreen : cs.error);
-                  subtitle = upd ? 'Aktualisiert' : 'Update fehlgeschlagen';
+                  subtitle =
+                      upd ? ctx.l10n.wUpdated : ctx.l10n.wUpdateFailed;
                 } else if (snap == null) {
                   leading = i == _probing
                       ? spinner
                       : Icon(Icons.circle_outlined,
                           color: cs.onSurfaceVariant);
-                  subtitle = i == _probing ? 'Prüfe …' : 'Wartet …';
+                  subtitle =
+                      i == _probing ? ctx.l10n.wChecking : ctx.l10n.wWaiting;
                 } else {
                   leading = Icon(Icons.circle, color: _colorFor(ctx, snap));
                   subtitle = [
-                    if (snap.updates) 'Updates verfügbar',
+                    if (snap.updates) ctx.l10n.wUpdatesAvailable,
                     snap.detail,
                   ].where((s) => s.isNotEmpty).join('  ·  ');
                 }
@@ -1022,91 +1023,62 @@ class _SetupGuidePage extends StatelessWidget {
     );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Pi einrichten')),
+      appBar: AppBar(title: Text(context.l10n.wSetUpPi)),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
           Text(
-            'Damit Pi-Tool sich verbinden kann, muss der Pi per SSH erreichbar '
-            'sein. Der „Raspberry Pi Imager" richtet das in wenigen Minuten ein '
-            '— ganz ohne Bildschirm/Tastatur am Pi.',
+            context.l10n.wSetupIntro,
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 20),
           step(
             1,
-            'Imager installieren',
+            context.l10n.wSetupStep1Title,
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Lade den „Raspberry Pi Imager" auf deinen Computer '
-                  'und starte ihn. Steck die SD-Karte des Pi in den Rechner.',
-                ),
+                Text(context.l10n.wSetupStep1Body),
                 const SizedBox(height: 6),
                 OutlinedButton.icon(
                   onPressed: onDownloadImager,
                   icon: const Icon(Icons.download, size: 18),
-                  label: const Text('Raspberry Pi Imager laden'),
+                  label: Text(context.l10n.wDownloadImager),
                 ),
               ],
             ),
           ),
           step(
             2,
-            'System wählen',
-            const Text(
-              'Wähle dein Pi-Modell, dann „Raspberry Pi OS Lite '
-              '(64-Bit)" (ohne Desktop – schlank und ideal für Pi-Tool) und '
-              'die SD-Karte.',
-            ),
+            context.l10n.wSetupStep2Title,
+            Text(context.l10n.wSetupStep2Body),
           ),
           step(
             3,
-            '⚙️ Erweiterte Optionen (wichtig!)',
+            context.l10n.wSetupStep3Title,
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Vor dem Schreiben auf das Zahnrad ⚙ bzw. '
-                  '„Einstellungen bearbeiten" tippen und setzen:',
-                ),
-                bullet('SSH aktivieren (mit Passwort-Anmeldung)'),
-                bullet(
-                  'Benutzername + Passwort – die trägst du gleich in '
-                  'Pi-Tool ein',
-                ),
-                bullet(
-                  'Hostname, z. B. „wohnzimmer-pi" (erreichbar als '
-                  'wohnzimmer-pi.local)',
-                ),
-                bullet(
-                  'WLAN: Netzwerkname, Passwort und Land – oder ein '
-                  'LAN-Kabel nutzen',
-                ),
+                Text(context.l10n.wSetupStep3Body),
+                bullet(context.l10n.wSetupBulletSsh),
+                bullet(context.l10n.wSetupBulletUserPass),
+                bullet(context.l10n.wSetupBulletHostname),
+                bullet(context.l10n.wSetupBulletWifi),
               ],
             ),
           ),
           step(
             4,
-            'Schreiben & starten',
-            const Text(
-              'SD-Karte beschreiben, in den Pi stecken, Strom '
-              'anschließen. Der erste Start dauert 1–2 Minuten.',
-            ),
+            context.l10n.wSetupStep4Title,
+            Text(context.l10n.wSetupStep4Body),
           ),
           step(
             5,
-            'In Pi-Tool verbinden',
-            const Text(
-              'Oben den Pi wählen/anlegen, als Host „<hostname>.local" '
-              'eintragen (oder „Pi im WLAN suchen"), Benutzer + Passwort aus '
-              'Schritt 3 – dann „Verbindung herstellen". Fertig.',
-            ),
+            context.l10n.wSetupStep5Title,
+            Text(context.l10n.wSetupStep5Body),
           ),
           Text(
-            'Tipp: Klappt „.local" nicht, nutze „Pi im WLAN suchen" oder die IP '
-            'aus deinem Router.',
+            context.l10n.wSetupTip,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -1145,7 +1117,7 @@ class _ConfigEditorPageState extends State<_ConfigEditorPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
-            tooltip: 'Speichern',
+            tooltip: context.l10n.wSave,
             onPressed: () => Navigator.pop(context, _c.text),
           ),
         ],
@@ -1335,9 +1307,11 @@ class _ServiceCard extends StatelessWidget {
               Text(
                 status.installed
                     ? (status.updateAvailable
-                          ? 'Update'
-                          : (status.active ? 'aktiv' : 'inaktiv'))
-                    : 'nicht installiert',
+                          ? context.l10n.wStatusUpdate
+                          : (status.active
+                                ? context.l10n.wActive
+                                : context.l10n.wInactive))
+                    : context.l10n.wNotInstalled,
                 style: TextStyle(color: ledText, fontSize: 12),
               ),
               if (actions.isNotEmpty)
@@ -1346,7 +1320,7 @@ class _ServiceCard extends StatelessWidget {
                   // menu regardless of card order.
                   key: ValueKey('menu-${status.id}'),
                   enabled: enabled,
-                  tooltip: '${status.name}-Aktionen',
+                  tooltip: context.l10n.wServiceActions(status.name),
                   icon: const Icon(Icons.more_vert),
                   onSelected: (i) => actions[i].onTap(),
                   itemBuilder: (_) => [
@@ -1415,7 +1389,7 @@ class _ServiceCard extends StatelessWidget {
                             size: 18,
                             color: okGreen,
                           ),
-                          label: const Text('Aktuell'),
+                          label: Text(context.l10n.wUpToDate),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size.fromHeight(42),
                           ),
@@ -1433,7 +1407,7 @@ class _ServiceCard extends StatelessWidget {
                   IconButton(
                     onPressed: onOpenWeb,
                     icon: const Icon(Icons.open_in_browser),
-                    tooltip: 'Oberfläche öffnen',
+                    tooltip: context.l10n.wOpenInterface,
                   ),
                 ],
               ],
@@ -1485,11 +1459,11 @@ class _ConnectionCard extends StatelessWidget {
   final VoidCallback? onSetupKey;
 
   /// Compact one-line stand-in shown in the header while collapsed.
-  String _summary() {
+  String _summary(BuildContext context) {
     final h = host.text.trim();
-    if (h.isEmpty) return 'Noch nicht eingerichtet';
+    if (h.isEmpty) return context.l10n.wNotSetUp;
     final u = user.text.trim().isEmpty ? 'pi' : user.text.trim();
-    return '$u@$h · ${authMode == AuthMode.key ? 'SSH-Key' : 'Passwort'}';
+    return '$u@$h · ${authMode == AuthMode.key ? context.l10n.wSshKey : context.l10n.wPassword}';
   }
 
   @override
@@ -1530,11 +1504,11 @@ class _ConnectionCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('Zugangsdaten',
+                        Text(context.l10n.wCredentials,
                             style: textTheme.titleSmall
                                 ?.copyWith(fontWeight: FontWeight.w600)),
                         if (!expanded)
-                          Text(_summary(),
+                          Text(_summary(context),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: textTheme.bodySmall
@@ -1558,10 +1532,10 @@ class _ConnectionCard extends StatelessWidget {
                     enabled: enabled,
                     autocorrect: false,
                     keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'Host / IP',
-                hintText: 'z. B. 192.168.178.64 oder Tailscale-IP',
-                prefixIcon: Icon(Icons.dns_outlined),
+              decoration: InputDecoration(
+                labelText: context.l10n.wHostIpLabel,
+                hintText: context.l10n.wHostHint,
+                prefixIcon: const Icon(Icons.dns_outlined),
               ),
             ),
             Row(
@@ -1573,9 +1547,9 @@ class _ConnectionCard extends StatelessWidget {
                     controller: user,
                     enabled: enabled,
                     autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Benutzer',
-                      prefixIcon: Icon(Icons.person_outline),
+                    decoration: InputDecoration(
+                      labelText: context.l10n.wUser,
+                      prefixIcon: const Icon(Icons.person_outline),
                     ),
                   ),
                 ),
@@ -1585,23 +1559,23 @@ class _ConnectionCard extends StatelessWidget {
                     controller: port,
                     enabled: enabled,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Port'),
+                    decoration: InputDecoration(labelText: context.l10n.wPort),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             SegmentedButton<AuthMode>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                   value: AuthMode.password,
-                  label: Text('Passwort'),
-                  icon: Icon(Icons.password),
+                  label: Text(context.l10n.wPassword),
+                  icon: const Icon(Icons.password),
                 ),
                 ButtonSegment(
                   value: AuthMode.key,
-                  label: Text('SSH-Key'),
-                  icon: Icon(Icons.vpn_key_outlined),
+                  label: Text(context.l10n.wSshKey),
+                  icon: const Icon(Icons.vpn_key_outlined),
                 ),
               ],
               selected: {authMode},
@@ -1631,20 +1605,19 @@ class _ConnectionCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Noch kein Schlüssel?',
+                          Text(context.l10n.wNoKeyYet,
                               style: Theme.of(context).textTheme.labelLarge),
                           const SizedBox(height: 8),
                           FilledButton.tonalIcon(
                             onPressed: enabled ? onSetupKey : null,
                             icon: const Icon(Icons.vpn_key_outlined, size: 18),
-                            label: const Text('SSH-Key automatisch einrichten'),
+                            label: Text(context.l10n.wSetupKeyAuto),
                             style: FilledButton.styleFrom(
                                 minimumSize: const Size.fromHeight(44)),
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Erzeugt einen Schlüssel und hinterlegt ihn auf dem '
-                            'Pi — dafür wird einmal dein Passwort gebraucht.',
+                            context.l10n.wSetupKeyExplain,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],
@@ -1660,8 +1633,8 @@ class _ConnectionCard extends StatelessWidget {
                 minLines: 3,
                 maxLines: 6,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                decoration: const InputDecoration(
-                  labelText: 'Privater SSH-Key (PEM)',
+                decoration: InputDecoration(
+                  labelText: context.l10n.wPrivateKeyLabel,
                   hintText: '-----BEGIN OPENSSH PRIVATE KEY----- …',
                   alignLabelWithHint: true,
                 ),
@@ -1672,9 +1645,9 @@ class _ConnectionCard extends StatelessWidget {
                 obscureText: true,
                 autocorrect: false,
                 enableSuggestions: false,
-                decoration: const InputDecoration(
-                  labelText: 'Key-Passphrase (optional)',
-                  prefixIcon: Icon(Icons.key_outlined),
+                decoration: InputDecoration(
+                  labelText: context.l10n.wKeyPassphraseLabel,
+                  prefixIcon: const Icon(Icons.key_outlined),
                 ),
               ),
             ],
@@ -1685,15 +1658,13 @@ class _ConnectionCard extends StatelessWidget {
               autocorrect: false,
               enableSuggestions: false,
               decoration: InputDecoration(
-                labelText: keyMode ? 'sudo-Passwort' : 'Passwort',
-                helperText: keyMode
-                    ? 'für sudo auf dem Pi (leer lassen bei NOPASSWD-sudo)'
-                    : null,
+                labelText: keyMode ? context.l10n.wSudoPassword : context.l10n.wPassword,
+                helperText: keyMode ? context.l10n.wSudoPasswordHelper : null,
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
                   onPressed: onToggleObscure,
                   icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
-                  tooltip: obscure ? 'Anzeigen' : 'Verbergen',
+                  tooltip: obscure ? context.l10n.wShow : context.l10n.wHide,
                 ),
               ),
             ),
@@ -1760,7 +1731,7 @@ class _NameDialogState extends State<_NameDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Abbrechen'),
+          child: Text(context.l10n.wCancel),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _ctrl.text),
@@ -1801,12 +1772,12 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
     super.dispose();
   }
 
-  String? get _error {
+  String? _errorText(BuildContext context) {
     if (widget.confirm && _ctrl.text.length < _minLen) {
-      return 'Mindestens $_minLen Zeichen.';
+      return context.l10n.wMinChars(_minLen);
     }
     if (widget.confirm && _ctrl2.text.isNotEmpty && _ctrl2.text != _ctrl.text) {
-      return 'Die Passphrasen stimmen nicht überein.';
+      return context.l10n.wPassphrasesNoMatch;
     }
     return null;
   }
@@ -1837,8 +1808,8 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
                 ? (_) => Navigator.pop(context, _ctrl.text)
                 : null,
             decoration: InputDecoration(
-              labelText: 'Passphrase',
-              errorText: _error,
+              labelText: context.l10n.wPassphrase,
+              errorText: _errorText(context),
               suffixIcon: IconButton(
                 icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
                 onPressed: () => setState(() => _obscure = !_obscure),
@@ -1853,8 +1824,8 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
               autocorrect: false,
               enableSuggestions: false,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Passphrase wiederholen',
+              decoration: InputDecoration(
+                labelText: context.l10n.wRepeatPassphrase,
               ),
             ),
           ],
@@ -1863,7 +1834,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Abbrechen'),
+          child: Text(context.l10n.wCancel),
         ),
         FilledButton(
           onPressed: _valid ? () => Navigator.pop(context, _ctrl.text) : null,
@@ -1983,12 +1954,13 @@ class _LockScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              const Text('Gesperrt', style: TextStyle(color: Colors.white54)),
+              Text(context.l10n.wLocked,
+                  style: const TextStyle(color: Colors.white54)),
               const SizedBox(height: 20),
               FilledButton.icon(
                 onPressed: onUnlock,
                 icon: const Icon(Icons.lock_open),
-                label: const Text('Entsperren'),
+                label: Text(context.l10n.wUnlock),
               ),
             ],
           ),
@@ -2040,7 +2012,7 @@ class _DisclaimerScreen extends StatelessWidget {
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    'Willkommen bei Pi-Tool',
+                    context.l10n.wWelcomeTitle,
                     style: theme.textTheme.titleLarge,
                   ),
                 ],
@@ -2051,34 +2023,17 @@ class _DisclaimerScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Pi-Tool führt auf den von dir eingerichteten Geräten '
-                        'Befehle über SSH aus — auch mit erhöhten Rechten '
-                        '(sudo): Paket-Updates, Dienst- und System-Neustarts '
-                        'sowie frei eingegebene Konsolen-Befehle.',
-                      ),
+                      Text(context.l10n.wDisclaimerIntro),
                       const SizedBox(height: 14),
                       Text(
-                        'Mit „Akzeptieren" bestätigst du:',
+                        context.l10n.wDisclaimerConfirmIntro,
                         style: theme.textTheme.titleSmall,
                       ),
                       const SizedBox(height: 10),
-                      bullet(
-                        'Du bist berechtigt, die Zielgeräte zu verwalten, '
-                        'und nutzt Pi-Tool auf eigene Verantwortung.',
-                      ),
-                      bullet(
-                        'KYTH. Systems übernimmt keine Haftung für Schäden '
-                        'an System, Daten oder Hardware.',
-                      ),
-                      bullet(
-                        'Deine Zugangsdaten bleiben verschlüsselt auf dem '
-                        'Gerät — keine Cloud, keine Weitergabe, kein Tracking.',
-                      ),
-                      bullet(
-                        'Pi-Tool ist ein inoffizielles Werkzeug und nicht '
-                        'mit evcc oder Pi-hole verbunden.',
-                      ),
+                      bullet(context.l10n.wDisclaimerBullet1),
+                      bullet(context.l10n.wDisclaimerBullet2),
+                      bullet(context.l10n.wDisclaimerBullet3),
+                      bullet(context.l10n.wDisclaimerBullet4),
                       const SizedBox(height: 4),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -2088,7 +2043,7 @@ class _DisclaimerScreen extends StatelessWidget {
                             Icons.privacy_tip_outlined,
                             size: 18,
                           ),
-                          label: const Text('Datenschutzerklärung'),
+                          label: Text(context.l10n.wPrivacyPolicy),
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -2108,12 +2063,12 @@ class _DisclaimerScreen extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(50),
                 ),
-                child: const Text('Akzeptieren und starten'),
+                child: Text(context.l10n.wAcceptAndStart),
               ),
               const SizedBox(height: 6),
               TextButton(
                 onPressed: onDecline,
-                child: const Text('Ablehnen (App beenden)'),
+                child: Text(context.l10n.wDeclineExit),
               ),
             ],
           ),
@@ -2183,15 +2138,16 @@ class _UpdateBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Update ${release.version} verfügbar',
+              context.l10n.wUpdateAvailableVersion(release.version),
               style: TextStyle(color: scheme.onTertiaryContainer),
             ),
           ),
-          TextButton(onPressed: onDownload, child: const Text('Laden')),
+          TextButton(
+              onPressed: onDownload, child: Text(context.l10n.wDownloadShort)),
           IconButton(
             onPressed: onDismiss,
             icon: Icon(Icons.close, color: scheme.onTertiaryContainer),
-            tooltip: 'Ausblenden',
+            tooltip: context.l10n.wDismiss,
           ),
         ],
       ),
@@ -2216,10 +2172,9 @@ class _LogView extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: lines.isEmpty
-          ? const Text(
-              'Noch keine Ausgabe. Aktionen (z. B. „Aktualisieren") erscheinen '
-              'hier live, sobald du einen Dienst startest.',
-              style: TextStyle(color: Color(0xFF8A8F84), fontSize: 13),
+          ? Text(
+              context.l10n.wLogEmpty,
+              style: const TextStyle(color: Color(0xFF8A8F84), fontSize: 13),
             )
           : SingleChildScrollView(
               controller: controller,
@@ -2263,12 +2218,13 @@ class _ApiStatusSheet extends StatelessWidget {
               final e = snap.error;
               final msg = e is EvccApiException
                   ? e.message
-                  : 'Live-Status nicht verfügbar.';
+                  : ctx.l10n.wLiveStatusUnavailable;
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('evcc-Live-Status', style: theme.textTheme.titleMedium),
+                  Text(ctx.l10n.wEvccLiveStatus,
+                      style: theme.textTheme.titleMedium),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -2303,7 +2259,7 @@ class _ApiStatusSheet extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  s.siteTitle ?? 'evcc-Status',
+                  s.siteTitle ?? ctx.l10n.wEvccStatus,
                   style: theme.textTheme.titleMedium,
                 ),
               ),
@@ -2320,32 +2276,33 @@ class _ApiStatusSheet extends StatelessWidget {
           _metric(
             ctx,
             Icons.solar_power_outlined,
-            'PV-Erzeugung',
+            ctx.l10n.wPvGeneration,
             formatPower(s.pvPower),
           ),
-          _metric(ctx, Icons.swap_vert, 'Netz', formatPower(s.gridPower)),
+          _metric(ctx, Icons.swap_vert, ctx.l10n.wGrid,
+              formatPower(s.gridPower)),
           _metric(
             ctx,
             Icons.home_outlined,
-            'Hausverbrauch',
+            ctx.l10n.wHomeConsumption,
             formatPower(s.homePower),
           ),
           if (s.batteryConfigured)
             _metric(
               ctx,
               Icons.battery_charging_full,
-              'Batterie',
+              ctx.l10n.wBattery,
               '${s.batterySoc != null ? '${s.batterySoc!.round()} %' : '—'}'
                   '  ·  ${formatPower(s.batteryPower)}',
             ),
           if (s.loadpoints.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Text('Ladepunkte', style: theme.textTheme.labelLarge),
+            Text(ctx.l10n.wLoadpoints, style: theme.textTheme.labelLarge),
             for (final lp in s.loadpoints) _loadpoint(ctx, lp),
           ],
           const SizedBox(height: 8),
           Text(
-            'Live aus der evcc-Web-API (nur Anzeige).',
+            ctx.l10n.wEvccLiveApiNote,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -2373,13 +2330,15 @@ class _ApiStatusSheet extends StatelessWidget {
   Widget _loadpoint(BuildContext ctx, EvccLoadpoint lp) {
     final theme = Theme.of(ctx);
     final bits = <String>[];
-    if (lp.mode != null) bits.add('Modus ${lp.mode}');
+    if (lp.mode != null) bits.add(ctx.l10n.wModeValue(lp.mode!));
     bits.add(
       lp.charging
-          ? 'lädt ${formatPower(lp.chargePower)}'
-          : (lp.connected ? 'verbunden' : 'frei'),
+          ? ctx.l10n.wChargingPower(formatPower(lp.chargePower))
+          : (lp.connected ? ctx.l10n.wConnectedLp : ctx.l10n.wFree),
     );
-    if (lp.vehicleSoc != null) bits.add('Fahrzeug ${lp.vehicleSoc!.round()} %');
+    if (lp.vehicleSoc != null) {
+      bits.add(ctx.l10n.wVehicleSoc(lp.vehicleSoc!.round()));
+    }
     return ListTile(
       contentPadding: EdgeInsets.zero,
       dense: true,
@@ -2404,20 +2363,20 @@ class _ScanProgressDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      content: const Row(
+      content: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
+          const SizedBox(
             width: 22,
             height: 22,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          SizedBox(width: 16),
-          Flexible(child: Text('Suche SSH-Geräte im WLAN …')),
+          const SizedBox(width: 16),
+          Flexible(child: Text(context.l10n.wScanningWifi)),
         ],
       ),
       actions: [
-        TextButton(onPressed: onCancel, child: const Text('Abbrechen')),
+        TextButton(onPressed: onCancel, child: Text(context.l10n.wCancel)),
       ],
     );
   }

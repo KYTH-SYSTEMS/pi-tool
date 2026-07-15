@@ -3,5 +3,1126 @@
   "settingsLanguageTitle": "Language",
   "@settingsLanguageTitle": {
     "description": "Settings section title: the app language selector"
-  }
+  },
+  "wAcceptAndStart": "Accept and start",
+  "wActions": "Actions",
+  "wActive": "active",
+  "wAlertsActiveSince": "Currently active · last check: {check}",
+  "@wAlertsActiveSince": {
+    "placeholders": {
+      "check": {
+        "type": "String"
+      }
+    }
+  },
+  "wAlertsExplain": "The Pi notifies you via push (through ntfy) when the disk fills up, a service goes down, it gets too hot or updates are due — checked every 30 min. Free and no account needed.",
+  "wAlertsNtfyLink": "How ntfy works (install the app, subscribe to the topic) →",
+  "wAlertsOff": "Currently off.",
+  "wAlertsUpdate": "Update",
+  "wAllPis": "All Pis",
+  "wBattery": "Battery",
+  "wCancel": "Cancel",
+  "wChargingPower": "charging {power}",
+  "@wChargingPower": {
+    "placeholders": {
+      "power": {
+        "type": "String"
+      }
+    }
+  },
+  "wChecking": "Checking …",
+  "wConnect": "Connect",
+  "wConnected": "Connected",
+  "wConnectedLp": "connected",
+  "wConnecting": "Connecting …",
+  "wCredentials": "Credentials",
+  "wDeclineExit": "Decline (quit app)",
+  "wDelete": "Delete",
+  "wDirLoadFailed": "Could not load the directory.",
+  "wDisable": "Turn off",
+  "wDisclaimerBullet1": "You are authorized to manage the target devices and use Pi-Tool at your own risk.",
+  "wDisclaimerBullet2": "KYTH. Systems accepts no liability for damage to your system, data or hardware.",
+  "wDisclaimerBullet3": "Your credentials stay encrypted on the device — no cloud, no sharing, no tracking.",
+  "wDisclaimerBullet4": "Pi-Tool is an unofficial tool and is not affiliated with evcc or Pi-hole.",
+  "wDisclaimerConfirmIntro": "By tapping \"Accept\" you confirm:",
+  "wDisclaimerIntro": "On the devices you set up, Pi-Tool runs commands over SSH — including with elevated privileges (sudo): package updates, service and system restarts, and freely entered console commands.",
+  "wDismiss": "Dismiss",
+  "wDockerContainers": "Docker containers",
+  "wDownloadImager": "Download Raspberry Pi Imager",
+  "wDownloadShort": "Download",
+  "wEmpty": "— empty —",
+  "wEnable": "Turn on",
+  "wEnterNtfyTopic": "Please enter an ntfy topic.",
+  "wEvccLiveApiNote": "Live from the evcc web API (display only).",
+  "wEvccLiveStatus": "evcc live status",
+  "wEvccStatus": "evcc status",
+  "wFree": "free",
+  "wGrid": "Grid",
+  "wHealthAlertsTitle": "Health alerts",
+  "wHide": "Hide",
+  "wHomeConsumption": "Home consumption",
+  "wHostHint": "e.g. 192.168.178.64 or Tailscale IP",
+  "wHostIpLabel": "Host / IP",
+  "wInactive": "inactive",
+  "wKeyPassphraseLabel": "Key passphrase (optional)",
+  "wLive": "Live",
+  "wLiveStatusUnavailable": "Live status unavailable.",
+  "wLoadFailedPerms": "Could not load (permissions?).",
+  "wLoadpoints": "Loadpoints",
+  "wLocked": "Locked",
+  "wLogEmpty": "No output yet. Actions (e.g. \"Update\") appear here live as soon as you start a service.",
+  "wLogs": "Logs",
+  "wMinChars": "At least {n} characters.",
+  "@wMinChars": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "wModeValue": "Mode {mode}",
+  "@wModeValue": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "wNoConnection": "No connection",
+  "wNoContainers": "No containers (or Docker not installed).",
+  "wNoKeyYet": "No key yet?",
+  "wNoOutput": "No output.",
+  "wNoWarnings": "No warnings — looks good.",
+  "wNotInstalled": "not installed",
+  "wNotSetUp": "Not set up yet",
+  "wNtfyServerLabel": "ntfy server",
+  "wNtfyTopicHelper": "Choose freely, but pick something hard to guess.",
+  "wNtfyTopicHint": "e.g. my-pi-a7Xk",
+  "wNtfyTopicLabel": "ntfy topic",
+  "wOpenInterface": "Open interface",
+  "wParentFolder": "Parent folder",
+  "wPassphrase": "Passphrase",
+  "wPassphrasesNoMatch": "The passphrases don't match.",
+  "wPassword": "Password",
+  "wPort": "Port",
+  "wPrivacyPolicy": "Privacy policy",
+  "wPrivateKeyLabel": "Private SSH key (PEM)",
+  "wPvGeneration": "PV generation",
+  "wReadOnlyCheckNote": "Read-only check — the app changes nothing. You can apply the recommendations via the console.",
+  "wRecheck": "Re-check",
+  "wRefresh": "Refresh",
+  "wRepeatPassphrase": "Repeat passphrase",
+  "wRestart": "Restart",
+  "wSave": "Save",
+  "wScanningWifi": "Searching for SSH devices on Wi-Fi …",
+  "wSecurityCheck": "Security check",
+  "wServiceActions": "{name} actions",
+  "@wServiceActions": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "wSetUpPi": "Set up Pi",
+  "wSetupBulletHostname": "Hostname, e.g. \"living-room-pi\" (reachable as living-room-pi.local)",
+  "wSetupBulletSsh": "Enable SSH (with password login)",
+  "wSetupBulletUserPass": "Username + password – you'll enter these in Pi-Tool shortly",
+  "wSetupBulletWifi": "Wi-Fi: network name, password and country – or use a LAN cable",
+  "wSetupIntro": "For Pi-Tool to connect, the Pi must be reachable via SSH. The \"Raspberry Pi Imager\" sets this up in a few minutes — with no screen or keyboard on the Pi.",
+  "wSetupKeyAuto": "Set up SSH key automatically",
+  "wSetupKeyExplain": "Generates a key and installs it on the Pi — this needs your password once.",
+  "wSetupStep1Body": "Download the \"Raspberry Pi Imager\" to your computer and launch it. Insert the Pi's SD card into the computer.",
+  "wSetupStep1Title": "Install the Imager",
+  "wSetupStep2Body": "Pick your Pi model, then \"Raspberry Pi OS Lite (64-bit)\" (no desktop – lean and ideal for Pi-Tool) and the SD card.",
+  "wSetupStep2Title": "Choose the OS",
+  "wSetupStep3Body": "Before writing, tap the gear ⚙ or \"Edit settings\" and set:",
+  "wSetupStep3Title": "⚙️ Advanced options (important!)",
+  "wSetupStep4Body": "Write the SD card, insert it into the Pi, connect power. The first boot takes 1–2 minutes.",
+  "wSetupStep4Title": "Write & boot",
+  "wSetupStep5Body": "At the top, select or create the Pi, enter \"<hostname>.local\" as the host (or \"Search for Pi on Wi-Fi\"), user + password from step 3 – then \"Connect\". Done.",
+  "wSetupStep5Title": "Connect in Pi-Tool",
+  "wSetupTip": "Tip: if \".local\" doesn't work, use \"Search for Pi on Wi-Fi\" or the IP from your router.",
+  "wShow": "Show",
+  "wSshKey": "SSH key",
+  "wStatusUpdate": "Update",
+  "wSudoPassword": "sudo password",
+  "wSudoPasswordHelper": "for sudo on the Pi (leave empty for NOPASSWD sudo)",
+  "wTest": "Test",
+  "wUnlock": "Unlock",
+  "wUpToDate": "Up to date",
+  "wUpdateAllWithUpdates": "Update all that have updates",
+  "wUpdateAvailableVersion": "Update {version} available",
+  "@wUpdateAvailableVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "wUpdateFailed": "Update failed",
+  "wUpdated": "Updated",
+  "wUpdatesAvailable": "Updates available",
+  "wUpdating": "Updating …",
+  "wUploadFile": "Upload file",
+  "wUser": "User",
+  "wVehicleSoc": "Vehicle {soc} %",
+  "@wVehicleSoc": {
+    "placeholders": {
+      "soc": {
+        "type": "int"
+      }
+    }
+  },
+  "wWaiting": "Waiting …",
+  "wWarningsFound": "{count, plural, =1{1 warning found.} other{{count} warnings found.}}",
+  "@wWarningsFound": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "wWelcomeTitle": "Welcome to Pi-Tool",
+  "exportProfilesTitle": "Export profiles",
+  "exportProfilesBody": "The file contains your Pi credentials (passwords/SSH keys) — encrypted. Choose a passphrase; without it the file is worthless.",
+  "snackExportCreated": "Export created — keep it safe.",
+  "snackExportFailed": "Export failed.",
+  "snackFilePickFailed": "File selection failed.",
+  "importProfilesTitle": "Import profiles",
+  "importProfilesBody": "Enter the export file's passphrase.",
+  "snackFileNoProfiles": "File contains no profiles.",
+  "dialogImportTitle": "Import?",
+  "dialogImportBody": "{count} profile(s) will be added to your existing ones.",
+  "@dialogImportBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "snackProfilesImported": "{count} profile(s) imported.",
+  "@snackProfilesImported": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "snackImportFailed": "Import failed.",
+  "paywallSubtitle": "Unlock once – no subscription:",
+  "paywallFeatureBackups": "Back up, restore & manage backups",
+  "paywallFeatureAutomation": "Automation – scheduled updates & health alerts",
+  "paywallFeatureFiles": "Files – browse, upload & delete",
+  "paywallFeatureTerminal": "Terminal – your own commands on the Pi",
+  "paywallFeatureProfiles": "Manage multiple Pis (profiles)",
+  "paywallFeatureCleanup": "Cleanup – free up storage",
+  "paywallUnlockButton": "Unlock Pro – €5",
+  "snackProUnlocked": "Pro unlocked – thank you!",
+  "snackProRestored": "Pro restored.",
+  "snackNoPurchaseFound": "No previous purchase found.",
+  "paywallRestoreButton": "Restore purchases",
+  "whatsNewTitle": "New in v{version}",
+  "@whatsNewTitle": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "whatsNewGotIt": "Let's go",
+  "profileSwitcherTitle": "Choose Pi",
+  "profileActionsTooltip": "Profile actions",
+  "menuRename": "Rename",
+  "actionDelete": "Delete",
+  "addProfile": "Add profile",
+  "newProfileTitle": "New profile",
+  "renameProfileTitle": "Rename profile",
+  "dialogDeleteProfileTitle": "Delete profile \"{name}\"?",
+  "@dialogDeleteProfileTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogDeleteProfileBody": "Removes the profile including saved credentials and SSH key. This cannot be undone.",
+  "snackUpdateAvailable": "Update available: {version}",
+  "@snackUpdateAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "snackUpToDate": "Up to date – you have the latest version (v{version}).",
+  "@snackUpToDate": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "snackUpdateCheckFailed": "Update check failed – try again later.",
+  "authUnlockReason": "Unlock Pi-Tool",
+  "snackEnterHost": "Please enter host/IP.",
+  "snackEnterPassword": "Please enter the Pi password.",
+  "snackEnterPrivateKey": "Please paste the private SSH key.",
+  "snackInvalidPort": "Port is invalid (1–65535).",
+  "probeNoHost": "No host set",
+  "probeReachable": "reachable",
+  "probeUnreachable": "Not reachable",
+  "logCancelled": "Cancelled.",
+  "logError": "ERROR: {detail}",
+  "@logError": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "statusUnexpectedError": "Unexpected error – see the terminal log for details.",
+  "busyLoadingEvccRelease": "Loading evcc release …",
+  "runFullUpgradeWarning": "Warning: \"Full system upgrade\" updates ALL system packages on the Pi, not just evcc.",
+  "dialogEvccInstallTitle": "Install evcc {version}?",
+  "@dialogEvccInstallTitle": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogEvccUpdateTitle": "Update evcc?",
+  "errorEvccNotFound": "evcc was not found – neither as an apt package nor as a Docker container.",
+  "statusDockerDryRunUnavailable": "Dry run not available for Docker installations – evcc runs here in the container \"{name}\".",
+  "@statusDockerDryRunUnavailable": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "statusEvccContainerUpdated": "evcc container updated (docker compose pull + up).",
+  "historyEvccDockerUpdated": "evcc Docker container updated.",
+  "busyEvccUpdate": "evcc update running …",
+  "busyConnecting": "Connecting …",
+  "statusConnectedDetecting": "Connected – detecting services …",
+  "statusConnectionOk": "Connection OK – detected: {found}.",
+  "@statusConnectionOk": {
+    "placeholders": {
+      "found": {
+        "type": "String"
+      }
+    }
+  },
+  "logConnectedWith": "✓ Connected to {host}.",
+  "@logConnectedWith": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogInstallEvccTitle": "Install evcc?",
+  "dialogInstallEvccBody": "Installs evcc on {host}: adds the official evcc repo, installs the package and starts the service.\n\nExperimental: not fully tested against a fresh Pi installation.",
+  "@dialogInstallEvccBody": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "statusEvccInstalled": "evcc {version} installed, service {state}. Set it up in the browser now.",
+  "@statusEvccInstalled": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "state": {
+        "type": "String"
+      }
+    }
+  },
+  "serviceActive": "active",
+  "serviceInactive": "inactive",
+  "historyEvccInstalled": "evcc {version} installed.",
+  "@historyEvccInstalled": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "busyInstallingEvcc": "Installing evcc …",
+  "dialogRestartEvccTitle": "Restart the evcc service?",
+  "dialogRestartEvccBody": "Any running charging sessions will be briefly interrupted.",
+  "statusEvccRestarted": "evcc service restarted.",
+  "dialogRebootTitle": "Restart the Pi?",
+  "dialogRebootBody": "Restarts the Raspberry Pi. The connection will briefly drop.",
+  "statusRebootTriggered": "Restart triggered – the Pi will be briefly offline.",
+  "historyRebootTriggered": "Pi restart triggered.",
+  "snackProfileHasKey": "This profile already has an SSH key.",
+  "snackKeySetupNeedsPassword": "Setup needs your Pi password once.",
+  "dialogSetupKeyTitle": "Set up SSH key?",
+  "dialogSetupKeyBody": "Generates a key pair on the phone, installs the public key on the Pi and switches this profile to key login. The private key never leaves the phone; your password stays saved for sudo.",
+  "statusKeyConfigured": "SSH key set up — login now uses the key.",
+  "historyKeyConfigured": "SSH key set up.",
+  "statusKeyNotAccepted": "Key installed, but the Pi doesn't accept key login yet — profile stays on password. (sshd: PubkeyAuthentication?)",
+  "busySettingUpKey": "Setting up SSH key …",
+  "busyReadingDockerContainers": "Reading Docker containers …",
+  "logsTitle": "Logs: {name}",
+  "@logsTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "busyAnalyzingStorage": "Analyzing storage …",
+  "busySecurityCheck": "Security check running …",
+  "dialogShutdownTitle": "Shut down the Pi?",
+  "dialogShutdownBody": "Shuts the Raspberry Pi down completely. It will stay OFF and only be reachable again once you physically disconnect it from power and switch it back on.",
+  "confirmShutdown": "Shut down",
+  "statusShuttingDown": "Pi is shutting down – stays off until you switch it back on.",
+  "historyShutdown": "Pi shut down.",
+  "snackNoEvccBackups": "No evcc backups found on the Pi.",
+  "dialogRestoreBackupTitle": "Restore backup?",
+  "dialogRestoreBackupBody": "Overwrites the current evcc configuration + database with the state from {label} and restarts evcc.",
+  "@dialogRestoreBackupBody": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "statusBackupRestored": "Backup restored ({label}).",
+  "@statusBackupRestored": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "historyBackupRestored": "Backup restored: {label}.",
+  "@historyBackupRestored": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "busyRestoringBackup": "Restoring backup …",
+  "backupTimestamp": "{ts}",
+  "@backupTimestamp": {
+    "placeholders": {
+      "ts": {
+        "type": "String"
+      }
+    }
+  },
+  "actionRestoreBackup": "Restore backup",
+  "newestFirst": "Newest first",
+  "snackNoServiceBackups": "No {service} backups found on the Pi.",
+  "@snackNoServiceBackups": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "statusBackupDownloaded": "Backup downloaded: {name}",
+  "@statusBackupDownloaded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "historyBackupDownloaded": "{service} backup saved to the phone ({name}).",
+  "@historyBackupDownloaded": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      },
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "busyDownloadingBackup": "Downloading backup …",
+  "dialogDeleteBackupTitle": "Delete backup?",
+  "dialogDeleteBackupBody": "Permanently deletes the {service} backup ({label}) from the Pi.",
+  "@dialogDeleteBackupBody": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      },
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "statusBackupDeleted": "Backup deleted ({label}).",
+  "@statusBackupDeleted": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "historyBackupDeleted": "{service} backup deleted ({label}).",
+  "@historyBackupDeleted": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      },
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "busyDeletingBackup": "Deleting backup …",
+  "statusServiceRestored": "{service} restored ({label}).",
+  "@statusServiceRestored": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      },
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "historyServiceBackupRestored": "{service} backup restored.",
+  "@historyServiceBackupRestored": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "busyRestoringService": "Restoring {service} …",
+  "@busyRestoringService": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "restoreWarningPihole": "Imports the Teleporter backup and overwrites the current Pi-hole configuration (lists, settings). DNS restarts briefly.",
+  "restoreWarningHomeAssistant": "Briefly stops Home Assistant, restores the /config backup over the current configuration and starts the container again.",
+  "serviceBackupsTitle": "{service} backups",
+  "@serviceBackupsTitle": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "serviceBackupsSubtitle": "Tap = restore · Newest first",
+  "tooltipDownloadToPhone": "Save to phone",
+  "tooltipDeleteBackup": "Delete backup",
+  "dialogCleanupTitle": "Free up storage?",
+  "dialogCleanupBody": "Cleans up the Pi: no-longer-needed packages (apt autoremove + clean), unused Docker images and system journal older than 7 days. Your data and running services stay untouched.",
+  "statusCleanedUp": "Cleaned up – {freed} freed.",
+  "@statusCleanedUp": {
+    "placeholders": {
+      "freed": {
+        "type": "String"
+      }
+    }
+  },
+  "historyCleanedUp": "System cleaned up ({freed} freed).",
+  "@historyCleanedUp": {
+    "placeholders": {
+      "freed": {
+        "type": "String"
+      }
+    }
+  },
+  "busyFreeingStorage": "Freeing up storage …",
+  "busyDefault": "Operation running …",
+  "cancel": "Cancel",
+  "hostKeyTrustButton": "Pi reinstalled → trust new key",
+  "errorNoPiConnected": "No Pi connected.",
+  "snackConnectPiFirst": "Connect a Pi above first.",
+  "snackFileTooLarge": "File too large (max {max} MB).",
+  "@snackFileTooLarge": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "snackInvalidFilename": "Invalid file name.",
+  "snackUploading": "Uploading \"{name}\" …",
+  "@snackUploading": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "snackUploaded": "Uploaded: {name}",
+  "@snackUploaded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "snackUploadFailed": "Upload failed (permissions?).",
+  "dialogDeleteFileTitle": "Delete \"{name}\"?",
+  "@dialogDeleteFileTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogDeleteFolderBody": "Deletes the folder and its contents. This cannot be undone.",
+  "dialogDeleteFileBody": "This cannot be undone.",
+  "snackDeleted": "Deleted: {name}",
+  "@snackDeleted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "snackDeleteFailed": "Delete failed (permissions?).",
+  "filePreviewTitle": "File: {name}",
+  "@filePreviewTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "snackFileLoadFailed": "File could not be loaded.",
+  "actionEdit": "Edit",
+  "emptyFile": "Empty file.",
+  "busyLoadingFile": "Loading {title} …",
+  "@busyLoadingFile": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "snackEmptyContent": "Empty content — not saved (that would destroy {title}).",
+  "@snackEmptyContent": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogSaveTitle": "Save?",
+  "dialogSaveBody": "Overwrites {path} on the Pi (a backup is made first).",
+  "@dialogSaveBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "statusFileSaved": "{title} saved (backup made).",
+  "@statusFileSaved": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "historyFileEdited": "{title} edited.",
+  "@historyFileEdited": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "busySavingFile": "Saving {title} …",
+  "@busySavingFile": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "busyLoadingLogs": "Loading logs …",
+  "snackTestAlertSent": "Test notification sent — check your ntfy.",
+  "snackTestFailed": "Test failed (see the terminal log for details).",
+  "statusAlertsActive": "Health alerts active (ntfy: {topic}).",
+  "@statusAlertsActive": {
+    "placeholders": {
+      "topic": {
+        "type": "String"
+      }
+    }
+  },
+  "historyAlertsConfigured": "Health alerts set up (ntfy).",
+  "statusAlertsDisabled": "Health alerts disabled.",
+  "busyEnablingAlerts": "Setting up health alerts …",
+  "busyDisablingAlerts": "Disabling health alerts …",
+  "statusAutoUpdatesActive": "Automatic updates active.",
+  "historyAutoUpdatesConfigured": "Automatic updates set up ({schedule}).",
+  "@historyAutoUpdatesConfigured": {
+    "placeholders": {
+      "schedule": {
+        "type": "String"
+      }
+    }
+  },
+  "statusAutoUpdatesDisabled": "Automatic updates disabled.",
+  "busyEnablingAutoUpdates": "Setting up automatic updates …",
+  "busyDisablingAutoUpdates": "Disabling automatic updates …",
+  "dayMon": "Mon",
+  "dayTue": "Tue",
+  "dayWed": "Wed",
+  "dayThu": "Thu",
+  "dayFri": "Fri",
+  "daySat": "Sat",
+  "daySun": "Sun",
+  "autoUpdatesTitle": "Automatic updates",
+  "autoUpdatesDescription": "The Pi will update itself going forward (system + services). evcc is backed up first and automatically restarted if there are problems.",
+  "statusScheduleActive": "Currently active · next: {next}",
+  "@statusScheduleActive": {
+    "placeholders": {
+      "next": {
+        "type": "String"
+      }
+    }
+  },
+  "statusScheduleOff": "Currently off.",
+  "labelLastRun": "Last run: {result}",
+  "@labelLastRun": {
+    "placeholders": {
+      "result": {
+        "type": "String"
+      }
+    }
+  },
+  "daily": "Daily",
+  "weekly": "Weekly",
+  "labelTime": "Time:  ",
+  "timeOClock": "{hour}:00",
+  "@timeOClock": {
+    "placeholders": {
+      "hour": {
+        "type": "String"
+      }
+    }
+  },
+  "labelDay": "Day:  ",
+  "changeSchedule": "Change schedule",
+  "turnOn": "Turn on",
+  "turnOff": "Turn off",
+  "scheduledBackupsTitle": "Scheduled backups",
+  "scheduledBackupsDescription": "The Pi will back up evcc (config + data) and Pi-hole (Teleporter) itself, where present — with rotation. Runs as a systemd timer on the Pi.",
+  "labelLast": "Last: {result}",
+  "@labelLast": {
+    "placeholders": {
+      "result": {
+        "type": "String"
+      }
+    }
+  },
+  "labelKeep": "Keep:  ",
+  "statusScheduledBackupsActive": "Scheduled backups active.",
+  "historyScheduledBackupsConfigured": "Scheduled backups set up ({schedule}, {keep}×).",
+  "@historyScheduledBackupsConfigured": {
+    "placeholders": {
+      "schedule": {
+        "type": "String"
+      },
+      "keep": {
+        "type": "int"
+      }
+    }
+  },
+  "statusScheduledBackupsDisabled": "Scheduled backups disabled.",
+  "busyEnablingScheduledBackups": "Setting up scheduled backups …",
+  "busyDisablingScheduledBackups": "Disabling scheduled backups …",
+  "statusPiholeUpdated": "Pi-hole updated.",
+  "busyUpdatingPihole": "Updating Pi-hole …",
+  "statusPiholeBlocklistsUpdated": "Pi-hole blocklists updated.",
+  "busyUpdatingBlocklists": "Updating blocklists …",
+  "statusPiholeDnsRestarted": "Pi-hole DNS restarted.",
+  "dialogInstallPiholeTitle": "Install Pi-hole?",
+  "dialogInstallPiholeBody": "Installs Pi-hole unattended on {host}.\n\nExperimental: not tested against every configuration; setup then happens in the browser at /admin.",
+  "@dialogInstallPiholeBody": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "statusPiholeInstalled": "Pi-hole installed – set it up in the browser at /admin.",
+  "historyPiholeInstalled": "Pi-hole installed.",
+  "busyInstallingPihole": "Installing Pi-hole …",
+  "dialogUpgradeSystemTitle": "Update the system?",
+  "dialogUpgradeSystemBody": "Updates ALL packages on the Pi (apt full-upgrade), not just a single service.",
+  "statusSystemUpdated": "System updated.",
+  "historySystemUpgraded": "System upgrade performed.",
+  "busySystemUpgrade": "System upgrade running …",
+  "snackEnterHostFirst": "Please enter host/IP first.",
+  "busyBackingUpPihole": "Backing up Pi-hole …",
+  "busyBackingUpHomeAssistant": "Backing up Home Assistant …",
+  "statusServiceBackedUp": "{label} backed up: {path}",
+  "@statusServiceBackedUp": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "historyServiceBackedUp": "{label} backed up.",
+  "@historyServiceBackedUp": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "statusHomeAssistantUpdated": "Home Assistant updated.",
+  "busyUpdatingHomeAssistant": "Updating Home Assistant …",
+  "dialogInstallHomeAssistantTitle": "Install Home Assistant?",
+  "dialogInstallHomeAssistantBody": "Installs Home Assistant as a Docker container on {host} (Docker is installed first if needed).\n\nExperimental: not tested against every configuration; setup then happens in the browser on port 8123.",
+  "@dialogInstallHomeAssistantBody": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "statusHomeAssistantInstalled": "Home Assistant installed – set it up in the browser on port 8123.",
+  "historyHomeAssistantInstalled": "Home Assistant installed.",
+  "busyInstallingHomeAssistant": "Installing Home Assistant …",
+  "logCancelRequested": "Cancel requested …",
+  "snackLogEmpty": "The log is empty.",
+  "snackNoSshDevices": "No SSH devices found on the Wi-Fi – please enter the IP manually.",
+  "foundDevicesTitle": "Found devices (SSH open)",
+  "foundDevicesSubtitle": "Same Wi-Fi only. Tap to use.",
+  "snackHostSet": "Host set to {host}.",
+  "@snackHostSet": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "statusInteractiveCommand": "Interactive command – not executed.",
+  "statusCommandExecuted": "Command executed: {cmd}",
+  "@statusCommandExecuted": {
+    "placeholders": {
+      "cmd": {
+        "type": "String"
+      }
+    }
+  },
+  "busyCommandRunning": "Command running …",
+  "dialogAddQuickCommandTitle": "Create custom quick command",
+  "labelCommand": "Command",
+  "hintCommandExample": "e.g. vcgencmd measure_temp",
+  "actionSave": "Save",
+  "quickCommandsTitle": "Quick commands",
+  "customCommandsTitle": "Custom commands",
+  "tooltipAddCustomCommand": "Create custom command",
+  "tooltipRemove": "Remove",
+  "historyTitle": "History",
+  "evccNewVersionAvailable": "New evcc version available.",
+  "noHistoryYet": "No history yet.",
+  "actionClear": "Clear",
+  "snackCouldNotOpenLink": "Couldn't open the link.",
+  "actionContinue": "Continue",
+  "dialogTrustPiTitle": "Trust new Pi?",
+  "dialogTrustPiBody": "First connection to {host}. Check the SSH fingerprint of the Pi:",
+  "@dialogTrustPiBody": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogTrustPiWarning": "Only \"Trust\" if the fingerprint matches your Pi. With \"Cancel\" NO password is sent.",
+  "actionTrust": "Trust",
+  "licenseAppName": "Pi-Tool (unofficial)",
+  "settingsTitle": "Settings",
+  "settingsLockTitle": "Lock app with biometrics/PIN",
+  "settingsLockSubtitle": "On open & after switching",
+  "snackNoBiometrics": "No biometrics/PIN set up on the device.",
+  "settingsBackupBeforeUpdateTitle": "Back up before update",
+  "settingsBackupBeforeUpdateSubtitle": "Backs up evcc.yaml + database on the Pi (apt update)",
+  "settingsHttpsTitle": "evcc interface over HTTPS",
+  "settingsHttpsSubtitleOff": "http://… (default)",
+  "settingsPortLabel": "evcc interface: port",
+  "settingsPortHelper": "Default 7070",
+  "settingsThemeTitle": "Theme",
+  "optionSystem": "System",
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "langGerman": "German",
+  "langEnglish": "English",
+  "settingsNightlyTitle": "Install evcc nightly",
+  "settingsNightlySubtitle": "unstable channel instead of stable (only on fresh install)",
+  "settingsExportSubtitle": "Encrypted file (phone change)",
+  "settingsContactSupport": "Contact support",
+  "serviceCardsFailedHint": "Connection failed – check host/IP and credentials, then connect again.",
+  "serviceCardsConnectHint": "Tap \"Connect\" to detect the services on the Pi.",
+  "snackPiConnectNeedsBookworm": "Raspberry Pi Connect needs Raspberry Pi OS Bookworm or newer.",
+  "piConnectSubtitleInstall": "Official remote access (shell) – install",
+  "piConnectSubtitleIncompatible": "Not compatible – needs Bookworm or newer",
+  "tailscaleSubtitle": "VPN/mesh – reach the Pi from anywhere",
+  "actionUpdate": "Update",
+  "actionShowLogs": "Show logs",
+  "actionUpdateAnyway": "Update anyway",
+  "actionDryRun": "Dry run (changes nothing)",
+  "actionLiveStatus": "Live status",
+  "actionRestartService": "Restart service",
+  "actionEditConfig": "Edit configuration",
+  "actionOfficialEvccApp": "Official evcc app",
+  "actionBackupTeleporter": "Back up (Teleporter)",
+  "actionManageBackups": "Manage backups",
+  "actionUpdateBlocklists": "Update blocklists",
+  "actionRestartDns": "Restart DNS",
+  "actionBackupConfig": "Back up (/config)",
+  "actionOpenWeb": "Open web",
+  "actionSignIn": "Sign in",
+  "actionEnableRemoteAccess": "Enable remote access",
+  "actionPauseRemoteAccess": "Pause remote access",
+  "actionSignOut": "Sign out",
+  "actionDisconnect": "Disconnect",
+  "actionConnect": "Connect",
+  "actionUseIpAsHost": "Use this IP as host ({ip})",
+  "@actionUseIpAsHost": {
+    "placeholders": {
+      "ip": {
+        "type": "String"
+      }
+    }
+  },
+  "actionSignOutTailscale": "Sign out of Tailscale",
+  "actionInstallUpdates": "Install updates",
+  "actionCleanup": "Clean up (free storage)",
+  "actionSecurityCheck": "Security check",
+  "actionAnalyzeStorage": "Analyze storage",
+  "actionDockerContainers": "Docker containers",
+  "actionRebootPi": "Restart Pi",
+  "actionShutdownPi": "Shut down Pi",
+  "actionRestart": "Restart",
+  "webUiOnPort": "Web interface on port {port}",
+  "@webUiOnPort": {
+    "placeholders": {
+      "port": {
+        "type": "int"
+      }
+    }
+  },
+  "energyMonitoringStack": "Energy monitoring stack",
+  "energyStackSubtitle": "InfluxDB + Grafana + Mosquitto in one step",
+  "addService": "Add service",
+  "addServiceDescription": "Installs the service on the Pi (experimental).",
+  "snackStackAlreadyInstalled": "The monitoring stack is already installed.",
+  "logInstalling": "== Installing {name} ==",
+  "@logInstalling": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "statusStackInstalled": "Monitoring stack installed: {names}.",
+  "@statusStackInstalled": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "historyStackInstalled": "Energy stack installed: {names}.",
+  "@historyStackInstalled": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "busyInstallingStack": "Installing monitoring stack …",
+  "stackRoleInfluxdb": "Time-series database (stores the readings)",
+  "stackRoleGrafana": "Dashboards (visualizes the data)",
+  "stackRoleMosquitto": "MQTT broker (data distribution)",
+  "guidedSetupDescription": "Installs the building blocks to store your evcc energy data and view it as a dashboard — in one step.",
+  "guidedSetupNote": "Afterwards enter InfluxDB + MQTT in evcc (see the evcc docs). Experimental — installed from the official apt sources.",
+  "actionInstall": "Install",
+  "statusPiConnectInstalled": "Raspberry Pi Connect installed – sign in now.",
+  "historyPiConnectInstalled": "Raspberry Pi Connect installed.",
+  "busyInstallingPiConnect": "Installing Raspberry Pi Connect …",
+  "busyStartingSignin": "Starting sign-in …",
+  "snackNoSigninLink": "No sign-in link received (see the terminal log for details).",
+  "snackPiConnectSignin": "Sign in with your Raspberry Pi ID in the browser, then \"Connect\" again.",
+  "statusPiConnectEnabled": "Pi Connect enabled.",
+  "statusPiConnectDisabled": "Pi Connect disabled.",
+  "busyEnablingPiConnect": "Enabling Pi Connect …",
+  "busyDisablingPiConnect": "Disabling Pi Connect …",
+  "dialogSignOutTitle": "Sign out?",
+  "dialogSignOutPiConnectBody": "Disconnects the Pi from your Raspberry Pi Connect account.",
+  "statusPiConnectSignedOut": "Signed out of Pi Connect.",
+  "busySigningOut": "Signing out …",
+  "statusTailscaleInstalled": "Tailscale installed – now \"Connect\".",
+  "historyTailscaleInstalled": "Tailscale installed.",
+  "busyInstallingTailscale": "Installing Tailscale …",
+  "busyConnectingTailscale": "Connecting Tailscale …",
+  "snackTailscaleSignin": "Sign in to Tailscale in the browser, then \"Connect\" again.",
+  "snackTailscaleConnected": "Tailscale connected.",
+  "dialogSignOutTailscaleBody": "Removes the Pi from your tailnet (new sign-in required).",
+  "statusTailscaleSignedOut": "Tailscale signed out.",
+  "statusTailscaleDisconnected": "Tailscale disconnected.",
+  "busyTailscaleSigningOut": "Tailscale sign-out running …",
+  "busyTailscaleDisconnecting": "Disconnecting Tailscale …",
+  "snackHostSetConnect": "Host set to {host} – now \"Connect\".",
+  "@snackHostSetConnect": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "snackHostResetConnect": "Host set back to {host} – now \"Connect\".",
+  "@snackHostResetConnect": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "snackTailscaleNotInstalled": "Tailscale app not installed – install it from the Play Store, then try again.",
+  "snackTailscaleOpenedWithHost": "Tailscale opened – enable the VPN there, then \"Connect\" (host is set to {host}).",
+  "@snackTailscaleOpenedWithHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "snackTailscaleOpenedTip": "Tailscale opened – enable the VPN. Tip: connect once at home and \"Use this IP as host\", then remote access works automatically in future.",
+  "statusServiceInstalled": "{service} installed.",
+  "@statusServiceInstalled": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "historyServiceInstalled": "{service} installed.",
+  "@historyServiceInstalled": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "busyInstallingService": "Installing {service} …",
+  "@busyInstallingService": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "statusServiceRestarted": "{service} restarted.",
+  "@statusServiceRestarted": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "historyServiceRestarted": "{service} restarted.",
+  "@historyServiceRestarted": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "busyRestartingService": "Restarting {service} …",
+  "@busyRestartingService": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "statusServiceUpdated": "{service} updated.",
+  "@statusServiceUpdated": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "historyServiceUpdated": "{service} updated.",
+  "@historyServiceUpdated": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "busyUpdatingService": "Updating {service} …",
+  "@busyUpdatingService": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
+  "menuApiStatus": "evcc status (live)",
+  "menuSetupPi": "Set up Pi",
+  "menuRemoteAccess": "Remote access: open Tailscale",
+  "menuRemoteAccessHint": "Connect to the Pi once to fetch the Tailscale IP",
+  "menuBackToHomeIp": "Back to home IP ({ip})",
+  "@menuBackToHomeIp": {
+    "placeholders": {
+      "ip": {
+        "type": "String"
+      }
+    }
+  },
+  "menuFindPi": "Find Pi on Wi-Fi",
+  "menuAllPis": "All Pis (overview)",
+  "menuShareLog": "Share log",
+  "menuCheckUpdate": "Check for update",
+  "noPiYetSetup": "No Pi yet? Here's how to set one up",
+  "openEvccSetup": "Open evcc setup",
+  "disclaimerFooter": "Use at your own risk. We accept no liability for damage to system, data or hardware.",
+  "unofficialFooter": "Unofficial tool, not affiliated with evcc or Pi-hole.",
+  "legalPrivacy": "Privacy",
+  "legalImprint": "Imprint",
+  "legalLicenses": "Open-source licenses",
+  "snackConnectFirst": "Connect first: \"Connect\" on the Management tab.",
+  "tabManagement": "Management",
+  "tabAutomation": "Automation",
+  "tabTerminal": "Terminal",
+  "tabFiles": "Files",
+  "automationDescription": "Runs autonomously on the Pi — no background service needed on the phone.",
+  "autoUpdatesTileSubtitle": "Scheduled updates with evcc backup + self-healing",
+  "scheduledBackupsTileSubtitle": "Nightly evcc + Pi-hole backup with rotation",
+  "healthAlertsTitle": "Health alerts",
+  "healthAlertsTileSubtitle": "Push on full disk, dead service, heat, updates (via ntfy)",
+  "consoleHint": "Enter command … (e.g. df -h)",
+  "tooltipHistoryQuickCommands": "History + quick commands",
+  "tooltipSendCommand": "Send command",
+  "tooltipProFeature": "Pro feature",
+  "terminalFooter": "Commands run with your privileges directly on the Pi (sudo is supported). At your own risk.",
+  "filesExplorerProTitle": "File explorer (Pro)",
+  "filesExplorerProBody": "Browsing, uploading and deleting your Pi's files is part of Pro.",
+  "unlockPro": "Unlock Pro",
+  "filesNoPiTitle": "No Pi connected",
+  "filesNoPiBody": "Enter host + credentials on the \"Management\" tab — then you can browse and upload your Pi's files here."
 }

@@ -542,9 +542,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// warning + authenticated encryption (see profile_transfer.dart).
   Future<void> _exportProfiles() async {
     final pass = await _promptPassphrase(
-      'Profile exportieren',
-      'Die Datei enthält deine Pi-Zugangsdaten (Passwörter/SSH-Keys) — '
-          'verschlüsselt. Wähle eine Passphrase; ohne sie ist die Datei wertlos.',
+      context.l10n.exportProfilesTitle,
+      context.l10n.exportProfilesBody,
       confirm: true,
     );
     if (pass == null || !mounted) return;
@@ -554,40 +553,40 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (!mounted) return;
       await _fileSaver('pi-tool-profile.pitool',
           Uint8List.fromList(utf8.encode(envelope)));
-      if (mounted) _snack('Export erstellt — sicher aufbewahren.');
+      if (mounted) _snack(context.l10n.snackExportCreated);
     } catch (_) {
-      if (mounted) _snack('Export fehlgeschlagen.');
+      if (mounted) _snack(context.l10n.snackExportFailed);
     }
   }
 
   /// Imports profiles from an exported file (SAF picker → passphrase → merge).
   Future<void> _importProfiles() async {
     if (_busy) return;
+    final l10n = context.l10n;
     _suppressLock = true;
     PickedFile? picked;
     try {
       picked = await _filePicker.pick();
     } catch (_) {
-      if (mounted) _snack('Dateiauswahl fehlgeschlagen.');
+      if (mounted) _snack(l10n.snackFilePickFailed);
       return;
     } finally {
       _suppressLock = false;
     }
     if (picked == null || !mounted) return;
-    final pass = await _promptPassphrase('Profile importieren',
-        'Passphrase der Export-Datei eingeben.');
+    final pass = await _promptPassphrase(l10n.importProfilesTitle,
+        l10n.importProfilesBody);
     if (pass == null || !mounted) return;
     try {
       final json =
           await decryptProfileExport(utf8.decode(picked.bytes), pass);
       final cfg = parseAppConfig(json);
       if (cfg.profiles.isEmpty) {
-        _snack('Datei enthält keine Profile.');
+        _snack(l10n.snackFileNoProfiles);
         return;
       }
-      if (!await _confirm('Importieren?',
-          '${cfg.profiles.length} Profil(e) werden zu deinen vorhandenen '
-              'hinzugefügt.')) {
+      if (!await _confirm(l10n.dialogImportTitle,
+          l10n.dialogImportBody(cfg.profiles.length))) {
         return;
       }
       setState(() {
@@ -597,11 +596,11 @@ class _UpdaterPageState extends State<UpdaterPage>
         _resetDetectionForNewPi();
       });
       _persistSettings();
-      _snack('${cfg.profiles.length} Profil(e) importiert.');
+      _snack(l10n.snackProfilesImported(cfg.profiles.length));
     } on ProfileTransferException catch (e) {
       if (mounted) _snack(e.message);
     } catch (_) {
-      if (mounted) _snack('Import fehlgeschlagen.');
+      if (mounted) _snack(l10n.snackImportFailed);
     }
   }
 
@@ -637,15 +636,15 @@ class _UpdaterPageState extends State<UpdaterPage>
                     style: Theme.of(ctx).textTheme.titleLarge),
               ]),
               const SizedBox(height: 12),
-              const Text('Einmalig freischalten – kein Abo:'),
+              Text(ctx.l10n.paywallSubtitle),
               const SizedBox(height: 10),
-              for (final f in const [
-                'Backups sichern, wiederherstellen & verwalten',
-                'Automatik – geplante Updates & Health-Alerts',
-                'Dateien – durchsuchen, hochladen & löschen',
-                'Terminal – eigene Befehle auf dem Pi',
-                'Mehrere Pis (Profile) verwalten',
-                'Aufräumen – Speicher freigeben',
+              for (final f in [
+                ctx.l10n.paywallFeatureBackups,
+                ctx.l10n.paywallFeatureAutomation,
+                ctx.l10n.paywallFeatureFiles,
+                ctx.l10n.paywallFeatureTerminal,
+                ctx.l10n.paywallFeatureProfiles,
+                ctx.l10n.paywallFeatureCleanup,
               ])
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
@@ -662,14 +661,14 @@ class _UpdaterPageState extends State<UpdaterPage>
                 width: double.infinity,
                 child: FilledButton.icon(
                   icon: const Icon(Icons.lock_open),
-                  label: const Text('Pro freischalten – 5 €'),
+                  label: Text(ctx.l10n.paywallUnlockButton),
                   onPressed: () async {
                     final ok = await _entitlement.buyPro();
                     if (!ctx.mounted) return;
                     Navigator.pop(ctx);
                     if (ok && mounted) {
                       setState(() => _isPro = true);
-                      _snack('Pro freigeschaltet – danke!');
+                      _snack(context.l10n.snackProUnlocked);
                     }
                   },
                 ),
@@ -683,11 +682,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                     if (mounted) {
                       setState(() => _isPro = ok);
                       _snack(ok
-                          ? 'Pro wiederhergestellt.'
-                          : 'Kein früherer Kauf gefunden.');
+                          ? context.l10n.snackProRestored
+                          : context.l10n.snackNoPurchaseFound);
                     }
                   },
-                  child: const Text('Käufe wiederherstellen'),
+                  child: Text(ctx.l10n.paywallRestoreButton),
                 ),
               ),
             ],
@@ -727,7 +726,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Neu in v$version'),
+        title: Text(ctx.l10n.whatsNewTitle(version)),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -750,7 +749,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         actions: [
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text("Los geht's"),
+            child: Text(ctx.l10n.whatsNewGotIt),
           ),
         ],
       ),
@@ -777,8 +776,8 @@ class _UpdaterPageState extends State<UpdaterPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ListTile(
-              title:
-                  Text('Pi wählen', style: Theme.of(ctx).textTheme.titleMedium),
+              title: Text(ctx.l10n.profileSwitcherTitle,
+                  style: Theme.of(ctx).textTheme.titleMedium),
               dense: true,
             ),
             for (var i = 0; i < _profiles.length; i++)
@@ -801,18 +800,18 @@ class _UpdaterPageState extends State<UpdaterPage>
                     if (i == _activeIndex)
                       const Icon(Icons.check, color: kGreen, size: 20),
                     PopupMenuButton<String>(
-                      tooltip: 'Profil-Aktionen',
+                      tooltip: ctx.l10n.profileActionsTooltip,
                       onSelected: (v) {
                         Navigator.pop(ctx);
                         if (v == 'rename') _renameProfile(i);
                         if (v == 'delete') _deleteProfile(i);
                       },
                       itemBuilder: (_) => [
-                        const PopupMenuItem(
-                            value: 'rename', child: Text('Umbenennen')),
+                        PopupMenuItem(
+                            value: 'rename', child: Text(ctx.l10n.menuRename)),
                         if (_profiles.length > 1)
-                          const PopupMenuItem(
-                              value: 'delete', child: Text('Löschen')),
+                          PopupMenuItem(
+                              value: 'delete', child: Text(ctx.l10n.actionDelete)),
                       ],
                     ),
                   ],
@@ -825,7 +824,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             const Divider(),
             ListTile(
               leading: const Icon(Icons.add),
-              title: const Text('Profil hinzufügen'),
+              title: Text(ctx.l10n.addProfile),
               onTap: () {
                 Navigator.pop(ctx);
                 _addProfile();
@@ -854,7 +853,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _showPaywall(); // multiple Pis are a Pro feature
       return;
     }
-    final name = await _promptName('Neues Profil', '');
+    final name = await _promptName(context.l10n.newProfileTitle, '');
     if (name == null || !mounted) return;
     _profiles[_activeIndex] = _currentProfile();
     final next = [..._profiles, Profile(name: name)];
@@ -869,7 +868,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _renameProfile(int i) async {
     if (i < 0 || i >= _profiles.length) return;
-    final name = await _promptName('Profil umbenennen', _profiles[i].name);
+    final name = await _promptName(context.l10n.renameProfileTitle, _profiles[i].name);
     if (name == null || !mounted) return;
     setState(() {
       // Capture live edits before renaming the active profile.
@@ -884,9 +883,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     final name = _profiles[i].name;
     // Destructive + irreversible (wipes host, credentials and any SSH key).
     if (!await _confirm(
-      'Profil „$name" löschen?',
-      'Entfernt das Profil samt gespeicherter Zugangsdaten und SSH-Key. '
-          'Das kann nicht rückgängig gemacht werden.',
+      context.l10n.dialogDeleteProfileTitle(name),
+      context.l10n.dialogDeleteProfileBody,
       destructive: true,
     )) {
       return;
@@ -955,11 +953,11 @@ class _UpdaterPageState extends State<UpdaterPage>
         if (release != null) _update = release;
       });
       _snack(release != null
-          ? 'Update verfügbar: ${release.version}'
-          : 'Aktuell – du hast die neueste Version (v${info.version}).');
+          ? context.l10n.snackUpdateAvailable(release.version)
+          : context.l10n.snackUpToDate(info.version));
     } catch (_) {
       if (mounted) {
-        _snack('Update-Prüfung fehlgeschlagen – später erneut versuchen.');
+        _snack(context.l10n.snackUpdateCheckFailed);
       }
     }
   }
@@ -972,7 +970,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (_unlocking) return; // re-entrancy guard: avoid overlapping prompts
     _unlocking = true;
     try {
-      final ok = await _authenticator.authenticate('Pi-Tool entsperren');
+      final ok = await _authenticator.authenticate(context.l10n.authUnlockReason);
       if (ok && mounted) setState(() => _locked = false);
     } finally {
       _unlocking = false;
@@ -983,20 +981,20 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   int? _validatedPort() {
     if (_host.text.trim().isEmpty) {
-      _snack('Bitte Host/IP eintragen.');
+      _snack(context.l10n.snackEnterHost);
       return null;
     }
     if (_authMode == AuthMode.password && _password.text.isEmpty) {
-      _snack('Bitte Pi-Passwort eintragen.');
+      _snack(context.l10n.snackEnterPassword);
       return null;
     }
     if (_authMode == AuthMode.key && _privateKey.text.trim().isEmpty) {
-      _snack('Bitte privaten SSH-Key einfügen.');
+      _snack(context.l10n.snackEnterPrivateKey);
       return null;
     }
     final port = int.tryParse(_port.text.trim());
     if (port == null || port <= 0 || port > 65535) {
-      _snack('Port ist ungültig (1–65535).');
+      _snack(context.l10n.snackInvalidPort);
       return null;
     }
     return port;
@@ -1017,12 +1015,13 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Connects to one Pi and summarises its System card (fail-soft). Used by the
   /// multi-Pi overview.
   Future<PiSnapshot> _probePi(Profile p) async {
+    final l10n = context.l10n;
     if (p.host.trim().isEmpty) {
       return (
         reachable: false,
         updates: false,
         warning: false,
-        detail: 'Kein Host eingetragen'
+        detail: l10n.probeNoHost
       );
     }
     try {
@@ -1036,14 +1035,14 @@ class _UpdaterPageState extends State<UpdaterPage>
         reachable: true,
         updates: sys?.updateAvailable ?? false,
         warning: sys?.healthWarning ?? false,
-        detail: (sys?.health.isNotEmpty ?? false) ? sys!.health : 'erreichbar',
+        detail: (sys?.health.isNotEmpty ?? false) ? sys!.health : l10n.probeReachable,
       );
     } catch (_) {
       return (
         reachable: false,
         updates: false,
         warning: false,
-        detail: 'Nicht erreichbar'
+        detail: l10n.probeUnreachable
       );
     }
   }
@@ -1112,6 +1111,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     Future<void> Function() body, {
     String? backgroundMessage,
   }) async {
+    final l10n = context.l10n;
     if (backgroundMessage != null) {
       await _keepAlive.begin(backgroundMessage);
       if (mounted) setState(() => _busyMessage = backgroundMessage);
@@ -1120,7 +1120,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       await body();
     } on EvccUpdateException catch (e) {
       final cancelled = e.kind == UpdateErrorKind.cancelled;
-      _appendLog(cancelled ? 'Abgebrochen.' : 'FEHLER: ${e.message}');
+      _appendLog(cancelled ? l10n.logCancelled : l10n.logError(e.message));
       if (!mounted) return;
       // A connection-class failure means the session is no longer valid — drop
       // it honestly so the UI doesn't claim "verbunden" for an unreachable Pi.
@@ -1137,11 +1137,11 @@ class _UpdaterPageState extends State<UpdaterPage>
         }
       });
     } catch (e) {
-      _appendLog('FEHLER: $e'); // _appendLog redacts the password
+      _appendLog(l10n.logError('$e')); // _appendLog redacts the password
       if (!mounted) return;
       setState(() {
         // Keep the raw exception in the (redacted) log, not in the headline.
-        _statusMessage = 'Unerwarteter Fehler – Details im Terminal-Log.';
+        _statusMessage = l10n.statusUnexpectedError;
         _statusOk = false;
       });
     } finally {
@@ -1157,6 +1157,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _run({required bool dryRun}) async {
     if (_busy) return;
+    final l10n = context.l10n;
     // Before a real update, show evcc's latest release notes (fail-soft). Mark
     // busy during the fetch/confirm so all action buttons disable — otherwise
     // the network await opens a window for double-taps / concurrent SSH ops.
@@ -1165,7 +1166,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       // feedback; clear it again before the confirm dialog opens.
       setState(() {
         _busy = true;
-        _busyMessage = 'evcc-Release wird geladen …';
+        _busyMessage = l10n.busyLoadingEvccRelease;
       });
       final rel = await _fetchEvccRelease();
       if (!mounted) return;
@@ -1173,8 +1174,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       // Always warn when full-upgrade is on (it touches ALL packages, not just
       // evcc) — even if the release-notes fetch failed.
       final warn = _fullUpgrade
-          ? 'Achtung: „Komplettes System-Upgrade" aktualisiert ALLE '
-              'System-Pakete auf dem Pi, nicht nur evcc.'
+          ? l10n.runFullUpgradeWarning
           : '';
       final notes = rel != null ? _notesExcerpt(rel.notes) : '';
       final body = [warn, notes].where((s) => s.isNotEmpty).join('\n\n');
@@ -1182,7 +1182,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       // otherwise (plain evcc update, no notes) proceed silently as before.
       final proceed = body.isEmpty ||
           await _confirm(
-            rel != null ? 'evcc ${rel.version} installieren?' : 'evcc aktualisieren?',
+            rel != null
+                ? l10n.dialogEvccInstallTitle(rel.version)
+                : l10n.dialogEvccUpdateTitle,
             body,
           );
       if (!proceed) {
@@ -1202,18 +1204,16 @@ class _UpdaterPageState extends State<UpdaterPage>
           await _updater.detectInstall(config: config, onLog: _appendLog);
       switch (detection.kind) {
         case InstallKind.unknown:
-          throw const EvccUpdateException(
+          throw EvccUpdateException(
             UpdateErrorKind.packageMissing,
-            'evcc wurde nicht gefunden – weder als apt-Paket noch als '
-            'Docker-Container.',
+            l10n.errorEvccNotFound,
           );
         case InstallKind.docker:
           if (dryRun) {
             if (!mounted) return;
             setState(() {
-              _statusMessage =
-                  'Probelauf für Docker-Installationen nicht verfügbar – evcc '
-                  'läuft hier im Container "${detection.container!.name}".';
+              _statusMessage = l10n
+                  .statusDockerDryRunUnavailable(detection.container!.name);
               _statusOk = true;
             });
             return;
@@ -1225,11 +1225,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           );
           if (!mounted) return;
           setState(() {
-            _statusMessage =
-                'evcc-Container aktualisiert (docker compose pull + up).';
+            _statusMessage = l10n.statusEvccContainerUpdated;
             _statusOk = true;
           });
-          _addHistory('evcc-Docker-Container aktualisiert.');
+          _addHistory(l10n.historyEvccDockerUpdated);
           await _refreshServices(config);
         case InstallKind.apt:
           // Back up config + DB first (opt-out). A backup failure throws here
@@ -1256,7 +1255,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             await _refreshServices(config);
           }
       }
-    }, backgroundMessage: dryRun ? null : 'evcc-Update läuft …');
+    }, backgroundMessage: dryRun ? null : l10n.busyEvccUpdate);
   }
 
   Future<void> _testConnection() async {
@@ -1268,7 +1267,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     // (connect is short); the finally in _guard clears _busyMessage.
     setState(() {
       _testing = true;
-      _busyMessage = 'Verbinde …';
+      _busyMessage = context.l10n.busyConnecting;
     });
     await _guard(() async {
       final detected = await _updater.detectServices(
@@ -1279,7 +1278,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         onConnected: () {
           if (!mounted) return;
           setState(() {
-            _statusMessage = 'Verbunden – erkenne Dienste …';
+            _statusMessage = context.l10n.statusConnectedDetecting;
             _statusOk = true;
           });
         },
@@ -1294,10 +1293,10 @@ class _UpdaterPageState extends State<UpdaterPage>
         _connected = true; // explicit session established → unlock gated tabs
         final found =
             services.where((s) => s.installed).map((s) => s.name).join(', ');
-        _statusMessage = 'Verbindung OK – erkannt: $found.';
+        _statusMessage = context.l10n.statusConnectionOk(found);
         _statusOk = true;
       });
-      _appendLog('✓ Verbunden mit ${_host.text.trim()}.');
+      _appendLog(context.l10n.logConnectedWith(_host.text.trim()));
     });
     // Drive the Test-Button colour from the outcome (success populated the
     // cards; any thrown error set _statusOk=false via _guard).
@@ -1311,12 +1310,10 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _install() async {
     if (_busy) return;
+    final l10n = context.l10n;
     if (!await _confirm(
-      'evcc installieren?',
-      'Installiert evcc auf ${_host.text.trim()}: fügt das offizielle '
-          'evcc-Repo hinzu, installiert das Paket und startet den Dienst.\n\n'
-          'Experimentell: gegen eine frische Pi-Installation nicht vollständig '
-          'getestet.',
+      context.l10n.dialogInstallEvccTitle,
+      context.l10n.dialogInstallEvccBody(_host.text.trim()),
     )) {
       return;
     }
@@ -1331,21 +1328,23 @@ class _UpdaterPageState extends State<UpdaterPage>
       );
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'evcc ${res.version} installiert, '
-            'Dienst ${res.serviceActive ? 'aktiv' : 'inaktiv'}. '
-            'Jetzt im Browser einrichten.';
+        _statusMessage = context.l10n.statusEvccInstalled(
+            res.version,
+            res.serviceActive
+                ? context.l10n.serviceActive
+                : context.l10n.serviceInactive);
         _statusOk = true;
         _setupUrl = _evccUiUrl();
       });
-      _addHistory('evcc ${res.version} installiert.');
+      _addHistory(context.l10n.historyEvccInstalled(res.version));
       await _refreshServices(config);
-    }, backgroundMessage: 'evcc wird installiert …');
+    }, backgroundMessage: l10n.busyInstallingEvcc);
   }
 
   Future<void> _restartService() async {
     if (_busy) return;
-    if (!await _confirm('evcc-Dienst neu starten?',
-        'Laufende Ladevorgänge werden dabei kurz unterbrochen.')) {
+    if (!await _confirm(context.l10n.dialogRestartEvccTitle,
+        context.l10n.dialogRestartEvccBody)) {
       return;
     }
     final config = _prepare();
@@ -1355,18 +1354,18 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.restartService(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'evcc-Dienst neu gestartet.';
+        _statusMessage = context.l10n.statusEvccRestarted;
         _statusOk = true;
       });
-      _addHistory('evcc-Dienst neu gestartet.');
+      _addHistory(context.l10n.statusEvccRestarted);
     });
   }
 
   Future<void> _reboot() async {
     if (_busy) return;
     if (!await _confirm(
-      'Pi neu starten?',
-      'Startet den Raspberry Pi neu. Die Verbindung bricht dabei kurz ab.',
+      context.l10n.dialogRebootTitle,
+      context.l10n.dialogRebootBody,
       // Not destructive-red: a reboot interrupts service briefly but doesn't
       // lose data (unlike shutdown/delete). Confirm, but don't alarm.
     )) {
@@ -1379,40 +1378,38 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.reboot(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Neustart ausgelöst – der Pi ist gleich kurz offline.';
+        _statusMessage = context.l10n.statusRebootTriggered;
         _statusOk = true;
       });
-      _addHistory('Pi-Neustart ausgelöst.');
+      _addHistory(context.l10n.historyRebootTriggered);
     });
   }
 
   Future<void> _setupSshKey() async {
     if (_busy) return;
+    final l10n = context.l10n;
     // Idempotent per-Pi: nothing to do once a key is already present (in either
     // auth mode) — the inline button hides then too.
     if (_privateKey.text.trim().isNotEmpty) {
-      _snack('Dieses Profil hat bereits einen SSH-Key.');
+      _snack(context.l10n.snackProfileHasKey);
       return;
     }
     if (_host.text.trim().isEmpty) {
-      _snack('Bitte Host/IP eintragen.');
+      _snack(context.l10n.snackEnterHost);
       return;
     }
     if (_password.text.isEmpty) {
-      _snack('Für die Einrichtung wird einmal dein Pi-Passwort gebraucht.');
+      _snack(context.l10n.snackKeySetupNeedsPassword);
       return;
     }
     final port = int.tryParse(_port.text.trim());
     if (port == null || port <= 0 || port > 65535) {
-      _snack('Port ist ungültig (1–65535).');
+      _snack(context.l10n.snackInvalidPort);
       return;
     }
     if (!await _confirm(
-      'SSH-Key einrichten?',
-      'Erzeugt ein Schlüsselpaar auf dem Handy, hinterlegt den öffentlichen '
-          'Schlüssel auf dem Pi und stellt dieses Profil auf Key-Login um. Der '
-          'private Schlüssel verlässt das Handy nie; dein Passwort bleibt für '
-          'sudo gespeichert.',
+      context.l10n.dialogSetupKeyTitle,
+      context.l10n.dialogSetupKeyBody,
     )) {
       return;
     }
@@ -1460,21 +1457,18 @@ class _UpdaterPageState extends State<UpdaterPage>
         setState(() {
           _privateKey.text = key.privateKeyPem;
           _authMode = AuthMode.key;
-          _statusMessage =
-              'SSH-Key eingerichtet — Login läuft jetzt über den Schlüssel.';
+          _statusMessage = context.l10n.statusKeyConfigured;
           _statusOk = true;
         });
         _persistSettings();
-        _addHistory('SSH-Key eingerichtet.');
+        _addHistory(context.l10n.historyKeyConfigured);
       } else {
         setState(() {
-          _statusMessage =
-              'Schlüssel hinterlegt, aber der Key-Login wird vom Pi noch nicht '
-              'akzeptiert — Profil bleibt auf Passwort. (sshd: PubkeyAuthentication?)';
+          _statusMessage = context.l10n.statusKeyNotAccepted;
           _statusOk = false;
         });
       }
-    }, backgroundMessage: 'SSH-Key wird eingerichtet …');
+    }, backgroundMessage: l10n.busySettingUpKey);
   }
 
   Future<void> _dockerContainers() async {
@@ -1486,7 +1480,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     await _guard(() async {
       list =
           await _updater.dockerContainers(config: config, onLog: _appendLog);
-    }, backgroundMessage: 'Docker-Container werden gelesen …');
+    }, backgroundMessage: context.l10n.busyReadingDockerContainers);
     if (!mounted || list == null) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -1507,7 +1501,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             showDragHandle: true,
             isScrollControlled: true,
             builder: (_) => _LiveLogSheet(
-              title: 'Logs: $name',
+              title: context.l10n.logsTitle(name),
               initial: logs,
               fetch: () => _updater.fetchDockerLogs(
                   config: config, name: name, onLog: (_) {}),
@@ -1528,7 +1522,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     await _guard(() async {
       entries =
           await _updater.diskUsage(config: config, path: start, onLog: _appendLog);
-    }, backgroundMessage: 'Speicher wird analysiert …');
+    }, backgroundMessage: context.l10n.busyAnalyzingStorage);
     if (!mounted || entries == null) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -1553,7 +1547,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     await _guard(() async {
       findings =
           await _updater.runSecurityCheck(config: config, onLog: _appendLog);
-    }, backgroundMessage: 'Sicherheits-Check läuft …');
+    }, backgroundMessage: context.l10n.busySecurityCheck);
     if (!mounted || findings == null) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -1566,11 +1560,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _shutdown() async {
     if (_busy) return;
     if (!await _confirm(
-      'Pi herunterfahren?',
-      'Fährt den Raspberry Pi komplett herunter. Er bleibt danach AUS und ist '
-          'erst wieder erreichbar, wenn du ihn physisch vom Strom trennst und '
-          'neu einschaltest.',
-      confirmLabel: 'Herunterfahren',
+      context.l10n.dialogShutdownTitle,
+      context.l10n.dialogShutdownBody,
+      confirmLabel: context.l10n.confirmShutdown,
       destructive: true,
     )) {
       return;
@@ -1582,11 +1574,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.shutdown(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage =
-            'Pi wird heruntergefahren – bleibt aus, bis du ihn wieder einschaltest.';
+        _statusMessage = context.l10n.statusShuttingDown;
         _statusOk = true;
       });
-      _addHistory('Pi heruntergefahren.');
+      _addHistory(context.l10n.historyShutdown);
     });
   }
 
@@ -1595,6 +1586,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// updates (see the backup-before-update setting).
   Future<void> _restoreBackup() async {
     if (_busy) return;
+    final l10n = context.l10n;
     final config = _prepare();
     if (config == null) return;
     _lastAction = _restoreBackup; // before the first guard (trust-and-retry)
@@ -1604,15 +1596,14 @@ class _UpdaterPageState extends State<UpdaterPage>
     });
     if (!mounted || backups == null) return;
     if (backups!.isEmpty) {
-      _snack('Keine evcc-Backups auf dem Pi gefunden.');
+      _snack(context.l10n.snackNoEvccBackups);
       return;
     }
     final chosen = await _pickBackup(backups!);
     if (chosen == null || !mounted) return;
     if (!await _confirm(
-      'Backup wiederherstellen?',
-      'Überschreibt die aktuelle evcc-Konfiguration + Datenbank mit dem Stand '
-          'vom ${_backupLabel(chosen)} und startet evcc neu.',
+      context.l10n.dialogRestoreBackupTitle,
+      context.l10n.dialogRestoreBackupBody(_backupLabel(chosen)),
     )) {
       return;
     }
@@ -1623,12 +1614,12 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, path: chosen, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Backup wiederhergestellt (${_backupLabel(chosen)}).';
+        _statusMessage = context.l10n.statusBackupRestored(_backupLabel(chosen));
         _statusOk = true;
       });
-      _addHistory('Backup wiederhergestellt: ${_backupLabel(chosen)}.');
+      _addHistory(context.l10n.historyBackupRestored(_backupLabel(chosen)));
       await _refreshServices(config);
-    }, backgroundMessage: 'Backup wird wiederhergestellt …');
+    }, backgroundMessage: l10n.busyRestoringBackup);
   }
 
   /// Human label for a backup archive path
@@ -1637,7 +1628,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     final m = RegExp(r'(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})')
         .firstMatch(path);
     if (m == null) return path.split('/').last;
-    return '${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]} Uhr';
+    return context.l10n
+        .backupTimestamp('${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}');
   }
 
   Future<String?> _pickBackup(List<String> backups) {
@@ -1649,9 +1641,9 @@ class _UpdaterPageState extends State<UpdaterPage>
           shrinkWrap: true,
           children: [
             ListTile(
-              title: Text('Backup wiederherstellen',
+              title: Text(ctx.l10n.actionRestoreBackup,
                   style: Theme.of(ctx).textTheme.titleMedium),
-              subtitle: const Text('Neuestes zuerst'),
+              subtitle: Text(ctx.l10n.newestFirst),
             ),
             for (final b in backups)
               ListTile(
@@ -1678,6 +1670,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     required String restoreWarning,
   }) async {
     if (_busy) return;
+    final l10n = context.l10n;
     final config = _prepare();
     if (config == null) return;
     // Set BEFORE the first guard so a host-key "trust & retry" replays THIS
@@ -1695,7 +1688,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     });
     if (!mounted || backups == null) return;
     if (backups!.isEmpty) {
-      _snack('Keine $serviceName-Backups auf dem Pi gefunden.');
+      _snack(context.l10n.snackNoServiceBackups(serviceName));
       return;
     }
     final choice = await _pickServiceBackup(serviceName, backups!);
@@ -1711,17 +1704,17 @@ class _UpdaterPageState extends State<UpdaterPage>
         await _fileSaver(name, bytes);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Backup heruntergeladen: $name';
+          _statusMessage = context.l10n.statusBackupDownloaded(name);
           _statusOk = true;
         });
-        _addHistory('$serviceName-Backup aufs Handy geladen ($name).');
-      }, backgroundMessage: 'Backup wird heruntergeladen …');
+        _addHistory(context.l10n.historyBackupDownloaded(serviceName, name));
+      }, backgroundMessage: context.l10n.busyDownloadingBackup);
       return;
     }
     if (action == 'delete') {
-      if (!await _confirm('Backup löschen?',
-          'Löscht das $serviceName-Backup (${_backupLabel(path)}) endgültig '
-          'vom Pi.', destructive: true)) {
+      if (!await _confirm(context.l10n.dialogDeleteBackupTitle,
+          context.l10n.dialogDeleteBackupBody(serviceName, _backupLabel(path)),
+          destructive: true)) {
         return;
       }
       _beginBusy();
@@ -1730,34 +1723,34 @@ class _UpdaterPageState extends State<UpdaterPage>
             config: config, path: path, onLog: _appendLog);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Backup gelöscht (${_backupLabel(path)}).';
+          _statusMessage = context.l10n.statusBackupDeleted(_backupLabel(path));
           _statusOk = true;
         });
-        _addHistory('$serviceName-Backup gelöscht (${_backupLabel(path)}).');
-      }, backgroundMessage: 'Backup wird gelöscht …');
+        _addHistory(
+            context.l10n.historyBackupDeleted(serviceName, _backupLabel(path)));
+      }, backgroundMessage: l10n.busyDeletingBackup);
       return;
     }
-    if (!await _confirm('Backup wiederherstellen?', restoreWarning)) return;
+    if (!await _confirm(context.l10n.dialogRestoreBackupTitle, restoreWarning)) {
+      return;
+    }
     _beginBusy();
     await _guard(() async {
       await restore(config, path);
       if (!mounted) return;
       setState(() {
         _statusMessage =
-            '$serviceName wiederhergestellt (${_backupLabel(path)}).';
+            context.l10n.statusServiceRestored(serviceName, _backupLabel(path));
         _statusOk = true;
       });
-      _addHistory('$serviceName-Backup wiederhergestellt.');
-    }, backgroundMessage: '$serviceName wird wiederhergestellt …');
+      _addHistory(context.l10n.historyServiceBackupRestored(serviceName));
+    }, backgroundMessage: l10n.busyRestoringService(serviceName));
   }
 
   Future<void> _managePiholeBackups() => _manageServiceBackups(
         servicePrefix: 'pihole',
         serviceName: 'Pi-hole',
-        restoreWarning:
-            'Importiert das Teleporter-Backup und überschreibt die aktuelle '
-            'Pi-hole-Konfiguration (Listen, Einstellungen). DNS wird kurz neu '
-            'gestartet.',
+        restoreWarning: context.l10n.restoreWarningPihole,
         restore: (config, path) => _updater.restorePiholeBackup(
             config: config, path: path, onLog: _appendLog),
       );
@@ -1765,9 +1758,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _manageHomeAssistantBackups() => _manageServiceBackups(
         servicePrefix: 'homeassistant',
         serviceName: 'Home Assistant',
-        restoreWarning:
-            'Stoppt Home Assistant kurz, spielt das /config-Backup über die '
-            'aktuelle Konfiguration ein und startet den Container wieder.',
+        restoreWarning: context.l10n.restoreWarningHomeAssistant,
         restore: (config, path) => _updater.restoreHomeAssistantBackup(
             config: config, path: path, onLog: _appendLog),
       );
@@ -1783,10 +1774,9 @@ class _UpdaterPageState extends State<UpdaterPage>
           shrinkWrap: true,
           children: [
             ListTile(
-              title: Text('$serviceName-Backups',
+              title: Text(ctx.l10n.serviceBackupsTitle(serviceName),
                   style: Theme.of(ctx).textTheme.titleMedium),
-              subtitle:
-                  const Text('Antippen = wiederherstellen · Neuestes zuerst'),
+              subtitle: Text(ctx.l10n.serviceBackupsSubtitle),
             ),
             for (final b in backups)
               ListTile(
@@ -1800,12 +1790,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                   children: [
                     IconButton(
                       icon: const Icon(Icons.download_outlined),
-                      tooltip: 'Aufs Handy laden',
+                      tooltip: ctx.l10n.tooltipDownloadToPhone,
                       onPressed: () => Navigator.pop(ctx, ('download', b)),
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Backup löschen',
+                      tooltip: ctx.l10n.tooltipDeleteBackup,
                       onPressed: () => Navigator.pop(ctx, ('delete', b)),
                     ),
                   ],
@@ -1823,11 +1813,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Frees disk space on the Pi (confirmed), then reports how much.
   Future<void> _cleanupSystem() async {
     if (_busy) return;
+    final l10n = context.l10n;
     if (!await _confirm(
-      'Speicher freigeben?',
-      'Räumt auf dem Pi auf: nicht mehr benötigte Pakete (apt autoremove + '
-          'clean), ungenutzte Docker-Images und System-Journal älter als '
-          '7 Tage. Deine Daten und laufenden Dienste bleiben unberührt.',
+      context.l10n.dialogCleanupTitle,
+      context.l10n.dialogCleanupBody,
     )) {
       return;
     }
@@ -1839,12 +1828,12 @@ class _UpdaterPageState extends State<UpdaterPage>
           await _updater.cleanupSystem(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Aufgeräumt – ${_formatBytes(freed)} freigegeben.';
+        _statusMessage = context.l10n.statusCleanedUp(_formatBytes(freed));
         _statusOk = true;
       });
-      _addHistory('System aufgeräumt (${_formatBytes(freed)} freigegeben).');
+      _addHistory(context.l10n.historyCleanedUp(_formatBytes(freed)));
       await _refreshServices(config);
-    }, backgroundMessage: 'Speicher wird freigegeben …');
+    }, backgroundMessage: l10n.busyFreeingStorage);
   }
 
   String _formatBytes(int bytes) {
@@ -1871,7 +1860,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             child: Row(
               children: [
                 Expanded(
-                  child: Text(_busyMessage ?? 'Vorgang läuft …',
+                  child: Text(_busyMessage ?? context.l10n.busyDefault,
                       style: theme.textTheme.bodyMedium,
                       overflow: TextOverflow.ellipsis),
                 ),
@@ -1883,7 +1872,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 OutlinedButton.icon(
                   onPressed: _cancel,
                   icon: const Icon(Icons.close, size: 18),
-                  label: const Text('Abbrechen'),
+                  label: Text(context.l10n.cancel),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: cs.error,
                     side: BorderSide(color: cs.error.withValues(alpha: 0.55)),
@@ -1906,7 +1895,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         child: FilledButton.icon(
           onPressed: _trustAndRetry,
           icon: const Icon(Icons.verified_user_outlined),
-          label: const Text('Pi neu aufgesetzt → neuen Key vertrauen'),
+          label: Text(context.l10n.hostKeyTrustButton),
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
         ),
       );
@@ -1927,8 +1916,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<List<DirEntry>> _filesList(String path) {
     final c = _filesConfig();
     if (c == null) {
-      throw const EvccUpdateException(
-          UpdateErrorKind.connection, 'Kein Pi verbunden.');
+      throw EvccUpdateException(
+          UpdateErrorKind.connection, context.l10n.errorNoPiConnected);
     }
     return _updater.listDir(config: c, path: path, onLog: _appendLog);
   }
@@ -1942,7 +1931,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<bool> _filesUpload(String dir) async {
     final c = _filesConfig();
     if (c == null) {
-      _snack('Erst oben einen Pi verbinden.');
+      _snack(context.l10n.snackConnectPiFirst);
       return false;
     }
     PickedFile? picked;
@@ -1952,31 +1941,31 @@ class _UpdaterPageState extends State<UpdaterPage>
     try {
       picked = await _filePicker.pick();
     } catch (_) {
-      if (mounted) _snack('Dateiauswahl fehlgeschlagen.');
+      if (mounted) _snack(context.l10n.snackFilePickFailed);
       return false;
     } finally {
       _suppressLock = false;
     }
     if (picked == null || !mounted) return false; // cancelled
     if (picked.bytes.length > kFileUploadLimit) {
-      _snack('Datei zu groß (max ${kFileUploadLimit ~/ (1024 * 1024)} MB).');
+      _snack(context.l10n.snackFileTooLarge(kFileUploadLimit ~/ (1024 * 1024)));
       return false;
     }
     // Use only the basename — a hostile document provider could put `../` in the
     // display name and (as root) `mv` the file outside the browsed directory.
     final safeName = picked.name.split(RegExp(r'[\\/]')).last.trim();
     if (safeName.isEmpty || safeName == '.' || safeName == '..') {
-      _snack('Ungültiger Dateiname.');
+      _snack(context.l10n.snackInvalidFilename);
       return false;
     }
     final target = joinRemotePath(dir, safeName);
     try {
-      _snack('Lädt „$safeName" hoch …');
+      _snack(context.l10n.snackUploading(safeName));
       await _updater.uploadFile(
           config: c, path: target, bytes: picked.bytes, onLog: _appendLog);
-      if (mounted) _snack('Hochgeladen: $safeName');
+      if (mounted) _snack(context.l10n.snackUploaded(safeName));
     } catch (_) {
-      if (mounted) _snack('Hochladen fehlgeschlagen (Rechte?).');
+      if (mounted) _snack(context.l10n.snackUploadFailed);
     }
     // Reload after any upload ATTEMPT, not only on success: if the app was
     // backgrounded by the picker the success marker can be missed even though
@@ -1988,11 +1977,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     final c = _filesConfig();
     if (c == null) return false;
     if (!await _confirm(
-      '„${entry.name}" löschen?',
+      context.l10n.dialogDeleteFileTitle(entry.name),
       entry.isDir
-          ? 'Löscht den Ordner samt Inhalt. Das kann nicht rückgängig gemacht '
-              'werden.'
-          : 'Das kann nicht rückgängig gemacht werden.',
+          ? context.l10n.dialogDeleteFolderBody
+          : context.l10n.dialogDeleteFileBody,
       destructive: true,
     )) {
       return false;
@@ -2003,10 +1991,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           path: joinRemotePath(dir, entry.name),
           isDir: entry.isDir,
           onLog: _appendLog);
-      if (mounted) _snack('Gelöscht: ${entry.name}');
+      if (mounted) _snack(context.l10n.snackDeleted(entry.name));
       return true;
     } catch (_) {
-      if (mounted) _snack('Löschen fehlgeschlagen (Rechte?).');
+      if (mounted) _snack(context.l10n.snackDeleteFailed);
       return false;
     }
   }
@@ -2022,12 +2010,12 @@ class _UpdaterPageState extends State<UpdaterPage>
       // off to the atomic config editor (backup + marker write, sudo-capable).
       final editable =
           isProbablyTextFile(bytes) && bytes.length <= kFileEditLimit;
-      final edit = await _showFilePreview('Datei: $name',
+      final edit = await _showFilePreview(context.l10n.filePreviewTitle(name),
           text.length > 100000 ? '${text.substring(0, 100000)}\n…' : text,
           editable: editable);
       if (edit == true && mounted) await _editConfig(path, name);
     } catch (_) {
-      if (mounted) _snack('Datei konnte nicht geladen werden.');
+      if (mounted) _snack(context.l10n.snackFileLoadFailed);
     }
   }
 
@@ -2055,7 +2043,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   if (editable)
                     TextButton.icon(
                       icon: const Icon(Icons.edit_outlined, size: 18),
-                      label: const Text('Bearbeiten'),
+                      label: Text(ctx.l10n.actionEdit),
                       onPressed: () => Navigator.pop(ctx, true),
                     ),
                 ],
@@ -2066,7 +2054,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(12),
                 child: SelectableText(
-                  content.trim().isEmpty ? 'Leere Datei.' : content,
+                  content.trim().isEmpty ? ctx.l10n.emptyFile : content,
                   style:
                       const TextStyle(fontFamily: 'monospace', fontSize: 12),
                 ),
@@ -2082,6 +2070,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _editConfig(String path, String title) async {
     if (_busy) return;
+    final l10n = context.l10n;
     final config = _prepare();
     if (config == null) return;
     _lastAction = () => _editConfig(path, title);
@@ -2089,7 +2078,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     await _guard(() async {
       content =
           await _updater.readConfigFile(config: config, path: path, onLog: _appendLog);
-    }, backgroundMessage: '$title wird geladen …');
+    }, backgroundMessage: context.l10n.busyLoadingFile(title));
     if (!mounted || content == null) return;
     final edited = await Navigator.of(context).push<String>(
       MaterialPageRoute(
@@ -2098,11 +2087,11 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
     if (edited == null || !mounted || edited == content) return; // cancel/no-op
     if (edited.trim().isEmpty) {
-      _snack('Leerer Inhalt — nicht gespeichert (das würde $title zerstören).');
+      _snack(context.l10n.snackEmptyContent(title));
       return;
     }
-    if (!await _confirm('Speichern?',
-        'Überschreibt $path auf dem Pi (eine Sicherung wird vorher angelegt).')) {
+    if (!await _confirm(context.l10n.dialogSaveTitle,
+        context.l10n.dialogSaveBody(path))) {
       return;
     }
     _beginBusy();
@@ -2111,11 +2100,11 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, path: path, content: edited, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = '$title gespeichert (Backup angelegt).';
+        _statusMessage = context.l10n.statusFileSaved(title);
         _statusOk = true;
       });
-      _addHistory('$title bearbeitet.');
-    }, backgroundMessage: '$title wird gespeichert …');
+      _addHistory(context.l10n.historyFileEdited(title));
+    }, backgroundMessage: l10n.busySavingFile(title));
   }
 
   // ---- service logs (journalctl / docker logs) ----
@@ -2129,14 +2118,14 @@ class _UpdaterPageState extends State<UpdaterPage>
     await _guard(() async {
       logs = await _updater.fetchServiceLogs(
           config: config, id: s.id, detail: s.detail, onLog: _appendLog);
-    }, backgroundMessage: 'Logs werden geladen …');
+    }, backgroundMessage: context.l10n.busyLoadingLogs);
     if (!mounted || logs == null) return;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (_) => _LiveLogSheet(
-        title: 'Logs: ${s.name}',
+        title: context.l10n.logsTitle(s.name),
         initial: logs!,
         // Live mode re-polls the tail quietly (no _guard/_busy churn).
         fetch: () => _updater.fetchServiceLogs(
@@ -2174,23 +2163,23 @@ class _UpdaterPageState extends State<UpdaterPage>
             onLog: _appendLog);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Health-Alerts aktiv (ntfy: ${choice.topic}).';
+          _statusMessage = context.l10n.statusAlertsActive(choice.topic);
           _statusOk = true;
         });
-        _addHistory('Health-Alerts eingerichtet (ntfy).');
+        _addHistory(context.l10n.historyAlertsConfigured);
       } else {
         await _updater.disableAlerts(config: config, onLog: _appendLog);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Health-Alerts deaktiviert.';
+          _statusMessage = context.l10n.statusAlertsDisabled;
           _statusOk = true;
         });
-        _addHistory('Health-Alerts deaktiviert.');
+        _addHistory(context.l10n.statusAlertsDisabled);
       }
     },
         backgroundMessage: choice.enable
-            ? 'Richte Health-Alerts ein …'
-            : 'Deaktiviere Health-Alerts …');
+            ? context.l10n.busyEnablingAlerts
+            : context.l10n.busyDisablingAlerts);
   }
 
   /// Fires a one-off test push (best-effort) so the user can confirm ntfy works.
@@ -2203,10 +2192,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           ntfyTopic: topic,
           onLog: _appendLog);
       if (!mounted) return;
-      _snack('Test-Benachrichtigung gesendet — prüf dein ntfy.');
+      _snack(context.l10n.snackTestAlertSent);
     } catch (_) {
       if (!mounted) return;
-      _snack('Test fehlgeschlagen (Details im Terminal-Log).');
+      _snack(context.l10n.snackTestFailed);
     }
   }
 
@@ -2256,23 +2245,23 @@ class _UpdaterPageState extends State<UpdaterPage>
             config: config, onCalendar: onCal, onLog: _appendLog);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Automatische Updates aktiv.';
+          _statusMessage = context.l10n.statusAutoUpdatesActive;
           _statusOk = true;
         });
-        _addHistory('Automatische Updates eingerichtet ($onCal).');
+        _addHistory(context.l10n.historyAutoUpdatesConfigured(onCal));
       } else {
         await _updater.disableAutoUpdate(config: config, onLog: _appendLog);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Automatische Updates deaktiviert.';
+          _statusMessage = context.l10n.statusAutoUpdatesDisabled;
           _statusOk = true;
         });
-        _addHistory('Automatische Updates deaktiviert.');
+        _addHistory(context.l10n.statusAutoUpdatesDisabled);
       }
     },
         backgroundMessage: choice.enable
-            ? 'Richte automatische Updates ein …'
-            : 'Deaktiviere automatische Updates …');
+            ? context.l10n.busyEnablingAutoUpdates
+            : context.l10n.busyDisablingAutoUpdates);
   }
 
   Future<({bool enable, bool weekly, int hour, int weekday})?>
@@ -2280,7 +2269,15 @@ class _UpdaterPageState extends State<UpdaterPage>
     var weekly = false;
     var hour = 4;
     var weekday = 7;
-    const days = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+    final days = [
+      context.l10n.dayMon,
+      context.l10n.dayTue,
+      context.l10n.dayWed,
+      context.l10n.dayThu,
+      context.l10n.dayFri,
+      context.l10n.daySat,
+      context.l10n.daySun,
+    ];
     return showModalBottomSheet<
         ({bool enable, bool weekly, int hour, int weekday})>(
       context: context,
@@ -2294,17 +2291,15 @@ class _UpdaterPageState extends State<UpdaterPage>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Automatische Updates',
+                Text(ctx.l10n.autoUpdatesTitle,
                     style: Theme.of(ctx).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                const Text('Der Pi aktualisiert sich künftig selbst (System + '
-                    'Dienste). evcc wird vorher gesichert und bei Problemen '
-                    'automatisch neu gestartet.'),
+                Text(ctx.l10n.autoUpdatesDescription),
                 const SizedBox(height: 12),
                 Text(
                   status.enabled
-                      ? 'Aktuell aktiv · nächste: ${status.nextRun ?? '—'}'
-                      : 'Aktuell aus.',
+                      ? ctx.l10n.statusScheduleActive(status.nextRun ?? '—')
+                      : ctx.l10n.statusScheduleOff,
                   style: TextStyle(
                       color: status.enabled ? kGreen : null,
                       fontWeight: FontWeight.w600),
@@ -2312,15 +2307,15 @@ class _UpdaterPageState extends State<UpdaterPage>
                 if (status.lastResult != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
-                    child: Text('Zuletzt gelaufen: ${status.lastResult}',
+                    child: Text(ctx.l10n.labelLastRun(status.lastResult!),
                         style: const TextStyle(
                             fontFamily: 'monospace', fontSize: 12)),
                   ),
                 const Divider(height: 24),
                 SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: false, label: Text('Täglich')),
-                    ButtonSegment(value: true, label: Text('Wöchentlich')),
+                  segments: [
+                    ButtonSegment(value: false, label: Text(ctx.l10n.daily)),
+                    ButtonSegment(value: true, label: Text(ctx.l10n.weekly)),
                   ],
                   selected: {weekly},
                   onSelectionChanged: (s) => setSheet(() => weekly = s.first),
@@ -2328,21 +2323,21 @@ class _UpdaterPageState extends State<UpdaterPage>
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    const Text('Uhrzeit:  '),
+                    Text(ctx.l10n.labelTime),
                     DropdownButton<int>(
                       value: hour,
                       items: [
                         for (var h = 0; h < 24; h++)
                           DropdownMenuItem(
                               value: h,
-                              child: Text(
-                                  '${h.toString().padLeft(2, '0')}:00 Uhr')),
+                              child: Text(ctx.l10n
+                                  .timeOClock(h.toString().padLeft(2, '0')))),
                       ],
                       onChanged: (v) => setSheet(() => hour = v ?? 4),
                     ),
                     if (weekly) ...[
                       const Spacer(),
-                      const Text('Tag:  '),
+                      Text(ctx.l10n.labelDay),
                       DropdownButton<int>(
                         value: weekday,
                         items: [
@@ -2366,8 +2361,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                           hour: hour,
                           weekday: weekday
                         )),
-                        child: Text(
-                            status.enabled ? 'Zeitplan ändern' : 'Einschalten'),
+                        child: Text(status.enabled
+                            ? ctx.l10n.changeSchedule
+                            : ctx.l10n.turnOn),
                       ),
                     ),
                     if (status.enabled) ...[
@@ -2379,7 +2375,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                           hour: 0,
                           weekday: 7
                         )),
-                        child: const Text('Ausschalten'),
+                        child: Text(ctx.l10n.turnOff),
                       ),
                     ],
                   ],
@@ -2414,23 +2410,24 @@ class _UpdaterPageState extends State<UpdaterPage>
             config: config, onCalendar: onCal, keep: choice.keep, onLog: _appendLog);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Geplante Backups aktiv.';
+          _statusMessage = context.l10n.statusScheduledBackupsActive;
           _statusOk = true;
         });
-        _addHistory('Geplante Backups eingerichtet ($onCal, ${choice.keep}×).');
+        _addHistory(context.l10n
+            .historyScheduledBackupsConfigured(onCal, choice.keep));
       } else {
         await _updater.disableScheduledBackup(config: config, onLog: _appendLog);
         if (!mounted) return;
         setState(() {
-          _statusMessage = 'Geplante Backups deaktiviert.';
+          _statusMessage = context.l10n.statusScheduledBackupsDisabled;
           _statusOk = true;
         });
-        _addHistory('Geplante Backups deaktiviert.');
+        _addHistory(context.l10n.statusScheduledBackupsDisabled);
       }
     },
         backgroundMessage: choice.enable
-            ? 'Richte geplante Backups ein …'
-            : 'Deaktiviere geplante Backups …');
+            ? context.l10n.busyEnablingScheduledBackups
+            : context.l10n.busyDisablingScheduledBackups);
   }
 
   Future<({bool enable, int hour, int keep})?> _showScheduledBackupSheet(
@@ -2449,17 +2446,15 @@ class _UpdaterPageState extends State<UpdaterPage>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Geplante Backups',
+                Text(ctx.l10n.scheduledBackupsTitle,
                     style: Theme.of(ctx).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                const Text('Der Pi sichert künftig selbst evcc (Konfig + Daten) '
-                    'und Pi-hole (Teleporter), sofern vorhanden — mit Rotation. '
-                    'Läuft als systemd-Timer auf dem Pi.'),
+                Text(ctx.l10n.scheduledBackupsDescription),
                 const SizedBox(height: 12),
                 Text(
                   status.enabled
-                      ? 'Aktuell aktiv · nächste: ${status.nextRun ?? '—'}'
-                      : 'Aktuell aus.',
+                      ? ctx.l10n.statusScheduleActive(status.nextRun ?? '—')
+                      : ctx.l10n.statusScheduleOff,
                   style: TextStyle(
                       color: status.enabled ? kGreen : null,
                       fontWeight: FontWeight.w600),
@@ -2467,27 +2462,27 @@ class _UpdaterPageState extends State<UpdaterPage>
                 if (status.lastResult != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
-                    child: Text('Zuletzt: ${status.lastResult}',
+                    child: Text(ctx.l10n.labelLast(status.lastResult!),
                         style: const TextStyle(
                             fontFamily: 'monospace', fontSize: 12)),
                   ),
                 const Divider(height: 24),
                 Row(
                   children: [
-                    const Text('Uhrzeit:  '),
+                    Text(ctx.l10n.labelTime),
                     DropdownButton<int>(
                       value: hour,
                       items: [
                         for (var h = 0; h < 24; h++)
                           DropdownMenuItem(
                               value: h,
-                              child: Text(
-                                  '${h.toString().padLeft(2, '0')}:00 Uhr')),
+                              child: Text(ctx.l10n
+                                  .timeOClock(h.toString().padLeft(2, '0')))),
                       ],
                       onChanged: (v) => setSheet(() => hour = v ?? 3),
                     ),
                     const Spacer(),
-                    const Text('Behalten:  '),
+                    Text(ctx.l10n.labelKeep),
                     DropdownButton<int>(
                       value: keep,
                       items: [
@@ -2505,8 +2500,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                       child: FilledButton(
                         onPressed: () => Navigator.pop(
                             ctx, (enable: true, hour: hour, keep: keep)),
-                        child: Text(
-                            status.enabled ? 'Zeitplan ändern' : 'Einschalten'),
+                        child: Text(status.enabled
+                            ? ctx.l10n.changeSchedule
+                            : ctx.l10n.turnOn),
                       ),
                     ),
                     if (status.enabled) ...[
@@ -2514,7 +2510,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                       TextButton(
                         onPressed: () => Navigator.pop(
                             ctx, (enable: false, hour: 0, keep: 0)),
-                        child: const Text('Ausschalten'),
+                        child: Text(ctx.l10n.turnOff),
                       ),
                     ],
                   ],
@@ -2538,12 +2534,12 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.updatePihole(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Pi-hole aktualisiert.';
+        _statusMessage = context.l10n.statusPiholeUpdated;
         _statusOk = true;
       });
-      _addHistory('Pi-hole aktualisiert.');
+      _addHistory(context.l10n.statusPiholeUpdated);
       await _refreshServices(config);
-    }, backgroundMessage: 'Pi-hole wird aktualisiert …');
+    }, backgroundMessage: context.l10n.busyUpdatingPihole);
   }
 
   Future<void> _piholeGravity() async {
@@ -2555,10 +2551,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.updatePiholeGravity(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Pi-hole-Blocklisten aktualisiert.';
+        _statusMessage = context.l10n.statusPiholeBlocklistsUpdated;
         _statusOk = true;
       });
-    }, backgroundMessage: 'Blocklisten werden aktualisiert …');
+    }, backgroundMessage: context.l10n.busyUpdatingBlocklists);
   }
 
   Future<void> _piholeRestartDns() async {
@@ -2570,7 +2566,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.restartPiholeDns(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Pi-hole-DNS neu gestartet.';
+        _statusMessage = context.l10n.statusPiholeDnsRestarted;
         _statusOk = true;
       });
     });
@@ -2578,11 +2574,10 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _installPihole() async {
     if (_busy) return;
+    final l10n = context.l10n;
     if (!await _confirm(
-      'Pi-hole installieren?',
-      'Installiert Pi-hole unbeaufsichtigt auf ${_host.text.trim()}.\n\n'
-          'Experimentell: nicht gegen jede Konfiguration getestet; die '
-          'Einrichtung erfolgt danach im Browser unter /admin.',
+      context.l10n.dialogInstallPiholeTitle,
+      context.l10n.dialogInstallPiholeBody(_host.text.trim()),
     )) {
       return;
     }
@@ -2593,22 +2588,21 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.installPihole(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage =
-            'Pi-hole installiert – im Browser unter /admin einrichten.';
+        _statusMessage = context.l10n.statusPiholeInstalled;
         _statusOk = true;
         _setupUrl = '$_uiScheme://${_host.text.trim()}/admin';
       });
-      _addHistory('Pi-hole installiert.');
+      _addHistory(context.l10n.historyPiholeInstalled);
       await _refreshServices(config);
-    }, backgroundMessage: 'Pi-hole wird installiert …');
+    }, backgroundMessage: l10n.busyInstallingPihole);
   }
 
   Future<void> _upgradeSystem() async {
     if (_busy) return;
+    final l10n = context.l10n;
     if (!await _confirm(
-      'System aktualisieren?',
-      'Aktualisiert ALLE Pakete auf dem Pi (apt full-upgrade), nicht nur einen '
-          'einzelnen Dienst.',
+      context.l10n.dialogUpgradeSystemTitle,
+      context.l10n.dialogUpgradeSystemBody,
     )) {
       return;
     }
@@ -2619,17 +2613,17 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.upgradeSystem(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'System aktualisiert.';
+        _statusMessage = context.l10n.statusSystemUpdated;
         _statusOk = true;
       });
-      _addHistory('System-Upgrade ausgeführt.');
+      _addHistory(context.l10n.historySystemUpgraded);
       await _refreshServices(config);
-    }, backgroundMessage: 'System-Upgrade läuft …');
+    }, backgroundMessage: l10n.busySystemUpgrade);
   }
 
   void _openPiholeAdmin() {
     if (_host.text.trim().isEmpty) {
-      _snack('Bitte zuerst Host/IP eintragen.');
+      _snack(context.l10n.snackEnterHostFirst);
       return;
     }
     _openUrl('$_uiScheme://${_host.text.trim()}/admin');
@@ -2637,14 +2631,14 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _backupPihole() => _runServiceBackup(
         label: 'Pi-hole',
-        backgroundMessage: 'Pi-hole wird gesichert …',
+        backgroundMessage: context.l10n.busyBackingUpPihole,
         run: (config) =>
             _updater.backupPihole(config: config, onLog: _appendLog),
       );
 
   Future<void> _backupHomeAssistant() => _runServiceBackup(
         label: 'Home Assistant',
-        backgroundMessage: 'Home Assistant wird gesichert …',
+        backgroundMessage: context.l10n.busyBackingUpHomeAssistant,
         run: (config) =>
             _updater.backupHomeAssistant(config: config, onLog: _appendLog),
       );
@@ -2664,10 +2658,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       final path = await run(config);
       if (!mounted) return;
       setState(() {
-        _statusMessage = '$label gesichert: $path';
+        _statusMessage = context.l10n.statusServiceBackedUp(label, path);
         _statusOk = true;
       });
-      _addHistory('$label gesichert.');
+      _addHistory(context.l10n.historyServiceBackedUp(label));
     }, backgroundMessage: backgroundMessage);
   }
 
@@ -2682,22 +2676,20 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.updateHomeAssistant(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Home Assistant aktualisiert.';
+        _statusMessage = context.l10n.statusHomeAssistantUpdated;
         _statusOk = true;
       });
-      _addHistory('Home Assistant aktualisiert.');
+      _addHistory(context.l10n.statusHomeAssistantUpdated);
       await _refreshServices(config);
-    }, backgroundMessage: 'Home Assistant wird aktualisiert …');
+    }, backgroundMessage: context.l10n.busyUpdatingHomeAssistant);
   }
 
   Future<void> _installHomeAssistant() async {
     if (_busy) return;
+    final l10n = context.l10n;
     if (!await _confirm(
-      'Home Assistant installieren?',
-      'Installiert Home Assistant als Docker-Container auf '
-          '${_host.text.trim()} (bei Bedarf wird zuerst Docker installiert).\n\n'
-          'Experimentell: nicht gegen jede Konfiguration getestet; die '
-          'Einrichtung erfolgt danach im Browser unter Port 8123.',
+      context.l10n.dialogInstallHomeAssistantTitle,
+      context.l10n.dialogInstallHomeAssistantBody(_host.text.trim()),
     )) {
       return;
     }
@@ -2708,19 +2700,18 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.installHomeAssistant(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage =
-            'Home Assistant installiert – im Browser unter Port 8123 einrichten.';
+        _statusMessage = context.l10n.statusHomeAssistantInstalled;
         _statusOk = true;
         _setupUrl = 'http://${_host.text.trim()}:8123';
       });
-      _addHistory('Home Assistant installiert.');
+      _addHistory(context.l10n.historyHomeAssistantInstalled);
       await _refreshServices(config);
-    }, backgroundMessage: 'Home Assistant wird installiert …');
+    }, backgroundMessage: l10n.busyInstallingHomeAssistant);
   }
 
   void _openHomeAssistant() {
     if (_host.text.trim().isEmpty) {
-      _snack('Bitte zuerst Host/IP eintragen.');
+      _snack(context.l10n.snackEnterHostFirst);
       return;
     }
     _openUrl('http://${_host.text.trim()}:8123');
@@ -2729,7 +2720,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Cancels the in-flight action by closing its SSH connection; the running
   /// action then finishes as "Abgebrochen".
   Future<void> _cancel() async {
-    _appendLog('Abbrechen angefordert …');
+    _appendLog(context.l10n.logCancelRequested);
     await _updater.cancel();
   }
 
@@ -2755,7 +2746,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   void _shareLog() {
     if (_log.isEmpty) {
-      _snack('Das Log ist leer.');
+      _snack(context.l10n.snackLogEmpty);
       return;
     }
     SharePlus.instance.share(ShareParams(text: _log.join('\n')));
@@ -2783,7 +2774,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _showApiStatus() {
     final host = _host.text.trim();
     if (host.isEmpty) {
-      _snack('Bitte zuerst Host/IP eintragen.');
+      _snack(context.l10n.snackEnterHostFirst);
       return;
     }
     final port = _uiPort.text.trim().isEmpty ? '7070' : _uiPort.text.trim();
@@ -2833,7 +2824,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     // Don't draw the results over the lock screen (or after dispose).
     if (!mounted || _locked) return;
     if (hosts.isEmpty) {
-      _snack('Keine SSH-Geräte im WLAN gefunden – IP bitte manuell eintragen.');
+      _snack(context.l10n.snackNoSshDevices);
       return;
     }
     showModalBottomSheet<void>(
@@ -2844,9 +2835,9 @@ class _UpdaterPageState extends State<UpdaterPage>
           shrinkWrap: true,
           children: [
             ListTile(
-              title: Text('Gefundene Geräte (SSH offen)',
+              title: Text(ctx.l10n.foundDevicesTitle,
                   style: Theme.of(ctx).textTheme.titleMedium),
-              subtitle: const Text('Nur im selben WLAN. Tippen zum Übernehmen.'),
+              subtitle: Text(ctx.l10n.foundDevicesSubtitle),
             ),
             for (final ip in hosts)
               ListTile(
@@ -2857,7 +2848,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   setState(() => _host.text = ip);
                   _scheduleSave();
                   Navigator.pop(ctx);
-                  _snack('Host auf $ip gesetzt.');
+                  _snack(context.l10n.snackHostSet(ip));
                 },
               ),
           ],
@@ -2883,7 +2874,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _appendLog('\$ $cmd');
       _appendLog('⚠ $hint');
       setState(() {
-        _statusMessage = 'Interaktiver Befehl – nicht ausgeführt.';
+        _statusMessage = context.l10n.statusInteractiveCommand;
         _statusOk = false;
       });
       _consoleHistory
@@ -2912,10 +2903,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           .runConsoleCommand(config: config, command: cmd, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Befehl ausgeführt: $cmd';
+        _statusMessage = context.l10n.statusCommandExecuted(cmd);
         _statusOk = true;
       });
-    }, backgroundMessage: 'Befehl läuft …');
+    }, backgroundMessage: context.l10n.busyCommandRunning);
   }
 
   /// Frequently useful read-only commands, offered above the history.
@@ -2933,13 +2924,13 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _addCustomCommand(StateSetter setSheet) async {
     final saved = await showDialog<String>(
       context: context,
-      builder: (ctx) => const _NameDialog(
-        title: 'Eigenen Schnellbefehl anlegen',
+      builder: (ctx) => _NameDialog(
+        title: ctx.l10n.dialogAddQuickCommandTitle,
         initial: '',
-        label: 'Befehl',
-        hint: 'z. B. vcgencmd measure_temp',
-        confirmLabel: 'Speichern',
-        fieldKey: Key('customCommandField'),
+        label: ctx.l10n.labelCommand,
+        hint: ctx.l10n.hintCommandExample,
+        confirmLabel: ctx.l10n.actionSave,
+        fieldKey: const Key('customCommandField'),
         mono: true,
       ),
     );
@@ -2963,7 +2954,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           shrinkWrap: true,
           children: [
             ListTile(
-              title: Text('Schnellbefehle',
+              title: Text(ctx.l10n.quickCommandsTitle,
                   style: Theme.of(ctx).textTheme.titleSmall),
               dense: true,
             ),
@@ -2981,11 +2972,11 @@ class _UpdaterPageState extends State<UpdaterPage>
               ),
             ListTile(
               dense: true,
-              title: Text('Eigene Befehle',
+              title: Text(ctx.l10n.customCommandsTitle,
                   style: Theme.of(ctx).textTheme.titleSmall),
               trailing: IconButton(
                 key: const Key('addCustomCommand'),
-                tooltip: 'Eigenen Befehl anlegen',
+                tooltip: ctx.l10n.tooltipAddCustomCommand,
                 icon: const Icon(Icons.add, size: 20),
                 onPressed: () => _addCustomCommand(setSheet),
               ),
@@ -3003,7 +2994,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 },
                 trailing: IconButton(
                   key: ValueKey('delCustom-$c'),
-                  tooltip: 'Entfernen',
+                  tooltip: ctx.l10n.tooltipRemove,
                   icon: const Icon(Icons.close, size: 18),
                   onPressed: () {
                     setState(() => _customCommands =
@@ -3016,12 +3007,12 @@ class _UpdaterPageState extends State<UpdaterPage>
             if (_consoleHistory.isNotEmpty) ...[
               const Divider(),
               ListTile(
-                title: Text('Verlauf',
+                title: Text(ctx.l10n.historyTitle,
                     style: Theme.of(ctx).textTheme.titleSmall),
                 dense: true,
                 trailing: TextButton.icon(
                   icon: const Icon(Icons.delete_sweep, size: 18),
-                  label: const Text('Löschen'),
+                  label: Text(ctx.l10n.actionDelete),
                   onPressed: () {
                     setState(() => _consoleHistory = []);
                     _scheduleSave();
@@ -3106,7 +3097,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   String _notesExcerpt(String s) {
     final t = s.trim();
-    if (t.isEmpty) return 'Neue evcc-Version verfügbar.';
+    if (t.isEmpty) return context.l10n.evccNewVersionAvailable;
     return t.length > 500 ? '${t.substring(0, 500)} …' : t;
   }
 
@@ -3118,22 +3109,22 @@ class _UpdaterPageState extends State<UpdaterPage>
       showDragHandle: true,
       builder: (ctx) => SafeArea(
         child: entries.isEmpty
-            ? const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('Noch kein Verlauf.'),
+            ? Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(ctx.l10n.noHistoryYet),
               )
             : ListView(
                 shrinkWrap: true,
                 children: [
                   ListTile(
-                    title: Text('Verlauf',
+                    title: Text(ctx.l10n.historyTitle,
                         style: Theme.of(ctx).textTheme.titleMedium),
                     trailing: TextButton(
                       onPressed: () async {
                         await _historyStore.clear();
                         if (ctx.mounted) Navigator.pop(ctx);
                       },
-                      child: const Text('Leeren'),
+                      child: Text(ctx.l10n.actionClear),
                     ),
                   ),
                   for (final e in entries.reversed)
@@ -3178,7 +3169,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   void _openEvccUi() {
     if (_host.text.trim().isEmpty) {
-      _snack('Bitte zuerst Host/IP eintragen.');
+      _snack(context.l10n.snackEnterHostFirst);
       return;
     }
     _openUrl(_evccUiUrl());
@@ -3188,13 +3179,14 @@ class _UpdaterPageState extends State<UpdaterPage>
     final uri = Uri.tryParse(url);
     if (uri == null) return;
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      if (mounted) _snack('Konnte den Link nicht öffnen.');
+      if (mounted) _snack(context.l10n.snackCouldNotOpenLink);
     }
   }
 
   Future<bool> _confirm(String title, String body,
-      {String confirmLabel = 'Weiter', bool destructive = false}) async {
+      {String? confirmLabel, bool destructive = false}) async {
     final cs = Theme.of(context).colorScheme;
+    final confirmText = confirmLabel ?? context.l10n.actionContinue;
     final r = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -3203,7 +3195,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Abbrechen'),
+            child: Text(ctx.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -3213,7 +3205,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ? FilledButton.styleFrom(
                     backgroundColor: cs.error, foregroundColor: cs.onError)
                 : null,
-            child: Text(confirmLabel),
+            child: Text(confirmText),
           ),
         ],
       ),
@@ -3230,35 +3222,33 @@ class _UpdaterPageState extends State<UpdaterPage>
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('Neuen Pi vertrauen?'),
+        title: Text(ctx.l10n.dialogTrustPiTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Erste Verbindung zu ${_host.text.trim()}. Prüfe den '
-                'SSH-Fingerprint des Pi:'),
+            Text(ctx.l10n.dialogTrustPiBody(_host.text.trim())),
             const SizedBox(height: 10),
             SelectableText(
               fingerprint,
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
             ),
             const SizedBox(height: 10),
-            const Text(
-              'Nur „Vertrauen", wenn der Fingerprint zu deinem Pi passt. Bei '
-              '„Abbrechen" wird KEIN Passwort gesendet.',
-              style: TextStyle(fontSize: 12),
+            Text(
+              ctx.l10n.dialogTrustPiWarning,
+              style: const TextStyle(fontSize: 12),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Abbrechen'),
+            child: Text(ctx.l10n.cancel),
           ),
           FilledButton.icon(
             onPressed: () => Navigator.pop(ctx, true),
             icon: const Icon(Icons.verified_user_outlined, size: 18),
-            label: const Text('Vertrauen'),
+            label: Text(ctx.l10n.actionTrust),
           ),
         ],
       ),
@@ -3298,7 +3288,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _showLicenses() {
     showLicensePage(
       context: context,
-      applicationName: 'Pi-Tool (inoffiziell)',
+      applicationName: context.l10n.licenseAppName,
       applicationIcon: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: _PromptMark(
@@ -3327,17 +3317,18 @@ class _UpdaterPageState extends State<UpdaterPage>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Einstellungen',
+                    Text(ctx.l10n.settingsTitle,
                         style: Theme.of(ctx).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('App mit Biometrie/PIN sperren'),
-                  subtitle: const Text('Beim Öffnen & nach dem Wechsel'),
+                  title: Text(ctx.l10n.settingsLockTitle),
+                  subtitle: Text(ctx.l10n.settingsLockSubtitle),
                   value: _lockEnabled,
                   onChanged: (v) async {
+                    final l10n = ctx.l10n;
                     if (v && !await _authenticator.canAuthenticate()) {
-                      _snack('Keine Biometrie/PIN auf dem Gerät eingerichtet.');
+                      _snack(l10n.snackNoBiometrics);
                       return;
                     }
                     setState(() => _lockEnabled = v);
@@ -3347,9 +3338,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Vor Update Backup anlegen'),
-                  subtitle: const Text(
-                      'Sichert evcc.yaml + Datenbank auf dem Pi (apt-Update)'),
+                  title: Text(ctx.l10n.settingsBackupBeforeUpdateTitle),
+                  subtitle: Text(ctx.l10n.settingsBackupBeforeUpdateSubtitle),
                   value: _backupBeforeUpdate,
                   onChanged: (v) {
                     setState(() => _backupBeforeUpdate = v);
@@ -3359,10 +3349,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('evcc-Oberfläche über HTTPS'),
+                  title: Text(ctx.l10n.settingsHttpsTitle),
                   subtitle: Text(_uiScheme == 'https'
                       ? 'https://…'
-                      : 'http://… (Standard)'),
+                      : ctx.l10n.settingsHttpsSubtitleOff),
                   value: _uiScheme == 'https',
                   onChanged: (v) {
                     setState(() => _uiScheme = v ? 'https' : 'http');
@@ -3374,19 +3364,23 @@ class _UpdaterPageState extends State<UpdaterPage>
                 TextField(
                   controller: _uiPort,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'evcc-Oberfläche: Port',
-                    helperText: 'Standard 7070',
+                  decoration: InputDecoration(
+                    labelText: ctx.l10n.settingsPortLabel,
+                    helperText: ctx.l10n.settingsPortHelper,
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text('Design', style: Theme.of(ctx).textTheme.labelLarge),
+                Text(ctx.l10n.settingsThemeTitle,
+                    style: Theme.of(ctx).textTheme.labelLarge),
                 const SizedBox(height: 6),
                 SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'system', label: Text('System')),
-                    ButtonSegment(value: 'light', label: Text('Hell')),
-                    ButtonSegment(value: 'dark', label: Text('Dunkel')),
+                  segments: [
+                    ButtonSegment(
+                        value: 'system', label: Text(ctx.l10n.optionSystem)),
+                    ButtonSegment(
+                        value: 'light', label: Text(ctx.l10n.themeLight)),
+                    ButtonSegment(
+                        value: 'dark', label: Text(ctx.l10n.themeDark)),
                   ],
                   selected: {_themeMode},
                   onSelectionChanged: (s) {
@@ -3401,10 +3395,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                     style: Theme.of(ctx).textTheme.labelLarge),
                 const SizedBox(height: 6),
                 SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'system', label: Text('System')),
-                    ButtonSegment(value: 'de', label: Text('Deutsch')),
-                    ButtonSegment(value: 'en', label: Text('English')),
+                  segments: [
+                    ButtonSegment(
+                        value: 'system', label: Text(ctx.l10n.optionSystem)),
+                    ButtonSegment(value: 'de', label: Text(ctx.l10n.langGerman)),
+                    ButtonSegment(
+                        value: 'en', label: Text(ctx.l10n.langEnglish)),
                   ],
                   selected: {_languageMode},
                   onSelectionChanged: (s) {
@@ -3416,9 +3412,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('evcc-Nightly installieren'),
-                  subtitle: const Text(
-                      'unstable-Kanal statt stable (nur bei Neuinstallation)'),
+                  title: Text(ctx.l10n.settingsNightlyTitle),
+                  subtitle: Text(ctx.l10n.settingsNightlySubtitle),
                   value: _channel == 'unstable',
                   onChanged: (v) {
                     setState(() => _channel = v ? 'unstable' : 'stable');
@@ -3430,8 +3425,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.upload_file_outlined),
-                  title: const Text('Profile exportieren'),
-                  subtitle: const Text('Verschlüsselte Datei (Handy-Wechsel)'),
+                  title: Text(ctx.l10n.exportProfilesTitle),
+                  subtitle: Text(ctx.l10n.settingsExportSubtitle),
                   onTap: () {
                     Navigator.pop(ctx);
                     _exportProfiles();
@@ -3440,7 +3435,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.download_outlined),
-                  title: const Text('Profile importieren'),
+                  title: Text(ctx.l10n.importProfilesTitle),
                   onTap: () {
                     Navigator.pop(ctx);
                     _importProfiles();
@@ -3450,7 +3445,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.support_agent),
-                  title: const Text('Support kontaktieren'),
+                  title: Text(ctx.l10n.settingsContactSupport),
                   subtitle: const Text(kSupportEmail),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -3485,10 +3480,8 @@ class _UpdaterPageState extends State<UpdaterPage>
               Expanded(
                 child: Text(
                   failed
-                      ? 'Verbindung fehlgeschlagen – Host/IP und Zugangsdaten '
-                          'prüfen, dann erneut verbinden.'
-                      : 'Tippe „Verbindung herstellen", um die Dienste auf dem '
-                          'Pi zu erkennen.',
+                      ? context.l10n.serviceCardsFailedHint
+                      : context.l10n.serviceCardsConnectHint,
                   style:
                       TextStyle(color: failed ? cs.error : cs.onSurfaceVariant),
                 ),
@@ -3523,11 +3516,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               Icons.cast,
               s.compatible
                   ? _installPiConnect
-                  : () => _snack('Raspberry Pi Connect braucht Raspberry Pi OS '
-                      'Bookworm oder neuer.'),
+                  : () => _snack(context.l10n.snackPiConnectNeedsBookworm),
               subtitle: s.compatible
-                  ? 'Offizieller Fernzugriff (Shell) – installieren'
-                  : 'Nicht kompatibel – braucht Bookworm oder neuer',
+                  ? context.l10n.piConnectSubtitleInstall
+                  : context.l10n.piConnectSubtitleIncompatible,
               enabled: s.compatible,
             ));
           case 'tailscale':
@@ -3535,7 +3527,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               'Tailscale',
               Icons.vpn_key_outlined,
               _installTailscale,
-              subtitle: 'VPN/Mesh – den Pi von überall erreichen',
+              subtitle: context.l10n.tailscaleSubtitle,
             ));
         }
         continue;
@@ -3550,31 +3542,33 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.bolt,
             enabled: !_busy,
-            primaryLabel: 'Aktualisieren',
+            primaryLabel: context.l10n.actionUpdate,
             onPrimary: () => _run(dryRun: false),
             onOpenWeb: _openEvccUi,
             actions: s.installed
                 ? [
-                    _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
-                    if (upToDate)
-                      _CardAction(
-                          'Trotzdem aktualisieren', () => _run(dryRun: false)),
                     _CardAction(
-                        'Probelauf (ändert nichts)', () => _run(dryRun: true)),
-                    _CardAction('Live-Status', _showApiStatus),
-                    _CardAction('Dienst neu starten', _restartService),
+                        context.l10n.actionShowLogs, () => _showServiceLogs(s)),
+                    if (upToDate)
+                      _CardAction(context.l10n.actionUpdateAnyway,
+                          () => _run(dryRun: false)),
+                    _CardAction(
+                        context.l10n.actionDryRun, () => _run(dryRun: true)),
+                    _CardAction(context.l10n.actionLiveStatus, _showApiStatus),
+                    _CardAction(
+                        context.l10n.actionRestartService, _restartService),
                     // Backups are made only for apt installs; restore would also
                     // `systemctl start evcc`, which has no unit on a Docker host.
                     if (s.detail.startsWith('apt')) ...[
                       _CardAction(
-                          'Konfiguration bearbeiten',
+                          context.l10n.actionEditConfig,
                           () => _proGate(
                               () => _editConfig('/etc/evcc.yaml', 'evcc.yaml')),
                           pro: true),
-                      _CardAction('Backup wiederherstellen',
+                      _CardAction(context.l10n.actionRestoreBackup,
                           () => _proGate(_restoreBackup), pro: true),
                     ],
-                    _CardAction('Offizielle evcc-App',
+                    _CardAction(context.l10n.actionOfficialEvccApp,
                         () => _openUrl(kEvccPlayStoreUrl)),
                   ]
                 : const [],
@@ -3585,18 +3579,20 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.shield_outlined,
             enabled: !_busy,
-            primaryLabel: 'Aktualisieren',
+            primaryLabel: context.l10n.actionUpdate,
             onPrimary: _updatePihole,
             onOpenWeb: _openPiholeAdmin,
             actions: [
-              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
-              if (upToDate) _CardAction('Trotzdem aktualisieren', _updatePihole),
-              _CardAction('Sichern (Teleporter)',
+              _CardAction(
+                  context.l10n.actionShowLogs, () => _showServiceLogs(s)),
+              if (upToDate)
+                _CardAction(context.l10n.actionUpdateAnyway, _updatePihole),
+              _CardAction(context.l10n.actionBackupTeleporter,
                   () => _proGate(_backupPihole), pro: true),
-              _CardAction('Backups verwalten',
+              _CardAction(context.l10n.actionManageBackups,
                   () => _proGate(_managePiholeBackups), pro: true),
-              _CardAction('Blocklisten aktualisieren', _piholeGravity),
-              _CardAction('DNS neu starten', _piholeRestartDns),
+              _CardAction(context.l10n.actionUpdateBlocklists, _piholeGravity),
+              _CardAction(context.l10n.actionRestartDns, _piholeRestartDns),
             ],
           ));
         case 'homeassistant':
@@ -3605,14 +3601,15 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.cottage_outlined,
             enabled: !_busy,
-            primaryLabel: 'Aktualisieren',
+            primaryLabel: context.l10n.actionUpdate,
             onPrimary: _updateHomeAssistant,
             onOpenWeb: _openHomeAssistant,
             actions: [
-              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
-              _CardAction('Sichern (/config)',
+              _CardAction(
+                  context.l10n.actionShowLogs, () => _showServiceLogs(s)),
+              _CardAction(context.l10n.actionBackupConfig,
                   () => _proGate(_backupHomeAssistant), pro: true),
-              _CardAction('Backups verwalten',
+              _CardAction(context.l10n.actionManageBackups,
                   () => _proGate(_manageHomeAssistantBackups), pro: true),
             ],
           ));
@@ -3623,17 +3620,18 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.cast,
             enabled: !_busy,
-            primaryLabel: signedIn ? 'Web öffnen' : 'Anmelden',
+            primaryLabel:
+                signedIn ? context.l10n.actionOpenWeb : context.l10n.actionSignIn,
             onPrimary: signedIn
                 ? () => _openUrl('https://connect.raspberrypi.com')
                 : _piConnectSignin,
             actions: signedIn
                 ? [
-                    _CardAction(
-                        'Fernzugriff aktivieren', () => _piConnectSet(true)),
-                    _CardAction(
-                        'Fernzugriff pausieren', () => _piConnectSet(false)),
-                    _CardAction('Abmelden', _piConnectSignout),
+                    _CardAction(context.l10n.actionEnableRemoteAccess,
+                        () => _piConnectSet(true)),
+                    _CardAction(context.l10n.actionPauseRemoteAccess,
+                        () => _piConnectSet(false)),
+                    _CardAction(context.l10n.actionSignOut, _piConnectSignout),
                   ]
                 : const [],
           ));
@@ -3644,7 +3642,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.vpn_key,
             enabled: !_busy,
-            primaryLabel: up ? 'Trennen' : 'Verbinden',
+            primaryLabel:
+                up ? context.l10n.actionDisconnect : context.l10n.actionConnect,
             onPrimary:
                 up ? () => _tailscaleSet(logout: false) : _tailscaleUp,
             onOpenWeb: up
@@ -3652,12 +3651,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                 : null,
             actions: [
               if (up && s.version != null)
-                _CardAction('Diese IP als Host übernehmen (${s.version})',
+                _CardAction(context.l10n.actionUseIpAsHost(s.version!),
                     () => _useTailscaleIp(s.version!)),
               // "Trennen" (primary) = tailscale down; this is the account-level
               // logout — labelled distinctly so the two aren't confused.
-              _CardAction(
-                  'Von Tailscale abmelden', () => _tailscaleSet(logout: true)),
+              _CardAction(context.l10n.actionSignOutTailscale,
+                  () => _tailscaleSet(logout: true)),
             ],
           ));
         case 'system':
@@ -3666,19 +3665,21 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.memory,
             enabled: !_busy,
-            primaryLabel: 'Updates installieren',
+            primaryLabel: context.l10n.actionInstallUpdates,
             onPrimary: _upgradeSystem,
             actions: [
-              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
+              _CardAction(
+                  context.l10n.actionShowLogs, () => _showServiceLogs(s)),
               if (upToDate)
-                _CardAction('Trotzdem aktualisieren', _upgradeSystem),
-              _CardAction('Aufräumen (Speicher freigeben)',
+                _CardAction(context.l10n.actionUpdateAnyway, _upgradeSystem),
+              _CardAction(context.l10n.actionCleanup,
                   () => _proGate(_cleanupSystem), pro: true),
-              _CardAction('Sicherheits-Check', _securityCheck),
-              _CardAction('Speicherplatz analysieren', _storageExplorer),
-              _CardAction('Docker-Container', _dockerContainers),
-              _CardAction('Pi neu starten', _reboot),
-              _CardAction('Pi herunterfahren', _shutdown, destructive: true),
+              _CardAction(context.l10n.actionSecurityCheck, _securityCheck),
+              _CardAction(context.l10n.actionAnalyzeStorage, _storageExplorer),
+              _CardAction(context.l10n.actionDockerContainers, _dockerContainers),
+              _CardAction(context.l10n.actionRebootPi, _reboot),
+              _CardAction(context.l10n.actionShutdownPi, _shutdown,
+                  destructive: true),
             ],
           ));
         case 'adguard':
@@ -3691,12 +3692,13 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: _serviceIcon(s.id),
             enabled: !_busy,
-            primaryLabel: 'Neustart',
+            primaryLabel: context.l10n.actionRestart,
             onPrimary: () => _restartSystemdService(s),
             onOpenWeb:
                 s.webPort != null ? () => _openServiceWeb(s.webPort!) : null,
             actions: [
-              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
+              _CardAction(
+                  context.l10n.actionShowLogs, () => _showServiceLogs(s)),
             ],
           ));
         default:
@@ -3707,15 +3709,16 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: _serviceIcon(s.id),
             enabled: !_busy,
-            primaryLabel: 'Aktualisieren',
+            primaryLabel: context.l10n.actionUpdate,
             onPrimary: () => _updateAptService(s),
             onOpenWeb:
                 s.webPort != null ? () => _openServiceWeb(s.webPort!) : null,
             actions: [
-              _CardAction('Logs anzeigen', () => _showServiceLogs(s)),
+              _CardAction(
+                  context.l10n.actionShowLogs, () => _showServiceLogs(s)),
               if (upToDate)
-                _CardAction(
-                    'Trotzdem aktualisieren', () => _updateAptService(s)),
+                _CardAction(context.l10n.actionUpdateAnyway,
+                    () => _updateAptService(s)),
             ],
           ));
       }
@@ -3729,8 +3732,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         svc.name,
         _serviceIcon(svc.id),
         () => _installAptService(svc),
-        subtitle:
-            svc.webPort != null ? 'Web-Oberfläche auf Port ${svc.webPort}' : null,
+        subtitle: svc.webPort != null
+            ? context.l10n.webUiOnPort(svc.webPort!)
+            : null,
       ));
     }
     // Guided one-flow setup of the evcc monitoring stack, offered at the top of
@@ -3743,10 +3747,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       addable.insert(
         0,
         _AddableService(
-          'Energie-Monitoring-Stack',
+          context.l10n.energyMonitoringStack,
           Icons.auto_awesome,
           _guidedSetup,
-          subtitle: 'InfluxDB + Grafana + Mosquitto in einem Schritt',
+          subtitle: context.l10n.energyStackSubtitle,
         ),
       );
     }
@@ -3756,7 +3760,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         child: OutlinedButton.icon(
           onPressed: _busy ? null : () => _showAddServicePicker(addable),
           icon: const Icon(Icons.add, size: 18),
-          label: const Text('Dienst hinzufügen'),
+          label: Text(context.l10n.addService),
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(44),
           ),
@@ -3783,14 +3787,14 @@ class _UpdaterPageState extends State<UpdaterPage>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
-                child: Text('Dienst hinzufügen',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                child: Text(sheetContext.l10n.addService,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Installiert den Dienst auf dem Pi (experimentell).'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(sheetContext.l10n.addServiceDescription),
             ),
             for (final item in items)
               ListTile(
@@ -3822,6 +3826,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Guided one-flow install of the (still-missing) monitoring-stack services.
   Future<void> _guidedSetup() async {
     if (_busy) return;
+    final l10n = context.l10n;
     final config = _prepare();
     if (config == null) return;
     // _prepare() set _busy; the install path re-acquires it via _guard, so
@@ -3832,7 +3837,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         .where((s) => _stackIds.contains(s.id) && !present.contains(s.id))
         .toList();
     if (stack.isEmpty) {
-      _snack('Der Monitoring-Stack ist bereits installiert.');
+      _snack(context.l10n.snackStackAlreadyInstalled);
       return;
     }
     final chosen = await _showGuidedSetupSheet(stack);
@@ -3841,29 +3846,29 @@ class _UpdaterPageState extends State<UpdaterPage>
     _beginBusy();
     await _guard(() async {
       for (final svc in chosen) {
-        _appendLog('== Installiere ${svc.name} ==');
+        _appendLog(l10n.logInstalling(svc.name));
         await _updater.installAptService(
             config: config, service: svc, onLog: _appendLog);
       }
       if (!mounted) return;
       final names = chosen.map((s) => s.name).join(', ');
       setState(() {
-        _statusMessage = 'Monitoring-Stack installiert: $names.';
+        _statusMessage = context.l10n.statusStackInstalled(names);
         _statusOk = true;
       });
-      _addHistory('Energie-Stack installiert: $names.');
+      _addHistory(context.l10n.historyStackInstalled(names));
       await _refreshServices(config);
-    }, backgroundMessage: 'Monitoring-Stack wird installiert …');
+    }, backgroundMessage: context.l10n.busyInstallingStack);
   }
 
   String _stackRole(String id) {
     switch (id) {
       case 'influxdb':
-        return 'Zeitreihen-Datenbank (speichert die Messwerte)';
+        return context.l10n.stackRoleInfluxdb;
       case 'grafana':
-        return 'Dashboards (visualisiert die Daten)';
+        return context.l10n.stackRoleGrafana;
       case 'mosquitto':
-        return 'MQTT-Broker (Datenverteilung)';
+        return context.l10n.stackRoleMosquitto;
       default:
         return '';
     }
@@ -3883,12 +3888,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Energie-Monitoring-Stack',
+                Text(ctx.l10n.energyMonitoringStack,
                     style: Theme.of(ctx).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                const Text('Installiert die Bausteine, um deine '
-                    'evcc-Energiedaten zu speichern und als Dashboard zu sehen '
-                    '— in einem Schritt.'),
+                Text(ctx.l10n.guidedSetupDescription),
                 const SizedBox(height: 12),
                 for (final svc in services)
                   CheckboxListTile(
@@ -3903,8 +3906,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   ),
                 const SizedBox(height: 8),
                 Text(
-                  'Danach in evcc InfluxDB + MQTT eintragen (siehe evcc-Doku). '
-                  'Experimentell — installiert aus den offiziellen apt-Quellen.',
+                  ctx.l10n.guidedSetupNote,
                   style: Theme.of(ctx).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 12),
@@ -3912,7 +3914,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   width: double.infinity,
                   child: FilledButton.icon(
                     icon: const Icon(Icons.download),
-                    label: const Text('Installieren'),
+                    label: Text(ctx.l10n.actionInstall),
                     onPressed: selected.isEmpty
                         ? null
                         : () => Navigator.pop(
@@ -3941,12 +3943,12 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.installPiConnect(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Raspberry Pi Connect installiert – jetzt anmelden.';
+        _statusMessage = context.l10n.statusPiConnectInstalled;
         _statusOk = true;
       });
-      _addHistory('Raspberry Pi Connect installiert.');
+      _addHistory(context.l10n.historyPiConnectInstalled);
       await _refreshServices(config);
-    }, backgroundMessage: 'Raspberry Pi Connect wird installiert …');
+    }, backgroundMessage: context.l10n.busyInstallingPiConnect);
   }
 
   Future<void> _piConnectSignin() async {
@@ -3957,16 +3959,15 @@ class _UpdaterPageState extends State<UpdaterPage>
     String? url;
     await _guard(() async {
       url = await _updater.piConnectSignin(config: config, onLog: _appendLog);
-    }, backgroundMessage: 'Anmeldung wird gestartet …');
+    }, backgroundMessage: context.l10n.busyStartingSignin);
     if (!mounted) return;
     if (url == null) {
-      _snack('Kein Anmelde-Link erhalten (Details im Terminal-Log).');
+      _snack(context.l10n.snackNoSigninLink);
       return;
     }
     await _openUrl(url!);
     if (mounted) {
-      _snack('Im Browser mit deiner Raspberry Pi ID anmelden, dann erneut '
-          '„Verbindung herstellen".');
+      _snack(context.l10n.snackPiConnectSignin);
     }
   }
 
@@ -3979,19 +3980,23 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.piConnectSet(config: config, on: on, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = on ? 'Pi Connect aktiviert.' : 'Pi Connect deaktiviert.';
+        _statusMessage = on
+            ? context.l10n.statusPiConnectEnabled
+            : context.l10n.statusPiConnectDisabled;
         _statusOk = true;
       });
       await _refreshServices(config);
     },
-        backgroundMessage:
-            on ? 'Pi Connect wird aktiviert …' : 'Pi Connect wird deaktiviert …');
+        backgroundMessage: on
+            ? context.l10n.busyEnablingPiConnect
+            : context.l10n.busyDisablingPiConnect);
   }
 
   Future<void> _piConnectSignout() async {
     if (_busy) return;
-    if (!await _confirm('Abmelden?',
-        'Trennt den Pi von deinem Raspberry-Pi-Connect-Konto.')) {
+    final l10n = context.l10n;
+    if (!await _confirm(context.l10n.dialogSignOutTitle,
+        context.l10n.dialogSignOutPiConnectBody)) {
       return;
     }
     final config = _prepare();
@@ -4001,11 +4006,11 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.piConnectSignout(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Von Pi Connect abgemeldet.';
+        _statusMessage = context.l10n.statusPiConnectSignedOut;
         _statusOk = true;
       });
       await _refreshServices(config);
-    }, backgroundMessage: 'Abmeldung läuft …');
+    }, backgroundMessage: l10n.busySigningOut);
   }
 
   // ---- Tailscale (VPN/mesh) ----
@@ -4019,12 +4024,12 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.installTailscale(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = 'Tailscale installiert – jetzt „Verbinden".';
+        _statusMessage = context.l10n.statusTailscaleInstalled;
         _statusOk = true;
       });
-      _addHistory('Tailscale installiert.');
+      _addHistory(context.l10n.historyTailscaleInstalled);
       await _refreshServices(config);
-    }, backgroundMessage: 'Tailscale wird installiert …');
+    }, backgroundMessage: context.l10n.busyInstallingTailscale);
   }
 
   Future<void> _tailscaleUp() async {
@@ -4035,26 +4040,26 @@ class _UpdaterPageState extends State<UpdaterPage>
     String? url;
     await _guard(() async {
       url = await _updater.tailscaleUp(config: config, onLog: _appendLog);
-    }, backgroundMessage: 'Tailscale wird verbunden …');
+    }, backgroundMessage: context.l10n.busyConnectingTailscale);
     if (!mounted) return;
     if (url != null) {
       await _openUrl(url!);
       if (mounted) {
-        _snack('Im Browser bei Tailscale anmelden, dann erneut „Verbindung '
-            'herstellen".');
+        _snack(context.l10n.snackTailscaleSignin);
       }
     } else {
       // Already authenticated → just re-detect to show the new state.
       await _refreshServices(config);
-      if (mounted) _snack('Tailscale verbunden.');
+      if (mounted) _snack(context.l10n.snackTailscaleConnected);
     }
   }
 
   Future<void> _tailscaleSet({required bool logout}) async {
     if (_busy) return;
+    final l10n = context.l10n;
     if (logout &&
-        !await _confirm('Abmelden?',
-            'Entfernt den Pi aus deinem Tailnet (neue Anmeldung nötig).')) {
+        !await _confirm(context.l10n.dialogSignOutTitle,
+            context.l10n.dialogSignOutTailscaleBody)) {
       return;
     }
     final config = _prepare();
@@ -4065,13 +4070,16 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, logout: logout, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = logout ? 'Tailscale abgemeldet.' : 'Tailscale getrennt.';
+        _statusMessage = logout
+            ? context.l10n.statusTailscaleSignedOut
+            : context.l10n.statusTailscaleDisconnected;
         _statusOk = true;
       });
       await _refreshServices(config);
     },
-        backgroundMessage:
-            logout ? 'Tailscale-Abmeldung läuft …' : 'Tailscale wird getrennt …');
+        backgroundMessage: logout
+            ? l10n.busyTailscaleSigningOut
+            : l10n.busyTailscaleDisconnecting);
   }
 
   /// Puts the Pi's tailnet IP into the host field (the bonus: connect from
@@ -4083,7 +4091,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _connExpanded = true; // show the changed host so it's not silently swapped
     });
     _scheduleSave();
-    _snack('Host auf $ip gesetzt – jetzt „Verbindung herstellen".');
+    _snack(context.l10n.snackHostSetConnect(ip));
   }
 
   /// The undo for the Tailscale switch: puts the remembered home/LAN address
@@ -4096,7 +4104,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _connExpanded = true; // show the changed host so it's not silently swapped
     });
     _scheduleSave();
-    _snack('Host zurück auf $_lanHost gesetzt – jetzt „Verbindung herstellen".');
+    _snack(context.l10n.snackHostResetConnect(_lanHost));
   }
 
   /// One-tap remote access: pre-fills the Pi's tailnet IP as host, then opens the
@@ -4119,14 +4127,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     );
     if (!mounted) return;
     _snack(!opened
-        ? 'Tailscale-App nicht installiert – im Play Store installieren, dann '
-            'erneut versuchen.'
+        ? context.l10n.snackTailscaleNotInstalled
         : hasIp
-            ? 'Tailscale geöffnet – dort das VPN aktivieren, dann „Verbindung '
-                'herstellen" (Host ist auf $tailnetIp gesetzt).'
-            : 'Tailscale geöffnet – VPN aktivieren. Tipp: einmal zuhause '
-                'verbinden und „Diese IP als Host übernehmen", dann klappt der '
-                'Fernzugriff künftig automatisch.');
+            ? context.l10n.snackTailscaleOpenedWithHost(tailnetIp)
+            : context.l10n.snackTailscaleOpenedTip);
   }
 
   Future<void> _installAptService(AptService service) async {
@@ -4139,12 +4143,12 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, service: service, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = '${service.name} installiert.';
+        _statusMessage = context.l10n.statusServiceInstalled(service.name);
         _statusOk = true;
       });
-      _addHistory('${service.name} installiert.');
+      _addHistory(context.l10n.historyServiceInstalled(service.name));
       await _refreshServices(config);
-    }, backgroundMessage: '${service.name} wird installiert …');
+    }, backgroundMessage: context.l10n.busyInstallingService(service.name));
   }
 
   /// Icon for an installable service (matches the card icons).
@@ -4184,12 +4188,12 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, unit: unit, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = '${s.name} neu gestartet.';
+        _statusMessage = context.l10n.statusServiceRestarted(s.name);
         _statusOk = true;
       });
-      _addHistory('${s.name} neu gestartet.');
+      _addHistory(context.l10n.historyServiceRestarted(s.name));
       await _refreshServices(config);
-    }, backgroundMessage: '${s.name} wird neu gestartet …');
+    }, backgroundMessage: context.l10n.busyRestartingService(s.name));
   }
 
   /// Update a generic apt service card (Grafana, InfluxDB, …).
@@ -4203,17 +4207,17 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, package: s.aptPackage ?? s.id, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
-        _statusMessage = '${s.name} aktualisiert.';
+        _statusMessage = context.l10n.statusServiceUpdated(s.name);
         _statusOk = true;
       });
-      _addHistory('${s.name} aktualisiert.');
+      _addHistory(context.l10n.historyServiceUpdated(s.name));
       await _refreshServices(config);
-    }, backgroundMessage: '${s.name} wird aktualisiert …');
+    }, backgroundMessage: context.l10n.busyUpdatingService(s.name));
   }
 
   void _openServiceWeb(int port) {
     if (_host.text.trim().isEmpty) {
-      _snack('Bitte zuerst Host/IP eintragen.');
+      _snack(context.l10n.snackEnterHostFirst);
       return;
     }
     _openUrl('http://${_host.text.trim()}:$port');
@@ -4331,20 +4335,20 @@ class _UpdaterPageState extends State<UpdaterPage>
             // Read-only / local items stay usable during an action; only the
             // SSH-mutating items (reboot/find) are disabled while busy.
             itemBuilder: (_) => [
-              const PopupMenuItem(
-                  value: 'api', child: Text('evcc-Status (Live)')),
+              PopupMenuItem(
+                  value: 'api', child: Text(context.l10n.menuApiStatus)),
               PopupMenuItem(
                   value: 'reboot',
                   enabled: !_busy,
-                  child: const Text('Pi neu starten')),
+                  child: Text(context.l10n.actionRebootPi)),
               PopupMenuItem(
                   value: 'shutdown',
                   enabled: !_busy,
-                  child: Text('Pi herunterfahren',
+                  child: Text(context.l10n.actionShutdownPi,
                       style: TextStyle(color: theme.colorScheme.error))),
               const PopupMenuDivider(),
-              const PopupMenuItem(
-                  value: 'setup', child: Text('Pi einrichten')),
+              PopupMenuItem(
+                  value: 'setup', child: Text(context.l10n.menuSetupPi)),
               // SSH-Key setup is per-Pi, not global: it lives inline in the
               // connection form (tap the SSH-Key segment), not in this menu.
               // Always listed so the feature is discoverable and the menu stays
@@ -4355,15 +4359,14 @@ class _UpdaterPageState extends State<UpdaterPage>
                   value: 'remote',
                   enabled: _tailscaleIp.isNotEmpty,
                   child: _tailscaleIp.isNotEmpty
-                      ? const Text('Fernzugriff: Tailscale öffnen')
+                      ? Text(context.l10n.menuRemoteAccess)
                       : Column(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Fernzugriff: Tailscale öffnen'),
+                            Text(context.l10n.menuRemoteAccess),
                             Text(
-                              'Einmal mit dem Pi verbinden, um die Tailscale-IP '
-                              'zu holen',
+                              context.l10n.menuRemoteAccessHint,
                               style: TextStyle(
                                   fontSize: 11,
                                   color: theme.colorScheme.onSurfaceVariant),
@@ -4376,24 +4379,26 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (_lanHost.isNotEmpty && isTailnetHost(_host.text.trim()))
                 PopupMenuItem(
                     value: 'homeip',
-                    child: Text('Zurück auf Heim-IP ($_lanHost)')),
+                    child: Text(context.l10n.menuBackToHomeIp(_lanHost))),
               PopupMenuItem(
                   value: 'find',
                   enabled: !_busy,
-                  child: const Text('Pi im WLAN suchen')),
+                  child: Text(context.l10n.menuFindPi)),
               if (_profiles.length > 1)
                 PopupMenuItem(
                     value: 'dashboard',
                     enabled: !_busy,
-                    child: const Text('Alle Pis (Überblick)')),
-              const PopupMenuItem(value: 'share', child: Text('Log teilen')),
-              const PopupMenuItem(value: 'history', child: Text('Verlauf')),
+                    child: Text(context.l10n.menuAllPis)),
+              PopupMenuItem(
+                  value: 'share', child: Text(context.l10n.menuShareLog)),
+              PopupMenuItem(
+                  value: 'history', child: Text(context.l10n.historyTitle)),
               const PopupMenuDivider(),
-              const PopupMenuItem(
-                  value: 'checkUpdate', child: Text('Auf Update prüfen')),
+              PopupMenuItem(
+                  value: 'checkUpdate', child: Text(context.l10n.menuCheckUpdate)),
               const PopupMenuItem(value: 'changelog', child: Text('Changelog')),
-              const PopupMenuItem(
-                  value: 'settings', child: Text('Einstellungen')),
+              PopupMenuItem(
+                  value: 'settings', child: Text(context.l10n.settingsTitle)),
             ],
           ),
         ],
@@ -4474,7 +4479,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                       OutlinedButton.icon(
                         onPressed: _busy ? null : _findPi,
                         icon: const Icon(Icons.wifi_find, size: 18),
-                        label: const Text('Pi im WLAN suchen'),
+                        label: Text(context.l10n.menuFindPi),
                         style: OutlinedButton.styleFrom(
                             minimumSize: const Size.fromHeight(44)),
                       ),
@@ -4482,7 +4487,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                       TextButton.icon(
                         onPressed: _openSetupGuide,
                         icon: const Icon(Icons.menu_book_outlined, size: 18),
-                        label: const Text('Noch keinen Pi? So richtest du einen ein'),
+                        label: Text(context.l10n.noPiYetSetup),
                       ),
                     ],
                   ),
@@ -4496,7 +4501,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               FilledButton.icon(
                 onPressed: () => _openUrl(_setupUrl!),
                 icon: const Icon(Icons.open_in_new),
-                label: const Text('evcc-Einrichtung öffnen'),
+                label: Text(context.l10n.openEvccSetup),
                 style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(48)),
               ),
@@ -4511,16 +4516,14 @@ class _UpdaterPageState extends State<UpdaterPage>
                           const Divider(height: 1),
                           const SizedBox(height: 8),
                           Text(
-                            'Nutzung auf eigene Gefahr. Wir übernehmen keine '
-                            'Haftung für Schäden an System, Daten oder Hardware.',
+                            context.l10n.disclaimerFooter,
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant),
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Inoffizielles Tool, nicht mit evcc oder Pi-hole '
-                            'verbunden.',
+                            context.l10n.unofficialFooter,
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant
@@ -4555,12 +4558,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                           Wrap(
                             alignment: WrapAlignment.center,
                             children: [
+                              _legalLink(context.l10n.legalPrivacy,
+                                  () => _openUrl(kPrivacyUrl)),
+                              _legalLink(context.l10n.legalImprint,
+                                  () => _openUrl(kImpressumUrl)),
                               _legalLink(
-                                  'Datenschutz', () => _openUrl(kPrivacyUrl)),
-                              _legalLink(
-                                  'Impressum', () => _openUrl(kImpressumUrl)),
-                              _legalLink(
-                                  'Open-Source-Lizenzen', _showLicenses),
+                                  context.l10n.legalLicenses, _showLicenses),
                             ],
                           ),
                         ],
@@ -4586,8 +4589,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           // Gated tabs (Automatik/Terminal/Dateien) stay locked until an
           // explicit connection exists — tapping one just hints, no switch.
           if (!tabAllowed(i, connected: _connected)) {
-            _snack('Zuerst verbinden: „Verbindung herstellen" im Tab '
-                'Verwaltung.');
+            _snack(context.l10n.snackConnectFirst);
             return;
           }
           setState(() {
@@ -4599,15 +4601,16 @@ class _UpdaterPageState extends State<UpdaterPage>
           });
         },
         destinations: [
-          const NavigationDestination(
-              icon: Icon(Icons.tune_outlined),
-              selectedIcon: Icon(Icons.tune),
-              label: 'Verwaltung'),
-          _navDest(kTabAutomatik, Icons.bolt_outlined, Icons.bolt, 'Automatik'),
-          _navDest(
-              kTabTerminal, Icons.terminal_outlined, Icons.terminal, 'Terminal'),
-          _navDest(
-              kTabDateien, Icons.folder_outlined, Icons.folder, 'Dateien'),
+          NavigationDestination(
+              icon: const Icon(Icons.tune_outlined),
+              selectedIcon: const Icon(Icons.tune),
+              label: context.l10n.tabManagement),
+          _navDest(kTabAutomatik, Icons.bolt_outlined, Icons.bolt,
+              context.l10n.tabAutomation),
+          _navDest(kTabTerminal, Icons.terminal_outlined, Icons.terminal,
+              context.l10n.tabTerminal),
+          _navDest(kTabDateien, Icons.folder_outlined, Icons.folder,
+              context.l10n.tabFiles),
         ],
       ),
     );
@@ -4642,34 +4645,32 @@ class _UpdaterPageState extends State<UpdaterPage>
   Widget _automatikTab(ThemeData theme) => ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('Automatik', style: theme.textTheme.titleLarge),
+          Text(context.l10n.tabAutomation, style: theme.textTheme.titleLarge),
           const SizedBox(height: 4),
           Text(
-            'Läuft autonom auf dem Pi — kein Hintergrunddienst auf dem Handy '
-            'nötig.',
+            context.l10n.automationDescription,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 12),
           _AutomationTile(
             icon: Icons.update,
-            title: 'Automatische Updates',
-            subtitle: 'Zeitplan-Updates mit evcc-Backup + Selbstheilung',
+            title: context.l10n.autoUpdatesTitle,
+            subtitle: context.l10n.autoUpdatesTileSubtitle,
             locked: !_isPro,
             onTap: () => _proGate(_configureAutoUpdate),
           ),
           _AutomationTile(
             icon: Icons.backup_outlined,
-            title: 'Geplante Backups',
-            subtitle: 'Nächtliche evcc- + Pi-hole-Sicherung mit Rotation',
+            title: context.l10n.scheduledBackupsTitle,
+            subtitle: context.l10n.scheduledBackupsTileSubtitle,
             locked: !_isPro,
             onTap: () => _proGate(_configureScheduledBackup),
           ),
           _AutomationTile(
             icon: Icons.notifications_active_outlined,
-            title: 'Health-Alerts',
-            subtitle: 'Push bei voller Platte, totem Dienst, Hitze, Updates '
-                '(via ntfy)',
+            title: context.l10n.healthAlertsTitle,
+            subtitle: context.l10n.healthAlertsTileSubtitle,
             locked: !_isPro,
             onTap: () => _proGate(_configureAlerts),
           ),
@@ -4681,7 +4682,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Widget _terminalTab(ThemeData theme) => ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('Terminal', style: theme.textTheme.titleSmall),
+          Text(context.l10n.tabTerminal, style: theme.textTheme.titleSmall),
           const SizedBox(height: 4),
           _LogView(lines: _log, controller: _logScroll),
           const SizedBox(height: 8),
@@ -4697,11 +4698,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                   enableSuggestions: false,
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
                   onSubmitted: _busy ? null : (v) => _runConsoleCommand(v),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     isDense: true,
                     prefixText: '\$ ',
-                    hintText: 'Befehl absetzen … (z. B. df -h)',
-                    border: OutlineInputBorder(),
+                    hintText: context.l10n.consoleHint,
+                    border: const OutlineInputBorder(),
                   ),
                 ),
               ),
@@ -4709,7 +4710,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               IconButton(
                 onPressed: _busy ? null : _showConsoleHistory,
                 icon: const Icon(Icons.history),
-                tooltip: 'Verlauf + Schnellbefehle',
+                tooltip: context.l10n.tooltipHistoryQuickCommands,
               ),
               const SizedBox(width: 4),
               IconButton.filledTonal(
@@ -4718,14 +4719,15 @@ class _UpdaterPageState extends State<UpdaterPage>
                 // Lock hint for free users (Konsole is Pro; the tap opens the
                 // paywall via _runConsoleCommand's gate).
                 icon: Icon(_isPro ? Icons.keyboard_return : Icons.lock_outline),
-                tooltip: _isPro ? 'Befehl absetzen' : 'Pro-Funktion',
+                tooltip: _isPro
+                    ? context.l10n.tooltipSendCommand
+                    : context.l10n.tooltipProFeature,
               ),
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            'Befehle laufen mit deinen Rechten direkt auf dem Pi (sudo wird '
-            'unterstützt). Auf eigene Gefahr.',
+            context.l10n.terminalFooter,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
@@ -4739,10 +4741,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       return _filesPlaceholder(
         theme,
         icon: Icons.lock_outline,
-        title: 'Datei-Explorer (Pro)',
-        body: 'Die Dateien deines Pi durchsuchen, hochladen und löschen ist '
-            'Teil von Pro.',
-        actionLabel: 'Pro freischalten',
+        title: context.l10n.filesExplorerProTitle,
+        body: context.l10n.filesExplorerProBody,
+        actionLabel: context.l10n.unlockPro,
         onAction: _showPaywall,
       );
     }
@@ -4750,9 +4751,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       return _filesPlaceholder(
         theme,
         icon: Icons.dns_outlined,
-        title: 'Kein Pi verbunden',
-        body: 'Trage im Tab „Dienste" Host + Zugangsdaten ein — dann kannst du '
-            'hier die Dateien deines Pi durchsuchen und hochladen.',
+        title: context.l10n.filesNoPiTitle,
+        body: context.l10n.filesNoPiBody,
       );
     }
     return _FilesView(
