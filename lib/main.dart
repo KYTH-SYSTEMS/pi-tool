@@ -700,10 +700,11 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// current version is recorded either way (a fresh install records silently).
   Future<void> _maybeShowWhatsNew() async {
     try {
+      final lang = Localizations.localeOf(context).languageCode; // before await
       final current = (await PackageInfo.fromPlatform()).version;
       if (current.isEmpty) return;
       final last = _lastSeenVersion;
-      final notes = whatsNewFor(current);
+      final notes = whatsNewFor(current, lang);
       // Show on a real update; and also once for an EXISTING user (has a Pi
       // configured) whose last-seen version wasn't tracked yet — so the first
       // version with this feature isn't silently missed. A truly fresh install

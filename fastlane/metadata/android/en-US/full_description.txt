@@ -27,6 +27,7 @@ Features:
 * Built-in "set up your Pi" guide (Raspberry Pi Imager: SSH, user, Wi-Fi) for beginners
 * Multiple Pi profiles, quick switching; an "All Pis" overview as a traffic light (reachable/updates/warning); encrypted export/import for moving to a new phone
 * Connect deliberately: "Verbindung herstellen" keeps the session to the active Pi until you switch profiles; Automation, Terminal and Files unlock only once connected (subtly locked before). Green/red status; a running action can be cancelled
+* German & English: follows your phone language automatically, switchable in Settings (System/German/English)
 
 Security & privacy:
 * Credentials stay encrypted on device (Android Keystore)

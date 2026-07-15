@@ -1,0 +1,1 @@
+Pi-Tool now speaks English: the app follows your phone's language automatically (German/English). In Settings you can pin the language to System, German or English anytime. The whole interface has been translated.

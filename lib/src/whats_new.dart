@@ -8,11 +8,29 @@ library;
 bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
     current.isNotEmpty && lastSeen.isNotEmpty && lastSeen != current;
 
-/// Curated highlights for [version], or null when there's nothing to show (then
-/// no popup even if the version changed). Keep only the latest few entries.
-List<String>? whatsNewFor(String version) => _whatsNew[version];
+/// Curated highlights for [version] in [languageCode] ('de'/'en'), or null when
+/// there's nothing to show (then no popup even if the version changed). English
+/// content exists only from v0.58.0 on; older entries fall back to German.
+List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
+    languageCode == 'en'
+        ? (_whatsNewEn[version] ?? _whatsNew[version])
+        : _whatsNew[version];
+
+/// English highlights (from v0.58.0 on). Older versions fall back to German.
+const Map<String, List<String>> _whatsNewEn = {
+  '0.58.0': [
+    'Pi-Tool now speaks English: the app follows your phone language '
+        '(German/English) automatically. In Settings you can pin the language '
+        'to System, German or English anytime.',
+  ],
+};
 
 const Map<String, List<String>> _whatsNew = {
+  '0.58.0': [
+    'Pi-Tool spricht jetzt Englisch: Die App folgt automatisch der Sprache '
+        'deines Handys (Deutsch/Englisch). In den Einstellungen kannst du die '
+        'Sprache jederzeit fest auf System, Deutsch oder English stellen.',
+  ],
   '0.57.0': [
     'Klarere Verbindung: Du verbindest dich jetzt bewusst über „Verbindung '
         'herstellen" und bleibst mit diesem Pi verbunden, bis du das Profil '

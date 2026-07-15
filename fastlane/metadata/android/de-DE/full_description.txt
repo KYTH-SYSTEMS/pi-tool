@@ -27,6 +27,7 @@ Funktionen:
 * Eingebaute Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import für den Gerätewechsel
 * Bewusst verbinden: „Verbindung herstellen" hält die Sitzung zum aktiven Pi, bis du das Profil wechselst; Automatik, Terminal und Dateien werden erst nach dem Verbinden freigeschaltet (vorher dezent gesperrt). Grün/rot-Status; laufende Aktion abbrechbar
+* Deutsch & Englisch: folgt automatisch der Handy-Sprache, in den Einstellungen umschaltbar (System/Deutsch/English)
 
 Sicherheit & Datenschutz:
 * Zugangsdaten bleiben verschlüsselt auf dem Gerät (Android Keystore)

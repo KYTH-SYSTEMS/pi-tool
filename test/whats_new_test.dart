@@ -33,5 +33,12 @@ void main() {
     test('null for a version without curated notes', () {
       expect(whatsNewFor('0.0.1'), isNull);
     });
+
+    test('English content from v0.58.0, German fallback for older', () {
+      expect(whatsNewFor('0.58.0', 'en')!.first, contains('English'));
+      expect(whatsNewFor('0.58.0', 'de')!.first, contains('Englisch'));
+      // Older versions have no English → fall back to the German entry.
+      expect(whatsNewFor('0.57.0', 'en'), whatsNewFor('0.57.0', 'de'));
+    });
   });
 }

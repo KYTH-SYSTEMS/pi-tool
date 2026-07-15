@@ -1,0 +1,1 @@
+Pi-Tool spricht jetzt Englisch: Die App folgt automatisch der Sprache deines Handys (Deutsch/Englisch). In den Einstellungen kannst du die Sprache jederzeit fest auf System, Deutsch oder English stellen. Die gesamte Oberfläche wurde übersetzt.

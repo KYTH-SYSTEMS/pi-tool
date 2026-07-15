@@ -33,6 +33,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   auf, die bleibt, bis du das Profil wechselst. **Automatik, Terminal und Dateien**
   sind bis dahin dezent gesperrt (ausgegraut) und werden erst nach dem Verbinden
   freigeschaltet. So ist immer klar, wann die App den Pi wirklich kontaktiert.
+- **Deutsch & Englisch** — die Oberfläche folgt automatisch der Handy-Sprache;
+  in den Einstellungen jederzeit fest umschaltbar (System / Deutsch / English).
 - **Dienste auto-erkennen** — „Verbindung herstellen" findet evcc, Pi-hole,
   Home Assistant und das System in *einer* SSH-Sitzung und zeigt pro Dienst eine
   Karte (Status, Version, Aktualisieren/Installieren, „Oberfläche öffnen").
