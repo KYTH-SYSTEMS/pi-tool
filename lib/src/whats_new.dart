@@ -13,6 +13,15 @@ bool shouldShowWhatsNew({required String lastSeen, required String current}) =>
 List<String>? whatsNewFor(String version) => _whatsNew[version];
 
 const Map<String, List<String>> _whatsNew = {
+  '0.57.0': [
+    'Klarere Verbindung: Du verbindest dich jetzt bewusst über „Verbindung '
+        'herstellen" und bleibst mit diesem Pi verbunden, bis du das Profil '
+        'wechselst. Erst danach sind Automatik, Terminal und Dateien '
+        'freigeschaltet — vorher sind sie dezent gesperrt. Der Tab „Dienste" '
+        'heißt jetzt „Verwaltung". Nebenbei verschwindet die alte „Verbinde '
+        'mit …"-Zeile, die beim App-Öffnen fälschlich nach einer laufenden '
+        'Verbindung aussah.',
+  ],
   '0.56.0': [
     'Mehr Platz für das Wesentliche: Die Zugangsdaten-Karte (Host, Benutzer, '
         'SSH-Key …) klappt jetzt ein, sobald die Daten stehen — und zeigt nur '

@@ -3,10 +3,12 @@
 Schlanke **Android-App** (clean minimal, Hell/Dunkel/System), die deine
 **self-hosted Dienste auf dem Raspberry Pi per SSH** installiert, aktualisiert,
 sichert und überwacht — plus **Fernzugriff** einrichten und **Dateien** verwalten.
-Ein **Cockpit mit vier Tabs** (Dienste · Automatik · Terminal · Dateien):
+Ein **Cockpit mit vier Tabs** (Verwaltung · Automatik · Terminal · Dateien):
 „Verbindung herstellen" erkennt automatisch, was läuft, und zeigt pro Dienst eine
 Karte — [evcc](https://evcc.io), Pi-hole, Home Assistant, Grafana, InfluxDB,
-Mosquitto und das **ganze System** (alle Pakete via `apt full-upgrade`). IP +
+Mosquitto und das **ganze System** (alle Pakete via `apt full-upgrade`). Du
+verbindest dich **bewusst** und bleibst mit dem Pi verbunden, bis du das Profil
+wechselst; erst dann sind Automatik, Terminal und Dateien freigeschaltet. IP +
 Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases**.
 
 > Noch **kein Pi**? Die App hat eine eingebaute Schritt-für-Schritt-Anleitung
@@ -22,11 +24,15 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 
 ## Funktionen
 
-- **Cockpit mit vier Tabs** — unten umschaltbar: **Dienste** (Karten + „+ Dienst
+- **Cockpit mit vier Tabs** — unten umschaltbar: **Verwaltung** (Karten + „+ Dienst
   hinzufügen"), **Automatik** (geplante Updates + Health-Alerts), **Terminal**
   (eigene Befehle) und **Dateien** (Datei-Browser). Der aktive Pi steht oben in der
   Leiste (antippen zum Umschalten/Hinzufügen/Umbenennen). Eine laufende Aktion
   wird auf jedem Tab als Fortschrittsleiste mit „Abbrechen" angezeigt.
+- **Bewusst verbinden** — „Verbindung herstellen" baut eine Sitzung zum aktiven Pi
+  auf, die bleibt, bis du das Profil wechselst. **Automatik, Terminal und Dateien**
+  sind bis dahin dezent gesperrt (ausgegraut) und werden erst nach dem Verbinden
+  freigeschaltet. So ist immer klar, wann die App den Pi wirklich kontaktiert.
 - **Dienste auto-erkennen** — „Verbindung herstellen" findet evcc, Pi-hole,
   Home Assistant und das System in *einer* SSH-Sitzung und zeigt pro Dienst eine
   Karte (Status, Version, Aktualisieren/Installieren, „Oberfläche öffnen").

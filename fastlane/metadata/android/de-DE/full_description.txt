@@ -26,7 +26,7 @@ Funktionen:
 * SSH-Key mit einem Tap einrichten: Schlüssel wird auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil auf Key-Login umgestellt
 * Eingebaute Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import für den Gerätewechsel
-* Verbindung herstellen mit grün/rot-Status; laufende Aktion abbrechbar
+* Bewusst verbinden: „Verbindung herstellen" hält die Sitzung zum aktiven Pi, bis du das Profil wechselst; Automatik, Terminal und Dateien werden erst nach dem Verbinden freigeschaltet (vorher dezent gesperrt). Grün/rot-Status; laufende Aktion abbrechbar
 
 Sicherheit & Datenschutz:
 * Zugangsdaten bleiben verschlüsselt auf dem Gerät (Android Keystore)

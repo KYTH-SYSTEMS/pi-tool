@@ -1,0 +1,1 @@
+Clearer connection model: you now connect deliberately via "Verbindung herstellen" and stay connected to that Pi until you switch profiles. Automation, Terminal and Files unlock only once connected — until then they are subtly locked. The "Dienste" tab is now called "Verwaltung". The stale "connecting…" line that wrongly looked like a live connection on app open is gone.
