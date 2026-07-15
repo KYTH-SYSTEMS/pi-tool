@@ -1,0 +1,1 @@
+Small fix: the Settings sheet can now be closed via an × at the top — it had grown tall enough that only the phone's back button worked. Its height is also capped so tapping outside dismisses it too.

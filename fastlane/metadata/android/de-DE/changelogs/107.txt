@@ -1,0 +1,1 @@
+Kleiner Fix: Die Einstellungen lassen sich jetzt über ein × oben im Menü schließen — das Menü war zu hoch geworden, sodass nur noch der Zurück-Button des Handys funktionierte. Zusätzlich ist die Höhe gedeckelt, sodass auch ein Tippen daneben schließt.

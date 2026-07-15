@@ -18,6 +18,10 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.58.1': [
+    'Small fix: the Settings sheet can now be closed via an × at the top '
+        '(it had grown tall enough that only the phone back button worked).',
+  ],
   '0.58.0': [
     'Pi-Tool now speaks English: the app follows your phone language '
         '(German/English) automatically. In Settings you can pin the language '
@@ -26,6 +30,11 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.58.1': [
+    'Kleiner Fix: Die Einstellungen lassen sich jetzt über ein × oben im Menü '
+        'schließen (das Menü war so hoch geworden, dass nur noch der '
+        'Zurück-Button des Handys funktionierte).',
+  ],
   '0.58.0': [
     'Pi-Tool spricht jetzt Englisch: Die App folgt automatisch der Sprache '
         'deines Handys (Deutsch/Englisch). In den Einstellungen kannst du die '

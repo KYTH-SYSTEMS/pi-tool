@@ -3304,158 +3304,183 @@ class _UpdaterPageState extends State<UpdaterPage>
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      // Scrollable + full-height allowed, so the (tall) list isn't clipped at
-      // the bottom and the port field stays above the keyboard.
+      // Scrollable, but capped below full height so a scrim strip stays tappable
+      // to dismiss; the port field still rises above the keyboard.
       isScrollControlled: true,
+      constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.9),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
           child: Padding(
             padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(ctx.l10n.settingsTitle,
-                        style: Theme.of(ctx).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(ctx.l10n.settingsLockTitle),
-                  subtitle: Text(ctx.l10n.settingsLockSubtitle),
-                  value: _lockEnabled,
-                  onChanged: (v) async {
-                    final l10n = ctx.l10n;
-                    if (v && !await _authenticator.canAuthenticate()) {
-                      _snack(l10n.snackNoBiometrics);
-                      return;
-                    }
-                    setState(() => _lockEnabled = v);
-                    setSheet(() {});
-                    _scheduleSave();
-                  },
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(ctx.l10n.settingsBackupBeforeUpdateTitle),
-                  subtitle: Text(ctx.l10n.settingsBackupBeforeUpdateSubtitle),
-                  value: _backupBeforeUpdate,
-                  onChanged: (v) {
-                    setState(() => _backupBeforeUpdate = v);
-                    setSheet(() {});
-                    _scheduleSave();
-                  },
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(ctx.l10n.settingsHttpsTitle),
-                  subtitle: Text(_uiScheme == 'https'
-                      ? 'https://…'
-                      : ctx.l10n.settingsHttpsSubtitleOff),
-                  value: _uiScheme == 'https',
-                  onChanged: (v) {
-                    setState(() => _uiScheme = v ? 'https' : 'http');
-                    setSheet(() {});
-                    _scheduleSave();
-                  },
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _uiPort,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: ctx.l10n.settingsPortLabel,
-                    helperText: ctx.l10n.settingsPortHelper,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Pinned header with an always-visible close button — the (tall)
+                // list can be dismissed without the phone back button.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 4, 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(ctx.l10n.settingsTitle,
+                            style: Theme.of(ctx).textTheme.titleMedium),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        tooltip:
+                            MaterialLocalizations.of(ctx).closeButtonTooltip,
+                        onPressed: () => Navigator.of(ctx).pop(),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                Text(ctx.l10n.settingsThemeTitle,
-                    style: Theme.of(ctx).textTheme.labelLarge),
-                const SizedBox(height: 6),
-                SegmentedButton<String>(
-                  segments: [
-                    ButtonSegment(
-                        value: 'system', label: Text(ctx.l10n.optionSystem)),
-                    ButtonSegment(
-                        value: 'light', label: Text(ctx.l10n.themeLight)),
-                    ButtonSegment(
-                        value: 'dark', label: Text(ctx.l10n.themeDark)),
-                  ],
-                  selected: {_themeMode},
-                  onSelectionChanged: (s) {
-                    setState(() => _themeMode = s.first);
-                    themeModeNotifier.value = parseThemeMode(s.first);
-                    setSheet(() {});
-                    _scheduleSave();
-                  },
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(ctx.l10n.settingsLockTitle),
+                            subtitle: Text(ctx.l10n.settingsLockSubtitle),
+                            value: _lockEnabled,
+                            onChanged: (v) async {
+                              final l10n = ctx.l10n;
+                              if (v && !await _authenticator.canAuthenticate()) {
+                                _snack(l10n.snackNoBiometrics);
+                                return;
+                              }
+                              setState(() => _lockEnabled = v);
+                              setSheet(() {});
+                              _scheduleSave();
+                            },
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(ctx.l10n.settingsBackupBeforeUpdateTitle),
+                            subtitle: Text(ctx.l10n.settingsBackupBeforeUpdateSubtitle),
+                            value: _backupBeforeUpdate,
+                            onChanged: (v) {
+                              setState(() => _backupBeforeUpdate = v);
+                              setSheet(() {});
+                              _scheduleSave();
+                            },
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(ctx.l10n.settingsHttpsTitle),
+                            subtitle: Text(_uiScheme == 'https'
+                                ? 'https://…'
+                                : ctx.l10n.settingsHttpsSubtitleOff),
+                            value: _uiScheme == 'https',
+                            onChanged: (v) {
+                              setState(() => _uiScheme = v ? 'https' : 'http');
+                              setSheet(() {});
+                              _scheduleSave();
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _uiPort,
+                            keyboardType: TextInputType.number,
+                            decoration: InputDecoration(
+                              labelText: ctx.l10n.settingsPortLabel,
+                              helperText: ctx.l10n.settingsPortHelper,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(ctx.l10n.settingsThemeTitle,
+                              style: Theme.of(ctx).textTheme.labelLarge),
+                          const SizedBox(height: 6),
+                          SegmentedButton<String>(
+                            segments: [
+                              ButtonSegment(
+                                  value: 'system', label: Text(ctx.l10n.optionSystem)),
+                              ButtonSegment(
+                                  value: 'light', label: Text(ctx.l10n.themeLight)),
+                              ButtonSegment(
+                                  value: 'dark', label: Text(ctx.l10n.themeDark)),
+                            ],
+                            selected: {_themeMode},
+                            onSelectionChanged: (s) {
+                              setState(() => _themeMode = s.first);
+                              themeModeNotifier.value = parseThemeMode(s.first);
+                              setSheet(() {});
+                              _scheduleSave();
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          Text(ctx.l10n.settingsLanguageTitle,
+                              style: Theme.of(ctx).textTheme.labelLarge),
+                          const SizedBox(height: 6),
+                          SegmentedButton<String>(
+                            segments: [
+                              ButtonSegment(
+                                  value: 'system', label: Text(ctx.l10n.optionSystem)),
+                              ButtonSegment(value: 'de', label: Text(ctx.l10n.langGerman)),
+                              ButtonSegment(
+                                  value: 'en', label: Text(ctx.l10n.langEnglish)),
+                            ],
+                            selected: {_languageMode},
+                            onSelectionChanged: (s) {
+                              setState(() => _languageMode = s.first);
+                              localeNotifier.value = localeForLanguageMode(s.first);
+                              setSheet(() {});
+                              _scheduleSave();
+                            },
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(ctx.l10n.settingsNightlyTitle),
+                            subtitle: Text(ctx.l10n.settingsNightlySubtitle),
+                            value: _channel == 'unstable',
+                            onChanged: (v) {
+                              setState(() => _channel = v ? 'unstable' : 'stable');
+                              setSheet(() {});
+                              _scheduleSave();
+                            },
+                          ),
+                          const Divider(),
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.upload_file_outlined),
+                            title: Text(ctx.l10n.exportProfilesTitle),
+                            subtitle: Text(ctx.l10n.settingsExportSubtitle),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _exportProfiles();
+                            },
+                          ),
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.download_outlined),
+                            title: Text(ctx.l10n.importProfilesTitle),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _importProfiles();
+                            },
+                          ),
+                          const Divider(),
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.support_agent),
+                            title: Text(ctx.l10n.settingsContactSupport),
+                            subtitle: const Text(kSupportEmail),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _contactSupport();
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 16),
-                Text(ctx.l10n.settingsLanguageTitle,
-                    style: Theme.of(ctx).textTheme.labelLarge),
-                const SizedBox(height: 6),
-                SegmentedButton<String>(
-                  segments: [
-                    ButtonSegment(
-                        value: 'system', label: Text(ctx.l10n.optionSystem)),
-                    ButtonSegment(value: 'de', label: Text(ctx.l10n.langGerman)),
-                    ButtonSegment(
-                        value: 'en', label: Text(ctx.l10n.langEnglish)),
-                  ],
-                  selected: {_languageMode},
-                  onSelectionChanged: (s) {
-                    setState(() => _languageMode = s.first);
-                    localeNotifier.value = localeForLanguageMode(s.first);
-                    setSheet(() {});
-                    _scheduleSave();
-                  },
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(ctx.l10n.settingsNightlyTitle),
-                  subtitle: Text(ctx.l10n.settingsNightlySubtitle),
-                  value: _channel == 'unstable',
-                  onChanged: (v) {
-                    setState(() => _channel = v ? 'unstable' : 'stable');
-                    setSheet(() {});
-                    _scheduleSave();
-                  },
-                ),
-                const Divider(),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.upload_file_outlined),
-                  title: Text(ctx.l10n.exportProfilesTitle),
-                  subtitle: Text(ctx.l10n.settingsExportSubtitle),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _exportProfiles();
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.download_outlined),
-                  title: Text(ctx.l10n.importProfilesTitle),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _importProfiles();
-                  },
-                ),
-                const Divider(),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.support_agent),
-                  title: Text(ctx.l10n.settingsContactSupport),
-                  subtitle: const Text(kSupportEmail),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _contactSupport();
-                  },
-                ),
-                  ],
-                ),
-              ),
+              ],
             ),
           ),
         ),

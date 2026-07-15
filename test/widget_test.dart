@@ -296,6 +296,12 @@ void main() {
     // Support entry (mailto support@kyth.systems) lives at the sheet's bottom.
     await tester.ensureVisible(find.text('Support kontaktieren'));
     expect(find.text('support@kyth.systems'), findsOneWidget);
+
+    // The pinned header's close button dismisses the (tall) sheet — no reliance
+    // on the phone back button.
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    expect(find.text('Support kontaktieren'), findsNothing);
   });
 
   testWidgets('the ⋮ menu opens the Pi setup guide', (tester) async {
