@@ -2189,24 +2189,41 @@ void main() {
     expect(u.systemUpgradeCalls, 2); // one per Pi, sequential + fail-soft
   });
 
-  testWidgets('⋮ → Pi herunterfahren confirms, then powers the Pi off',
-      (tester) async {
+  testWidgets(
+      '⋮ → Pi herunterfahren: gated until connected, confirms, then powers off '
+      'and drops the session', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater();
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
 
+    // Disconnected: the SSH-mutating menu items are locked (like the tabs) —
+    // tapping does nothing, and the "connect first" hint is shown.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('Zuerst mit dem Pi verbinden'), findsNWidgets(2));
+    await tester.tap(find.text('Pi herunterfahren'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pi herunterfahren?'), findsNothing);
+    expect(u.shutdownCalls, 0);
+    await tester.tapAt(const Offset(10, 600)); // dismiss the menu
+    await tester.pumpAndSettle();
+
+    // Connected: the action works — confirm gates it, then it runs.
+    await detect(tester);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Pi herunterfahren'));
     await tester.pumpAndSettle();
-
-    // A destructive confirm gates the shutdown — nothing runs until confirmed.
     expect(find.text('Pi herunterfahren?'), findsOneWidget);
     expect(u.shutdownCalls, 0);
     await tester.tap(find.widgetWithText(FilledButton, 'Herunterfahren'));
     await tester.pumpAndSettle();
     expect(u.shutdownCalls, 1);
+
+    // The Pi is off now — the session must not survive the shutdown.
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
   });
 
   testWidgets(

@@ -2373,11 +2373,16 @@ class EvccUpdater {
           'Zeitüberschreitung – Pi nicht erreichbar.',
         );
       }
+      // Keep the raw exception in the (redacted) log stream; the user-facing
+      // headline stays short and points at the log for details.
       if (e is SSHError) {
-        throw EvccUpdateException(UpdateErrorKind.unknown, 'SSH-Fehler: $e');
+        log('SSH-Fehler: $e');
+        throw const EvccUpdateException(
+            UpdateErrorKind.unknown, 'SSH-Fehler – Details im Terminal-Log.');
       }
-      throw EvccUpdateException(
-          UpdateErrorKind.unknown, 'Unerwarteter Fehler: $e');
+      log('Unerwarteter Fehler: $e');
+      throw const EvccUpdateException(UpdateErrorKind.unknown,
+          'Unerwarteter Fehler – Details im Terminal-Log.');
     } finally {
       _active = null;
       await runner.close();

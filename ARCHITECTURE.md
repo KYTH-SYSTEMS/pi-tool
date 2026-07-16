@@ -320,6 +320,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Verschlüsselung + bewusst langsame KDF (`kExportKdfIterations`); Import cappt die
   Iterationen (`_kMaxKdfIterations`) gegen DoS-Dateien. UI in den Einstellungen,
   Export via `fileSaver`-Seam, Import via SAF-Picker.
+- **`session.dart`** — reine Sitzungs-/Tab-Gating-Logik (v0.57): `kTab*`-
+  Konstanten, `isGatedTab`/`tabAllowed`/`tabAfterDisconnect`. Details im
+  UI-Shell-Abschnitt („Verbundene Sitzung").
+- **`language.dart`** — reine Sprach-Auflösung (v0.58): `localeForLanguageMode`
+  + `resolveSystemLocale` (Englisch-Fallback). Siehe „Sprache" im UI-Abschnitt.
+- **`l10n.dart`** — `context.l10n`-Extension auf die generierten
+  `AppLocalizations` (Quellen: `lib/l10n/app_{de,en}.arb`; Generat gitignored).
 - **`update_check.dart`** — Self-Update-Check (nur Sideload-Kanal) + evcc-/HA-
   Versionsproben, alle fail-soft (Fehler → null). `isNewerVersion` numerisch.
 - **`evcc_api.dart`** — read-only `GET /api/state`. `followRedirects = false`
@@ -334,18 +341,52 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
 ## 7. UI-Shell (`main.dart`, `ui_widgets.dart` (part), `kyth_splash.dart`)
 
 Ein großer `StatefulWidget` (`_UpdaterPageState`) hält allen State und rendert das
-**Cockpit**: `NavigationBar` + `IndexedStack`, 4 Tabs **Dienste / Automatik /
-Terminal / Dateien**. `ui_widgets.dart` ist ein `part of '../main.dart'` (teilt
-sich `kGreen/kBlack/kCard` ohne Re-Import — nicht in einen Import „aufräumen").
+**Cockpit**: `NavigationBar` + `IndexedStack`, 4 Tabs **Verwaltung / Automatik /
+Terminal / Dateien** (Tab 0 hieß bis v0.56 „Dienste"). `ui_widgets.dart` ist ein
+`part of '../main.dart'` (teilt sich `kGreen/kBlack/kCard` ohne Re-Import —
+nicht in einen Import „aufräumen").
+
+**Verbundene Sitzung (v0.57, `session.dart`):** „Verbindung herstellen" setzt
+`_connected` — ein **gemerkter, geprüfter Zustand, KEIN gehaltener Socket**
+(Aktionen verbinden weiter pro Aktion, `_withConnection` unverändert). Die reine
+Gating-Logik (`kTab*`-Konstanten, `isGatedTab`/`tabAllowed`/`tabAfterDisconnect`)
+lebt in `lib/src/session.dart` (unit-getestet). Automatik/Terminal/Dateien sowie
+die SSH-Aktionen „Pi neu starten/herunterfahren" im ⋮-Menü sind bis dahin
+gesperrt (ausgegraut + Hinweis). `_connected` fällt auf `false` bei:
+Profilwechsel (`_resetDetectionForNewPi`), Zugangsdaten-Edit
+(`_invalidateConnTest`), Verbindungs-Fehlern (`connection`/`auth`/
+`hostKeyChanged` im `_guard`-Catch) und **nach „Pi herunterfahren"** — mit
+Snap-Back auf Tab Verwaltung. `_beginBusy` fasst `_connected` bewusst NICHT an.
+In-Memory, nie persistiert (Kaltstart = getrennt; Resume löst kein SSH aus).
+Bewusster Gate-Bypass: der „Log"-Sprung der Running-Bar öffnet den Terminal-Tab
+auch ohne Sitzung (laufende Aktion → Log muss sichtbar sein).
 
 **Gate-Reihenfolge in `build()`** (load-bearing): `_booting` (neutraler
 Splash-Ersatz) → `_locked` (Lock-Screen) → `!_disclaimerAccepted`
-(Ablehnen = App beenden) → einmaliges „Was ist neu?" (post-frame) → Shell.
+(Ablehnen = App beenden) → einmaliges „Was ist neu?" (post-frame) → Shell
+(deren Tab-Gate siehe „Verbundene Sitzung" oben).
 
 **Theme:** Hell/System/Dunkel wählbar (`themeModeNotifier`, „Design"-Umschalter).
-**Ausnahme:** der `_LockScreen` (Fingerprint-Startscreen direkt nach dem dunklen
-Splash-Video) ist per `Theme(data: _buildTheme(Brightness.dark))`-Wrapper **fest
-dunkel** — unabhängig vom App-Theme, damit kein heller Blitz erscheint.
+Das App-Theme baut das öffentliche `buildAppTheme(Brightness, {fontFamily})` —
+Single Source of Truth, auch vom Screenshot-Generator (`test/screenshots.dart`)
+genutzt; `kGreen` aliast `KythWordmark.kWordmarkGreen`. **Ausnahme:** der
+`_LockScreen` (Fingerprint-Startscreen direkt nach dem dunklen Splash-Video) ist
+per `Theme(data: buildAppTheme(Brightness.dark))`-Wrapper **fest dunkel** —
+unabhängig vom App-Theme, damit kein heller Blitz erscheint.
+
+**Sprache (v0.58, l10n):** komplette UI-Schicht Deutsch/Englisch via Flutter
+`gen-l10n`: `lib/l10n/app_{de,en}.arb` (~500 Keys; generierte
+`app_localizations*.dart` sind **gitignored**, entstehen bei `flutter pub get`),
+Zugriff über die `context.l10n`-Extension (`lib/src/l10n.dart`). Reine
+Auflösungslogik in `lib/src/language.dart`: `localeForLanguageMode`
+(`AppConfig.languageMode` `'system'|'de'|'en'` → forced Locale oder null) und
+`resolveSystemLocale` (**Englisch-Fallback** für alle Nicht-DE-Geräte);
+verdrahtet über `localeNotifier` + `localeResolutionCallback` in
+`EvccPiToolApp`. Tests pinnen `Locale('de')` in ihren MaterialApp-Helpern,
+damit deutsche Text-Finder stabil bleiben. **Tier 2 (offen):** Meldungen der
+Logik-Schicht (`evcc_updater`-Exceptions, gestreamte Log-Zeilen) sind bewusst
+noch Deutsch (kein `BuildContext`; vermischt mit rohem Befehls-Output) — Spec:
+`docs/superpowers/specs/2026-07-15-app-lokalisierung-design.md`.
 
 **Aktions-Protokoll (jede der ~30 Aktionen):**
 `if (_busy) return;` → `_prepare()` (validieren → `SshConfig` bauen →

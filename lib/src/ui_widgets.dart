@@ -41,7 +41,7 @@ class _TestButton extends StatelessWidget {
         height: 16,
         child: CircularProgressIndicator(strokeWidth: 2),
       );
-      label = context.l10n.wConnecting;
+      label = context.l10n.busyConnecting;
       fg = cs.onSurfaceVariant;
       border = cs.outlineVariant;
     } else if (result == true) {
@@ -240,7 +240,7 @@ class _FilesViewState extends State<_FilesView> {
                           itemBuilder: (_) => [
                             PopupMenuItem(
                               value: 'delete',
-                              child: Text(context.l10n.wDelete),
+                              child: Text(context.l10n.actionDelete),
                             ),
                           ],
                         ),
@@ -312,7 +312,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(context.l10n.wHealthAlertsTitle,
+            Text(context.l10n.healthAlertsTitle,
                 style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(context.l10n.wAlertsExplain),
@@ -331,7 +331,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
             Text(
               status.enabled
                   ? context.l10n.wAlertsActiveSince(status.lastCheck ?? '—')
-                  : context.l10n.wAlertsOff,
+                  : context.l10n.statusScheduleOff,
               style: TextStyle(
                 color: status.enabled ? kGreen : null,
                 fontWeight: FontWeight.w600,
@@ -378,8 +378,8 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                     },
                     child: Text(
                       status.enabled
-                          ? context.l10n.wAlertsUpdate
-                          : context.l10n.wEnable,
+                          ? context.l10n.actionUpdate
+                          : context.l10n.turnOn,
                     ),
                   ),
                 ),
@@ -406,7 +406,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                     server: '',
                     topic: '',
                   )),
-                  child: Text(context.l10n.wDisable),
+                  child: Text(context.l10n.turnOff),
                 ),
               ),
           ],
@@ -575,7 +575,7 @@ class _DockerSheetState extends State<_DockerSheet> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(context.l10n.wDockerContainers,
+                  child: Text(context.l10n.actionDockerContainers,
                       style: Theme.of(context).textTheme.titleMedium),
                 ),
                 if (_busy)
@@ -621,7 +621,7 @@ class _DockerSheetState extends State<_DockerSheet> {
                           itemBuilder: (_) => [
                             PopupMenuItem(
                                 value: 'restart',
-                                child: Text(context.l10n.wRestart)),
+                                child: Text(context.l10n.actionRestart)),
                             PopupMenuItem(
                                 value: 'logs',
                                 child: Text(context.l10n.wLogs)),
@@ -759,7 +759,7 @@ class _SecurityReportSheet extends StatelessWidget {
         children: [
           ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text(context.l10n.wSecurityCheck,
+            title: Text(context.l10n.actionSecurityCheck,
                 style: Theme.of(context).textTheme.titleMedium),
             subtitle: Text(warnings == 0
                 ? context.l10n.wNoWarnings
@@ -1023,7 +1023,7 @@ class _SetupGuidePage extends StatelessWidget {
     );
 
     return Scaffold(
-      appBar: AppBar(title: Text(context.l10n.wSetUpPi)),
+      appBar: AppBar(title: Text(context.l10n.menuSetupPi)),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -1117,7 +1117,7 @@ class _ConfigEditorPageState extends State<_ConfigEditorPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
-            tooltip: context.l10n.wSave,
+            tooltip: context.l10n.actionSave,
             onPressed: () => Navigator.pop(context, _c.text),
           ),
         ],
@@ -1309,8 +1309,8 @@ class _ServiceCard extends StatelessWidget {
                     ? (status.updateAvailable
                           ? context.l10n.wStatusUpdate
                           : (status.active
-                                ? context.l10n.wActive
-                                : context.l10n.wInactive))
+                                ? context.l10n.serviceActive
+                                : context.l10n.serviceInactive))
                     : context.l10n.wNotInstalled,
                 style: TextStyle(color: ledText, fontSize: 12),
               ),
@@ -1731,7 +1731,7 @@ class _NameDialogState extends State<_NameDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text(context.l10n.wCancel),
+          child: Text(context.l10n.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _ctrl.text),
@@ -1834,7 +1834,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text(context.l10n.wCancel),
+          child: Text(context.l10n.cancel),
         ),
         FilledButton(
           onPressed: _valid ? () => Navigator.pop(context, _ctrl.text) : null,
@@ -1921,7 +1921,7 @@ class _LockScreen extends StatelessWidget {
     // the whole dark ThemeData (not just the scaffold colour) keeps the unlock
     // button and every default consistent.
     return Theme(
-      data: _buildTheme(Brightness.dark),
+      data: buildAppTheme(Brightness.dark),
       child: Scaffold(
         backgroundColor: kBlack,
         body: Center(
@@ -2376,7 +2376,7 @@ class _ScanProgressDialog extends StatelessWidget {
         ],
       ),
       actions: [
-        TextButton(onPressed: onCancel, child: Text(context.l10n.wCancel)),
+        TextButton(onPressed: onCancel, child: Text(context.l10n.cancel)),
       ],
     );
   }

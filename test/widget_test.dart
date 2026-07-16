@@ -293,9 +293,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('evcc-Nightly installieren'), findsOneWidget);
 
-    // Support entry (mailto support@kyth.systems) lives at the sheet's bottom.
+    // Support entry (mailto kSupportEmail) lives at the sheet's bottom.
     await tester.ensureVisible(find.text('Support kontaktieren'));
-    expect(find.text('support@kyth.systems'), findsOneWidget);
+    expect(find.text(kSupportEmail), findsOneWidget);
 
     // The pinned header's close button dismisses the (tall) sheet — no reliance
     // on the phone back button.

@@ -1,0 +1,1 @@
+Feinschliff aus einem kompletten App-Review: „Pi neu starten" und „Pi herunterfahren" folgen jetzt dem Verbindungsmodell (bis zum Verbinden gesperrt, mit Hinweis), und nach dem Herunterfahren zeigt die App ehrlich „getrennt". Fehler-Banner bleiben kurz und verweisen aufs Terminal-Log; mehrere Texte präzisiert (u. a. Einrichtungs-Anleitung und Play-Beschreibungen).

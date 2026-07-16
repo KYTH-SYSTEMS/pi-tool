@@ -60,7 +60,9 @@ void main() {
 }
 
 /// Clean minimal dark: near-black canvas, a single vivid green accent.
-const kGreen = Color(0xFF1FD65F);
+// Single source of truth for the brand green: the wordmark owns it (see the
+// owner-decision note there); the app accent simply aliases it.
+const kGreen = KythWordmark.kWordmarkGreen;
 const kBlack = Color(0xFF0B0E0C);
 const kCard = Color(0xFF161A17);
 
@@ -89,7 +91,10 @@ ThemeMode parseThemeMode(String s) => switch (s) {
 /// otherwise a forced Locale('de')/('en'). See [localeForLanguageMode].
 final ValueNotifier<Locale?> localeNotifier = ValueNotifier<Locale?>(null);
 
-ThemeData _buildTheme(Brightness brightness) {
+/// The app theme — public so tooling (e.g. the screenshot generator) reuses it
+/// instead of re-hardcoding the brand colors. [fontFamily] lets tests inject a
+/// bundled font.
+ThemeData buildAppTheme(Brightness brightness, {String? fontFamily}) {
   final dark = brightness == Brightness.dark;
   final scheme = dark
       ? ColorScheme.fromSeed(seedColor: kGreen, brightness: Brightness.dark)
@@ -98,6 +103,7 @@ ThemeData _buildTheme(Brightness brightness) {
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
+    fontFamily: fontFamily,
     scaffoldBackgroundColor: dark ? kBlack : null,
     appBarTheme: AppBarTheme(
       backgroundColor: dark ? kBlack : scheme.surface,
@@ -120,8 +126,8 @@ class EvccPiToolApp extends StatelessWidget {
           title: 'Pi-Tool',
           debugShowCheckedModeBanner: false,
           themeMode: mode,
-          theme: _buildTheme(Brightness.light),
-          darkTheme: _buildTheme(Brightness.dark),
+          theme: buildAppTheme(Brightness.light),
+          darkTheme: buildAppTheme(Brightness.dark),
           // null → follow the device; else a forced de/en. Framework strings
           // (copy/paste menus, dialogs, license page) follow the resolved locale.
           locale: locale,
@@ -264,7 +270,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   String _alertsServer = 'https://ntfy.sh'; // Health-Alerts ntfy destination
   String _alertsTopic = '';
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
-  int _tab = 0; // 0 = Verwaltung, 1 = Automatik, 2 = Terminal, 3 = Dateien
+  int _tab = kTabVerwaltung; // Verwaltung · Automatik · Terminal · Dateien
   String? _busyMessage; // shown in the shared running bar while _busy
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
@@ -1577,6 +1583,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       setState(() {
         _statusMessage = context.l10n.statusShuttingDown;
         _statusOk = true;
+        // The Pi is now OFF until physically powered on — keeping the session
+        // (and unlocked tabs) would claim a connection that no longer exists.
+        _connected = false;
+        if (isGatedTab(_tab)) _tab = kTabVerwaltung;
       });
       _addHistory(context.l10n.historyShutdown);
     });
@@ -1866,7 +1876,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                       overflow: TextOverflow.ellipsis),
                 ),
                 TextButton(
-                  onPressed: () => setState(() => _tab = 2),
+                  // Deliberate gate bypass: while an action runs, jumping to
+                  // its live log must work even before a session exists.
+                  onPressed: () => setState(() => _tab = kTabTerminal),
                   child: const Text('Log'),
                 ),
                 const SizedBox(width: 2),
@@ -4113,7 +4125,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _useTailscaleIp(String ip) {
     setState(() {
       _host.text = ip;
-      _tab = 0;
+      _tab = kTabVerwaltung;
       _connExpanded = true; // show the changed host so it's not silently swapped
     });
     _scheduleSave();
@@ -4126,7 +4138,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (_lanHost.isEmpty) return;
     setState(() {
       _host.text = _lanHost;
-      _tab = 0;
+      _tab = kTabVerwaltung;
       _connExpanded = true; // show the changed host so it's not silently swapped
     });
     _scheduleSave();
@@ -4141,7 +4153,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (hasIp) {
       setState(() {
         _host.text = tailnetIp.trim();
-        _tab = 0;
+        _tab = kTabVerwaltung;
         _connExpanded = true; // show the changed host so it's not silently swapped
       });
       _scheduleSave();
@@ -4172,7 +4184,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         _statusMessage = context.l10n.statusServiceInstalled(service.name);
         _statusOk = true;
       });
-      _addHistory(context.l10n.historyServiceInstalled(service.name));
+      _addHistory(context.l10n.statusServiceInstalled(service.name));
       await _refreshServices(config);
     }, backgroundMessage: context.l10n.busyInstallingService(service.name));
   }
@@ -4217,7 +4229,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         _statusMessage = context.l10n.statusServiceRestarted(s.name);
         _statusOk = true;
       });
-      _addHistory(context.l10n.historyServiceRestarted(s.name));
+      _addHistory(context.l10n.statusServiceRestarted(s.name));
       await _refreshServices(config);
     }, backgroundMessage: context.l10n.busyRestartingService(s.name));
   }
@@ -4236,7 +4248,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         _statusMessage = context.l10n.statusServiceUpdated(s.name);
         _statusOk = true;
       });
-      _addHistory(context.l10n.historyServiceUpdated(s.name));
+      _addHistory(context.l10n.statusServiceUpdated(s.name));
       await _refreshServices(config);
     }, backgroundMessage: context.l10n.busyUpdatingService(s.name));
   }
@@ -4363,15 +4375,24 @@ class _UpdaterPageState extends State<UpdaterPage>
             itemBuilder: (_) => [
               PopupMenuItem(
                   value: 'api', child: Text(context.l10n.menuApiStatus)),
+              // The two SSH-mutating Pi actions follow the session model: like
+              // the tabs they need an explicit connection first (greyed with a
+              // hint until then, same pattern as the remote-access item below).
               PopupMenuItem(
                   value: 'reboot',
-                  enabled: !_busy,
-                  child: Text(context.l10n.actionRebootPi)),
+                  enabled: !_busy && _connected,
+                  child: _connected
+                      ? Text(context.l10n.actionRebootPi)
+                      : _menuChildNeedsConnection(
+                          theme, context.l10n.actionRebootPi)),
               PopupMenuItem(
                   value: 'shutdown',
-                  enabled: !_busy,
-                  child: Text(context.l10n.actionShutdownPi,
-                      style: TextStyle(color: theme.colorScheme.error))),
+                  enabled: !_busy && _connected,
+                  child: _connected
+                      ? Text(context.l10n.actionShutdownPi,
+                          style: TextStyle(color: theme.colorScheme.error))
+                      : _menuChildNeedsConnection(
+                          theme, context.l10n.actionShutdownPi)),
               const PopupMenuDivider(),
               PopupMenuItem(
                   value: 'setup', child: Text(context.l10n.menuSetupPi)),
@@ -4665,6 +4686,22 @@ class _UpdaterPageState extends State<UpdaterPage>
       label: label,
     );
   }
+
+  /// Menu-item body for an SSH action that is locked until connected: the
+  /// label plus a small "connect first" hint (same look as the remote-access
+  /// item's hint).
+  Widget _menuChildNeedsConnection(ThemeData theme, String label) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label),
+          Text(
+            context.l10n.menuNeedsConnectionHint,
+            style: TextStyle(
+                fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
+      );
 
   // ---- Automatik tab: cross-cutting automation (updates, alerts) ----
 

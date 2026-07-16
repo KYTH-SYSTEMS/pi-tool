@@ -6,7 +6,6 @@
   },
   "wAcceptAndStart": "Accept and start",
   "wActions": "Actions",
-  "wActive": "active",
   "wAlertsActiveSince": "Currently active · last check: {check}",
   "@wAlertsActiveSince": {
     "placeholders": {
@@ -17,11 +16,8 @@
   },
   "wAlertsExplain": "The Pi notifies you via push (through ntfy) when the disk fills up, a service goes down, it gets too hot or updates are due — checked every 30 min. Free and no account needed.",
   "wAlertsNtfyLink": "How ntfy works (install the app, subscribe to the topic) →",
-  "wAlertsOff": "Currently off.",
-  "wAlertsUpdate": "Update",
   "wAllPis": "All Pis",
   "wBattery": "Battery",
-  "wCancel": "Cancel",
   "wChargingPower": "charging {power}",
   "@wChargingPower": {
     "placeholders": {
@@ -34,12 +30,9 @@
   "wConnect": "Connect",
   "wConnected": "Connected",
   "wConnectedLp": "connected",
-  "wConnecting": "Connecting …",
   "wCredentials": "Credentials",
   "wDeclineExit": "Decline (quit app)",
-  "wDelete": "Delete",
   "wDirLoadFailed": "Could not load the directory.",
-  "wDisable": "Turn off",
   "wDisclaimerBullet1": "You are authorized to manage the target devices and use Pi-Tool at your own risk.",
   "wDisclaimerBullet2": "KYTH. Systems accepts no liability for damage to your system, data or hardware.",
   "wDisclaimerBullet3": "Your credentials stay encrypted on the device — no cloud, no sharing, no tracking.",
@@ -47,23 +40,19 @@
   "wDisclaimerConfirmIntro": "By tapping \"Accept\" you confirm:",
   "wDisclaimerIntro": "On the devices you set up, Pi-Tool runs commands over SSH — including with elevated privileges (sudo): package updates, service and system restarts, and freely entered console commands.",
   "wDismiss": "Dismiss",
-  "wDockerContainers": "Docker containers",
   "wDownloadImager": "Download Raspberry Pi Imager",
   "wDownloadShort": "Download",
   "wEmpty": "— empty —",
-  "wEnable": "Turn on",
   "wEnterNtfyTopic": "Please enter an ntfy topic.",
   "wEvccLiveApiNote": "Live from the evcc web API (display only).",
   "wEvccLiveStatus": "evcc live status",
   "wEvccStatus": "evcc status",
   "wFree": "free",
   "wGrid": "Grid",
-  "wHealthAlertsTitle": "Health alerts",
   "wHide": "Hide",
   "wHomeConsumption": "Home consumption",
   "wHostHint": "e.g. 192.168.178.64 or Tailscale IP",
   "wHostIpLabel": "Host / IP",
-  "wInactive": "inactive",
   "wKeyPassphraseLabel": "Key passphrase (optional)",
   "wLive": "Live",
   "wLiveStatusUnavailable": "Live status unavailable.",
@@ -112,10 +101,7 @@
   "wRecheck": "Re-check",
   "wRefresh": "Refresh",
   "wRepeatPassphrase": "Repeat passphrase",
-  "wRestart": "Restart",
-  "wSave": "Save",
   "wScanningWifi": "Searching for SSH devices on Wi-Fi …",
-  "wSecurityCheck": "Security check",
   "wServiceActions": "{name} actions",
   "@wServiceActions": {
     "placeholders": {
@@ -124,7 +110,6 @@
       }
     }
   },
-  "wSetUpPi": "Set up Pi",
   "wSetupBulletHostname": "Hostname, e.g. \"living-room-pi\" (reachable as living-room-pi.local)",
   "wSetupBulletSsh": "Enable SSH (with password login)",
   "wSetupBulletUserPass": "Username + password – you'll enter these in Pi-Tool shortly",
@@ -140,9 +125,9 @@
   "wSetupStep3Title": "⚙️ Advanced options (important!)",
   "wSetupStep4Body": "Write the SD card, insert it into the Pi, connect power. The first boot takes 1–2 minutes.",
   "wSetupStep4Title": "Write & boot",
-  "wSetupStep5Body": "At the top, select or create the Pi, enter \"<hostname>.local\" as the host (or \"Search for Pi on Wi-Fi\"), user + password from step 3 – then \"Connect\". Done.",
+  "wSetupStep5Body": "At the top, select or create the Pi, enter \"<hostname>.local\" as the host (or \"Find Pi on Wi-Fi\"), user + password from step 3 – then \"Connect\". Done.",
   "wSetupStep5Title": "Connect in Pi-Tool",
-  "wSetupTip": "Tip: if \".local\" doesn't work, use \"Search for Pi on Wi-Fi\" or the IP from your router.",
+  "wSetupTip": "Tip: if \".local\" doesn't work, use \"Find Pi on Wi-Fi\" or the IP from your router.",
   "wShow": "Show",
   "wSshKey": "SSH key",
   "wStatusUpdate": "Update",
@@ -283,7 +268,7 @@
   },
   "statusUnexpectedError": "Unexpected error – see the terminal log for details.",
   "busyLoadingEvccRelease": "Loading evcc release …",
-  "runFullUpgradeWarning": "Warning: \"Full system upgrade\" updates ALL system packages on the Pi, not just evcc.",
+  "runFullUpgradeWarning": "Warning: this profile has the full system upgrade enabled – the update will upgrade ALL system packages on the Pi, not just evcc.",
   "dialogEvccInstallTitle": "Install evcc {version}?",
   "@dialogEvccInstallTitle": {
     "placeholders": {
@@ -866,7 +851,7 @@
   "optionSystem": "System",
   "themeLight": "Light",
   "themeDark": "Dark",
-  "langGerman": "German",
+  "langGerman": "Deutsch",
   "langEnglish": "English",
   "settingsNightlyTitle": "Install evcc nightly",
   "settingsNightlySubtitle": "unstable channel instead of stable (only on fresh install)",
@@ -1018,14 +1003,6 @@
       }
     }
   },
-  "historyServiceInstalled": "{service} installed.",
-  "@historyServiceInstalled": {
-    "placeholders": {
-      "service": {
-        "type": "String"
-      }
-    }
-  },
   "busyInstallingService": "Installing {service} …",
   "@busyInstallingService": {
     "placeholders": {
@@ -1042,14 +1019,6 @@
       }
     }
   },
-  "historyServiceRestarted": "{service} restarted.",
-  "@historyServiceRestarted": {
-    "placeholders": {
-      "service": {
-        "type": "String"
-      }
-    }
-  },
   "busyRestartingService": "Restarting {service} …",
   "@busyRestartingService": {
     "placeholders": {
@@ -1060,14 +1029,6 @@
   },
   "statusServiceUpdated": "{service} updated.",
   "@statusServiceUpdated": {
-    "placeholders": {
-      "service": {
-        "type": "String"
-      }
-    }
-  },
-  "historyServiceUpdated": "{service} updated.",
-  "@historyServiceUpdated": {
     "placeholders": {
       "service": {
         "type": "String"
@@ -1124,5 +1085,6 @@
   "filesExplorerProBody": "Browsing, uploading and deleting your Pi's files is part of Pro.",
   "unlockPro": "Unlock Pro",
   "filesNoPiTitle": "No Pi connected",
-  "filesNoPiBody": "Enter host + credentials on the \"Management\" tab — then you can browse and upload your Pi's files here."
+  "filesNoPiBody": "Enter host + credentials on the \"Management\" tab — then you can browse and upload your Pi's files here.",
+  "menuNeedsConnectionHint": "Connect to the Pi first"
 }

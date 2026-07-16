@@ -183,27 +183,14 @@ void main() {
   }
 
   Widget app(EvccUpdater u, {Locale locale = const Locale('de')}) {
-    final scheme = ColorScheme.fromSeed(
-            seedColor: const Color(0xFF1FD65F), brightness: Brightness.dark)
-        .copyWith(
-            primary: const Color(0xFF1FD65F),
-            onPrimary: Colors.black,
-            surface: const Color(0xFF0B0E0C));
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       locale: locale,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: scheme,
-        scaffoldBackgroundColor: const Color(0xFF0B0E0C),
-        fontFamily: 'Roboto',
-        appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFF0B0E0C),
-            foregroundColor: Colors.white,
-            elevation: 0),
-      ),
+      // The REAL app theme (single source of truth) — only the bundled test
+      // font is injected so the goldens render text.
+      theme: buildAppTheme(Brightness.dark, fontFamily: 'Roboto'),
       home: UpdaterPage(
           store: _ShotStore(_config), updater: u, updateChecker: _noUpdate),
     );

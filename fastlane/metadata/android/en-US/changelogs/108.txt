@@ -1,0 +1,1 @@
+Polish from a full app review: "Restart Pi" and "Shut down Pi" now follow the connection model (locked with a hint until you connect), and after a shutdown the app honestly shows "disconnected". Error banners stay short and point to the terminal log; several texts tightened (setup guide, store descriptions).

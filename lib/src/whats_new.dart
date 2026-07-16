@@ -18,6 +18,14 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.59.0': [
+    'Polish from a full app review: "Restart Pi" and "Shut down Pi" now follow '
+        'the connection model (locked with a hint until you connect), and after '
+        'a shutdown the app honestly shows "disconnected" — the Pi is off, '
+        'after all. Error banners stay short and point to the terminal log; '
+        'several texts were tightened (e.g. the setup guide now names the '
+        '"Find Pi on Wi-Fi" button correctly).',
+  ],
   '0.58.1': [
     'Small fix: the Settings sheet can now be closed via an × at the top '
         '(it had grown tall enough that only the phone back button worked).',
@@ -30,6 +38,15 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.59.0': [
+    'Feinschliff aus einem kompletten App-Review: „Pi neu starten" und „Pi '
+        'herunterfahren" folgen jetzt dem Verbindungsmodell (bis zum Verbinden '
+        'gesperrt, mit Hinweis), und nach dem Herunterfahren zeigt die App '
+        'ehrlich „getrennt" — der Pi ist ja aus. Fehler-Banner bleiben kurz '
+        'und verweisen aufs Terminal-Log; mehrere Texte wurden präzisiert '
+        '(z. B. nennt die Einrichtungs-Anleitung jetzt den richtigen Knopf '
+        '„Pi im WLAN suchen").',
+  ],
   '0.58.1': [
     'Kleiner Fix: Die Einstellungen lassen sich jetzt über ein × oben im Menü '
         'schließen (das Menü war so hoch geworden, dass nur noch der '

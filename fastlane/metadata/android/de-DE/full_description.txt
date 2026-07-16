@@ -22,7 +22,7 @@ Funktionen:
 * Sicherheits-Check – bewertet die Härtung des Pi (SSH, automatische Updates, fail2ban u. a.) als Ampel
 * System aufräumen: Speicher freigeben (apt, ungenutzte Docker-Images, Journal)
 * Automatik auf dem Pi (systemd-Timer, kein Hintergrunddienst am Handy): geplante Updates (mit evcc-Sicherung + Selbstheilung), geplante nächtliche Backups (mit Rotation) und Health-Alerts als Push via ntfy
-* Konsole: eigene Befehle per SSH absetzen (sudo unterstützt) mit Verlauf + Schnellbefehlen
+* Terminal: eigene Befehle per SSH absetzen (sudo unterstützt) mit Verlauf + Schnellbefehlen
 * SSH-Key mit einem Tap einrichten: Schlüssel wird auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil auf Key-Login umgestellt
 * Eingebaute Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import für den Gerätewechsel
