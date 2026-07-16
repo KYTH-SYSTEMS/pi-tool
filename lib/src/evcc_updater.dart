@@ -911,11 +911,22 @@ class EvccUpdater {
               stdin: '${config.password}\n$tailscaleUpScript\n');
           // A rejected sudo password yields no login URL — don't report that as
           // "already connected"; surface it as a real auth error.
-          if (isSudoPasswordFailure('${r.stdout}\n${r.stderr}')) {
+          final combined = '${r.stdout}\n${r.stderr}';
+          if (isSudoPasswordFailure(combined)) {
             throw const EvccUpdateException(UpdateErrorKind.sudo,
                 'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
           }
-          return parseTailscaleAuthUrl(r.stdout);
+          final url = parseTailscaleAuthUrl(r.stdout);
+          if (url != null) return url; // needs a browser login
+          // No login URL: it must have connected — verify via the marker, else
+          // surface the failure instead of reporting a phantom "connected".
+          if (!combined.contains('TS_UP_OK')) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'Tailscale konnte nicht verbinden (Details im Log) – läuft der '
+                'Dienst (tailscaled)? Ggf. neu installieren.');
+          }
+          return null;
         },
       );
 
@@ -940,6 +951,12 @@ class EvccUpdater {
           if (isSudoPasswordFailure(out)) {
             throw const EvccUpdateException(UpdateErrorKind.sudo,
                 'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+          if (r.exitCode != null && r.exitCode != 0) {
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'tailscale ${logout ? 'logout' : 'down'} fehlgeschlagen '
+                '(Exit ${r.exitCode}). Details im Log.');
           }
           if (out.isNotEmpty) log(out);
         },
@@ -1405,9 +1422,12 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('Installiere Pi-hole … (unbeaufsichtigt, dauert ein paar Minuten)');
-          await _runRootScript(runner, log, config,
-              sudo: true,
-              script: buildPiholeInstallScript(),
+          // Marker: the multi-step installer runs under `set -e`, so INSTALL_OK
+          // is only reached if every step succeeded (a half-run install, incl.
+          // a signal-killed channel with exitCode == null, fails here).
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: '${buildPiholeInstallScript()}\necho INSTALL_OK',
+              successMarker: 'INSTALL_OK',
               failMsg: 'Pi-hole-Installation fehlgeschlagen');
           log('Pi-hole installiert – Einrichtung im Browser unter /admin.');
         },
@@ -1617,9 +1637,11 @@ class EvccUpdater {
       onLog: onLog,
       body: (runner, log) async {
         log('Installiere ${service.name} … (kann ein paar Minuten dauern)');
-        await _runRootScript(runner, log, config,
-            sudo: true,
-            script: script,
+        // Marker: the install scripts run under `set -e`, so INSTALL_OK prints
+        // only on full success (guards against a partially-run root install).
+        await _runRootScriptExpectMarker(runner, log, config,
+            script: '$script\necho INSTALL_OK',
+            successMarker: 'INSTALL_OK',
             failMsg: '${service.name}-Installation fehlgeschlagen');
         log('${service.name} installiert.');
       },
@@ -1904,9 +1926,12 @@ class EvccUpdater {
       onLog: onLog,
       body: (runner, log) async {
         log('Stelle Backup wieder her: $path …');
-        await _runRootScript(runner, log, config,
-            sudo: true,
+        // Marker discipline: a destructive tar-over-/ must never look successful
+        // when killed mid-run (exitCode == null). The evcc-active post-check
+        // below additionally catches a restored-but-broken config.
+        await _runRootScriptExpectMarker(runner, log, config,
             script: buildRestoreScript(path),
+            successMarker: 'RESTORE_OK',
             failMsg: 'Wiederherstellung fehlgeschlagen');
         // `systemctl start` returns 0 as soon as the process forks, so verify
         // evcc actually stayed up (a restored config that crashes on start must

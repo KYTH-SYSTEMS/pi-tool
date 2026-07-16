@@ -655,7 +655,7 @@ void main() {
         () async {
       const path = '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz';
       final runner = FakeSshRunner({
-        installShellCommand: [_r('Wiederhergestellt.')],
+        installShellCommand: [_r('RESTORE_OK\n')],
         _svc: [_r('active\n')],
       });
       await _updaterWith(runner)
@@ -670,7 +670,7 @@ void main() {
         () async {
       const path = '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz';
       final runner = FakeSshRunner({
-        installShellCommand: [_r('Wiederhergestellt.')],
+        installShellCommand: [_r('RESTORE_OK\n')],
         _svc: [_r('inactive\n')], // restored config crashes evcc on start
       });
       await expectLater(
@@ -890,7 +890,7 @@ void main() {
     test('installs the service by running its script as root', () async {
       final grafana = knownAptServices.firstWhere((s) => s.id == 'grafana');
       final runner = FakeSshRunner({
-        installShellCommand: [_r('...\nSetting up grafana ...\n')],
+        installShellCommand: [_r('...\nSetting up grafana ...\nINSTALL_OK\n')],
       });
       await _updaterWith(runner)
           .installAptService(config: _config, service: grafana, onLog: (_) {});
@@ -1154,6 +1154,39 @@ void main() {
       await _updaterWith(runner)
           .tailscaleSet(config: _config, logout: false, onLog: (_) {});
       expect(runner.stdinByCommand[tailscaleDownCommand], 'sekret\n');
+    });
+
+    test('tailscaleUp: connected (marker, no URL) returns null', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('Success.\nTS_UP_OK\n')],
+      });
+      final url =
+          await _updaterWith(runner).tailscaleUp(config: _config, onLog: (_) {});
+      expect(url, isNull);
+    });
+
+    test('tailscaleUp: no URL and no marker is a real failure (not "connected")',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('failed to connect to local tailscaled\n')],
+      });
+      await expectLater(
+        _updaterWith(runner).tailscaleUp(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)),
+      );
+    });
+
+    test('tailscaleSet(down) surfaces a non-zero exit as an error', () async {
+      final runner = FakeSshRunner({
+        tailscaleDownCommand: [_r('daemon not running\n', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .tailscaleSet(config: _config, logout: false, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)),
+      );
     });
   });
 

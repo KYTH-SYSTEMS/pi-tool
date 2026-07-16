@@ -1,0 +1,1 @@
+Mehr Verlässlichkeit (Härtung aus einem Review): Fehlgeschlagene Installationen (Pi-hole, Grafana/InfluxDB/Mosquitto), evcc-Backup-Wiederherstellungen und Tailscale-Verbinden/-Trennen melden keinen Schein-Erfolg mehr — ein halb gelaufener oder gescheiterter Vorgang zeigt jetzt einen klaren Fehler.

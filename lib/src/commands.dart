@@ -794,7 +794,7 @@ if [ ! -f $a ]; then echo "Backup nicht gefunden."; exit 1; fi
 systemctl stop evcc 2>/dev/null || true
 tar -xzf $a -C /
 systemctl start evcc
-echo "Wiederhergestellt."
+echo RESTORE_OK
 ''';
 }
 

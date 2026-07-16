@@ -22,6 +22,10 @@ setsid tailscale up >"\$f" 2>&1 &
 sleep 5
 cat "\$f" 2>/dev/null
 rm -f "\$f"
+# The detached `up` always exits 0, so emit an explicit connectivity marker:
+# TS_UP_OK once the tailnet is actually up. Absent (and no login URL printed) =
+# a real failure the app must surface, not report as "connected".
+tailscale status >/dev/null 2>&1 && echo TS_UP_OK
 ''';
 
 /// No-sudo probe: status + the tailnet IPv4.

@@ -1,0 +1,1 @@
+More reliability (hardening from a review): failed installs (Pi-hole, Grafana/InfluxDB/Mosquitto), evcc backup restores, and Tailscale connect/disconnect no longer report a phantom "success" — a half-run or failed action now surfaces a clear error.

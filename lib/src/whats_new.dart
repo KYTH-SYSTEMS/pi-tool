@@ -18,6 +18,12 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.59.2': [
+    'More reliability: failed installs (Pi-hole, Grafana/InfluxDB/Mosquitto), '
+        'evcc backup restores, and Tailscale connect/disconnect no longer '
+        'report a phantom "success" — a half-run or failed action now surfaces '
+        'a clear error instead of looking done.',
+  ],
   '0.59.1': [
     'Security hardening from a full review: more robust password redaction in '
         'the log, and extra safeguards for the scripts generated on the Pi '
@@ -44,6 +50,13 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.59.2': [
+    'Mehr Verlässlichkeit: Fehlgeschlagene Installationen (Pi-hole, '
+        'Grafana/InfluxDB/Mosquitto), evcc-Backup-Wiederherstellungen und '
+        'Tailscale-Verbinden/-Trennen melden keinen Schein-Erfolg mehr — ein '
+        'halb gelaufener oder gescheiterter Vorgang zeigt jetzt einen klaren '
+        'Fehler, statt „fertig" auszusehen.',
+  ],
   '0.59.1': [
     'Sicherheits-Härtung aus einem kompletten Review: robusteres Schwärzen '
         'des Passworts im Log und zusätzliche Absicherung der auf dem Pi '
