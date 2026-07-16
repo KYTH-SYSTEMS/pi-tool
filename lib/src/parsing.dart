@@ -65,7 +65,17 @@ bool isSudoPasswordFailure(String output) {
 /// [passwordMask]. An empty [password] leaves [text] untouched.
 String redactPassword(String text, String password) {
   if (password.isEmpty) return text;
-  return text.replaceAll(password, passwordMask);
+  var out = text.replaceAll(password, passwordMask);
+  // Defense in depth: on a NOPASSWD-sudo Pi the password line isn't consumed by
+  // `sudo -S`, so `bash -s` may echo it word-split ("bash: line 1: <word>: not
+  // found"). A literal full-string match would miss those fragments, so also
+  // mask each whitespace-separated part (length ≥ 3 to avoid over-redacting).
+  for (final part in password.split(RegExp(r'\s+'))) {
+    if (part.length >= 3 && part != password) {
+      out = out.replaceAll(part, passwordMask);
+    }
+  }
+  return out;
 }
 
 /// Outcome category of a completed update run.

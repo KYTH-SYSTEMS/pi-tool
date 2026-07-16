@@ -62,7 +62,8 @@ void main() {
     test('list command targets one service prefix, newest first, no sudo', () {
       final c = serviceBackupListCommand('pihole');
       expect(c, contains('ls -1t'));
-      expect(c, contains('/var/backups/pi-tool/pihole-backup-*'));
+      // The prefix is single-quoted (defense-in-depth); the glob stays outside.
+      expect(c, contains("/var/backups/pi-tool/'pihole'-backup-*"));
       expect(c, contains('2>/dev/null'));
       expect(c, isNot(contains('sudo')));
     });

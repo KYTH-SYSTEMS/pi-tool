@@ -108,6 +108,20 @@ void main() {
     test('matches the password literally, not as a regex', () {
       expect(redactPassword('a.b matched', 'a.b'), '$passwordMask matched');
     });
+
+    test('masks word-split fragments (NOPASSWD echo leak)', () {
+      // On a NOPASSWD Pi `bash -s` echoes the unconsumed password word-split
+      // ("bash: line 1: <first word>: ..."); the full literal "hunter2 pass"
+      // never appears, so masking whole words is what catches the leak.
+      final out = redactPassword(
+          'bash: line 1: hunter2: command not found', 'hunter2 pass');
+      expect(out, isNot(contains('hunter2')));
+    });
+
+    test('does not over-redact short (<3) password fragments', () {
+      // Full password absent; the only present token "ab" is <3 → left alone.
+      expect(redactPassword('ab only here', 'ab cd'), 'ab only here');
+    });
   });
 
   group('summarize (evcc-only)', () {

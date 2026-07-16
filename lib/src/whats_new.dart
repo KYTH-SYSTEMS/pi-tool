@@ -18,6 +18,12 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.59.1': [
+    'Security hardening from a full review: more robust password redaction in '
+        'the log, and extra safeguards for the scripts generated on the Pi '
+        '(shell quoting for the ntfy destination). No change to how you use '
+        'the app.',
+  ],
   '0.59.0': [
     'Polish from a full app review: "Restart Pi" and "Shut down Pi" now follow '
         'the connection model (locked with a hint until you connect), and after '
@@ -38,6 +44,12 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.59.1': [
+    'Sicherheits-Härtung aus einem kompletten Review: robusteres Schwärzen '
+        'des Passworts im Log und zusätzliche Absicherung der auf dem Pi '
+        'erzeugten Skripte (Shell-Quoting fürs ntfy-Ziel). An der Bedienung '
+        'ändert sich nichts.',
+  ],
   '0.59.0': [
     'Feinschliff aus einem kompletten App-Review: „Pi neu starten" und „Pi '
         'herunterfahren" folgen jetzt dem Verbindungsmodell (bis zum Verbinden '

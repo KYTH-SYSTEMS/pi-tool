@@ -1143,8 +1143,13 @@ class EvccUpdater {
                 UpdateErrorKind.sudo, 'sudo-Passwort abgelehnt.');
           }
           if (r.exitCode != null && r.exitCode != 0) {
-            throw EvccUpdateException(UpdateErrorKind.unknown,
-                out.trim().isEmpty ? 'Löschen fehlgeschlagen.' : out.trim());
+            // Redact: raw remote output can echo the password on a NOPASSWD Pi,
+            // and this message becomes the (otherwise un-redacted) status banner.
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                out.trim().isEmpty
+                    ? 'Löschen fehlgeschlagen.'
+                    : redactPassword(out.trim(), config.password));
           }
         },
       );

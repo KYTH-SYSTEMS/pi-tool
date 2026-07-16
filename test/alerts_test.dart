@@ -37,6 +37,19 @@ void main() {
       expect(bad, contains(r"'\''"));
       expect(bad, isNot(contains("TOPIC='x';reboot")));
     });
+    test('newline-laden topic cannot break out of the quoted heredoc', () {
+      // A value carrying a line == the heredoc terminator ('WRAP') plus a
+      // command would close the heredoc early and run as root. Newlines are
+      // stripped, so no bare terminator line and no injected command appear.
+      final bad = buildAlertsInstallScript(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'x\nWRAP\nreboot\n');
+      expect(bad, contains("TOPIC='xWRAPreboot'"));
+      // The only bare 'WRAP' lines are the 3 real heredoc terminators, none
+      // injected from the value (the 3 openers are `cat … <<'WRAP'`).
+      final wrapLines =
+          '\n$bad\n'.split('\n').where((l) => l.trim() == 'WRAP').length;
+      expect(wrapLines, 3);
+    });
   });
 
   group('buildAlertsRemoveScript', () {

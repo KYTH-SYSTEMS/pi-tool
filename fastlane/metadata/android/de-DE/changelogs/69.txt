@@ -1,9 +1,1 @@
-Pi-Tool verwaltet deinen Raspberry Pi per SSH – jetzt als Cockpit mit drei Tabs (Dienste, Automatik, Terminal).
-
-• Dienste: evcc, Pi-hole, Home Assistant, Grafana, InfluxDB, Mosquitto erkennen, installieren, aktualisieren – plus das ganze System
-• Fernzugriff: Raspberry Pi Connect und Tailscale einrichten (Tailnet-IP mit einem Tap übernehmen)
-• Automatik: geplante Updates + Health-Alerts (Push via ntfy) – laufen als systemd-Timer auf dem Pi
-• Backups sichern & wiederherstellen, Konsole, Datei-Browser, Config-Editor, Logs, Aufräumen
-• Mehrere Pi-Profile, Biometrie-Sperre, SSH-Key-Auth
-
-Inoffizielles Tool, nicht mit evcc oder Pi-hole verbunden.
+Pi-Tool verwaltet deinen Raspberry Pi per SSH – jetzt als Cockpit mit drei Tabs (Dienste, Automatik, Terminal). Dienste (evcc, Pi-hole, Home Assistant, Grafana u. a.) erkennen, installieren, aktualisieren – plus das ganze System. Fernzugriff (Raspberry Pi Connect, Tailscale), geplante Updates + Health-Alerts (systemd-Timer auf dem Pi), Backups, Konsole, Datei-Browser, Config-Editor, mehrere Profile, Biometrie-Sperre, SSH-Key. Inoffiziell, nicht mit evcc/Pi-hole verbunden.

@@ -1,33 +1,33 @@
-Pi-Tool installiert, aktualisiert, sichert und überwacht self-hosted Dienste auf deinem Raspberry Pi – per SSH, mit einem Knopfdruck. Dazu Fernzugriff einrichten und Dateien verwalten. Ein Cockpit mit vier Tabs; „Verbindung herstellen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte. Inoffiziell, nicht mit evcc oder Pi-hole verbunden.
+Pi-Tool installiert, aktualisiert, sichert und überwacht self-hosted Dienste auf deinem Raspberry Pi – per SSH, mit einem Knopfdruck. Dazu Fernzugriff und Datei-Verwaltung. Ein Cockpit mit vier Tabs; „Verbindung herstellen" erkennt automatisch, was läuft, und zeigt pro Dienst eine Karte. Inoffiziell, nicht mit evcc oder Pi-hole verbunden.
 
 Dienste:
 * evcc – aktualisieren (apt oder Docker, automatisch erkannt), installieren, Live-Status, Probelauf, neustarten, Web öffnen
 * Pi-hole – aktualisieren (pihole -up), Blocklisten erneuern, DNS neustarten, installieren (experimentell), /admin öffnen
 * Home Assistant – als Docker-Container installieren (experimentell) und aktualisieren, Web-UI (Port 8123) öffnen
-* Grafana, InfluxDB & Mosquitto – installieren + aktualisieren per apt (offizielles Repo, experimentell), Web-UI öffnen
+* Grafana, InfluxDB & Mosquitto – installieren + aktualisieren per apt (offiz. Repo, experimentell), Web-UI öffnen
 * AdGuard Home, Node-RED & Zigbee2MQTT – automatisch erkannt: Web öffnen, Logs ansehen, neustarten
-* Raspberry Pi Connect – offizieller Fernzugriff (ab Raspberry Pi OS Bookworm): installieren, per Link anmelden, an/aus, Web öffnen
-* Tailscale – VPN/Mesh installieren und per Login-Link verbinden. Fernzugriff mit einem Tap: öffnet die Tailscale-App und setzt die gemerkte Tailnet-IP als Host – von überall auf den Pi, zuhause per Tap zurück auf die Heim-IP
+* Raspberry Pi Connect – offizieller Fernzugriff (ab Raspberry Pi OS Bookworm): installieren, anmelden, an/aus, Web öffnen
+* Tailscale – VPN/Mesh installieren und per Login-Link verbinden. Fernzugriff mit einem Tap: setzt die gemerkte Tailnet-IP als Host – von überall auf den Pi, zuhause per Tap zurück auf die Heim-IP
 * Docker-Container – laufende Container ansehen und neustarten
 * „Dienst hinzufügen" – alle noch nicht installierten Dienste an einer Stelle; der Hauptbildschirm zeigt nur, was wirklich läuft
-* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten oder herunterfahren, Gesundheits-Anzeige (Temperatur, Speicher, RAM, Uptime) mit Speicher-Warnung und SD-Karten-Check
+* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige (Temperatur, Speicher, RAM, Uptime) mit Speicher-Warnung und SD-Karten-Check
 
 Funktionen:
 * Cockpit mit vier Tabs; der aktive Pi steht oben und ist antippbar (umschalten/hinzufügen/umbenennen)
 * Auto-Erkennung aller Dienste in einer SSH-Sitzung
 * Dateien: Datei-Browser deines Pi – durchsuchen, ansehen, vom Handy hochladen, löschen
 * Config-Editor: Konfigdateien (z. B. evcc.yaml) direkt bearbeiten, atomar mit Backup
-* Backups inkl. Wiederherstellen & Verwalten: evcc (Config + DB), Pi-hole (Teleporter) und Home Assistant (/config); automatische Rotation; aufs Handy herunterladen
+* Backups inkl. Wiederherstellen & Verwalten: evcc (Config + DB), Pi-hole (Teleporter), Home Assistant (/config); autom. Rotation; aufs Handy laden
 * Speicherplatz analysieren – die größten Verzeichnisse auf einen Blick
-* Sicherheits-Check – bewertet die Härtung des Pi (SSH, automatische Updates, fail2ban u. a.) als Ampel
+* Sicherheits-Check – bewertet die Härtung des Pi (SSH, autom. Updates, fail2ban u. a.) als Ampel
 * System aufräumen: Speicher freigeben (apt, ungenutzte Docker-Images, Journal)
-* Automatik auf dem Pi (systemd-Timer, kein Hintergrunddienst am Handy): geplante Updates (mit evcc-Sicherung + Selbstheilung), geplante nächtliche Backups (mit Rotation) und Health-Alerts als Push via ntfy
+* Automatik auf dem Pi (systemd-Timer, kein Handy-Hintergrunddienst): geplante Updates (evcc-Sicherung + Selbstheilung), nächtliche Backups (Rotation), Health-Alerts via ntfy
 * Terminal: eigene Befehle per SSH absetzen (sudo unterstützt) mit Verlauf + Schnellbefehlen
 * SSH-Key mit einem Tap einrichten: Schlüssel wird auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil auf Key-Login umgestellt
 * Eingebaute Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import für den Gerätewechsel
-* Bewusst verbinden: „Verbindung herstellen" hält die Sitzung zum aktiven Pi, bis du das Profil wechselst; Automatik, Terminal und Dateien werden erst nach dem Verbinden freigeschaltet (vorher dezent gesperrt). Grün/rot-Status; laufende Aktion abbrechbar
-* Deutsch & Englisch: folgt automatisch der Handy-Sprache, in den Einstellungen umschaltbar (System/Deutsch/English)
+* Bewusst verbinden: „Verbindung herstellen" hält die Sitzung zum aktiven Pi bis zum Profilwechsel; Automatik, Terminal und Dateien werden erst nach dem Verbinden freigeschaltet. Grün/rot-Status; laufende Aktion abbrechbar
+* Deutsch & Englisch: folgt der Handy-Sprache, in den Einstellungen umschaltbar (System/Deutsch/English)
 
 Sicherheit & Datenschutz:
 * Zugangsdaten bleiben verschlüsselt auf dem Gerät (Android Keystore)
@@ -38,6 +38,6 @@ Sicherheit & Datenschutz:
 
 Hinweis: Inoffizielles Community-Tool, nicht mit evcc oder Pi-hole verbunden. Für die tägliche Lade-Steuerung gibt es die offizielle evcc-App.
 
-Haftungsausschluss: Die App führt sudo-Befehle (apt, pihole, systemctl, reboot) auf deinem Gerät aus. Nutzung auf eigene Gefahr – keine Haftung für Schäden an System, Daten oder Hardware (MIT-Lizenz, "AS IS").
+Haftungsausschluss: Die App führt sudo-Befehle auf deinem Gerät aus. Nutzung auf eigene Gefahr – keine Haftung für Schäden an System, Daten oder Hardware (MIT-Lizenz, "AS IS").
 
-Voraussetzung: ein per SSH erreichbarer Raspberry Pi (oder Debian/Linux-Gerät).
+Voraussetzung: ein per SSH erreichbarer Raspberry Pi (oder Debian-/Linux-Gerät).

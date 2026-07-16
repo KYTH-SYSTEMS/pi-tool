@@ -1,0 +1,1 @@
+Sicherheits-Härtung aus einem kompletten Review: robusteres Schwärzen des Passworts im Log und zusätzliche Absicherung der auf dem Pi erzeugten Skripte (Shell-Quoting fürs ntfy-Ziel). An der Bedienung ändert sich nichts. Nebenbei: Store-Texte auf die Play-Zeichenlimits getrimmt.

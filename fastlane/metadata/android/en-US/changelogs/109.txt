@@ -1,0 +1,1 @@
+Security hardening from a full review: more robust password redaction in the log, and extra safeguards for the scripts generated on the Pi (shell quoting for the ntfy destination). No change to how you use the app. Also: store texts trimmed to the Play character limits.

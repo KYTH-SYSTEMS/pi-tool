@@ -18,8 +18,14 @@ String buildAlertsInstallScript({
   required String ntfyServer,
   required String ntfyTopic,
 }) {
-  final url = shSingleQuote(ntfyServer);
-  final topic = shSingleQuote(ntfyTopic);
+  // Strip whitespace/control chars FIRST: a URL/ntfy-topic never contains any,
+  // and a newline in the value could otherwise smuggle a line equal to the
+  // heredoc terminator ('WRAP') into the wrapper — closing the heredoc early and
+  // executing the remainder in the root install shell. (Values can arrive from
+  // an imported profile, which isn't newline-filtered.) shSingleQuote handles
+  // the rest of the escaping.
+  final url = shSingleQuote(ntfyServer.replaceAll(RegExp(r'\s'), ''));
+  final topic = shSingleQuote(ntfyTopic.replaceAll(RegExp(r'\s'), ''));
   return '''
 set -e
 mkdir -p /var/lib/pi-tool

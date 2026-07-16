@@ -596,7 +596,8 @@ String? interactiveCommandHint(String command) {
 /// Lists one service's backups under /var/backups/pi-tool, newest first. No
 /// sudo: the dir is 0755 and the archives 0644 (see the backup scripts).
 String serviceBackupListCommand(String servicePrefix) =>
-    'ls -1t /var/backups/pi-tool/$servicePrefix-backup-* 2>/dev/null';
+    'ls -1t /var/backups/pi-tool/${shSingleQuote(servicePrefix)}-backup-* '
+    '2>/dev/null';
 
 /// Parses [serviceBackupListCommand] output into archive paths (newest first).
 List<String> parseServiceBackupList(String lsOutput) => lsOutput
