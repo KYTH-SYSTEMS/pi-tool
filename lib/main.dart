@@ -70,6 +70,7 @@ const kEvccPlayStoreUrl =
     'https://play.google.com/store/apps/details?id=io.evcc.android';
 const kPrivacyUrl = 'https://profex1337.github.io/evcc-pi-tool/privacy.html';
 const kImpressumUrl = 'https://profex1337.github.io/evcc-pi-tool/impressum.html';
+const kAgbUrl = 'https://profex1337.github.io/evcc-pi-tool/agb.html';
 const kReleasesUrl = 'https://github.com/profex1337/evcc-pi-tool/releases';
 const kImagerUrl = 'https://www.raspberrypi.com/software/';
 const kKythUrl = 'https://www.kyth.systems';
@@ -4605,6 +4606,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                           Wrap(
                             alignment: WrapAlignment.center,
                             children: [
+                              _legalLink(context.l10n.legalTerms,
+                                  () => _openUrl(kAgbUrl)),
                               _legalLink(context.l10n.legalPrivacy,
                                   () => _openUrl(kPrivacyUrl)),
                               _legalLink(context.l10n.legalImprint,

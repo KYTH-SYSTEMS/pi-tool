@@ -18,7 +18,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
 > (`apt`, `pihole`, `systemctl`, ggf. `docker compose`) auf dem Pi aus. Nutze
 > sie nur für Geräte, die dir gehören.
 >
-> ℹ️ **Inoffizielles** Community-Tool, nicht mit evcc oder Pi-hole verbunden.
+> ℹ️ **Inoffizielles, unabhängiges** Tool, nicht mit den genannten Projekten (evcc,
+> Pi-hole, Home Assistant, Grafana, Tailscale u. a.) verbunden; Namen werden nur
+> beschreibend zur Kompatibilität genannt, Marken gehören ihren Inhabern.
 > Für die tägliche Lade-Steuerung gibt es die
 > [offizielle evcc-App](https://play.google.com/store/apps/details?id=io.evcc.android).
 

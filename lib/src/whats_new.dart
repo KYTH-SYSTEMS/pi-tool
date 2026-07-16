@@ -18,6 +18,12 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.60.0': [
+    'New Terms of Use: clear, statute-compliant liability instead of a blanket '
+        '"no liability", notes on the Pro purchase (sold via Google Play) and an '
+        'expanded independence/trademark notice. Reach them via "Terms" at the '
+        'bottom of the Management tab.',
+  ],
   '0.59.2': [
     'More reliability: failed installs (Pi-hole, Grafana/InfluxDB/Mosquitto), '
         'evcc backup restores, and Tailscale connect/disconnect no longer '
@@ -50,6 +56,12 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.60.0': [
+    'Neue Nutzungsbedingungen: klar geregelte, gesetzeskonforme Haftung statt '
+        'pauschalem „keine Haftung", Hinweise zum Pro-Kauf (Verkauf über Google '
+        'Play) und ein erweiterter Unabhängigkeits-/Markenhinweis. Erreichbar '
+        'unten im Tab Verwaltung über „Nutzungsbedingungen".',
+  ],
   '0.59.2': [
     'Mehr Verlässlichkeit: Fehlgeschlagene Installationen (Pi-hole, '
         'Grafana/InfluxDB/Mosquitto), evcc-Backup-Wiederherstellungen und '

@@ -1,4 +1,4 @@
-Pi-Tool installs, updates, backs up and monitors self-hosted services on your Raspberry Pi over SSH, with a single tap. Plus set up remote access and manage files. A cockpit with four tabs (Management, Automation, Terminal, Files); "Connect" auto-detects what's running and shows a card per service. Unofficial, not affiliated with evcc or Pi-hole.
+Pi-Tool installs, updates, backs up and monitors self-hosted services on your Raspberry Pi over SSH, with a single tap. Plus set up remote access and manage files. A cockpit with four tabs (Management, Automation, Terminal, Files); "Connect" auto-detects what's running and shows a card per service. Unofficial, not affiliated with the mentioned projects.
 
 Services:
 * evcc – update (apt or Docker, auto-detected), install, live status, dry-run, restart service, open web UI
@@ -36,8 +36,8 @@ Security & privacy:
 * SSH key auth as an alternative to passwords
 * No accounts, no ads, no tracking, no cloud
 
-Note: unofficial community tool, not affiliated with evcc or Pi-hole. For day-to-day charging control there is the official evcc app.
+Note: unofficial community tool, not affiliated with the mentioned projects. For day-to-day charging control there is the official evcc app.
 
-Disclaimer: the app runs sudo commands (apt, pihole, systemctl, reboot) on your device. Use at your own risk – no liability for damage to system, data or hardware (MIT license, "AS IS").
+Important: on your instruction the app runs sudo commands on your Pi — mistakes or bugs can cause data loss. Please keep backups. The Terms of Use apply.
 
 Requirement: a Raspberry Pi (or Debian/Linux device) reachable over SSH.
