@@ -1,7 +1,7 @@
 Pi-Tool installs, updates, backs up and monitors self-hosted services on your Raspberry Pi over SSH, with a single tap. Plus set up remote access and manage files. A cockpit with four tabs (Management, Automation, Terminal, Files); "Connect" auto-detects what's running and shows a card per service. Unofficial, not affiliated with the mentioned projects.
 
 Services:
-* evcc – update (apt or Docker, auto-detected), install, live status, dry-run, restart service, open web UI
+* evcc – update (apt or Docker, auto-detected), install, live status, restart service, open web UI
 * Pi-hole – update (pihole -up), rebuild blocklists, restart DNS, install (experimental), open /admin
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
 * Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI
@@ -24,9 +24,10 @@ Features:
 * Automation on the Pi (systemd timers, no background service on the phone): scheduled updates (with evcc backup + self-heal), nightly backups (with rotation) and health alerts via ntfy (full disk, dead service, heat, updates)
 * Terminal: run your own commands over SSH (sudo supported) with history + quick commands
 * Set up an SSH key with one tap: the key is generated on the phone, installed on the Pi and the profile switched to key login
-* Built-in "Set up Pi" guide (Raspberry Pi Imager: SSH, user, Wi-Fi) for beginners
+* "Set up Pi" guide (Raspberry Pi Imager) for beginners
 * Multiple Pi profiles, quick switching; an "All Pis" overview as a traffic light (reachable/updates/warning); encrypted export/import for moving to a new phone
 * Connect deliberately: "Connect" keeps the session to the active Pi until you switch profiles; Automation, Terminal and Files unlock only once connected. Green/red status; a running action can be cancelled
+* Demo mode: try the whole app with sample data – no real Pi needed
 * German & English: follows your phone language automatically, switchable in Settings (System/German/English)
 
 Security & privacy:

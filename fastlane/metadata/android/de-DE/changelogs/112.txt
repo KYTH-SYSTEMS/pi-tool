@@ -1,0 +1,1 @@
+Neuer Demo-Modus: „Demo ausprobieren" auf dem Verbindungs-Bildschirm zeigt die ganze App mit Beispieldaten – ganz ohne Raspberry Pi. So lassen sich alle Funktionen (inklusive der Pro-Features) unverbindlich ausprobieren, ohne einen Pi zu verbinden.

@@ -313,6 +313,22 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `_showPaywall` muss dazu passen. Echte Play-
   Billing-Impl wird später hinter `EntitlementService` gesteckt. Gate-Punkte nie
   mit `!isPro` inlinen — immer über den Seam / `_proGate`.
+- **`demo.dart`** — **Demo-Modus**: `DemoSshRunner implements SshRunner` liefert
+  kanned Kommando-Ausgaben (Detection-Batch + Datei-/Terminal-Befehle) plus ein
+  Demo-`EvccApiClient`. Injiziert über `buildDemoUpdater()` (die einzige
+  `runnerFactory`-Stelle) — EINE Klasse füllt alle Tabs mit Beispieldaten, ohne
+  echten Pi/Socket. In `main.dart`: `_demoMode` (in-memory wie `_connected`) swappt
+  `_updater`/`_apiClient` auf die Demo-Instanzen (`_startDemo`), zurück via
+  `_restoreRealBackend` (jeder echte Connect / Profilwechsel / Cred-Edit /
+  `_exitDemo`). Pro ist im Demo offen über **`_unlocked = _isPro || _demoMode`** —
+  alle Gate-Sites lesen `_unlocked`, nie mehr roh `_isPro`. Löst die Play-
+  „LoginWall"-Prüfung ohne Demo-SSH-Server.
+- **`early_adopter.dart`** — Marker fürs künftige Pro-**Grandfathering**:
+  `AppConfig.firstSeenVersionCode` wird beim Start **einmalig** gestempelt
+  (`_stampFirstSeenMarker`, best-effort, **nach** dem Unlock, ohne `setState` —
+  nichts im Boot-/Lock-Pfad). Sentinel `0` = Bestandsnutzer (erkannt via
+  `disclaimerAccepted`/`lastSeenVersion`); `isGrandfathered(fs, paywallVC) = fs <
+  paywallVC`. Noch **kein** Gating — reines Aufzeichnen (Play-Billing-Zukunft).
 - **`profile_transfer.dart`** — verschlüsselter Profil-Export/-Import (Gerätewechsel):
   die AppConfig-JSON wird mit **AES-256-GCM** unter einem **PBKDF2-HMAC-SHA256**-
   Schlüssel (aus einer User-Passphrase) versiegelt. Rein Dart (`cryptography`,

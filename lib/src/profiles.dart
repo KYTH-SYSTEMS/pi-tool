@@ -121,6 +121,10 @@ class AppConfig {
   final String alertsNtfyServer;
   final String alertsNtfyTopic;
 
+  /// The app build (versionCode) this user first ran — for future Pro
+  /// grandfathering (null = not yet stamped). See early_adopter.dart.
+  final int? firstSeenVersionCode;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -139,6 +143,7 @@ class AppConfig {
     this.customCommands = const [],
     this.alertsNtfyServer = 'https://ntfy.sh',
     this.alertsNtfyTopic = '',
+    this.firstSeenVersionCode,
   });
 
   static const initial =
@@ -168,6 +173,7 @@ class AppConfig {
     List<String>? customCommands,
     String? alertsNtfyServer,
     String? alertsNtfyTopic,
+    int? firstSeenVersionCode,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -187,6 +193,8 @@ class AppConfig {
         customCommands: customCommands ?? this.customCommands,
         alertsNtfyServer: alertsNtfyServer ?? this.alertsNtfyServer,
         alertsNtfyTopic: alertsNtfyTopic ?? this.alertsNtfyTopic,
+        firstSeenVersionCode:
+            firstSeenVersionCode ?? this.firstSeenVersionCode,
       );
 
   Map<String, dynamic> toJson() => {
@@ -207,6 +215,7 @@ class AppConfig {
         'customCommands': customCommands,
         'alertsNtfyServer': alertsNtfyServer,
         'alertsNtfyTopic': alertsNtfyTopic,
+        'firstSeenVersionCode': firstSeenVersionCode,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -241,6 +250,9 @@ class AppConfig {
       alertsNtfyServer:
           (j['alertsNtfyServer'] ?? 'https://ntfy.sh').toString(),
       alertsNtfyTopic: (j['alertsNtfyTopic'] ?? '').toString(),
+      firstSeenVersionCode: j['firstSeenVersionCode'] is int
+          ? j['firstSeenVersionCode'] as int
+          : null,
     );
   }
 }

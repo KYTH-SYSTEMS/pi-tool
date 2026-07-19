@@ -1,0 +1,1 @@
+New demo mode: "Try the demo" on the connection screen shows the whole app with sample data – no Raspberry Pi needed. A quick, no-strings way to explore every feature, including the Pro ones, before connecting a real Pi.

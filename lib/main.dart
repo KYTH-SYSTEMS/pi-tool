@@ -16,7 +16,9 @@ import 'src/authenticator.dart';
 import 'src/alerts.dart';
 import 'src/auto_update.dart';
 import 'src/commands.dart';
+import 'src/demo.dart';
 import 'src/docker_containers.dart';
+import 'src/early_adopter.dart';
 import 'src/entitlement.dart';
 import 'src/file_pick.dart';
 import 'src/files.dart';
@@ -208,13 +210,20 @@ class UpdaterPage extends StatefulWidget {
 class _UpdaterPageState extends State<UpdaterPage>
     with WidgetsBindingObserver {
   late final AppConfigStore _store = widget.store ?? AppConfigStore();
-  late final EvccUpdater _updater =
+  late final EvccUpdater _realUpdater =
       widget.updater ?? EvccUpdater.real(confirmFirstUse: _confirmFirstHostKey);
+  // Demo backend (canned data, no real Pi); built lazily on first demo use.
+  late final EvccUpdater _demoUpdater = buildDemoUpdater();
+  // Points at the real or demo updater. Every action call-site uses `_updater`
+  // unchanged; demo mode swaps this pointer (_startDemo / _restoreRealBackend).
+  late EvccUpdater _updater = _realUpdater;
   late final UpdateChecker _updateChecker =
       widget.updateChecker ?? UpdateChecker();
   late final Authenticator _authenticator =
       widget.authenticator ?? LocalAuthenticator();
-  late final EvccApiClient _apiClient = widget.apiClient ?? EvccApiClient();
+  late final EvccApiClient _realApi = widget.apiClient ?? EvccApiClient();
+  late final EvccApiClient _demoApi = buildDemoApiClient();
+  late EvccApiClient _apiClient = _realApi;
   late final KeepAliveService _keepAlive =
       widget.keepAlive ?? ForegroundKeepAlive();
   late final Future<List<String>> Function() _piFinder =
@@ -270,7 +279,13 @@ class _UpdaterPageState extends State<UpdaterPage>
   List<String> _customCommands = []; // user-defined quick commands
   String _alertsServer = 'https://ntfy.sh'; // Health-Alerts ntfy destination
   String _alertsTopic = '';
+  // The app build (versionCode) first seen by this install — Pro grandfathering
+  // marker; null until stamped once at startup. See early_adopter.dart.
+  int? _firstSeenVersionCode;
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
+  // Demo mode: canned data via the demo updater/API, everything unlocked, no
+  // real Pi. In-memory only (like _connected); never persisted.
+  bool _demoMode = false;
   int _tab = kTabVerwaltung; // Verwaltung · Automatik · Terminal · Dateien
   String? _busyMessage; // shown in the shared running bar while _busy
   bool _testing = false; // a "Verbindung herstellen" run is in flight
@@ -367,6 +382,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _backupBeforeUpdate = cfg.backupBeforeUpdate;
       _disclaimerAccepted = cfg.disclaimerAccepted;
       _lastSeenVersion = cfg.lastSeenVersion;
+      _firstSeenVersionCode = cfg.firstSeenVersionCode;
       _consoleHistory = List.of(cfg.consoleHistory);
       _customCommands = List.of(cfg.customCommands);
       _alertsServer = cfg.alertsNtfyServer;
@@ -387,6 +403,32 @@ class _UpdaterPageState extends State<UpdaterPage>
       c.addListener(_invalidateConnTest);
     }
     if (_locked) _unlockAfterSplash();
+    // Stamp the early-adopter marker as a best-effort BACKGROUND task —
+    // deliberately after the unlock is scheduled and fully off the boot-critical
+    // path (no setState, no lock interaction, per the "nothing untested in the
+    // startup path" invariant).
+    unawaited(_stampFirstSeenMarker(cfg));
+  }
+
+  /// Records `firstSeenVersionCode` once (if not yet set) for future Pro
+  /// grandfathering. Best-effort and decoupled from startup/lock; no setState
+  /// (the field is never shown in the UI).
+  Future<void> _stampFirstSeenMarker(AppConfig cfg) async {
+    if (cfg.firstSeenVersionCode != null) return;
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final current = int.tryParse(info.buildNumber) ?? 0;
+      final wasUsedBefore =
+          cfg.disclaimerAccepted || cfg.lastSeenVersion.isNotEmpty;
+      _firstSeenVersionCode = resolveFirstSeenVersionCode(
+        stored: null,
+        wasUsedBefore: wasUsedBefore,
+        currentVersionCode: current,
+      );
+      await _store.save(_currentConfig());
+    } catch (_) {
+      // Best-effort; a marker failure must never affect the app.
+    }
   }
 
   /// Prompt for biometric unlock only once the brand splash has finished — the
@@ -409,6 +451,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _invalidateConnTest() {
     if ((_connectionOk != null || _connected) && mounted) {
       setState(() {
+        if (_demoMode) _restoreRealBackend();
         _connectionOk = null;
         _connected = false; // editing creds invalidates the session
         if (isGatedTab(_tab)) _tab = tabAfterDisconnect(_tab);
@@ -447,6 +490,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// connection indicator, banners, the host-key "trust new key" prompt and the
   /// stashed trust-and-retry target ([_lastConfig]/[_lastAction]).
   void _resetDetectionForNewPi() {
+    _restoreRealBackend(); // a profile switch also leaves any demo session
     _services = [];
     _connectionOk = null;
     _connected = false; // end the session — the new Pi must be connected anew
@@ -533,6 +577,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       customCommands: _customCommands,
       alertsNtfyServer: _alertsServer,
       alertsNtfyTopic: _alertsTopic,
+      firstSeenVersionCode: _firstSeenVersionCode,
     );
   }
 
@@ -611,10 +656,14 @@ class _UpdaterPageState extends State<UpdaterPage>
     }
   }
 
+  /// Effective Pro unlock: the real entitlement OR demo mode. Every gate reads
+  /// this, so demo mode shows all Pro features even after Play Billing is live.
+  bool get _unlocked => _isPro || _demoMode;
+
   /// Runs [action] for Pro users; otherwise opens the paywall. The single gate
   /// every Pro feature routes through.
   void _proGate(VoidCallback action) {
-    if (_isPro) {
+    if (_unlocked) {
       action();
     } else {
       _showPaywall();
@@ -857,7 +906,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   Future<void> _addProfile() async {
-    if (isAddProfileLocked(isPro: _isPro, profileCount: _profiles.length)) {
+    if (isAddProfileLocked(isPro: _unlocked, profileCount: _profiles.length)) {
       _showPaywall(); // multiple Pis are a Pro feature
       return;
     }
@@ -1269,7 +1318,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _testConnection() async {
     if (_busy) return;
     final config = _prepare();
-    if (config == null) return;
+    if (config == null) return; // invalid port → keep any demo session intact
+    // A real connect always uses the real backend, even if we were in a demo.
+    if (_demoMode) setState(_restoreRealBackend);
     _lastAction = _testConnection;
     // Show the running bar + Abbrechen during connect, but WITHOUT a keep-alive
     // (connect is short); the finally in _guard clears _busyMessage.
@@ -1315,6 +1366,107 @@ class _UpdaterPageState extends State<UpdaterPage>
       });
     }
   }
+
+  /// Restores the real backend (updater + evcc API) and clears the demo flag.
+  /// Call inside a setState.
+  void _restoreRealBackend() {
+    _demoMode = false;
+    _updater = _realUpdater;
+    _apiClient = _realApi;
+  }
+
+  /// Enters demo mode: swaps in the demo backend and runs the normal detection
+  /// against it, so every tab fills with believable sample data — no real Pi and
+  /// no credentials. All Pro features are unlocked (via `_unlocked`). Exited via
+  /// [_exitDemo] or any real connect.
+  Future<void> _startDemo() async {
+    if (_busy) return;
+    const config =
+        SshConfig(host: 'demo', port: 22, username: 'pi', password: 'demo');
+    setState(() {
+      _demoMode = true;
+      _updater = _demoUpdater;
+      _apiClient = _demoApi;
+    });
+    _lastConfig = config;
+    _lastAction = _startDemo;
+    _beginBusy();
+    setState(() {
+      _testing = true;
+      _busyMessage = context.l10n.busyConnecting;
+    });
+    await _guard(() async {
+      final detected = await _updater.detectServices(
+        config: config,
+        onLog: _appendLog,
+        onConnected: () {
+          if (!mounted) return;
+          setState(() {
+            _statusMessage = context.l10n.statusConnectedDetecting;
+            _statusOk = true;
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _services = detected;
+        _connExpanded = false;
+        _connected = true;
+        final found =
+            detected.where((s) => s.installed).map((s) => s.name).join(', ');
+        _statusMessage = context.l10n.statusConnectionOk(found);
+        _statusOk = true;
+      });
+      _appendLog(context.l10n.demoBanner);
+    });
+    if (mounted) {
+      setState(() {
+        _testing = false;
+        _connectionOk = _statusOk;
+      });
+    }
+  }
+
+  /// Leaves demo mode, returning to the disconnected connect screen.
+  void _exitDemo() {
+    setState(() {
+      _restoreRealBackend();
+      _connected = false;
+      _services = [];
+      _statusMessage = null;
+      _connectionOk = null;
+      _lastConfig = null; // drop the dummy demo config
+      _lastAction = null;
+      _connExpanded = true;
+      if (isGatedTab(_tab)) _tab = kTabVerwaltung;
+    });
+  }
+
+  /// The banner shown above all tabs while in demo mode.
+  Widget _demoBar(ThemeData theme) => Material(
+        color: theme.colorScheme.secondaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+          child: Row(
+            children: [
+              Icon(Icons.science_outlined,
+                  size: 18, color: theme.colorScheme.onSecondaryContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  context.l10n.demoBanner,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSecondaryContainer),
+                ),
+              ),
+              TextButton(
+                onPressed: _busy ? null : _exitDemo,
+                child: Text(context.l10n.demoExit),
+              ),
+            ],
+          ),
+        ),
+      );
 
   Future<void> _install() async {
     if (_busy) return;
@@ -2876,7 +3028,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _runConsoleCommand(String command) async {
     final cmd = command.trim();
     if (cmd.isEmpty || _busy) return;
-    if (!_isPro) {
+    if (!_unlocked) {
       _showPaywall(); // Konsole is a Pro feature
       return;
     }
@@ -3577,7 +3729,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       switch (s.id) {
         case 'evcc':
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: Icons.bolt,
             enabled: !_busy,
@@ -3614,7 +3766,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           ));
         case 'pihole':
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: Icons.shield_outlined,
             enabled: !_busy,
@@ -3636,7 +3788,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           ));
         case 'homeassistant':
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: Icons.cottage_outlined,
             enabled: !_busy,
@@ -3655,7 +3807,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         case 'piconnect':
           final signedIn = s.active; // active == signed in
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: Icons.cast,
             enabled: !_busy,
@@ -3677,7 +3829,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         case 'tailscale':
           final up = s.active;
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: Icons.vpn_key,
             enabled: !_busy,
@@ -3700,7 +3852,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           ));
         case 'system':
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: Icons.memory,
             enabled: !_busy,
@@ -3727,7 +3879,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           // Detected systemd services (not app-installed): manage only —
           // restart, open web, logs. No apt update path.
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: _serviceIcon(s.id),
             enabled: !_busy,
@@ -3744,7 +3896,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           // Generic apt service (Grafana, InfluxDB, …): update via apt,
           // optional web UI. Only ever emitted when installed.
           cards.add(_ServiceCard(
-            isPro: _isPro,
+            isPro: _unlocked,
             status: s,
             icon: _serviceIcon(s.id),
             enabled: !_busy,
@@ -4459,6 +4611,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             // tab, but actions launch from every tab — so surface them globally.
             // Keyed on _busyMessage (set inside _guard for a named operation) so
             // it shows for real SSH work, not while a confirm dialog is open.
+            if (_demoMode) _demoBar(theme),
             if (_busyMessage != null) _runningBar(theme),
             if (!_busy && _hostKeyIssue) _hostKeyBar(theme),
             if (_statusMessage != null)
@@ -4514,6 +4667,19 @@ class _UpdaterPageState extends State<UpdaterPage>
               enabled: !_busy,
               onTap: _testConnection,
             ),
+            // Explore the whole app with sample data, no Pi required (also how a
+            // Play reviewer gets past the connection screen).
+            if (!_connected)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : _startDemo,
+                  icon: const Icon(Icons.play_circle_outline, size: 18),
+                  label: Text(context.l10n.demoButton),
+                  style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44)),
+                ),
+              ),
             // No host yet (first start, or a freshly added profile) → offer a
             // prominent network scan. Rebuilds live as the host field changes.
             ValueListenableBuilder<TextEditingValue>(
@@ -4723,21 +4889,21 @@ class _UpdaterPageState extends State<UpdaterPage>
             icon: Icons.update,
             title: context.l10n.autoUpdatesTitle,
             subtitle: context.l10n.autoUpdatesTileSubtitle,
-            locked: !_isPro,
+            locked: !_unlocked,
             onTap: () => _proGate(_configureAutoUpdate),
           ),
           _AutomationTile(
             icon: Icons.backup_outlined,
             title: context.l10n.scheduledBackupsTitle,
             subtitle: context.l10n.scheduledBackupsTileSubtitle,
-            locked: !_isPro,
+            locked: !_unlocked,
             onTap: () => _proGate(_configureScheduledBackup),
           ),
           _AutomationTile(
             icon: Icons.notifications_active_outlined,
             title: context.l10n.healthAlertsTitle,
             subtitle: context.l10n.healthAlertsTileSubtitle,
-            locked: !_isPro,
+            locked: !_unlocked,
             onTap: () => _proGate(_configureAlerts),
           ),
         ],
@@ -4784,8 +4950,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                     _busy ? null : () => _runConsoleCommand(_consoleInput.text),
                 // Lock hint for free users (Konsole is Pro; the tap opens the
                 // paywall via _runConsoleCommand's gate).
-                icon: Icon(_isPro ? Icons.keyboard_return : Icons.lock_outline),
-                tooltip: _isPro
+                icon: Icon(_unlocked ? Icons.keyboard_return : Icons.lock_outline),
+                tooltip: _unlocked
                     ? context.l10n.tooltipSendCommand
                     : context.l10n.tooltipProFeature,
               ),
@@ -4803,7 +4969,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   // ---- Dateien tab: browse / preview / upload / delete on the Pi ----
 
   Widget _dateienTab(ThemeData theme) {
-    if (!_isPro) {
+    if (!_unlocked) {
       return _filesPlaceholder(
         theme,
         icon: Icons.lock_outline,

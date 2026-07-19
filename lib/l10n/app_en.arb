@@ -291,6 +291,9 @@
   "historyEvccDockerUpdated": "evcc Docker container updated.",
   "busyEvccUpdate": "evcc update running …",
   "busyConnecting": "Connecting …",
+  "demoButton": "Try the demo",
+  "demoBanner": "Demo mode – sample data, no real Pi.",
+  "demoExit": "Exit",
   "statusConnectedDetecting": "Connected – detecting services …",
   "statusConnectionOk": "Connection OK – detected: {found}.",
   "@statusConnectionOk": {

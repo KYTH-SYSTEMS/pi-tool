@@ -35,6 +35,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases*
   auf, die bleibt, bis du das Profil wechselst. **Automatik, Terminal und Dateien**
   sind bis dahin dezent gesperrt (ausgegraut) und werden erst nach dem Verbinden
   freigeschaltet. So ist immer klar, wann die App den Pi wirklich kontaktiert.
+- **Demo-Modus** — „Demo ausprobieren" auf dem Verbindungs-Bildschirm zeigt die
+  ganze App mit Beispieldaten (alle Tabs, alle Pro-Features), **ohne** einen echten
+  Raspberry Pi — zum Kennenlernen, und damit App-Reviewer die App ohne Gerät prüfen können.
 - **Deutsch & Englisch** — die Oberfläche folgt automatisch der Handy-Sprache;
   in den Einstellungen jederzeit fest umschaltbar (System / Deutsch / English).
 - **Dienste auto-erkennen** — „Verbindung herstellen" findet evcc, Pi-hole,

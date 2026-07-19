@@ -701,6 +701,50 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
+  testWidgets('Demo-Modus: „Demo ausprobieren" schaltet die App ohne Pi frei',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'S')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // Starts disconnected: no session badge, the demo entry is offered.
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    expect(find.text('Demo ausprobieren'), findsOneWidget);
+
+    // Tap it → the demo backend's canned detection populates the cards.
+    await tester.tap(find.text('Demo ausprobieren'));
+    await tester.pumpAndSettle();
+
+    // Demo banner + session badge (tabs unlocked) + the canned evcc service.
+    expect(find.text('Demo-Modus – Beispieldaten, kein echter Pi.'),
+        findsOneWidget);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+    expect(find.textContaining('evcc'), findsWidgets);
+
+    // A previously-gated tab (Terminal) is reachable AND Pro-unlocked in demo —
+    // the send button shows the unlocked icon, not a lock.
+    await tester.tap(find.byIcon(Icons.terminal_outlined));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.keyboard_return), findsOneWidget);
+
+    // Leaving demo returns to the connect screen.
+    await tester.tap(find.text('Beenden'));
+    await tester.pumpAndSettle();
+    expect(find.text('Demo ausprobieren'), findsOneWidget);
+  });
+
   Widget page(FakeEvccUpdater updater,
           {Future<EvccRelease?> Function()? rel,
           Future<String?> Function()? haLatest,
