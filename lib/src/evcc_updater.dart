@@ -527,6 +527,15 @@ class EvccUpdater {
           // "active" (green LED) = signed in. The on/off sub-state isn't
           // reliably parseable across rpi-connect versions, so we don't gate on
           // it (was falsely reporting "inaktiv" on a running, signed-in node).
+          // rpi-connect is an apt package → surface a pending apt upgrade like
+          // the other apt cards (handle both the lite and the full package).
+          String? pcPkg;
+          for (final p in const ['rpi-connect-lite', 'rpi-connect']) {
+            if (aptUpgrades.any((u) => u == p || u.startsWith('$p:'))) {
+              pcPkg = p;
+              break;
+            }
+          }
           out.add(ServiceStatus(
             id: 'piconnect',
             name: 'Raspberry Pi Connect',
@@ -534,6 +543,9 @@ class EvccUpdater {
             active: pc.signedIn,
             version: pc.signedIn ? 'angemeldet' : 'nicht angemeldet',
             detail: pc.signedIn ? 'Angemeldet' : 'Nicht angemeldet',
+            updateAvailable: pcPkg != null,
+            updateKnown: aptKnown,
+            aptPackage: pcPkg ?? 'rpi-connect-lite',
           ));
         } else {
           out.add(ServiceStatus.absent('piconnect', 'Raspberry Pi Connect',
@@ -543,6 +555,8 @@ class EvccUpdater {
         // ---- Tailscale (VPN/mesh, official installer, any OS) ----
         final ts = parseTailscaleStatus(sec['TAILSCALE'] ?? '');
         if (ts.installed) {
+          final tsUpdate = aptUpgrades
+              .any((u) => u == 'tailscale' || u.startsWith('tailscale:'));
           out.add(ServiceStatus(
             id: 'tailscale',
             name: 'Tailscale',
@@ -550,6 +564,9 @@ class EvccUpdater {
             active: ts.up,
             version: ts.up ? ts.ip : null,
             detail: ts.up ? 'Verbunden · ${ts.ip}' : 'Getrennt',
+            updateAvailable: tsUpdate,
+            updateKnown: aptKnown,
+            aptPackage: 'tailscale',
           ));
         } else {
           out.add(ServiceStatus.absent('tailscale', 'Tailscale'));

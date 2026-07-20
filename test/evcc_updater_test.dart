@@ -1600,6 +1600,52 @@ void main() {
       expect(list.firstWhere((s) => s.id == 'evcc').updateAvailable, isTrue);
     });
 
+    test('Pi Connect + Tailscale (apt) flag an update when the apt sim upgrades them',
+        () async {
+      final runner = FakeSshRunner({
+        piConnectStatusCommand: [_r('Signed in: yes\nScreen sharing: on')],
+        tailscaleStatusCommand: [_r('100.64.0.5   mypi   linux\n100.64.0.5')],
+        systemPendingCommand: [
+          _r('Inst rpi-connect-lite [1.0] (1.1 raspberrypi:armhf [armhf])\n'
+              'Inst tailscale [1.70] (1.72 tailscale:armhf [armhf])\n'
+              '2 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.')
+        ],
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"')],
+      });
+
+      final byId = {
+        for (final s in await _updaterWith(runner)
+            .detectServices(config: _config, onLog: (_) {}))
+          s.id: s
+      };
+
+      expect(byId['piconnect']!.installed, isTrue);
+      expect(byId['piconnect']!.updateKnown, isTrue);
+      expect(byId['piconnect']!.updateAvailable, isTrue);
+      expect(byId['piconnect']!.aptPackage, 'rpi-connect-lite');
+      expect(byId['tailscale']!.updateAvailable, isTrue);
+      expect(byId['tailscale']!.aptPackage, 'tailscale');
+    });
+
+    test('Pi Connect + Tailscale report up to date when the apt sim has no upgrade',
+        () async {
+      final runner = FakeSshRunner({
+        piConnectStatusCommand: [_r('Signed in: yes')],
+        tailscaleStatusCommand: [_r('100.64.0.5   mypi\n100.64.0.5')],
+        systemPendingCommand: [_r('0 upgraded, 0 newly installed, 0 to remove.')],
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+      });
+      final byId = {
+        for (final s in await _updaterWith(runner)
+            .detectServices(config: _config, onLog: (_) {}))
+          s.id: s
+      };
+      expect(byId['piconnect']!.updateKnown, isTrue);
+      expect(byId['piconnect']!.updateAvailable, isFalse);
+      expect(byId['tailscale']!.updateKnown, isTrue);
+      expect(byId['tailscale']!.updateAvailable, isFalse);
+    });
+
     test('System card carries vitals (temp, disk, RAM) with low-disk warning',
         () async {
       final runner = FakeSshRunner({

@@ -3816,15 +3816,18 @@ class _UpdaterPageState extends State<UpdaterPage>
             onPrimary: signedIn
                 ? () => _openUrl('https://connect.raspberrypi.com')
                 : _piConnectSignin,
-            actions: signedIn
-                ? [
-                    _CardAction(context.l10n.actionEnableRemoteAccess,
-                        () => _piConnectSet(true)),
-                    _CardAction(context.l10n.actionPauseRemoteAccess,
-                        () => _piConnectSet(false)),
-                    _CardAction(context.l10n.actionSignOut, _piConnectSignout),
-                  ]
-                : const [],
+            actions: [
+              if (s.updateAvailable)
+                _CardAction(
+                    context.l10n.actionUpdate, () => _updateAptService(s)),
+              if (signedIn) ...[
+                _CardAction(context.l10n.actionEnableRemoteAccess,
+                    () => _piConnectSet(true)),
+                _CardAction(context.l10n.actionPauseRemoteAccess,
+                    () => _piConnectSet(false)),
+                _CardAction(context.l10n.actionSignOut, _piConnectSignout),
+              ],
+            ],
           ));
         case 'tailscale':
           final up = s.active;
@@ -3841,6 +3844,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                 ? () => _openUrl('https://login.tailscale.com/admin/machines')
                 : null,
             actions: [
+              if (s.updateAvailable)
+                _CardAction(
+                    context.l10n.actionUpdate, () => _updateAptService(s)),
               if (up && s.version != null)
                 _CardAction(context.l10n.actionUseIpAsHost(s.version!),
                     () => _useTailscaleIp(s.version!)),
