@@ -4667,25 +4667,17 @@ class _UpdaterPageState extends State<UpdaterPage>
               enabled: !_busy,
               onTap: _testConnection,
             ),
-            // Explore the whole app with sample data, no Pi required (also how a
-            // Play reviewer gets past the connection screen).
-            if (!_connected)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _startDemo,
-                  icon: const Icon(Icons.play_circle_outline, size: 18),
-                  label: Text(context.l10n.demoButton),
-                  style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(44)),
-                ),
-              ),
             // No host yet (first start, or a freshly added profile) → offer a
-            // prominent network scan. Rebuilds live as the host field changes.
+            // prominent network scan, the setup guide, and a discreet demo link.
+            // Hidden once a Pi is configured OR a session is active, so it never
+            // clutters a returning user's connect screen — nor the demo view.
+            // Rebuilds live as the host field changes.
             ValueListenableBuilder<TextEditingValue>(
               valueListenable: _host,
               builder: (context, value, _) {
-                if (value.text.trim().isNotEmpty) return const SizedBox.shrink();
+                if (value.text.trim().isNotEmpty || _connected) {
+                  return const SizedBox.shrink();
+                }
                 return Padding(
                   padding: const EdgeInsets.only(top: 10),
                   child: Column(
@@ -4702,6 +4694,14 @@ class _UpdaterPageState extends State<UpdaterPage>
                         onPressed: _openSetupGuide,
                         icon: const Icon(Icons.menu_book_outlined, size: 18),
                         label: Text(context.l10n.noPiYetSetup),
+                      ),
+                      // Explore the whole app with sample data, no Pi required
+                      // (also how a Play reviewer gets past this screen). A quiet
+                      // text link — it only appears when no Pi is set up.
+                      TextButton.icon(
+                        onPressed: _busy ? null : _startDemo,
+                        icon: const Icon(Icons.play_circle_outline, size: 18),
+                        label: Text(context.l10n.demoButton),
                       ),
                     ],
                   ),
