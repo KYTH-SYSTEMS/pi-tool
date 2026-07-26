@@ -745,6 +745,69 @@ void main() {
     expect(find.text('Demo ausprobieren'), findsOneWidget);
   });
 
+  // Googles Prüfer-Pfad, belegt durch den Screenshot zu versionCode 115:
+  // WLAN-Suche öffnen, ein gefundenes Gerät antippen. Das setzt NUR den Host —
+  // die Zugangsdaten fehlen weiter, es gibt also immer noch keinen nutzbaren Pi.
+  // Verschwindet der Demo-Einstieg hier, sitzt der Prüfer in der Sackgasse.
+  testWidgets(
+      'Demo-Einstieg bleibt stehen, wenn die WLAN-Suche nur den Host füllt',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'Standard')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+        piFinder: () async => const ['192.168.97.1', '192.168.97.5'],
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('demoEntry')), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('192.168.97.1'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('demoEntry')), findsOneWidget,
+        reason: 'Host gesetzt, aber keine Zugangsdaten — genau der Zustand aus '
+            'Googles Screenshot; der Weg in die App muss bleiben');
+  });
+
+  // Gegenprobe: fertig eingerichtet (Host + Passwort) → weg, wie gewünscht.
+  testWidgets('Demo-Einstieg ist weg, sobald der Pi fertig konfiguriert ist',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [
+            Profile(name: 'S', host: '192.168.178.64', password: 'pw')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('demoEntry')), findsNothing);
+  });
+
   // The Play reviewer's exact situation: fresh install, small screen, no Pi.
   // The demo entry is their only way past the connect form — if it sits below
   // the fold they never find it and the password field reads as a login wall.

@@ -1,0 +1,3 @@
+Behoben: Der Demo-Einstieg verschwand schon, sobald man in der WLAN-Suche ein gefundenes Gerät antippte – obwohl damit nur die Adresse gesetzt ist und der Pi noch gar nicht eingerichtet.
+
+Jetzt bleibt er stehen, bis Adresse UND Zugangsdaten wirklich hinterlegt sind. Wer seinen Pi eingerichtet hat, sieht ihn wie gehabt nicht mehr.

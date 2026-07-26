@@ -335,9 +335,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   **Play-Invariante (nicht verhandelbar):** Ohne eingerichteten Pi muss der
   Einstieg „Demo ausprobieren" **auffällig und ohne Scrollen sichtbar** sein —
   gefüllter Knopf mit Key `demoEntry`, **vor** „Pi im WLAN suchen", plus
-  Erklärzeile `demoEntryHint`. Er versteckt sich weiterhin, sobald ein Host
-  eingetragen ist oder eine Verbindung steht (`ValueListenableBuilder` auf
-  `_host`) — wer die App eingerichtet hat, braucht ihn nicht. Daran hängt die
+  Erklärzeile `demoEntryHint`. Er versteckt sich erst, wenn das Profil
+  **wirklich nutzbar** ist — `_connected || _credsComplete()` (Host **und** das
+  Geheimnis des Auth-Modus), beobachtet über `Listenable.merge([_host,
+  _password, _privateKey])`. **Nicht** auf „Host-Feld nicht leer" zurückbauen:
+  ein Tipp auf ein Gerät in der WLAN-Suche füllt nur den Host, und genau dadurch
+  verschwand der Einstieg mitten im Ablauf (Googles Screenshot zu Code 115:
+  „Host set to 192.168.97.1", kein Weg mehr in die App). Daran hängt die
   Play-Erklärung **App-Zugriff = „kein Teil ist zugangsbeschränkt"**: ohne diesen
   Weg wirkt das Verbindungsformular wie eine Login-Wand. **Zweimal passiert:**
   v0.60.0 (19.07.2026, es gab den Demo-Modus noch nicht) und v0.63.0/Code 114

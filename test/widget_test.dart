@@ -562,9 +562,13 @@ void main() {
     await tester.pump(const Duration(seconds: 1)); // drain auto-save debounce
 
     expect(store.saved.active.host, '192.168.178.77');
-    // Once a host is set, the prominent button disappears.
+    // The block does NOT disappear yet: adopting a scan result fills only the
+    // host, so there is still no usable Pi — and the demo entry next to the
+    // scan button is the only way into the app. It used to vanish here, which
+    // is the dead end Google's reviewer got stuck in (see dispatch_test).
     expect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'),
-        findsNothing);
+        findsOneWidget);
+    expect(find.byKey(const Key('demoEntry')), findsOneWidget);
   });
 
   testWidgets('evcc-Status sheet renders live values from the API',

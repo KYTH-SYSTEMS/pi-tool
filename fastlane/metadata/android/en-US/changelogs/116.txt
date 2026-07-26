@@ -1,0 +1,3 @@
+Fixed: the demo entry disappeared as soon as you tapped a device found by the Wi-Fi search – even though that only fills in the address and the Pi isn't set up yet.
+
+It now stays until the address AND the credentials are actually in place. Once your Pi is set up you won't see it, as before.

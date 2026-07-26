@@ -4694,15 +4694,20 @@ class _UpdaterPageState extends State<UpdaterPage>
               enabled: !_busy,
               onTap: _testConnection,
             ),
-            // No host yet (first start, or a freshly added profile) → offer a
-            // prominent network scan, the setup guide, and a discreet demo link.
-            // Hidden once a Pi is configured OR a session is active, so it never
-            // clutters a returning user's connect screen — nor the demo view.
-            // Rebuilds live as the host field changes.
-            ValueListenableBuilder<TextEditingValue>(
-              valueListenable: _host,
-              builder: (context, value, _) {
-                if (value.text.trim().isNotEmpty || _connected) {
+            // No usable Pi yet → offer the demo, the network scan and the setup
+            // guide. Hidden once the profile is REALLY set up (`_credsComplete`:
+            // host + the secret the auth mode needs) or a session is live, so it
+            // never clutters a returning user's screen — nor the demo view.
+            //
+            // Deliberately NOT "host field non-empty": tapping a device in the
+            // Wi-Fi-search sheet fills only the host, and that used to make the
+            // demo entry vanish mid-flow. That is the dead end Google's reviewer
+            // hit — their screenshot shows "Host set to 192.168.97.1" and no way
+            // into the app left. Rebuilds live on host/password/key edits.
+            AnimatedBuilder(
+              animation: Listenable.merge([_host, _password, _privateKey]),
+              builder: (context, _) {
+                if (_connected || _credsComplete()) {
                   return const SizedBox.shrink();
                 }
                 return Padding(
