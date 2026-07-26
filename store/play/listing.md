@@ -56,6 +56,28 @@ wäre „App-Aktivität → Sonstige" bzw. „Diagnose", *shared*, **optional**,
 Erst ändern, wenn die App selbst zu ntfy spricht — dann ist diese Zeile hinfällig.
 → Bei jeder Änderung an den Health-Alerts diesen Abschnitt gegen `docs/privacy.html` prüfen.
 
+## Play-Console-Warnung „Randlose Anzeige funktioniert möglicherweise nicht für alle Nutzer"
+**Status: bekannt, nichts zu tun, nicht blockierend („1 Aktion empfohlen").** Untersucht am
+26.07.2026 (v0.63.0, targetSdk 35, Flutter 3.44.4).
+
+- **Unsere Layouts sind korrekt.** Mit simulierten Android-15-Insets gerendert (48 dp Statusbar,
+  24 dp Gestenleiste): App-Shell (`Scaffold` + `AppBar` + `NavigationBar`) und Verbindungs-Screen
+  halten sauber Abstand, kein Inhalt landet unter einer Systemleiste. Vollbild-Routen sind
+  abgedeckt — `_DisclaimerScreen` hat `SafeArea`, `_LockScreen`/Splash sind zentriert, die
+  Bottom-Sheets nutzen durchgehend `SafeArea`.
+- **Die beanstandeten APIs stecken in der Flutter-Engine, nicht in unserem Code.** Im
+  `flutter_embedding`-Jar nachgewiesen: `PlatformPlugin.class` referenziert `setStatusBarColor`,
+  `setNavigationBarColor`, `setNavigationBarDividerColor` und `setDecorFitsSystemWindows`,
+  `FlutterActivity.class` referenziert `setStatusBarColor` — genau die vier von Google für
+  Edge-to-Edge als veraltet markierten Aufrufe. Unser `MainActivity.kt` ruft keinen davon auf
+  (nur `FLAG_SECURE`), und `styles.xml` setzt weder `statusBarColor`/`navigationBarColor` noch
+  `windowOptOutEdgeToEdgeEnforcement`.
+- **Konsequenz:** In der App ist nichts zu reparieren; die Warnung verschwindet erst mit einer
+  Flutter-Version, deren Embedding diese Aufrufe nicht mehr enthält. Nicht bei jedem Release neu
+  untersuchen — nur gegenprüfen, wenn Google die Warnung von „empfohlen" auf **blockierend**
+  hochstuft oder der Text sich ändert (dann wäre der nächste Schritt ein Flutter-Upgrade, nicht
+  eine Änderung an unserem Layout).
+
 ## Content Rating
 - IARC-Fragebogen ausfüllen: keine Gewalt/Sexualität/Glücksspiel etc. → Ergebnis voraussichtlich **USK 0 / PEGI 3**.
 
