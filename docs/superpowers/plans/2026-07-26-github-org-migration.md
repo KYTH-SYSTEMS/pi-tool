@@ -48,8 +48,23 @@ Danach ist der Eigentümer des Repos für die URL egal.
 | 3 | Prüfen: alle drei Seiten (`privacy.html`, `impressum.html`, `agb.html`) über die neue Domain erreichbar, HTTPS gültig | ich |
 | 4 | **App-Release** mit den neuen URLs (`kPrivacyUrl`/`kImpressumUrl`/`kAgbUrl`) + README/`docs/`/fastlane nachziehen | ich |
 | 5 | In der **Play Console** die Datenschutz-URL auf die neue Domain umstellen | **Stefan** |
-| 6 | Erst **jetzt** die Organisation `KYTH-SYSTEMS` anlegen und das Repo transferieren | **Stefan** |
+| 6 | Erst **jetzt** das Repo nach `KYTH-SYSTEMS` transferieren (die Org existiert bereits: `github.com/KYTH-SYSTEMS`) **und dabei in `pi-tool` umbenennen** | **Stefan** |
 | 7 | Nacharbeiten (siehe unten) | ich |
+| 8 | Unter `profex1337` ein **Stub-Repo `evcc-pi-tool` mit Pages** stehen lassen, das auf die neue Domain weiterleitet | ich |
+
+**Zur Umbenennung** (Stefans Entscheidung 2026-07-19: die App heißt „Pi-Tool", „evcc"
+nur noch nominativ): sie vergrößert den Radius — jeder `evcc-pi-tool`-String in Code und
+Docs ändert sich mit (`kReleasesUrl`, `UpdateChecker.repo`, README/`docs/`/`store/`,
+`LICENSE`, `test/update_check_test.dart`). Genau deshalb gehören die Rechts-URLs vorher
+auf die eigene Domain: die ist gegen Transfer **und** Umbenennung immun. Der interne
+Dart-Package-Name bleibt `evcc_updater` (nicht nutzersichtbar).
+
+**Zu Schritt 8:** Alle bis dahin installierten App-Versionen (v0.60.0–v0.62.0) haben die
+`profex1337.github.io`-URLs fest eingebacken und lassen sich nicht nachträglich ändern.
+Ein Stub-Repo gleichen Namens mit einer Pages-Weiterleitung hält deren Rechts-Links am
+Leben. **Achtung:** dasselbe Stub-Repo killt GitHubs automatische Repo-Weiterleitung für
+`github.com/profex1337/evcc-pi-tool` — deshalb erst anlegen, NACHDEM Schritt 7 alle
+Code-Referenzen auf den neuen Ort umgestellt hat.
 
 Schritt 1 und 2 kosten die alten URLs nichts: die alte
 `profex1337.github.io`-Adresse bleibt bis zum Transfer erreichbar, danach
@@ -82,6 +97,14 @@ Leere — genau das ist der Zweck der Reihenfolge.
   `kyth-systems.github.io` geändert werden.
 - **Alte APK-Downloadlinks** aus GitHub-Releases werden von GitHub
   weitergeleitet — kein Handlungsbedarf.
+
+## Was GitHub von allein richtig macht
+
+Nicht überplanen — folgendes ist durch GitHub-Weiterleitungen abgedeckt und braucht
+keine Maßnahme: `git remote`/clone, Releases samt APK-Downloadlinks, Issues/PRs/Stars/
+Tags und der In-App-Update-Check (die GitHub-API folgt dem Repo-Redirect; `_defaultGetJson`
+folgt Redirects). Das eine, was NICHT mitzieht, ist Pages — und genau daran hängen die
+Rechts-URLs.
 
 ## Wenn ohne eigene Domain umgezogen werden soll
 
