@@ -152,6 +152,16 @@ der Play-Launch ist voll intakt.
       Der Demo-Link versteckt sich nur, wenn schon ein Host eingetragen ist (`main.dart`
       ValueListenableBuilder auf `_host`) — bei der Frisch-Installation eines Prüfers ist er also
       immer sichtbar.
+- [ ] **Erwartbar beim Einreichen: „Fehlende Anmeldedaten" trotz korrekter „Nein"-Angabe.** Das
+      ist Googles automatischer Vorab-Scan, der das SSH-Passwortfeld für eine Kontoanmeldung
+      hält (derselbe Fehlalarm wie bei v0.60.0). Dann **nicht** die Erklärung ändern und **keine**
+      erfundenen Zugangsdaten eintragen, sondern den angebotenen Weg „Liegt hier deiner Ansicht
+      nach ein Fehler vor? → ohne Korrektur einreichen" nehmen. So ist v0.63.0 am 26.07.2026
+      eingereicht worden; dieselbe Konstellation (Erklärung „Nein" + Demo-Einstieg) hat v0.61.0
+      durchs Review gebracht. Falls ein Mensch danach doch Zugangsdaten verlangt: erst im
+      Einspruch auf „Demo ausprobieren" verweisen, erst als letztes Mittel der Plan B vom
+      19.07.2026 (wegwerfbarer öffentlich erreichbarer SSH-Server als Prüf-Zugang) — bisher nie
+      nötig gewesen.
 - [ ] Store-Eintrag füllen (Texte aus `fastlane/…` übernehmen oder via `fastlane supply`)
 - [ ] Data Safety = „no data collected/shared" (siehe §2)
 - [ ] Content Rating (alles Nein → USK 0)
