@@ -27,7 +27,18 @@ Legende: **[DU]** = nur du kannst es (Konto, Zahlung, Gerät) · **[ICH]** = mac
 
 ## 1. Store-Eintrag (Texte + Grafiken)
 Schon fertig im Repo unter `fastlane/metadata/android/{de-DE,en-US}/`:
-- **[ICH] Titel** `title.txt` — „Pi-Tool (inoffiziell)" / „Pi-Tool (unofficial)" (max 30 Zeichen ✓)
+- **[ICH] Titel** `title.txt` — „Pi-Tool: SSH-Verwaltung" (23) / „Pi-Tool: SSH Manager" (20), max 30 ✓.
+  **Geändert am 26.07.2026** (vorher „Pi-Tool (inoffiziell)"/„(unofficial)"): Der Titel ist das mit
+  Abstand am stärksten gewichtete Suchfeld, und „(inoffiziell)" verschenkte 13 Zeichen an ein Wort ohne
+  Suchwert. Der Zusatz stammte aus der Zeit des alten Namens **„evcc Pi-Tool"** — da stand eine fremde
+  Marke im Titel und der Disclaimer war die Absicherung. „Pi-Tool" enthält keine fremde Marke mehr,
+  Play verlangt kein „unofficial" (die Impersonation-Richtlinie verbietet nur, eine Verbindung
+  vorzutäuschen), also trägt jetzt die Beschreibung den Hinweis. **Der Unabhängigkeitssatz im ersten
+  Absatz von `full_description.txt` muss deshalb stehen bleiben — er ist die ganze Absicherung.**
+  **„Raspberry Pi" gehört NICHT in den Titel:** Raspberry Pi Ltd verbietet die Marke ausdrücklich
+  „as part of your … product name" und erlaubt sie nur referenziell („for", „compatible with") —
+  der Play-Titel ist der Produktname. In der Beschreibung ist der referenzielle Gebrauch dagegen in
+  Ordnung (und in DE zusätzlich von § 23 MarkenG gedeckt).
 - **[ICH] Kurzbeschreibung** `short_description.txt` (max 80 Zeichen ✓)
 - **[ICH] Vollbeschreibung** `full_description.txt` (max 4000 Zeichen ✓)
 - **[ICH] Changelog** `changelogs/57.txt` (= versionCode von 0.23.0)

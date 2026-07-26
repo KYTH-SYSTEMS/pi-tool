@@ -1,1 +1,1 @@
-Manage your Raspberry Pi's services over SSH: update, back up, remote access.
+Manage your Raspberry Pi over SSH: update evcc, Pi-hole & Home Assistant

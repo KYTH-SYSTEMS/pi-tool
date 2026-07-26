@@ -1,1 +1,1 @@
-Raspberry-Pi-Dienste per SSH verwalten: aktualisieren, sichern, Fernzugriff.
+Raspberry Pi per SSH verwalten: evcc, Pi-hole & Home Assistant aktualisieren
