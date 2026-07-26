@@ -1,0 +1,3 @@
+Kein Raspberry Pi zur Hand? Der Demo-Einstieg ist auf dem Verbindungs-Bildschirm wieder ein klar sichtbarer Knopf statt eines kleinen Links – mit dem Hinweis, dass die ganze App ohne Anmeldung mit Beispieldaten läuft.
+
+Sobald ein Pi eingetragen ist, verschwindet er wie bisher: Wer die App eingerichtet hat, sieht ihn nicht mehr.

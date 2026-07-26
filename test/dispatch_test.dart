@@ -745,6 +745,53 @@ void main() {
     expect(find.text('Demo ausprobieren'), findsOneWidget);
   });
 
+  // The Play reviewer's exact situation: fresh install, small screen, no Pi.
+  // The demo entry is their only way past the connect form — if it sits below
+  // the fold they never find it and the password field reads as a login wall.
+  // That is why versionCode 114 was rejected (LoginWall.png showed the connect
+  // screen with the entry out of view), so pin both position and prominence.
+  testWidgets(
+      'Demo-Einstieg ist bei einer Frisch-Installation ohne Scrollen sichtbar '
+      'und steht VOR „Pi im WLAN suchen"', (tester) async {
+    tester.view.physicalSize = const Size(1080, 1920); // 360x640 logisch
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'S')], // kein Host → wie frisch installiert
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final demo = find.byKey(const Key('demoEntry'));
+    expect(demo, findsOneWidget);
+
+    final demoRect = tester.getRect(demo);
+    final screenHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(demoRect.bottom, lessThanOrEqualTo(screenHeight),
+        reason: 'Demo-Einstieg liegt unter der Falz — genau der Ablehnungsgrund '
+            'von versionCode 114');
+
+    // Vor der WLAN-Suche, damit er nicht wieder nach unten rutscht.
+    expect(
+        demoRect.top,
+        lessThan(tester
+            .getRect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'))
+            .top));
+  });
+
   Widget page(FakeEvccUpdater updater,
           {Future<EvccRelease?> Function()? rel,
           Future<String?> Function()? haLatest,

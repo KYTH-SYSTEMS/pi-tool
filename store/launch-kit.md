@@ -152,15 +152,28 @@ der Play-Launch ist voll intakt.
       Der Demo-Link versteckt sich nur, wenn schon ein Host eingetragen ist (`main.dart`
       ValueListenableBuilder auf `_host`) — bei der Frisch-Installation eines Prüfers ist er also
       immer sichtbar.
-- [ ] **Erwartbar beim Einreichen: „Fehlende Anmeldedaten" trotz korrekter „Nein"-Angabe.** Das
-      ist Googles automatischer Vorab-Scan, der das SSH-Passwortfeld für eine Kontoanmeldung
-      hält (derselbe Fehlalarm wie bei v0.60.0). Dann **nicht** die Erklärung ändern und **keine**
-      erfundenen Zugangsdaten eintragen, sondern den angebotenen Weg „Liegt hier deiner Ansicht
-      nach ein Fehler vor? → ohne Korrektur einreichen" nehmen. So ist v0.63.0 am 26.07.2026
-      eingereicht worden; dieselbe Konstellation (Erklärung „Nein" + Demo-Einstieg) hat v0.61.0
-      durchs Review gebracht. Falls ein Mensch danach doch Zugangsdaten verlangt: erst im
-      Einspruch auf „Demo ausprobieren" verweisen, erst als letztes Mittel der Plan B vom
-      19.07.2026 (wegwerfbarer öffentlich erreichbarer SSH-Server als Prüf-Zugang) — bisher nie
+- [ ] **„Fehlende Anmeldedaten" beim Einreichen — der Vorab-Scan hält das SSH-Passwortfeld für
+      eine Kontoanmeldung.** Der angebotene Ausweg „Liegt hier deiner Ansicht nach ein Fehler
+      vor? → ohne Korrektur einreichen" **reicht allein NICHT**: genau so wurde versionCode 114
+      am 26.07.2026 eingereicht und **abgelehnt** („In-app experience: LoginWall.png"). Der
+      Screenshot im Anhang zeigte den Verbindungs-Screen mit geöffneter WLAN-Suche — der
+      Demo-Einstieg lag darunter außerhalb des Sichtbereichs, der Prüfer kam nie in die App.
+      **Lehre: die Erklärung „nicht zugangsbeschränkt" ist nur so gut wie die Sichtbarkeit des
+      Demo-Einstiegs** (Invariante in `ARCHITECTURE.md`, Test in `dispatch_test.dart`). Beim
+      Wiedereinreichen deshalb **beides**: (1) ein Build, in dem der Demo-Knopf ohne Scrollen
+      sichtbar ist (ab v0.63.1), und (2) unter **App-Zugriff Anweisungen hinterlegen** statt nur
+      „Nein" — Google verlangt sie ausdrücklich auf Englisch. Passender Grund: „Aktionen, die auf
+      einem anderen Gerät ausgeführt werden müssen" (die App steuert den Raspberry Pi des
+      Nutzers). Vorlage für das Anweisungsfeld:
+
+      > This app has no account and no login. The form on the start screen takes the SSH
+      > credentials of the user's own Raspberry Pi; it is not a sign-in to any service of ours.
+      > No credentials are required to review the app: on the start screen, tap the button
+      > "Try the demo". Demo mode opens the complete app with sample data, including every paid
+      > feature. Username/password: not required.
+
+      **Keine erfundenen Zugangsdaten eintragen.** Letztes Mittel bleibt der Plan B vom
+      19.07.2026 (wegwerfbarer, öffentlich erreichbarer SSH-Server als Prüf-Zugang) — bisher nie
       nötig gewesen.
 - [ ] Store-Eintrag füllen (Texte aus `fastlane/…` übernehmen oder via `fastlane supply`)
 - [ ] Data Safety = „no data collected/shared" (siehe §2)

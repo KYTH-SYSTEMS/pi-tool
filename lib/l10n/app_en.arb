@@ -297,6 +297,7 @@
   "busyEvccUpdate": "evcc update running …",
   "busyConnecting": "Connecting …",
   "demoButton": "Try the demo",
+  "demoEntryHint": "No Pi at hand? Explore the whole app with sample data — no sign-in needed.",
   "demoBanner": "Demo mode – sample data, no real Pi.",
   "demoExit": "Exit",
   "statusConnectedDetecting": "Connected – detecting services …",

@@ -4709,6 +4709,32 @@ class _UpdaterPageState extends State<UpdaterPage>
                   padding: const EdgeInsets.only(top: 10),
                   child: Column(
                     children: [
+                      // FIRST and a real button, not fine print: without a Pi
+                      // this is the only way into the app — for a curious user
+                      // AND for the Play reviewer. v0.63.0 was rejected because
+                      // v0.62.0 had demoted it to a quiet text link below two
+                      // other entries: on the reviewer's small screen it sat
+                      // under the fold and they never found it (LoginWall.png),
+                      // so the connect form read as a login wall. Keep it above
+                      // "Pi im WLAN suchen" and keep it looking tappable.
+                      FilledButton.tonalIcon(
+                        key: const Key('demoEntry'),
+                        onPressed: _busy ? null : _startDemo,
+                        icon: const Icon(Icons.play_circle_outline, size: 18),
+                        label: Text(context.l10n.demoButton),
+                        style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(44)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 2),
+                        child: Text(
+                          context.l10n.demoEntryHint,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: theme.colorScheme.onSurfaceVariant),
+                        ),
+                      ),
                       OutlinedButton.icon(
                         onPressed: _busy ? null : _findPi,
                         icon: const Icon(Icons.wifi_find, size: 18),
@@ -4721,14 +4747,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                         onPressed: _openSetupGuide,
                         icon: const Icon(Icons.menu_book_outlined, size: 18),
                         label: Text(context.l10n.noPiYetSetup),
-                      ),
-                      // Explore the whole app with sample data, no Pi required
-                      // (also how a Play reviewer gets past this screen). A quiet
-                      // text link — it only appears when no Pi is set up.
-                      TextButton.icon(
-                        onPressed: _busy ? null : _startDemo,
-                        icon: const Icon(Icons.play_circle_outline, size: 18),
-                        label: Text(context.l10n.demoButton),
                       ),
                     ],
                   ),

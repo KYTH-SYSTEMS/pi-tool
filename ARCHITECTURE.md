@@ -332,15 +332,20 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `_exitDemo`). Pro ist im Demo offen über **`_unlocked = _isPro || _demoMode`** —
   alle Gate-Sites lesen `_unlocked`, nie mehr roh `_isPro`. Löst die Play-
   „LoginWall"-Prüfung ohne Demo-SSH-Server.
-  **Play-Invariante (nicht verhandelbar):** Der Einstieg „Demo ausprobieren" muss
-  auf einer **Frisch-Installation sichtbar** bleiben. Er versteckt sich bewusst
-  nur, sobald ein Host eingetragen ist oder eine Verbindung steht
-  (`ValueListenableBuilder` auf `_host` im Verbindungs-Screen) — ein Prüfer hat
-  ein leeres Host-Feld und sieht ihn also immer. Daran hängt die Play-Erklärung
-  **App-Zugriff = „Nein" (kein Teil der App ist zugangsbeschränkt)**: ohne diesen
-  Weg wirkt der Verbindungs-Screen wie eine Login-Wand — genau daran ist v0.60.0
-  am 19.07.2026 gescheitert. Wer die Sichtbarkeitsregel enger zieht, muss die
-  Play-Erklärung mit ändern (siehe `store/launch-kit.md`).
+  **Play-Invariante (nicht verhandelbar):** Ohne eingerichteten Pi muss der
+  Einstieg „Demo ausprobieren" **auffällig und ohne Scrollen sichtbar** sein —
+  gefüllter Knopf mit Key `demoEntry`, **vor** „Pi im WLAN suchen", plus
+  Erklärzeile `demoEntryHint`. Er versteckt sich weiterhin, sobald ein Host
+  eingetragen ist oder eine Verbindung steht (`ValueListenableBuilder` auf
+  `_host`) — wer die App eingerichtet hat, braucht ihn nicht. Daran hängt die
+  Play-Erklärung **App-Zugriff = „kein Teil ist zugangsbeschränkt"**: ohne diesen
+  Weg wirkt das Verbindungsformular wie eine Login-Wand. **Zweimal passiert:**
+  v0.60.0 (19.07.2026, es gab den Demo-Modus noch nicht) und v0.63.0/Code 114
+  (26.07.2026 — v0.62.0 hatte den Einstieg zum leisen Textlink an dritter Stelle
+  degradiert; auf dem kleinen Prüfer-Display lag er unter der Falz, der Beleg
+  „LoginWall.png" zeigt genau das). Ein Test in `dispatch_test.dart` pinnt seit
+  v0.63.1 Position und Sichtbarkeit auf 360×640 fest — nicht aufweichen, ohne die
+  Play-Erklärung mit zu ändern (siehe `store/launch-kit.md`).
 - **`early_adopter.dart`** — Marker fürs künftige Pro-**Grandfathering**:
   `AppConfig.firstSeenVersionCode` wird beim Start **einmalig** gestempelt
   (`_stampFirstSeenMarker`, best-effort, **nach** dem Unlock, ohne `setState` —
