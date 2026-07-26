@@ -74,6 +74,40 @@ void main() {
     });
   });
 
+  group('installChannelFor', () {
+    test('the Play Store installer means a Play build', () {
+      expect(installChannelFor('com.android.vending'), InstallChannel.play);
+    });
+
+    test('the legacy Play installer package also means a Play build', () {
+      expect(
+          installChannelFor('com.google.android.feedback'), InstallChannel.play);
+    });
+
+    test('casing and surrounding whitespace do not matter', () {
+      expect(installChannelFor('  COM.Android.Vending '), InstallChannel.play);
+    });
+
+    test('null (adb / unknown installer) means sideload', () {
+      expect(installChannelFor(null), InstallChannel.sideload);
+    });
+
+    test('an empty string means sideload', () {
+      expect(installChannelFor(''), InstallChannel.sideload);
+    });
+
+    test('another installer (browser, file manager) means sideload', () {
+      expect(installChannelFor('com.google.android.packageinstaller'),
+          InstallChannel.sideload);
+      expect(installChannelFor('org.fdroid.fdroid'), InstallChannel.sideload);
+    });
+
+    test('a package merely containing the Play id is not a Play build', () {
+      expect(installChannelFor('com.android.vending.evil'),
+          InstallChannel.sideload);
+    });
+  });
+
   group('parseEvccRelease', () {
     test('reads tag and notes body', () {
       final r = parseEvccRelease(

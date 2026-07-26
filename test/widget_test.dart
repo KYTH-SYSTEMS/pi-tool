@@ -44,6 +44,31 @@ class _DenyAuth implements Authenticator {
 final _noUpdateChecker =
     UpdateChecker(getJson: (_) async => <String, dynamic>{});
 
+/// Update checker that always reports a much newer GitHub release.
+final _newReleaseChecker = UpdateChecker(getJson: (_) async => {
+      'tag_name': 'v9.9.9',
+      'html_url': 'https://example.invalid/releases/tag/v9.9.9',
+      'assets': [
+        {
+          'name': 'app-release.apk',
+          'browser_download_url': 'https://example.invalid/app-release.apk',
+        },
+      ],
+    });
+
+/// Mocks PackageInfo for the app version + where the build was installed from.
+/// [installerStore] null = sideload, 'com.android.vending' = Play.
+void _mockPackageInfo({String version = '0.21.2', String? installerStore}) {
+  PackageInfo.setMockInitialValues(
+    appName: 'Pi-Tool',
+    packageName: 'systems.kyth.pitool',
+    version: version,
+    buildNumber: '40',
+    buildSignature: '',
+    installerStore: installerStore,
+  );
+}
+
 Widget _page() => MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -198,6 +223,60 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300)); // resolve + snackbar
     expect(find.text('Aktuell – du hast die neueste Version (v0.21.2).'),
         findsOneWidget);
+  });
+
+  testWidgets('a sideload build shows the GitHub update banner', (tester) async {
+    _mockPackageInfo(); // installerStore null → sideload
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(store: _FakeStore(), updateChecker: _newReleaseChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update v9.9.9 verfügbar'), findsOneWidget);
+  });
+
+  testWidgets('a Play build never shows the GitHub APK update banner',
+      (tester) async {
+    // Play re-signs the bundle, so the GitHub APK cannot install over a Play
+    // build — and Play requires updates to come through Play.
+    _mockPackageInfo(installerStore: 'com.android.vending');
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(store: _FakeStore(), updateChecker: _newReleaseChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update v9.9.9 verfügbar'), findsNothing);
+  });
+
+  testWidgets('⋮ → "Auf Update prüfen" points a Play build at Google Play',
+      (tester) async {
+    _mockPackageInfo(installerStore: 'com.android.vending');
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(store: _FakeStore(), updateChecker: _newReleaseChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>)); // top-right ⋮
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Auf Update prüfen'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Updates kommen automatisch über Google Play.'),
+        findsOneWidget);
+    expect(find.text('Play öffnen'), findsOneWidget); // snackbar action
   });
 
   testWidgets('warns when testing the connection with an empty host',

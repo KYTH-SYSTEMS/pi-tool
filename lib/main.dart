@@ -70,6 +70,9 @@ const kCard = Color(0xFF161A17);
 
 const kEvccPlayStoreUrl =
     'https://play.google.com/store/apps/details?id=io.evcc.android';
+/// Our own Play listing — where a Play build gets its updates.
+const kPlayStoreUrl =
+    'https://play.google.com/store/apps/details?id=systems.kyth.pitool';
 const kPrivacyUrl = 'https://profex1337.github.io/evcc-pi-tool/privacy.html';
 const kImpressumUrl = 'https://profex1337.github.io/evcc-pi-tool/impressum.html';
 const kAgbUrl = 'https://profex1337.github.io/evcc-pi-tool/agb.html';
@@ -990,6 +993,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     try {
       final info = await PackageInfo.fromPlatform();
       if (mounted) setState(() => _appVersion = info.version);
+      // A Play build updates through Play — never point it at the GitHub APK
+      // (Play requires updates to come through Play, and the sideload APK is
+      // signed with a different key, so it could not install over it anyway).
+      if (installChannelFor(info.installerStore) == InstallChannel.play) return;
       final release = await _updateChecker.checkForUpdate(info.version);
       if (release != null && mounted) setState(() => _update = release);
     } catch (_) {
@@ -999,10 +1006,19 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Manual "Auf Update prüfen": re-checks GitHub and reports the outcome (an
   /// update banner if newer, else a snackbar). Fail-soft — a failed check just
-  /// says so.
+  /// says so. On a Play build there is nothing to check here: Play delivers the
+  /// updates, so we only offer a shortcut to the store page.
   Future<void> _checkUpdatesNow() async {
     try {
       final info = await PackageInfo.fromPlatform();
+      if (installChannelFor(info.installerStore) == InstallChannel.play) {
+        if (!mounted) return;
+        setState(() => _appVersion = info.version);
+        _snack(context.l10n.snackUpdatesViaPlay,
+            actionLabel: context.l10n.actionOpenPlayStore,
+            onAction: () => _openUrl(kPlayStoreUrl));
+        return;
+      }
       final release = await _updateChecker.checkForUpdate(info.version);
       if (!mounted) return;
       setState(() {
@@ -3422,10 +3438,15 @@ class _UpdaterPageState extends State<UpdaterPage>
     return ok == true;
   }
 
-  void _snack(String msg) {
+  void _snack(String msg, {String? actionLabel, VoidCallback? onAction}) {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+      ..showSnackBar(SnackBar(
+        content: Text(msg),
+        action: (actionLabel != null && onAction != null)
+            ? SnackBarAction(label: actionLabel, onPressed: onAction)
+            : null,
+      ));
   }
 
   void _openSetupGuide() {

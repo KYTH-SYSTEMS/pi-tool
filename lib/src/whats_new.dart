@@ -18,6 +18,17 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.62.0': [
+    'Raspberry Pi Connect and Tailscale now flag an available update on their '
+        'card and offer "Update" right there — just like Grafana, InfluxDB and '
+        'Mosquitto. No more checking by hand whether remote access is current.',
+    'Updates from Google Play are handled by Play itself: installs from the '
+        'Play Store no longer show the in-app download banner for the GitHub '
+        'APK (it could not be installed over a Play build anyway). Sideload '
+        'installs keep the banner unchanged.',
+    'The "Try the demo" entry is more discreet — it now appears only while no '
+        'Pi is set up yet, instead of on every visit to the connection screen.',
+  ],
   '0.61.0': [
     'New demo mode: tap "Try the demo" on the connection screen to explore the '
         'whole app with sample data — no Raspberry Pi needed. A quick way to see '
@@ -61,6 +72,19 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.62.0': [
+    'Raspberry Pi Connect und Tailscale melden jetzt auf ihrer Karte, wenn ein '
+        'Update verfügbar ist, und bieten direkt „Aktualisieren" an — genau wie '
+        'Grafana, InfluxDB und Mosquitto. Kein manuelles Nachsehen mehr, ob der '
+        'Fernzugriff aktuell ist.',
+    'Updates aus Google Play regelt Play selbst: Installationen aus dem Play '
+        'Store zeigen den In-App-Hinweis auf die GitHub-APK nicht mehr an (die '
+        'ließe sich über eine Play-Version ohnehin nicht installieren). Bei '
+        'Sideload-Installationen bleibt der Hinweis unverändert.',
+    'Der Einstieg „Demo ausprobieren" ist dezenter — er erscheint jetzt nur '
+        'noch, solange noch kein Pi eingerichtet ist, statt bei jedem Besuch '
+        'des Verbindungs-Bildschirms.',
+  ],
   '0.61.0': [
     'Neuer Demo-Modus: Tippe auf dem Verbindungs-Bildschirm auf „Demo '
         'ausprobieren" und klick die ganze App mit Beispieldaten durch — ganz '

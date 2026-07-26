@@ -6,8 +6,8 @@ Services:
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
 * Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI
 * AdGuard Home, Node-RED & Zigbee2MQTT – auto-detected: open the web UI, view logs, restart the service
-* Raspberry Pi Connect – official remote access (Raspberry Pi OS Bookworm+): install, sign in via link, toggle on/off, open web
-* Tailscale – VPN/mesh: install, connect via login link. One-tap remote access: adopts the remembered tailnet IP as the host – reach your Pi from anywhere; back home, one tap returns to the home IP
+* Raspberry Pi Connect – official remote access (Raspberry Pi OS Bookworm+): install, sign in via link, toggle on/off, updates, open web
+* Tailscale – VPN/mesh: install, update, connect via login link. One-tap remote access: adopts the remembered tailnet IP as the host – reach your Pi from anywhere; one tap returns to the home IP
 * Docker containers – view running containers and restart them
 * "Add service" – every not-yet-installed service in one picker; the main screen shows only what's actually running
 * System (whole Pi) – update all packages (apt full-upgrade), reboot or shut down, health readout (temperature, disk, RAM, uptime) with a low-disk warning and an SD-card check

@@ -6,8 +6,8 @@ Dienste:
 * Home Assistant – als Docker-Container installieren (experimentell) und aktualisieren, Web-UI (Port 8123) öffnen
 * Grafana, InfluxDB & Mosquitto – installieren + aktualisieren per apt (offiz. Repo, experimentell), Web-UI öffnen
 * AdGuard Home, Node-RED & Zigbee2MQTT – automatisch erkannt: Web öffnen, Logs ansehen, neustarten
-* Raspberry Pi Connect – offizieller Fernzugriff (ab Raspberry Pi OS Bookworm): installieren, anmelden, an/aus, Web öffnen
-* Tailscale – VPN/Mesh installieren und per Login-Link verbinden. Fernzugriff mit einem Tap: setzt die Tailnet-IP als Host – von überall auf den Pi, per Tap zurück auf die Heim-IP
+* Raspberry Pi Connect – offizieller Fernzugriff (ab Raspberry Pi OS Bookworm): installieren, anmelden, an/aus, Updates, Web öffnen
+* Tailscale – VPN/Mesh installieren, aktualisieren und per Login-Link verbinden. Fernzugriff mit einem Tap: Tailnet-IP als Host – von überall auf den Pi, per Tap zurück zur Heim-IP
 * Docker-Container – laufende Container ansehen und neustarten
 * „Dienst hinzufügen" – alle noch nicht installierten Dienste an einer Stelle; der Hauptbildschirm zeigt nur, was wirklich läuft
 * System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige (Temperatur, Speicher, RAM, Uptime) mit Speicher-Warnung und SD-Check
@@ -23,7 +23,7 @@ Funktionen:
 * System aufräumen: Speicher freigeben (apt, ungenutzte Docker-Images, Journal)
 * Automatik auf dem Pi (systemd-Timer, kein Handy-Hintergrunddienst): geplante Updates (evcc-Sicherung + Selbstheilung), nächtliche Backups (Rotation), Health-Alerts via ntfy
 * Terminal: eigene Befehle per SSH absetzen (sudo unterstützt) mit Verlauf + Schnellbefehlen
-* SSH-Key mit einem Tap einrichten: Schlüssel wird auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil auf Key-Login umgestellt
+* SSH-Key mit einem Tap: Schlüssel wird auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil auf Key-Login umgestellt
 * Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import für den Gerätewechsel
 * Bewusst verbinden: „Verbindung herstellen" hält die Sitzung zum aktiven Pi bis zum Profilwechsel; Automatik, Terminal und Dateien werden erst nach dem Verbinden freigeschaltet. Grün/rot-Status; laufende Aktion abbrechbar

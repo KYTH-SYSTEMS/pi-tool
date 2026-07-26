@@ -1,0 +1,5 @@
+Raspberry Pi Connect and Tailscale now flag an available update on their card and offer "Update" right there – just like Grafana, InfluxDB and Mosquitto.
+
+Updates are handled by Google Play itself: Play installs no longer show the in-app notice pointing at the GitHub APK.
+
+The "Try the demo" entry is more discreet and appears only while no Pi is set up yet.

@@ -75,7 +75,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Pi OS Bookworm; per Link mit der Raspberry Pi ID anmelden) und **Tailscale**
   (VPN/Mesh, per Login-Link verbinden). Beides installieren/verbinden/trennen
   direkt in der App; die Tailnet-IP (100.x) lässt sich mit einem Tap ins
-  Host-Feld übernehmen — so erreichst du den Pi von überall.
+  Host-Feld übernehmen — so erreichst du den Pi von überall. Beide Karten
+  **melden verfügbare apt-Updates** und bieten „Aktualisieren" direkt an (wie
+  Grafana, InfluxDB und Mosquitto).
 - **Geplante Backups** — nächtliche evcc- + Pi-hole-Sicherung mit Rotation als
   On-Pi-systemd-Timer (Pro).
 - **Automatik** (läuft autonom auf dem Pi, **kein** Handy-Hintergrunddienst) —

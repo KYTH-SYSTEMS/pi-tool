@@ -1,4 +1,5 @@
-/// In-app update check against GitHub Releases (sideload channel only).
+/// In-app update check against GitHub Releases — sideload channel only, which
+/// [installChannelFor] enforces (a Play build is updated by Play itself).
 ///
 /// Pure version comparison + JSON parsing are unit-tested; the network fetch is
 /// a thin injectable adapter. The check is deliberately fail-soft: any error
@@ -8,6 +9,35 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+/// Where this build was installed from.
+enum InstallChannel {
+  /// Installed by the Play Store — updates come through Play.
+  play,
+
+  /// Everything else: the GitHub APK, adb, a file manager, another store.
+  sideload,
+}
+
+/// Installer package name reported by the Play Store.
+const _kPlayInstaller = 'com.android.vending';
+
+/// Legacy installer package Play used (still reported on some devices).
+const _kPlayInstallerLegacy = 'com.google.android.feedback';
+
+/// Classifies `PackageInfo.installerStore` into an [InstallChannel].
+///
+/// A Play build must NEVER be offered the GitHub APK: Play requires its apps to
+/// update through Play, and Play App Signing re-signs the bundle, so the
+/// differently-signed sideload APK cannot install over a Play build anyway.
+/// Anything we cannot positively identify as Play counts as sideload — that is
+/// the channel whose only update path IS the in-app notice.
+InstallChannel installChannelFor(String? installerStore) {
+  final store = (installerStore ?? '').trim().toLowerCase();
+  return (store == _kPlayInstaller || store == _kPlayInstallerLegacy)
+      ? InstallChannel.play
+      : InstallChannel.sideload;
+}
 
 /// Info about the latest GitHub release.
 class ReleaseInfo {

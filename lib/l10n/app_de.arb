@@ -148,6 +148,8 @@
   "snackUpdateAvailable": "Update verfügbar: {version}",
   "snackUpToDate": "Aktuell – du hast die neueste Version (v{version}).",
   "snackUpdateCheckFailed": "Update-Prüfung fehlgeschlagen – später erneut versuchen.",
+  "snackUpdatesViaPlay": "Updates kommen automatisch über Google Play.",
+  "actionOpenPlayStore": "Play öffnen",
   "authUnlockReason": "Pi-Tool entsperren",
   "snackEnterHost": "Bitte Host/IP eintragen.",
   "snackEnterPassword": "Bitte Pi-Passwort eintragen.",

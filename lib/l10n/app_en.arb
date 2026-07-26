@@ -249,6 +249,8 @@
     }
   },
   "snackUpdateCheckFailed": "Update check failed – try again later.",
+  "snackUpdatesViaPlay": "Updates are delivered automatically through Google Play.",
+  "actionOpenPlayStore": "Open Play",
   "authUnlockReason": "Unlock Pi-Tool",
   "snackEnterHost": "Please enter host/IP.",
   "snackEnterPassword": "Please enter the Pi password.",

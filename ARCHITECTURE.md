@@ -345,6 +345,15 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `AppLocalizations` (Quellen: `lib/l10n/app_{de,en}.arb`; Generat gitignored).
 - **`update_check.dart`** — Self-Update-Check (nur Sideload-Kanal) + evcc-/HA-
   Versionsproben, alle fail-soft (Fehler → null). `isNewerVersion` numerisch.
+  **`installChannelFor(PackageInfo.installerStore)` → `InstallChannel`** setzt
+  „nur Sideload" durch: bei `com.android.vending` (bzw. dem Legacy-Installer
+  `com.google.android.feedback`) unterbleiben Banner UND Netz-Check, und „Auf
+  Update prüfen" verweist auf die Play-Seite. Grund: Play verlangt Updates über
+  Play, und Play App Signing re-signiert das Bundle — die anders signierte
+  GitHub-APK ließe sich über eine Play-Version gar nicht installieren. Alles
+  nicht sicher als Play Erkannte gilt als Sideload (dort IST der Hinweis der
+  einzige Update-Pfad). Kein Native-Code nötig — `installerStore` kommt aus dem
+  ohnehin genutzten `package_info_plus`.
 - **`evcc_api.dart`** — read-only `GET /api/state`. `followRedirects = false`
   (kein Bounce durch einen Impersonator), nie Credentials, defensiver Parser.
 - **`network_scan.dart`** — „Pi finden": TCP-Port-22-Sweep des /24 (bewusst
