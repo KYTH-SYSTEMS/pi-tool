@@ -140,6 +140,18 @@ der Play-Launch ist voll intakt.
       DE 3967 / EN 3838 Zeichen (< 4000).
 
 **[DU] — in der Play Console**
+- [ ] **App-Inhalte → App-Zugriff = „Alle Funktionen sind ohne besondere Zugangsdaten
+      verfügbar"** — und KEIN Anweisungs-Eintrag darunter. Steht dort „eingeschränkt" mit einem
+      Eintrag ohne Benutzername/Passwort, blockt die Console das Einreichen mit **„Fehlende
+      Anmeldedaten"** (Pre-Submit-Check auf die Erklärung, kein Review-Befund). Die Angabe ist
+      inhaltlich korrekt: die App hat kein Konto und kein Login, seit v0.61.0 ist über
+      „Demo ausprobieren" auf dem Verbindungs-Screen die **ganze** App inkl. aller Pro-Funktionen
+      ohne Zugangsdaten erreichbar; die SSH-Felder sind die Zugangsdaten zum **eigenen Gerät des
+      Nutzers**, kein Login in einen Dienst von uns. Genau diese Einstellung hat v0.61.0 durchs
+      Review getragen (die Ablehnung vom 19.07.2026 kam, als es diesen Demo-Weg noch nicht gab).
+      Der Demo-Link versteckt sich nur, wenn schon ein Host eingetragen ist (`main.dart`
+      ValueListenableBuilder auf `_host`) — bei der Frisch-Installation eines Prüfers ist er also
+      immer sichtbar.
 - [ ] Store-Eintrag füllen (Texte aus `fastlane/…` übernehmen oder via `fastlane supply`)
 - [ ] Data Safety = „no data collected/shared" (siehe §2)
 - [ ] Content Rating (alles Nein → USK 0)

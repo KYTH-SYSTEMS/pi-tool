@@ -332,6 +332,15 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `_exitDemo`). Pro ist im Demo offen über **`_unlocked = _isPro || _demoMode`** —
   alle Gate-Sites lesen `_unlocked`, nie mehr roh `_isPro`. Löst die Play-
   „LoginWall"-Prüfung ohne Demo-SSH-Server.
+  **Play-Invariante (nicht verhandelbar):** Der Einstieg „Demo ausprobieren" muss
+  auf einer **Frisch-Installation sichtbar** bleiben. Er versteckt sich bewusst
+  nur, sobald ein Host eingetragen ist oder eine Verbindung steht
+  (`ValueListenableBuilder` auf `_host` im Verbindungs-Screen) — ein Prüfer hat
+  ein leeres Host-Feld und sieht ihn also immer. Daran hängt die Play-Erklärung
+  **App-Zugriff = „Nein" (kein Teil der App ist zugangsbeschränkt)**: ohne diesen
+  Weg wirkt der Verbindungs-Screen wie eine Login-Wand — genau daran ist v0.60.0
+  am 19.07.2026 gescheitert. Wer die Sichtbarkeitsregel enger zieht, muss die
+  Play-Erklärung mit ändern (siehe `store/launch-kit.md`).
 - **`early_adopter.dart`** — Marker fürs künftige Pro-**Grandfathering**:
   `AppConfig.firstSeenVersionCode` wird beim Start **einmalig** gestempelt
   (`_stampFirstSeenMarker`, best-effort, **nach** dem Unlock, ohne `setState` —

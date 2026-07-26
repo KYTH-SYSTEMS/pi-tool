@@ -82,6 +82,16 @@ Versprechens, dessen Bruch man erst Monate später merken würde.
 - Eine **Neuinstallation nach dem Flip verliert** den Grandfather-Status (der
   Marker ist rein lokal, kein Backend). Bewusst akzeptiert — im Zweifel über
   Support lösen.
+- **Die Play-Erklärung „App-Zugriff" muss beim Flip neu bewertet werden.** Heute
+  steht sie korrekt auf **„Nein"** (nichts ist zugangsbeschränkt: Pro schläft,
+  alles ist frei, und der Demo-Einstieg zeigt Prüfern die ganze App ohne
+  Zugangsdaten). Sobald Funktionen hinter einem Kauf liegen, greift Googles
+  Kriterium „Zahlungen … und/oder Zugriffsstufen" — dann entweder auf **„Ja"**
+  umstellen und dem Prüfer einen Weg geben (Lizenztester-Konto oder Promo-Code),
+  **oder** sicherstellen, dass der Demo-Modus weiterhin *alle* Pro-Funktionen
+  ohne Kauf zeigt (`_unlocked = _isPro || _demoMode` tut das heute) und die
+  Antwort begründet bei „Nein" belassen. Nicht stillschweigend übergehen — genau
+  diese Erklärung hat v0.60.0 die Ablehnung eingebracht.
 
 ## Quellen im Code
 
