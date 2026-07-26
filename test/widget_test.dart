@@ -1,6 +1,7 @@
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/l10n.dart';
 import 'package:evcc_updater/src/authenticator.dart';
+import 'package:evcc_updater/src/early_adopter.dart';
 import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:evcc_updater/src/kyth_wordmark.dart';
 import 'package:evcc_updater/src/profiles.dart';
@@ -223,6 +224,48 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300)); // resolve + snackbar
     expect(find.text('Aktuell – du hast die neueste Version (v0.21.2).'),
         findsOneWidget);
+  });
+
+  // The early-adopter marker is what makes the later Pro grandfathering
+  // possible: it must be stamped and PERSISTED while the app is still free.
+  // The pure resolve/decide logic is covered in early_adopter_test.dart — these
+  // two prove the wiring actually reaches the store.
+  testWidgets('a fresh install records the current versionCode as first-seen',
+      (tester) async {
+    _mockPackageInfo(); // buildNumber '40'
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'Standard')],
+      activeIndex: 0,
+      disclaimerAccepted: false, // nothing persisted yet → genuine fresh install
+    ));
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(store.saved.firstSeenVersionCode, 40);
+  });
+
+  testWidgets('a user from before the marker is stamped as pre-marker (0)',
+      (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    // Disclaimer already accepted → the app was clearly used before the marker
+    // shipped, so this user must land below any future paywall versionCode.
+    final store = _FakeStore();
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(store.saved.firstSeenVersionCode, kPreMarkerFirstSeen);
   });
 
   testWidgets('a sideload build shows the GitHub update banner', (tester) async {
