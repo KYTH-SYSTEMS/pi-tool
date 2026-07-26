@@ -1,0 +1,5 @@
+Health alerts: an ntfy topic is effectively a password – ntfy has no accounts, so anyone who guesses the name can read your Pi's status messages.
+
+The app now suggests a long random topic, offers a dice button for a fresh one, and flags a guessable topic in the dialog and on the Automation card.
+
+The privacy policy now describes the ntfy transmission and explains every Android permission the app requests.

@@ -183,6 +183,15 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `alerts.last` (Push nur bei Änderung). **Heredoc-Regel**: ntfy-Server/-Topic
   sind `shSingleQuote`d und landen in einem **quoted** Heredoc (`<<'WRAP'`) → kein
   Install-Zeit-Expand von `$(reboot)`. Blöcke nie zusammenlegen/entquoten.
+  **Topic-Invariante (v0.63.0):** ntfy kennt kein Konto — das Topic *ist* das
+  Passwort, wer es errät liest den Health-Feed mit. Deshalb `generateNtfyTopic()`
+  (`pi-tool-` + 14 Zeichen aus einem 31er-Alphabet ohne Verwechsler `0/o`,
+  `1/l/i` ≈ 69 Bit, `Random.secure`) — das Sheet belegt bei leerem Topic damit
+  vor, ein Würfel-Button würfelt neu, und `isWeakNtfyTopic()` (< 16 Zeichen oder
+  < 8 verschiedene Zeichen) markiert erratbare Namen im Sheet **und** als
+  Warnzeile auf der Automatik-Karte (`_AutomationTile.warning`) — Bestandsnutzer
+  öffnen das Sheet sonst nie wieder. Beides rein/testbar; nie durch ein
+  Freitext-Feld ohne Vorbelegung ersetzen.
 - **`files.dart`** — Datei-Browser über den normalen Exec-Kanal (kein SFTP → der
   `FakeSshRunner`-Seam deckt ihn ab). `head -c 512K | base64` (Server-seitiges
   Limit gegen OOM bei riesigen Dateien). **Löschen** (`buildDeleteCommand`,

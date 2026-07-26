@@ -18,6 +18,17 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.63.0': [
+    'Health alerts are safer by default: an ntfy topic is effectively a '
+        'password — ntfy has no accounts, so anyone who knows or guesses the '
+        'name can read your Pi\'s status messages. The app now suggests a long '
+        'random topic, offers a dice button for a fresh one, and flags a '
+        'guessable topic both in the dialog and on the Automation card.',
+    'The privacy policy now describes the ntfy transmission (what leaves your '
+        'Pi, to whom, and that topics are public), explains every Android '
+        'permission the app requests, and names the Home Assistant version '
+        'lookup on GitHub.',
+  ],
   '0.62.0': [
     'Raspberry Pi Connect and Tailscale now flag an available update on their '
         'card and offer "Update" right there — just like Grafana, InfluxDB and '
@@ -72,6 +83,17 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.63.0': [
+    'Health-Alerts sind ab Werk sicherer: Ein ntfy-Thema ist faktisch das '
+        'Passwort — ntfy kennt kein Konto, wer den Namen kennt oder errät, liest '
+        'die Statusmeldungen deines Pi mit. Die App schlägt jetzt ein langes '
+        'Zufallsthema vor, hat einen Würfel-Knopf für ein neues, und markiert '
+        'ein leicht erratbares Thema im Dialog und auf der Automatik-Karte.',
+    'Die Datenschutzerklärung beschreibt jetzt die ntfy-Übermittlung (was den '
+        'Pi verlässt, an wen, und dass Themen öffentlich lesbar sind), erklärt '
+        'alle Android-Berechtigungen der App und nennt die '
+        'Home-Assistant-Versionsabfrage bei GitHub.',
+  ],
   '0.62.0': [
     'Raspberry Pi Connect und Tailscale melden jetzt auf ihrer Karte, wenn ein '
         'Update verfügbar ist, und bieten direkt „Aktualisieren" an — genau wie '

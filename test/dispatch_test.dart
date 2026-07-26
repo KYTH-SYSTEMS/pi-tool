@@ -1613,6 +1613,113 @@ void main() {
     expect(u.alertsTopic, 'mein-pi-a7Xk');
   });
 
+  // An ntfy topic IS the password (ntfy.sh has no account and no auth): whoever
+  // knows or guesses the name reads which services run on the Pi and which
+  // updates are pending. So the sheet says so and hands out a strong name.
+  testWidgets(
+      'Automatik → Health-Alerts: Sheet warnt vor öffentlichen Themen und '
+      'belegt ein starkes Zufallsthema vor', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    // Nothing configured yet → the card carries no warning.
+    expect(find.textContaining('leicht erratbar'), findsNothing);
+
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+
+    final prefilled =
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text;
+    expect(prefilled, startsWith('pi-tool-'));
+    expect(isWeakNtfyTopic(prefilled), isFalse);
+    expect(find.textContaining('öffentlich'), findsOneWidget);
+
+    // The lazy path — tap "Einschalten", touch nothing — installs that topic.
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+    expect(u.alertsTopic, prefilled);
+  });
+
+  testWidgets('Health-Alerts: der Würfel erzeugt ein neues starkes Thema',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+
+    final ctrl =
+        tester.widget<TextField>(find.byType(TextField).first).controller!;
+    final before = ctrl.text;
+    await tester.tap(find.byIcon(Icons.casino_outlined));
+    await tester.pumpAndSettle();
+
+    expect(ctrl.text, isNot(before));
+    expect(isWeakNtfyTopic(ctrl.text), isFalse);
+  });
+
+  testWidgets('Health-Alerts-Sheet läuft auf einem kleinen Display nicht über',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+
+    // Shrink to a small phone (360x640 logical): the warning block made the
+    // sheet taller, so it has to scroll — a RenderFlex overflow fails here.
+    tester.view.physicalSize = const Size(1080, 1920);
+    tester.view.devicePixelRatio = 3.0;
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsWidgets);
+  });
+
+  testWidgets('Health-Alerts: ein kurzes Wunsch-Thema wird sofort als leicht '
+      'erratbar markiert', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'pi');
+    await tester.pump();
+    expect(find.textContaining('leicht zu erraten'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Automatik-Karte warnt bei einem bereits eingerichteten, schwachen '
+      'ntfy-Thema (wer das Sheet nie wieder öffnet, sieht es sonst nie)',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          alertsNtfyTopic: 'mein-pi',
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    expect(find.textContaining('leicht erratbar'), findsOneWidget);
+  });
+
   testWidgets('Automatik → auto-updates: turn OFF when currently active',
       (tester) async {
     useTallScreen(tester);

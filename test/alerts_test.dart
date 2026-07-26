@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:evcc_updater/src/alerts.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -87,6 +89,75 @@ void main() {
       expect(parseAlertsStatus('ENABLED disabled\nLAST \n').enabled, isFalse);
       expect(parseAlertsStatus('').enabled, isFalse);
       expect(parseAlertsStatus('').lastCheck, isNull);
+    });
+  });
+
+  // An ntfy topic IS the password (no auth on ntfy.sh): whoever knows or
+  // guesses the name reads every health message. So the generated name has to
+  // be long, valid for ntfy, and unguessable.
+  group('generateNtfyTopic', () {
+    test('prefixed + long random tail, only ntfy-legal characters', () {
+      final t = generateNtfyTopic(Random(42));
+      expect(t, matches(RegExp(r'^pi-tool-[a-z0-9]{14}$')));
+      // ntfy: "Topic names may only contain letters, numbers, underscores and
+      // dashes ([-_A-Za-z0-9]), and may be up to 64 characters long."
+      expect(t, matches(RegExp(r'^[-_A-Za-z0-9]+$')));
+      expect(t.length, lessThanOrEqualTo(64));
+    });
+
+    test('avoids look-alike characters (0/o, 1/l/i) so it can be re-typed', () {
+      for (var seed = 0; seed < 50; seed++) {
+        final tail = generateNtfyTopic(Random(seed)).substring(8);
+        expect(tail, isNot(matches(RegExp('[01oli]'))));
+      }
+    });
+
+    test('different draws yield different topics', () {
+      final drawn = {for (var i = 0; i < 200; i++) generateNtfyTopic()};
+      expect(drawn.length, 200);
+    });
+
+    test('a generated topic never trips the weak-topic warning', () {
+      for (var seed = 0; seed < 50; seed++) {
+        expect(isWeakNtfyTopic(generateNtfyTopic(Random(seed))), isFalse);
+      }
+    });
+
+    test('survives the install script unchanged (no quoting surprises)', () {
+      final t = generateNtfyTopic(Random(7));
+      final s = buildAlertsInstallScript(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: t);
+      expect(s, contains("TOPIC='$t'"));
+    });
+  });
+
+  group('isWeakNtfyTopic', () {
+    test('flags short names — the realistic guessing target', () {
+      expect(isWeakNtfyTopic('pi'), isTrue);
+      expect(isWeakNtfyTopic('evcc'), isTrue);
+      expect(isWeakNtfyTopic('mein-pi'), isTrue);
+      expect(isWeakNtfyTopic('mein-pi-a7Xk'), isTrue); // 12 chars
+    });
+
+    test('flags long but repetitive names', () {
+      expect(isWeakNtfyTopic('aaaaaaaaaaaaaaaaaaaaaa'), isTrue);
+      expect(isWeakNtfyTopic('ab-ab-ab-ab-ab-ab-ab'), isTrue);
+    });
+
+    test('accepts a long, varied name', () {
+      expect(isWeakNtfyTopic('pi-tool-k7m2q9x4vb3dwz'), isFalse);
+      expect(isWeakNtfyTopic('wohnzimmer-pi-7fq2mx'), isFalse);
+    });
+
+    test('an empty topic is not "weak" — there is nothing to warn about yet',
+        () {
+      expect(isWeakNtfyTopic(''), isFalse);
+      expect(isWeakNtfyTopic('   '), isFalse);
+    });
+
+    test('ignores surrounding whitespace', () {
+      expect(isWeakNtfyTopic('  pi-tool-k7m2q9x4vb3dwz  '), isFalse);
+      expect(isWeakNtfyTopic('  pi  '), isTrue);
     });
   });
 }

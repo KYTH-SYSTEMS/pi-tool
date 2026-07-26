@@ -18,7 +18,7 @@
 <body>
 <main>
   <h1>Pi-Tool — Datenschutzerklärung</h1>
-  <p class="muted">Stand: 30. Juni 2026. Diese App ist ein <strong>inoffizielles</strong> Community-Tool und
+  <p class="muted">Stand: 26. Juli 2026. Diese App ist ein <strong>inoffizielles</strong> Community-Tool und
   steht in keiner Verbindung zum evcc-Projekt. <strong>Nutzung auf eigene Gefahr — keine Haftung
   für Schäden an System, Daten oder Hardware</strong> (MIT-Lizenz, „AS IS").</p>
 
@@ -58,21 +58,76 @@
       Verbindungsversuche in deinem eigenen Netzwerk gemacht; <strong>an uns oder Dritte werden keine
       Daten übertragen</strong>.</li>
     <li>Aufrufe der öffentlichen <strong>GitHub-API</strong>: beim Start prüft die App auf eine neuere
-      Version (dieses Projekt) und lädt die evcc-Release-Notes (Projekt evcc-io/evcc). Dabei werden keine
+      Version (dieses Projekt); nach dem Verbinden lädt sie die Release-Notes von evcc
+      (<code>evcc-io/evcc</code>) und — nur wenn auf deinem Pi Home Assistant erkannt wurde — dessen
+      neueste Versionsnummer (<code>home-assistant/core</code>), damit die Karten „Aktuell ✓" statt
+      immer „Aktualisieren" zeigen können. Dabei werden keine
       Konten-, Nutzungs- oder Zugangsdaten übermittelt; technisch unvermeidbar erhält dabei GitHub Inc.
       (USA) die IP-Adresse deines Geräts als Empfänger in einem Drittland. Rechtsgrundlage ist unser
       berechtigtes Interesse an Update-Hinweisen (Art. 6 Abs. 1 lit. f DSGVO).</li>
-    <li>Beim Öffnen von Links (evcc-Weboberfläche, offizielle evcc-App im Play Store) öffnet sich dein Browser
-      bzw. der Play Store.</li>
+    <li>Beim Öffnen von Links (evcc-Weboberfläche, offizielle evcc-App im Play Store, Raspberry Pi Connect,
+      Tailscale) öffnet sich dein Browser bzw. der Play Store.</li>
   </ul>
+
+  <h2>Health-Alerts über ntfy (optional, standardmäßig aus)</h2>
+  <p>Richtest du „Health-Alerts" ein, installiert die App über deine SSH-Verbindung einen
+  <strong>systemd-Timer auf deinem Pi</strong>. Dieser prüft alle 30 Minuten den Zustand des Geräts und
+  schickt bei einem Problem eine Push-Nachricht an einen <strong>ntfy-Server</strong>. Voreingestellt ist
+  der öffentliche Dienst <a href="https://ntfy.sh">ntfy.sh</a> (Drittanbieter); im selben Dialog kannst du
+  jeden anderen — auch einen selbst gehosteten — ntfy-Server eintragen.</p>
+  <ul>
+    <li><strong>Wer sendet:</strong> Die Meldungen gehen von <em>deinem Pi</em> aus, nicht von deinem
+      Handy. Die App richtet diese Übermittlung jedoch ein und verschickt auf dein Antippen eine
+      Test-Nachricht.</li>
+    <li><strong>Was übertragen wird:</strong> das von dir gewählte Thema (Topic) und der Meldungstext —
+      also Zustandsdaten deines Pi: Speicherbelegung, Temperatur, Hinweise auf ein nur-lesendes
+      Dateisystem bzw. SD-Karten-Fehler, die Namen nicht laufender Dienste (z. B. evcc, Pi-hole) und die
+      <em>Anzahl</em> verfügbarer Updates. Keine Zugangsdaten, keine Konto- oder Nutzungsdaten. Technisch
+      bedingt erhält der ntfy-Server die IP-Adresse deines Internetanschlusses als Absender.</li>
+    <li><strong>Speicherung beim Dienst:</strong> ntfy.sh speichert veröffentlichte Nachrichten nach
+      eigenen Angaben vorübergehend zwischen (Voreinstellung: 12 Stunden) und protokolliert IP-Adressen
+      zur Begrenzung von Missbrauch; siehe die
+      <a href="https://docs.ntfy.sh/privacy/">Datenschutzhinweise von ntfy</a>. Betreiber, Serverstandort
+      und Aufbewahrung richten sich nach dem von dir eingetragenen Server.</li>
+    <li><strong>Wichtig — das Thema ist das Passwort:</strong> ntfy-Themen sind ohne Konto und ohne
+      Anmeldung erreichbar. <strong>Wer den Themennamen kennt oder errät, kann deine Meldungen
+      mitlesen</strong> — und damit sehen, welche Dienste auf deinem Pi laufen und welche Updates offen
+      sind. Die App schlägt deshalb ein langes, zufälliges Thema vor und warnt vor leicht erratbaren
+      Namen. Behandle den Namen wie ein Passwort und gib ihn nicht weiter.</li>
+    <li><strong>Rechtsgrundlage und Widerruf:</strong> Durchführung der von dir ausgelösten Funktion
+      (Art. 6 Abs. 1 lit. b bzw. f DSGVO). Ohne Einrichtung findet keine Übermittlung statt; du kannst die
+      Alerts jederzeit im selben Dialog abschalten — Timer und Skript werden dann vom Pi entfernt.</li>
+  </ul>
+
+  <h2>Berechtigungen der App</h2>
+  <ul>
+    <li><strong>Internet</strong> (<code>INTERNET</code>) — für die SSH-Verbindung zu deinem Pi und die
+      oben genannten Aufrufe.</li>
+    <li><strong>Biometrie / Gerätesperre</strong> (<code>USE_BIOMETRIC</code>) — ausschließlich für die
+      optionale App-Sperre. Die Prüfung übernimmt Android; die App erfährt nur „bestätigt" oder
+      „abgebrochen" und erhält <strong>keinerlei biometrische Daten</strong>. Es wird nichts übertragen.</li>
+    <li><strong>Benachrichtigungen</strong> (<code>POST_NOTIFICATIONS</code>) — damit Android die
+      Hinweis-Benachrichtigung des unten genannten Vordergrunddienstes anzeigen darf. Rein lokal auf
+      deinem Gerät: kein Push-Dienst, keine Push-Token, keine Firebase-Nachrichten.</li>
+    <li><strong>Vordergrunddienst</strong> (<code>FOREGROUND_SERVICE</code>,
+      <code>FOREGROUND_SERVICE_DATA_SYNC</code>) — damit eine von dir gestartete SSH-Aktion
+      (Update/Installation) weiterläuft, wenn du die App in den Hintergrund schickst; währenddessen ist
+      eine Benachrichtigung sichtbar. Übertragen werden dabei nur die von dir ausgelösten Befehle zu
+      deinem eigenen Pi.</li>
+  </ul>
+  <p class="muted">Die App enthält <strong>keine</strong> Analyse-, Werbe- oder Tracking-Bibliotheken und
+  fordert keine Berechtigungen für Standort, Kontakte, Kamera oder Mikrofon an. Einen Android-Dienst, der
+  im Hintergrund selbsttätig Aufgaben ausführt, gibt es bewusst nicht — Automatik läuft als Timer auf dem
+  Pi.</p>
 
   <h2>Löschung</h2>
   <p>Deinstallieren der App entfernt alle lokal gespeicherten Daten.</p>
 
   <h2>Rechtsgrundlage</h2>
   <p>Die lokal verarbeiteten Verbindungsdaten dienen ausschließlich der von dir ausgelösten Aktion
-  (Art. 6 Abs. 1 lit. b/f DSGVO). Außer dem oben genannten Update-Check bei GitHub (USA) werden keine
-  Daten an Dritte übermittelt.</p>
+  (Art. 6 Abs. 1 lit. b/f DSGVO). Außer dem oben genannten Update-Check bei GitHub (USA) und — nur wenn du
+  die Health-Alerts einrichtest — den Statusmeldungen deines Pi an den von dir gewählten ntfy-Server
+  werden keine Daten an Dritte übermittelt. An uns selbst übermittelt die App nichts.</p>
 
   <h2>Pro-Kauf über Google Play</h2>
   <p>Die einmalige Pro-Freischaltung kaufst du über Google Play. Vertragspartner des Kaufs
@@ -123,14 +178,37 @@
   Connection details you enter (host, port, username, password) are stored <strong>only locally and encrypted</strong>
   on your device (Android Keystore). They are never transmitted to the developer or any third party. Your password
   is sent only over your own SSH connection to your own server to perform the action you trigger, and is filtered
-  from logs. The app calls GitHub's public API on launch to check for app updates and to fetch evcc's release
-  notes; no account, usage or credential data is sent, but GitHub Inc. (USA) unavoidably receives your device's
+  from logs. The app calls GitHub's public API on launch to check for app updates, and after connecting it fetches
+  evcc's release notes (<code>evcc-io/evcc</code>) and — only if Home Assistant is detected on your Pi — its
+  latest version tag (<code>home-assistant/core</code>);
+  no account, usage or credential data is sent, but GitHub Inc. (USA) unavoidably receives your device's
   IP address as a recipient in a third country (legal basis: our legitimate interest in update checks,
   Art. 6(1)(f) GDPR). It makes a read-only HTTP call to your own evcc web API (<code>/api/state</code>) when you
   open the live status, and — only when you tap "find Pi" — probes the SSH port of devices on your own local
   Wi-Fi (local connection attempts only; no data is sent to us or any third party). Uninstalling the app deletes
   all stored data. This is an
   <strong>unofficial</strong> community tool, not affiliated with the mentioned projects.</p>
+  <p><strong>Health alerts via ntfy (optional, off by default):</strong> if you set them up, the app installs a
+  systemd timer <em>on your Pi</em> that checks the device every 30 minutes and pushes a message to an
+  <strong>ntfy server</strong> when something is wrong — by default the public service
+  <a href="https://ntfy.sh">ntfy.sh</a> (a third party); you may enter any other, including a self-hosted one.
+  What leaves your Pi (not your phone): the topic you chose and the message text — disk usage, temperature,
+  read-only-filesystem/SD-card errors, the names of services that are not running (e.g. evcc, Pi-hole) and the
+  <em>number</em> of available updates. No credentials, no account or usage data; the server receives your
+  connection's IP address as the sender. ntfy.sh states that published messages are cached temporarily
+  (default: 12 hours) and IP addresses may be logged for rate limiting
+  (<a href="https://docs.ntfy.sh/privacy/">ntfy privacy notes</a>). <strong>Note that an ntfy topic is
+  effectively a password:</strong> topics are reachable without an account, so anyone who knows or guesses the
+  name can read your messages — which is why the app suggests a long random topic and warns about guessable
+  ones. Legal basis: performing the function you triggered (Art. 6(1)(b)/(f) GDPR); switch it off in the same
+  dialog and the timer is removed from the Pi.</p>
+  <p><strong>Permissions:</strong> <code>INTERNET</code> for the SSH connection and the calls above;
+  <code>USE_BIOMETRIC</code> only for the optional app lock (Android performs the check — the app receives
+  "confirmed"/"cancelled" and no biometric data); <code>POST_NOTIFICATIONS</code> so Android may show the
+  foreground service's ongoing notification (local only — no push service, no push tokens, no Firebase); and
+  <code>FOREGROUND_SERVICE</code>/<code>FOREGROUND_SERVICE_DATA_SYNC</code> so a long SSH action keeps running
+  while the app is in the background. No analytics, ad or tracking libraries; no location, contacts, camera or
+  microphone permissions.</p>
   <p><strong>Pro purchase:</strong> the one-time Pro unlock is bought via Google Play. The seller
   (merchant of record) is the Google entity named at checkout (Google Commerce Limited); payment is
   handled by Google under Google's privacy policy and Play terms. We receive no payment data and

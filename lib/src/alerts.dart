@@ -5,9 +5,55 @@
 /// a state file so it never spams the same alert.
 library;
 
+import 'dart:math';
+
 import 'commands.dart' show shSingleQuote;
 
 const String alertsUnit = 'pi-tool-alerts';
+
+// ---- ntfy topic: the topic IS the password ----------------------------------
+//
+// ntfy.sh has no sign-up and no auth: "the topic is essentially a password, so
+// pick something that's not easily guessable" (docs.ntfy.sh/publish). Whoever
+// knows or guesses the name reads every health message — which services run on
+// the Pi and which updates are pending. So the app generates the name instead
+// of letting people type "pi".
+
+/// Alphabet for the random part: lowercase + digits minus the look-alikes
+/// (`0/o`, `1/l/i`) so the topic stays re-typable into the ntfy app. 31 chars.
+const String _topicAlphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+/// Length of the random part — 14 chars from 31 ≈ 69 bit, far past guessing.
+const int _topicRandomLength = 14;
+
+/// Prefix so a subscribed topic is recognisable in the ntfy app.
+const String _topicPrefix = 'pi-tool-';
+
+/// A hard-to-guess ntfy topic, e.g. `pi-tool-k7m2q9x4vb3dwz` (22 chars, well
+/// under ntfy's 64 and inside its `[-_A-Za-z0-9]` charset). [random] is for
+/// tests; production uses [Random.secure].
+String generateNtfyTopic([Random? random]) {
+  final rnd = random ?? Random.secure();
+  final buf = StringBuffer(_topicPrefix);
+  for (var i = 0; i < _topicRandomLength; i++) {
+    buf.write(_topicAlphabet[rnd.nextInt(_topicAlphabet.length)]);
+  }
+  return buf.toString();
+}
+
+/// Rough guessability check behind the warning on the Health-Alerts card.
+/// Deliberately crude and biased toward warning: a false warning costs one tap,
+/// a miss costs a publicly readable health feed. It catches the realistic case
+/// — short names ("pi", "evcc", "mein-pi") and long-but-repetitive ones. It
+/// can't judge whether a long name is a guessable dictionary phrase.
+/// An empty topic is not "weak": nothing is configured, so there's nothing to
+/// warn about.
+bool isWeakNtfyTopic(String topic) {
+  final t = topic.trim();
+  if (t.isEmpty) return false;
+  if (t.length < 16) return true;
+  return t.toLowerCase().split('').toSet().length < 8;
+}
 
 /// systemd schedule for the health check (every 30 minutes).
 const String _alertsOnCalendar = '*-*-* *:00/30:00';

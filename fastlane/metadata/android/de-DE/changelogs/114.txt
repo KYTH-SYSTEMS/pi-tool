@@ -1,0 +1,5 @@
+Health-Alerts: Ein ntfy-Thema ist faktisch das Passwort – ntfy kennt kein Konto, wer den Namen errät, liest die Statusmeldungen deines Pi mit.
+
+Die App schlägt jetzt ein langes Zufallsthema vor, bietet einen Würfel-Knopf für ein neues und markiert ein leicht erratbares Thema im Dialog und auf der Automatik-Karte.
+
+Die Datenschutzerklärung beschreibt jetzt die ntfy-Übermittlung und erklärt alle Android-Berechtigungen der App.

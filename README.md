@@ -83,7 +83,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Automatik** (läuft autonom auf dem Pi, **kein** Handy-Hintergrunddienst) —
   **geplante Updates** per systemd-Timer (mit evcc-Sicherung + Selbstheilung) und
   **Health-Alerts** als Push via [ntfy](https://ntfy.sh) bei voller Platte,
-  totem Dienst, Hitze oder anstehenden Updates.
+  totem Dienst, Hitze oder anstehenden Updates. Das ntfy-Thema ist faktisch das
+  Passwort (ntfy kennt kein Konto), deshalb schlägt die App ein langes
+  Zufallsthema vor und warnt vor leicht erratbaren Namen.
 - **Dateien** — der Datei-Browser deines Pi im eigenen Tab: Ordner durchsuchen,
   Dateien ansehen (Vorschau), **Textdateien direkt bearbeiten** (atomar mit
   Backup; Binärdateien bleiben schreibgeschützt), **vom Handy hochladen** und

@@ -37,6 +37,25 @@ Diese beschreiben den Multi-Service-Stand (evcc + Pi-hole + ganzer Pi) inkl. Aff
 - Löschung: durch Deinstallation.
 - (Falls das Formular „App-Funktionalität / Credentials" abfragt: lokal, nicht geteilt.)
 
+### Abgleich mit der DSE: ntfy / Health-Alerts (Stand 26.07.2026, v0.63.0)
+Die Datenschutzerklärung nennt seit v0.63.0 die ntfy-Übermittlung. **Die Data-Safety-Antwort
+bleibt trotzdem „No data collected / No data shared"** — begründet, nicht aus Bequemlichkeit:
+
+- **Die App selbst überträgt nichts an ntfy.** Sie schreibt per SSH einen systemd-Timer auf den
+  Pi; das `curl` läuft dort. Auch die Test-Nachricht ist ein SSH-Befehl auf dem Pi
+  (`buildTestAlertCommand`), kein HTTP-Aufruf vom Handy. Data Safety fragt nach Daten, die **die
+  App vom Gerät des Nutzers** erhebt/teilt.
+- **Nutzer-initiiert an ein selbst gewähltes Ziel:** Server *und* Topic gibt der Nutzer ein
+  (Play-Ausnahme für Übertragungen aufgrund einer konkreten Nutzeraktion an einen Empfänger,
+  mit dem der Nutzer die Weitergabe erwartet). Ohne Einrichtung passiert nichts (Default: aus).
+- **Inhalt sind Gerätezustandsdaten des Pi** (Speicher, Temperatur, Dienstnamen, *Anzahl*
+  offener Updates) — keine Nutzerdaten aus einer Data-Safety-Kategorie, keine Kennungen.
+
+**Wenn Google in der Console nachfragt** (oder die Antwort konservativer sein soll): Kategorie
+wäre „App-Aktivität → Sonstige" bzw. „Diagnose", *shared*, **optional**, Zweck „App-Funktionalität".
+Erst ändern, wenn die App selbst zu ntfy spricht — dann ist diese Zeile hinfällig.
+→ Bei jeder Änderung an den Health-Alerts diesen Abschnitt gegen `docs/privacy.html` prüfen.
+
 ## Content Rating
 - IARC-Fragebogen ausfüllen: keine Gewalt/Sexualität/Glücksspiel etc. → Ergebnis voraussichtlich **USK 0 / PEGI 3**.
 

@@ -4931,6 +4931,12 @@ class _UpdaterPageState extends State<UpdaterPage>
             title: context.l10n.healthAlertsTitle,
             subtitle: context.l10n.healthAlertsTileSubtitle,
             locked: !_unlocked,
+            // The topic is the only protection on ntfy (no account, no auth), so
+            // flag a guessable one here too — someone who set alerts up once may
+            // never open the sheet again.
+            warning: isWeakNtfyTopic(_alertsTopic)
+                ? context.l10n.alertsWeakTopicCardHint
+                : null,
             onTap: () => _proGate(_configureAlerts),
           ),
         ],

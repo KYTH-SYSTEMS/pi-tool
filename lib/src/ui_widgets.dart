@@ -281,12 +281,28 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   late final TextEditingController _serverCtrl = TextEditingController(
     text: widget.initialServer,
   );
+
+  /// On first setup the field starts on a generated topic: an ntfy topic IS the
+  /// password (no account, no auth), so the default path has to be the safe one
+  /// — a hand-typed "pi" publishes the Pi's health to whoever guesses it.
   late final TextEditingController _topicCtrl = TextEditingController(
-    text: widget.initialTopic,
+    text: widget.initialTopic.trim().isEmpty
+        ? generateNtfyTopic()
+        : widget.initialTopic,
   );
 
   @override
+  void initState() {
+    super.initState();
+    // Rebuild while typing so the "easy to guess" line tracks the actual field.
+    _topicCtrl.addListener(_onTopicChanged);
+  }
+
+  void _onTopicChanged() => setState(() {});
+
+  @override
   void dispose() {
+    _topicCtrl.removeListener(_onTopicChanged);
     _serverCtrl.dispose();
     _topicCtrl.dispose();
     super.dispose();
@@ -295,6 +311,39 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   String get _server => _serverCtrl.text.trim().isEmpty
       ? 'https://ntfy.sh'
       : _serverCtrl.text.trim();
+
+  void _rollTopic() {
+    final topic = generateNtfyTopic();
+    _topicCtrl.value = TextEditingValue(
+      text: topic,
+      selection: TextSelection.collapsed(offset: topic.length),
+    );
+  }
+
+  /// Warning row in the app's usual style (amber icon, `cs.error`).
+  Widget _warnRow(String text, {required bool strong}) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 16, color: cs.error),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: strong ? cs.error : cs.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -308,108 +357,121 @@ class _AlertsSheetState extends State<_AlertsSheet> {
           top: 4,
           bottom: 20 + MediaQuery.of(context).viewInsets.bottom,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(context.l10n.healthAlertsTitle,
-                style: theme.textTheme.titleLarge),
-            const SizedBox(height: 8),
-            Text(context.l10n.wAlertsExplain),
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: widget.onOpenNtfy,
-              child: Text(
-                context.l10n.wAlertsNtfyLink,
-                style: TextStyle(
-                  color: theme.colorScheme.primary,
-                  fontSize: 13,
+        // Scrollable: with the topic warning + both fields the sheet is taller
+        // than a small phone in landscape or with the keyboard up.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(context.l10n.healthAlertsTitle,
+                  style: theme.textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(context.l10n.wAlertsExplain),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: widget.onOpenNtfy,
+                child: Text(
+                  context.l10n.wAlertsNtfyLink,
+                  style: TextStyle(
+                    color: theme.colorScheme.primary,
+                    fontSize: 13,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              status.enabled
-                  ? context.l10n.wAlertsActiveSince(status.lastCheck ?? '—')
-                  : context.l10n.statusScheduleOff,
-              style: TextStyle(
-                color: status.enabled ? kGreen : null,
-                fontWeight: FontWeight.w600,
+              const SizedBox(height: 12),
+              Text(
+                status.enabled
+                    ? context.l10n.wAlertsActiveSince(status.lastCheck ?? '—')
+                    : context.l10n.statusScheduleOff,
+                style: TextStyle(
+                  color: status.enabled ? kGreen : null,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _topicCtrl,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: context.l10n.wNtfyTopicLabel,
-                hintText: context.l10n.wNtfyTopicHint,
-                helperText: context.l10n.wNtfyTopicHelper,
-                border: const OutlineInputBorder(),
+              const SizedBox(height: 12),
+              _warnRow(context.l10n.wNtfyTopicPublicWarning, strong: false),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _topicCtrl,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: context.l10n.wNtfyTopicLabel,
+                  hintText: context.l10n.wNtfyTopicHint,
+                  helperText: context.l10n.wNtfyTopicHelper,
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.casino_outlined),
+                    tooltip: context.l10n.wNtfyTopicDice,
+                    onPressed: _rollTopic,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _serverCtrl,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: context.l10n.wNtfyServerLabel,
-                border: const OutlineInputBorder(),
+              if (isWeakNtfyTopic(_topicCtrl.text))
+                _warnRow(context.l10n.wNtfyTopicWeak, strong: true),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _serverCtrl,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: context.l10n.wNtfyServerLabel,
+                  border: const OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        final topic = _topicCtrl.text.trim();
+                        if (topic.isEmpty) {
+                          widget.onSnack(context.l10n.wEnterNtfyTopic);
+                          return;
+                        }
+                        Navigator.pop(context, (
+                          enable: true,
+                          server: _server,
+                          topic: topic,
+                        ));
+                      },
+                      child: Text(
+                        status.enabled
+                            ? context.l10n.actionUpdate
+                            : context.l10n.turnOn,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
                     onPressed: () {
                       final topic = _topicCtrl.text.trim();
                       if (topic.isEmpty) {
                         widget.onSnack(context.l10n.wEnterNtfyTopic);
                         return;
                       }
-                      Navigator.pop(context, (
-                        enable: true,
-                        server: _server,
-                        topic: topic,
-                      ));
+                      widget.onTest(_server, topic);
                     },
-                    child: Text(
-                      status.enabled
-                          ? context.l10n.actionUpdate
-                          : context.l10n.turnOn,
-                    ),
+                    child: Text(context.l10n.wTest),
+                  ),
+                ],
+              ),
+              if (status.enabled)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context, (
+                      enable: false,
+                      server: '',
+                      topic: '',
+                    )),
+                    child: Text(context.l10n.turnOff),
                   ),
                 ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: () {
-                    final topic = _topicCtrl.text.trim();
-                    if (topic.isEmpty) {
-                      widget.onSnack(context.l10n.wEnterNtfyTopic);
-                      return;
-                    }
-                    widget.onTest(_server, topic);
-                  },
-                  child: Text(context.l10n.wTest),
-                ),
-              ],
-            ),
-            if (status.enabled)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: () => Navigator.pop(context, (
-                    enable: false,
-                    server: '',
-                    topic: '',
-                  )),
-                  child: Text(context.l10n.turnOff),
-                ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1151,6 +1213,7 @@ class _AutomationTile extends StatelessWidget {
     required this.subtitle,
     this.onTap,
     this.locked = false,
+    this.warning,
   });
 
   final IconData icon;
@@ -1158,6 +1221,11 @@ class _AutomationTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback? onTap;
   final bool locked;
+
+  /// Optional second subtitle line in warning style — used for a configuration
+  /// that works but is unsafe (e.g. a guessable ntfy topic), so the user sees it
+  /// without having to reopen the sheet.
+  final String? warning;
 
   @override
   Widget build(BuildContext context) {
@@ -1172,7 +1240,31 @@ class _AutomationTile extends StatelessWidget {
           title,
           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
         ),
-        subtitle: Text(subtitle),
+        subtitle: warning == null
+            ? Text(subtitle)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(subtitle),
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          size: 15, color: cs.error),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          warning!,
+                          style: TextStyle(
+                              fontSize: 12, height: 1.3, color: cs.error),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
         trailing: locked
             ? Icon(Icons.lock_outline, size: 18, color: cs.onSurfaceVariant)
             : const Icon(Icons.chevron_right),
