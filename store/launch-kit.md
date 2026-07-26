@@ -1,5 +1,14 @@
 # Pi-Tool — Launch-Kit (kostenloser Start)
 
+> **STATUS: LAUNCH ERLEDIGT — die App ist seit 26.07.2026 in Google Play live**
+> ([`systems.kyth.pitool`](https://play.google.com/store/apps/details?id=systems.kyth.pitool),
+> v0.61.0 / versionCode 112; IARC-Ratings live, Global Rating ID
+> `a9a55def-8a3d-8414-84d0-3f6b21e9cff5`). Dieses Dokument ist ab jetzt
+> **Historie/Referenz**, keine offene To-do-Liste mehr. **F-Droid/IzzyOnDroid
+> entfällt** (IzzyOnDroid hat unter seiner AI-Policy abgelehnt) → Kanäle sind
+> Play + direkte APK am GitHub-Release. Offen bleibt nur der spätere
+> **Pro-Flip** (DormantEntitlement → echtes Play Billing).
+
 Ziel: **kostenlos** in Google Play + auf F-Droid, Reichweite sammeln, den 5-€-Pro-Kauf
 später per Update nachschieben (Gating liegt schon fertig+schlafend im Code).
 

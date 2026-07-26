@@ -12,7 +12,10 @@
     h1 { font-size:2rem; margin:.2rem 0; }
     h1 .accent { color:#1FD65F; }
     p.tag { color:#9AA39B; margin-top:0; }
-    .bolt { font-size:64px; color:#1FD65F; }
+    .mark { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+            font-size:56px; font-weight:700; letter-spacing:.04em; line-height:1; }
+    .mark .chev { color:#E8EDE9; }
+    .mark .dot { color:#1FD65F; }
     a.btn { display:inline-block; margin:10px 6px; padding:14px 22px; border-radius:12px;
             background:#1FD65F; color:#04210F; font-weight:700; text-decoration:none; }
     a.ghost { background:transparent; color:#1FD65F; border:1px solid #1FD65F44; }
@@ -22,23 +25,28 @@
 </head>
 <body>
 <main>
-  <div class="bolt">⚡</div>
+  <div class="mark"><span class="chev">&gt;</span><span class="dot">•</span></div>
   <h1><span class="accent">Pi-Tool</span></h1>
   <p class="tag">Inoffizielles Cockpit für den Raspberry Pi: self-hosted Dienste per SSH
   installieren, aktualisieren, sichern und überwachen — plus Fernzugriff und Dateien.
   evcc, Pi-hole, Home Assistant, Grafana, InfluxDB, Mosquitto, Raspberry Pi Connect &amp; Tailscale.</p>
 
   <div>
-    <a class="btn" href="https://github.com/profex1337/evcc-pi-tool/releases/latest">APK herunterladen (Android)</a>
+    <a class="btn" href="https://play.google.com/store/apps/details?id=systems.kyth.pitool">Bei Google Play installieren</a>
   </div>
   <div>
+    <a class="ghost btn" href="https://github.com/profex1337/evcc-pi-tool/releases/latest">APK herunterladen</a>
     <a class="ghost btn" href="https://github.com/profex1337/evcc-pi-tool">Quellcode auf GitHub</a>
+  </div>
+  <div>
     <a class="ghost btn" href="privacy.html">Datenschutz</a>
+    <a class="ghost btn" href="agb.html">Nutzungsbedingungen</a>
     <a class="ghost btn" href="impressum.html">Impressum</a>
   </div>
 
   <p class="muted">
-    Sideload-Installation: APK öffnen → „Apps aus dieser Quelle zulassen" → installieren.<br>
+    Über Google Play kommen Updates automatisch. Alternativ per Sideload:
+    APK öffnen → „Apps aus dieser Quelle zulassen" → installieren.<br>
     Inoffizielles Community-Tool, nicht mit dem evcc-Projekt verbunden. Für die tägliche Steuerung gibt es die
     <a href="https://play.google.com/store/apps/details?id=io.evcc.android">offizielle evcc-App</a>.<br>
     Nutzung auf eigene Gefahr — keine Haftung für Schäden an System, Daten oder Hardware (MIT-Lizenz, „AS IS").

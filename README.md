@@ -9,7 +9,10 @@ Karte — [evcc](https://evcc.io), Pi-hole, Home Assistant, Grafana, InfluxDB,
 Mosquitto und das **ganze System** (alle Pakete via `apt full-upgrade`). Du
 verbindest dich **bewusst** und bleibst mit dem Pi verbunden, bis du das Profil
 wechselst; erst dann sind Automatik, Terminal und Dateien freigeschaltet. IP +
-Pi-Zugang eintragen, tippen, fertig. Verteilung als **APK über GitHub Releases**.
+Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
+**APK über GitHub Releases**.
+
+**[➜ Bei Google Play installieren](https://play.google.com/store/apps/details?id=systems.kyth.pitool)**
 
 > Noch **kein Pi**? Die App hat eine eingebaute Schritt-für-Schritt-Anleitung
 > („Pi einrichten", per Raspberry Pi Imager: SSH + Benutzer + WLAN).
@@ -225,13 +228,23 @@ apt-Repo via `setup.deb.sh` hinzufügen → `apt install -y evcc` →
 zeigt die App **„Einrichtung öffnen"** → `http://<pi>:7070`. Über die
 Einstellungen lässt sich vorab der **nightly-Kanal** (unstable) wählen.
 
-## Installation (Sideload)
+## Installation
+
+**Google Play (empfohlen)** — automatische Updates, kein Sideload-Hinweis:
+
+[play.google.com/store/apps/details?id=systems.kyth.pitool](https://play.google.com/store/apps/details?id=systems.kyth.pitool)
+
+**Sideload (Alternative)** — ohne Google-Konto, direkt vom GitHub-Release:
 
 1. Auf der [Releases-Seite](../../releases) die neueste **`app-release.apk`**
    herunterladen (Handy-Browser genügt, kein GitHub-Account nötig).
 2. Beim Öffnen fragt Android nach **„Unbekannte Quellen / Apps aus dieser
    Quelle zulassen"** → erlauben.
 3. APK installieren, App öffnen.
+
+> Beide Kanäle laufen unabhängig nebeneinander (unterschiedliche Signatur, siehe
+> [Verteilung](#verteilung-google-play-und-sideload)) — ein Wechsel zwischen
+> ihnen erfordert Deinstallieren + neu installieren.
 
 ## Nutzung
 
@@ -308,22 +321,24 @@ CI baut die signierte APK und hängt sie ans GitHub-Release.
 > `.jks`-Datei + Passwort sicher auf — sie wird für künftige signierte Updates
 > gebraucht.
 
-## Verteilung: Sideload **und** Play-Store-fähig
+## Verteilung: Google Play **und** Sideload
 
 Beide Wege funktionieren parallel, ohne sich zu stören:
 
-- **Sideload (Standard):** Die signierte **`app-release.apk`** am `v*`-Release —
-  Freunde laden + installieren direkt, ohne Konto.
-- **Play Store (optional):** Derselbe CI-Lauf erzeugt zusätzlich ein **`.aab`**
-  (App Bundle) als Artifact **`evcc-pi-tool-playstore-aab`**. Damit ist alles für
-  eine Play-Einreichung vorbereitet:
+- **Google Play (seit 26.07.2026 live):**
+  [`systems.kyth.pitool`](https://play.google.com/store/apps/details?id=systems.kyth.pitool)
+  — veröffentlicht von der **KYTH. Systems UG (haftungsbeschränkt)**. Updates
+  kommen automatisch über Play. Hochgeladen wird das **`.aab`** (App Bundle),
+  das derselbe CI-Lauf als Artifact **`evcc-pi-tool-playstore-aab`** erzeugt.
   - Datenschutzerklärung: <https://profex1337.github.io/evcc-pi-tool/privacy.html>
-  - Store-Assets + Texte + Data-Safety + Checkliste: [`store/play/listing.md`](store/play/listing.md)
-  - Selbst beizusteuern: Google-Play-Account (25 $), Screenshots, der 14-Tage-
-    Closed-Test für neue Privat-Accounts.
-  > Hinweis: Play nutzt **Play App Signing** (re-signiert das Bundle) — die
-  > Play-Version hat daher eine andere Signatur als die Sideload-APK; beide Kanäle
-  > laufen unabhängig nebeneinander.
+  - Store-Assets + Texte + Data-Safety: [`store/play/listing.md`](store/play/listing.md)
+- **Sideload (Alternative):** Die signierte **`app-release.apk`** am `v*`-Release —
+  laden + installieren direkt, ohne Google-Konto.
+
+> Hinweis: Play nutzt **Play App Signing** (re-signiert das Bundle) — die
+> Play-Version hat daher eine **andere Signatur** als die Sideload-APK. Beide
+> Kanäle laufen unabhängig nebeneinander; ein Wechsel geht nur über
+> Deinstallieren + neu installieren (Profile werden dabei einmal neu eingetragen).
 
 ## Haftungsausschluss
 
