@@ -1,0 +1,3 @@
+Technisches Update: Die App ist jetzt auf Android 16 ausgerichtet – eine Vorgabe von Google Play für neue Updates.
+
+Damit gelten die neuen Systemvorgaben für randlose Darstellung und die Zurück-Geste. An der Bedienung und am Funktionsumfang ändert sich nichts.

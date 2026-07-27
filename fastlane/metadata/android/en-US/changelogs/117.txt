@@ -1,0 +1,3 @@
+Technical update: the app now targets Android 16 – a Google Play requirement for new updates.
+
+That means the current system rules for edge-to-edge display and the back gesture apply. Nothing changes in how the app works or what it can do.

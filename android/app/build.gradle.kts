@@ -34,8 +34,20 @@ android {
         // on Play, so it must not change again after publication.
         applicationId = "systems.kyth.pitool"
         minSdk = flutter.minSdkVersion
-        // Pinned explicitly: Play requires new apps/updates to target API 35.
-        targetSdk = 35
+        // Pinned explicitly: Play requires new apps/updates to target the
+        // current API level — raised to 36 (Android 16) on 2026-07-27, when the
+        // console started blocking further updates on API 35.
+        // What targeting 36 changes for us (all checked, nothing to do):
+        //  * Edge-to-edge is mandatory, the opt-out attribute is gone — our
+        //    layouts already respect the insets (Scaffold/AppBar/NavigationBar,
+        //    SafeArea in the full-screen routes), verified by rendering with
+        //    simulated system bars.
+        //  * Predictive back is on by default; Flutter's embedding handles the
+        //    OnBackInvokedCallback, and the one PopScope we use (the scan
+        //    dialog) blocks dismissal deliberately.
+        //  * Orientation/resizability restrictions are ignored on large screens
+        //    — we never set screenOrientation or resizeableActivity.
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
