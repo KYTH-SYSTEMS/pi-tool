@@ -73,9 +73,12 @@ const kEvccPlayStoreUrl =
 /// Our own Play listing — where a Play build gets its updates.
 const kPlayStoreUrl =
     'https://play.google.com/store/apps/details?id=systems.kyth.pitool';
-const kPrivacyUrl = 'https://profex1337.github.io/evcc-pi-tool/privacy.html';
-const kImpressumUrl = 'https://profex1337.github.io/evcc-pi-tool/impressum.html';
-const kAgbUrl = 'https://profex1337.github.io/evcc-pi-tool/agb.html';
+/// Legal pages live on a KYTH-owned domain, not on a GitHub-owner path: these
+/// URLs are filed with Play and baked into every shipped build, so they must
+/// survive a repo transfer or rename (Pages is not redirected like git).
+const kPrivacyUrl = 'https://pi-tool.kyth.systems/privacy.html';
+const kImpressumUrl = 'https://pi-tool.kyth.systems/impressum.html';
+const kAgbUrl = 'https://pi-tool.kyth.systems/agb.html';
 const kReleasesUrl = 'https://github.com/profex1337/evcc-pi-tool/releases';
 const kImagerUrl = 'https://www.raspberrypi.com/software/';
 const kKythUrl = 'https://www.kyth.systems';

@@ -43,11 +43,11 @@ Danach ist der Eigentümer des Repos für die URL egal.
 
 | # | Schritt | Wer |
 |---|---------|-----|
-| 1 | **DNS:** `CNAME pi-tool.kyth.systems → profex1337.github.io` anlegen | **Stefan** |
-| 2 | In den Repo-Settings → Pages die **Custom domain** `pi-tool.kyth.systems` eintragen (legt die Datei `docs/CNAME` an), „Enforce HTTPS" aktivieren, bis das Zertifikat steht | **Stefan** (oder ich per `gh api`, sobald DNS steht) |
-| 3 | Prüfen: alle drei Seiten (`privacy.html`, `impressum.html`, `agb.html`) über die neue Domain erreichbar, HTTPS gültig | ich |
-| 4 | **App-Release** mit den neuen URLs (`kPrivacyUrl`/`kImpressumUrl`/`kAgbUrl`) + README/`docs/`/fastlane nachziehen | ich |
-| 5 | In der **Play Console** die Datenschutz-URL auf die neue Domain umstellen | **Stefan** |
+| 1 | ✅ **2026-07-30 erledigt** — **DNS:** `CNAME pi-tool.kyth.systems → profex1337.github.io`, in Cloudflare **DNS-only (graue Wolke)**; proxied kann GitHub kein Zertifikat ausstellen | **Stefan** |
+| 2 | ✅ **2026-07-30 erledigt** — Custom domain gesetzt (`docs/CNAME` committet, Commit `9b1541e`), Zertifikat `approved`, `https_enforced: true` | ich (`gh api`) |
+| 3 | ✅ **2026-07-30 erledigt** — `privacy.html`, `impressum.html`, `agb.html` + Landing liefern je `200` über HTTPS; die alte `profex1337.github.io`-URL antwortet mit `301` auf die neue Domain | ich |
+| 4 | ✅ **2026-07-30 erledigt** — **App-Release v0.63.4+118** mit den neuen URLs (`kPrivacyUrl`/`kImpressumUrl`/`kAgbUrl`) + README/`store/`/ARCHITECTURE/fastlane-Changelog `118.txt` | ich |
+| 5 | **OFFEN** — In der **Play Console** Datenschutz-URL **und** Website-URL auf `https://pi-tool.kyth.systems/...` umstellen | **Stefan** |
 | 6 | Erst **jetzt** das Repo nach `KYTH-SYSTEMS` transferieren (die Org existiert bereits: `github.com/KYTH-SYSTEMS`) **und dabei in `pi-tool` umbenennen** | **Stefan** |
 | 7 | Nacharbeiten (siehe unten) | ich |
 | 8 | Unter `profex1337` ein **Stub-Repo `evcc-pi-tool` mit Pages** stehen lassen, das auf die neue Domain weiterleitet | ich |

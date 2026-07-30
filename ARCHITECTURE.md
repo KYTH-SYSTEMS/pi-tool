@@ -542,6 +542,15 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Deklaration Pflicht), `launch-kit.md`, `izzyondroid-rfp.md`.
 - `docs/**` — GitHub-Pages: Landing + `privacy.html` + `impressum.html` (URLs im
   Play-Listing verankert — nicht umbenennen; kein Google-Fonts/Tracking).
+  Ausgeliefert unter der **Custom Domain `pi-tool.kyth.systems`** (`docs/CNAME`,
+  DNS-CNAME in Cloudflare auf `profex1337.github.io`, **DNS-only** — proxied
+  kann GitHub kein Zertifikat ausstellen). Die Domain gehört KYTH und ist damit
+  unabhängig von Repo-Owner und -Name: Pages wird bei Transfer/Rename **nicht**
+  weitergeleitet, die Rechts-URLs sind aber in Play hinterlegt und in jedem
+  ausgelieferten Build verdrahtet (`main.dart` `kPrivacyUrl`/`kImpressumUrl`/
+  `kAgbUrl`). Beim Org-Transfer muss das Cloudflare-Target auf
+  `kyth-systems.github.io` wechseln; die alte `profex1337.github.io`-Adresse
+  wird nur bis dahin von Pages per 301 weitergeleitet (Alt-Installationen!).
 - **HRB eingetragen** (2026: Amtsgericht Nürnberg, HRB 46313) — die UG ist keine
   „i.G." mehr, die Haftungsbeschränkung greift. Der Launch-Blocker „Haftung"
   ist damit weg; Impressum/Datenschutz führen HRB + Registergericht.

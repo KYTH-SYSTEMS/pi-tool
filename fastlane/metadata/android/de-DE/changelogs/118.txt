@@ -1,0 +1,3 @@
+Technische Umstellung: Datenschutzerklärung, Impressum und AGB liegen jetzt unter einer eigenen Adresse von KYTH. Systems (pi-tool.kyth.systems) statt unter einer GitHub-Adresse.
+
+Damit bleiben die Rechtstexte dauerhaft erreichbar, auch wenn sich am Projekt-Repository etwas ändert. Bestehende Links werden weitergeleitet. An Bedienung und Funktionsumfang ändert sich nichts.

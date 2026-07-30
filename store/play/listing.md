@@ -25,10 +25,10 @@ Diese beschreiben den Multi-Service-Stand (evcc + Pi-hole + ganzer Pi) inkl. Aff
 ## Kategorie / Kontakt
 - Kategorie: **Tools** (Productivity ginge auch)
 - Tags: Raspberry Pi, SSH, evcc, Pi-hole
-- Website: https://profex1337.github.io/evcc-pi-tool/
-- Datenschutz-URL: **https://profex1337.github.io/evcc-pi-tool/privacy.html**
+- Website: https://pi-tool.kyth.systems/
+- Datenschutz-URL: **https://pi-tool.kyth.systems/privacy.html**
 - Kontakt-E-Mail: **hello@kyth.systems**
-- Impressum-URL: **https://profex1337.github.io/evcc-pi-tool/impressum.html**
+- Impressum-URL: **https://pi-tool.kyth.systems/impressum.html**
 
 ## Data Safety (Formular-Antworten)
 - Werden Daten erfasst/geteilt? **Nein** – nichts wird an uns oder Dritte übertragen.

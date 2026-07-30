@@ -334,7 +334,7 @@ Beide Wege funktionieren parallel, ohne sich zu stören:
   — veröffentlicht von der **KYTH. Systems UG (haftungsbeschränkt)**. Updates
   kommen automatisch über Play. Hochgeladen wird das **`.aab`** (App Bundle),
   das derselbe CI-Lauf als Artifact **`evcc-pi-tool-playstore-aab`** erzeugt.
-  - Datenschutzerklärung: <https://profex1337.github.io/evcc-pi-tool/privacy.html>
+  - Datenschutzerklärung: <https://pi-tool.kyth.systems/privacy.html>
   - Store-Assets + Texte + Data-Safety: [`store/play/listing.md`](store/play/listing.md)
 - **Sideload (Alternative):** Die signierte **`app-release.apk`** am `v*`-Release —
   laden + installieren direkt, ohne Google-Konto.

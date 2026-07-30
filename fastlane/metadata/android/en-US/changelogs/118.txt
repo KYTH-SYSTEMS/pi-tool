@@ -1,0 +1,3 @@
+Technical change: the privacy policy, legal notice and terms now live on an address owned by KYTH. Systems (pi-tool.kyth.systems) instead of a GitHub address.
+
+That keeps the legal texts reachable for good, even when something changes about the project repository. Existing links are redirected. Nothing changes in how the app works or what it can do.

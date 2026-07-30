@@ -53,7 +53,7 @@ Fehlt noch:
 
 Weitere Eintrags-Felder in der Play Console:
 - **Kategorie:** Tools. **Tags:** passend (kein Spam).
-- **Datenschutz-URL:** https://profex1337.github.io/evcc-pi-tool/privacy.html (steht ✓)
+- **Datenschutz-URL:** https://pi-tool.kyth.systems/privacy.html (steht ✓)
 
 ---
 
