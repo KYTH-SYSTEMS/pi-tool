@@ -549,7 +549,8 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   GitHub-Release (ein Google-Ausfall darf die Sideload-Nutzer nicht ihr APK
   kosten). Fehlt das Secret, bleibt es bei einer Warnung. Trockenlauf ohne
   Veröffentlichung: Workflow manuell mit `play_dry_run = true` starten (Lane
-  `play_validate` → `validate_only`).
+  `play_validate` → `validate_only`). Die **Einmal-Einrichtung** der Google-Seite
+  (Dienstkonto, Berechtigungen, Secret) steht in `store/play-ci-publishing.md`.
 - **Store-Text-Vorprüfung:** Weil ein Tag ungebremst an alle Nutzer geht, prüft
   die CI **vor** dem Bauen: Changelog `<versionCode>.txt` muss in **beiden**
   Sprachen existieren und die Play-Zeichenlimits müssen halten (Titel 30, Kurz
