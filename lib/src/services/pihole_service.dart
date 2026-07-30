@@ -17,8 +17,19 @@ const String piholeUpdateCommand = 'LC_ALL=C sudo -S pihole -up';
 /// Rebuild the blocklists / gravity database (needs sudo).
 const String piholeGravityCommand = 'LC_ALL=C sudo -S pihole -g';
 
-/// Restart the DNS resolver (needs sudo).
-const String piholeRestartCommand = 'LC_ALL=C sudo -S pihole restartdns';
+/// Flush the DNS cache / restart the resolver (needs sudo).
+///
+/// The subcommand differs between generations and **cannot** be picked by exit
+/// code: v6 dropped `restartdns` and routes every unknown subcommand to
+/// `helpFunc`, which exits **0** — so `pihole restartdns` prints the help text
+/// and reports success while flushing nothing. v5 in turn has no `reloaddns`.
+/// So we probe what the CLI actually offers (v6's help lists `reloaddns`
+/// verbatim, v5's does not) and run the matching name. If Pi-hole is missing
+/// entirely, the fallback fails loudly with a non-zero exit instead of
+/// pretending to have worked.
+const String piholeRestartCommand = "LC_ALL=C sudo -S sh -c 'if pihole --help "
+    "2>&1 | grep -q reloaddns; then pihole reloaddns; else pihole restartdns; "
+    "fi'";
 
 /// The detected current version + whether a newer one is available.
 class PiholeVersion {
@@ -106,9 +117,12 @@ echo "BACKUP_OK $out"
 /// Root script that restores a Pi-hole Teleporter backup. Only the v6 CLI can
 /// import (`pihole-FTL --teleporter <zip>`, since Pi-hole v6); a v5 `.tar.gz`
 /// archive can only be imported via the web UI, so it's refused with a clear
-/// marker instead of attempting something unsupported. The DNS restart failure
-/// is NOT swallowed: if the imported settings break FTL, `set -e` aborts before
-/// RESTORE_OK so the user learns DNS is down instead of a false "restored".
+/// marker instead of attempting something unsupported. The reload uses v6's
+/// `reloaddns` unconditionally — this path is v6-only, and v5's `restartdns`
+/// would exit 0 on v6 without doing anything, which would also void the `set
+/// -e` promise below. That promise: a reload failure is NOT swallowed — if the
+/// imported settings break FTL, `set -e` aborts before RESTORE_OK so the user
+/// learns DNS is down instead of getting a false "restored".
 String buildPiholeRestoreScript(String archivePath) {
   if (!archivePath.endsWith('.zip')) {
     return '''
@@ -121,7 +135,7 @@ exit 1
 set -e
 if [ ! -f $a ]; then echo "RESTORE_FAIL_MISSING"; exit 1; fi
 pihole-FTL --teleporter $a
-pihole restartdns
+pihole reloaddns
 echo "RESTORE_OK"
 ''';
 }

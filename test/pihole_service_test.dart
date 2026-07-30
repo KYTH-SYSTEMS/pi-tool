@@ -80,4 +80,30 @@ void main() {
       expect(isPiholeBlocking(''), isFalse);
     });
   });
+
+  // Pi-hole v6 removed the `restartdns` subcommand; its dispatcher sends every
+  // unknown subcommand to helpFunc, which exits **0**. A plain
+  // `pihole restartdns` therefore prints the help text and reports SUCCESS
+  // while flushing nothing — the app showed a green "DNS neu gestartet" and
+  // the stale cache survived. v5 in turn has no `reloaddns`, so neither name
+  // works everywhere and the exit code cannot be used to pick between them.
+  group('piholeRestartCommand across v5 and v6', () {
+    test('uses the v6 name (reloaddns), which actually flushes the cache', () {
+      expect(piholeRestartCommand, contains('pihole reloaddns'));
+    });
+
+    test('keeps the v5 name (restartdns) as the fallback', () {
+      expect(piholeRestartCommand, contains('pihole restartdns'));
+    });
+
+    test('picks by probing what the CLI offers, never by exit code', () {
+      // v6's help lists "reloaddns" verbatim, v5's does not.
+      expect(piholeRestartCommand, contains('--help'));
+      expect(piholeRestartCommand, contains('grep'));
+    });
+
+    test('still runs through sudo with a stable locale', () {
+      expect(piholeRestartCommand, startsWith('LC_ALL=C sudo -S '));
+    });
+  });
 }

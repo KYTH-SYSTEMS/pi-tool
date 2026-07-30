@@ -85,13 +85,23 @@ void main() {
   });
 
   group('buildPiholeRestoreScript', () {
-    test('a v6 zip is imported via pihole-FTL --teleporter + DNS restart', () {
+    test('a v6 zip is imported via pihole-FTL --teleporter + DNS reload', () {
       final s =
           buildPiholeRestoreScript('/var/backups/pi-tool/pihole-backup-x.zip');
       expect(s, contains('pihole-FTL --teleporter'));
       expect(s, contains("'/var/backups/pi-tool/pihole-backup-x.zip'"));
-      expect(s, contains('pihole restartdns'));
+      expect(s, contains('pihole reloaddns'));
       expect(s, contains('RESTORE_OK'));
+    });
+
+    // This path only ever runs on v6 (a v5 .tar.gz is refused above), and v6
+    // exits 0 for the unknown `restartdns`. Using it here would silently skip
+    // the reload AND void the `set -e` promise that a broken import aborts
+    // before RESTORE_OK — the script would claim success with DNS untouched.
+    test('does not use v6-dead restartdns, which would defeat set -e', () {
+      final s =
+          buildPiholeRestoreScript('/var/backups/pi-tool/pihole-backup-x.zip');
+      expect(s, isNot(contains('pihole restartdns')));
     });
 
     test('quotes a hostile path (no injection)', () {

@@ -139,8 +139,15 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   InfluxDB prüft den GPG-**Fingerprint** vor dem Vertrauen; Grafana speichert den
   armored Key ohne dearmor (aktueller offizieller Flow).
 - **`pihole_service.dart`** — v5+v6-Versionsparser; Backup via Teleporter, Restore
-  **verweigert v5 `.tar.gz`** (nur v6-CLI-Import); `pihole restartdns` im Restore
-  bewusst *nicht* fehlerverschluckt.
+  **verweigert v5 `.tar.gz`** (nur v6-CLI-Import); der DNS-Reload im Restore
+  bewusst *nicht* fehlerverschluckt (`set -e` vor `RESTORE_OK`).
+  **CLI-Falle (v6):** `pihole` schickt jeden unbekannten Subcommand in `helpFunc`
+  — und die endet mit **Exit 0**. Ein Kommando, das es in der laufenden
+  Generation nicht gibt, meldet also *Erfolg*. v6 kennt `restartdns` nicht mehr
+  (nur `reloaddns`/`reloadlists`), v5 kennt `reloaddns` nicht. Deshalb wählt
+  `piholeRestartCommand` per **Fähigkeits-Probe** (`pihole --help | grep -q
+  reloaddns`) statt per Exit-Code; der Restore nutzt fest `reloaddns` (v6-only).
+  Für neue `pihole`-Subcommands gilt dieselbe Regel: Exit-Code ≠ Beweis.
 - **`homeassistant_service.dart`** — HA als Docker-Container (bewusst, nicht HA
   OS). tar-Exit 1 auf laufendem HA = Warnung (nur rc>1 = Fehler). Restore per
   `trap` (Container kommt auch bei tar-Fehler zurück) + `.State.Running`-Check.

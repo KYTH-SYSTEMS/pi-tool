@@ -18,6 +18,16 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.63.5': [
+    '"Restart DNS" on the Pi-hole card really does it again. On Pi-hole v6 the '
+        'command the app used no longer exists — and because v6 answers unknown '
+        'commands with its help text and a success code, the app reported '
+        '"DNS restarted" while the cache was left untouched. It now asks the '
+        'installed Pi-hole which command it understands, and says so clearly '
+        'when the restart genuinely fails.',
+    'Same fix inside the Pi-hole backup restore: the DNS reload after an import '
+        'was silently skipped on v6.',
+  ],
   '0.63.0': [
     'Health alerts are safer by default: an ntfy topic is effectively a '
         'password — ntfy has no accounts, so anyone who knows or guesses the '
@@ -83,6 +93,16 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.63.5': [
+    '„DNS neu starten" auf der Pi-hole-Karte tut es wieder wirklich. Unter '
+        'Pi-hole v6 gibt es den bisher verwendeten Befehl nicht mehr — und weil '
+        'v6 auf unbekannte Befehle mit dem Hilfetext und einer Erfolgsmeldung '
+        'antwortet, meldete die App „DNS neu gestartet", ohne den Cache '
+        'anzufassen. Sie fragt jetzt das installierte Pi-hole, welchen Befehl es '
+        'versteht, und sagt es deutlich, wenn der Neustart wirklich scheitert.',
+    'Dieselbe Korrektur beim Wiederherstellen eines Pi-hole-Backups: Dort wurde '
+        'der DNS-Reload nach dem Import unter v6 stillschweigend übersprungen.',
+  ],
   '0.63.0': [
     'Health-Alerts sind ab Werk sicherer: Ein ntfy-Thema ist faktisch das '
         'Passwort — ntfy kennt kein Konto, wer den Namen kennt oder errät, liest '
