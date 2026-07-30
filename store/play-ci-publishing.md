@@ -54,8 +54,14 @@ gh run watch "$(gh run list --workflow build.yml --limit 1 --json databaseId --j
 
 Das baut den AAB und lässt die Play-API Bundle **und** Texte prüfen
 (`validate_only`), ohne etwas zu veröffentlichen. Grün = Zugangsdaten, Rechte
-und Texte passen. Der aktuell in pubspec stehende versionCode darf dabei ruhig
-schon veröffentlicht sein — validiert wird trotzdem.
+und Texte passen.
+
+**Wichtig:** `validate_only` prüft auch die Eindeutigkeit des versionCode. Steht
+in `pubspec.yaml` noch die bereits veröffentlichte Version, endet der Lauf mit
+`Version code <N> has already been used` — das ist **kein** Konfigurationsfehler,
+sondern der Beweis, dass Auth und Rechte funktionieren (so verifiziert am
+2026-07-30 mit Code 119). Voll grün wird der Trockenlauf erst nach dem
+Versions-Bump; genau dann lohnt er sich also: **nach dem Bump, vor dem Tag.**
 
 ## 5. Ab dann
 
