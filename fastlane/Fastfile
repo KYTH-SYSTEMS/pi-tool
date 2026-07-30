@@ -14,8 +14,18 @@
 default_platform(:android)
 
 PACKAGE_NAME = "systems.kyth.pitool"
-# Pfad relativ zum fastlane/-Ordner (fastlane arbeitet aus diesem Verzeichnis).
-AAB_PATH = "../build/app/outputs/bundle/release/app-release.aab"
+
+# Pfade absolut auflösen statt relativ zu raten: fastlane arbeitet aus dem
+# Repo-Root (nicht aus fastlane/), und das soll hier nicht kippen können, wenn
+# jemand die Lane von Hand aus einem anderen Verzeichnis startet. Vom Fastfile
+# (bzw. vom Arbeitsverzeichnis) nach oben laufen, bis `pubspec.yaml` auftaucht.
+ROOT = begin
+  dir = File.expand_path(__dir__ || Dir.pwd)
+  dir = File.expand_path("..", dir) while !File.exist?(File.join(dir, "pubspec.yaml")) && dir != File.dirname(dir)
+  dir
+end
+AAB_PATH = File.join(ROOT, "build/app/outputs/bundle/release/app-release.aab")
+METADATA_PATH = File.join(ROOT, "fastlane/metadata/android")
 
 platform :android do
   desc "AAB + Store-Texte in die Produktions-Spur laden (voller Rollout)"
@@ -29,13 +39,19 @@ platform :android do
   end
 
   private_lane :play_upload do |options|
+    UI.message("Repo-Root: #{ROOT}")
+    UI.message("AAB: #{AAB_PATH}")
+    unless File.exist?(AAB_PATH)
+      UI.user_error!("AAB nicht gefunden: #{AAB_PATH} — vorher `flutter build appbundle --release` laufen lassen.")
+    end
+
     supply(
       package_name: PACKAGE_NAME,
       json_key_data: ENV.fetch("PLAY_SERVICE_ACCOUNT_JSON"),
       aab: AAB_PATH,
       track: "production",
       release_status: "completed", # voller Rollout, keine Staffelung
-      metadata_path: "./metadata/android",
+      metadata_path: METADATA_PATH,
       skip_upload_apk: true,
       skip_upload_metadata: false,
       skip_upload_changelogs: false,
