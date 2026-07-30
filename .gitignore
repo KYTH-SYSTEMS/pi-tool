@@ -49,6 +49,15 @@ key.properties
 *.jks
 *.keystore
 
+# Play service account key (publishing credential — lives in the GitHub secret
+# PLAY_SERVICE_ACCOUNT_JSON, never in the repo)
+play-service-account*.json
+fastlane/*.json
+
+# fastlane run artifacts
+fastlane/report.xml
+fastlane/README.md
+
 # Generated store screenshots (intermediate; final copies live in fastlane)
 test/shots/
 

@@ -6,8 +6,10 @@
 Pi-Tool ist eine Flutter-**Android**-App, die einen Raspberry Pi (oder jedes
 Debian/Linux-Gerät) **per SSH** verwaltet: Dienste erkennen, installieren,
 aktualisieren, sichern/wiederherstellen, überwachen, konfigurieren — und
-Fernzugriff einrichten. Verteilung als signiertes APK über GitHub Releases
-(später Play Store / F-Droid). Interner Dart-Paketname: `evcc_updater`,
+Fernzugriff einrichten. Verteilung über **Google Play** (Produktions-Spur, Upload
+durch die CI) und als signiertes APK über GitHub Releases (Sideload).
+**Kein F-Droid/IzzyOnDroid** — IzzyOnDroid hat 2026-07-12 unter seiner KI-Policy
+abgelehnt (`store/launch-kit.md` §7). Interner Dart-Paketname: `evcc_updater`,
 App-ID: `systems.kyth.pitool`.
 
 ## Schichten (von unten nach oben)
@@ -529,10 +531,31 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Tab→Aktion→Fake asserted; `useTallScreen` weil das ListView off-screen nicht
   baut). Pins u.a.: Passwort nur als erste stdin-Zeile, nie im Befehl; evcc-Update
   sichert erst; Free-Nutzer erreichen den Pi nie.
-- **CI** (`.github/workflows/build.yml`): ein Job — analyze → test → signieren →
-  **fat APK** (arm64+armeabi-v7a) + AAB → **Signing-Material löschen, bevor**
-  Dritt-Actions laufen → APK-Artefakt + auf `v*`-Tag GitHub-Release. Actions
-  SHA-gepinnt, Secret nur im Signing-Step, Tag ohne Keystore = harter Fehler.
+- **CI** (`.github/workflows/build.yml`): ein Job — analyze → test → (auf Tag:
+  Store-Texte gegen die Play-Limits prüfen) → signieren → **fat APK**
+  (arm64+armeabi-v7a) + AAB → **Signing-Material löschen, bevor** Dritt-Actions
+  laufen → APK-Artefakt → auf `v*`-Tag GitHub-Release → **Play-Upload**. Actions
+  SHA-gepinnt, Secrets nur im jeweiligen Step, Tag ohne Keystore = harter Fehler.
+- **Play-Upload** (`fastlane/Fastfile`, Lane `play_release`): `supply` lädt auf
+  `v*`-Tag den signierten AAB in die **Produktions-Spur mit Status `completed`
+  (= 100 % Rollout, kein Draft)** und dazu die Texte aus `fastlane/metadata/**`
+  (Titel, Kurz-/Langbeschreibung, Changelog des versionCode).
+  **Bilder/Screenshots sind ausgeschlossen** (`skip_upload_images` +
+  `skip_upload_screenshots`) — die bleiben Handarbeit in der Console und dürfen
+  von einem automatischen Lauf nicht überschrieben/geleert werden. Der
+  Service-Account-Key kommt als **rohes JSON** aus dem Secret
+  `PLAY_SERVICE_ACCOUNT_JSON` in die Umgebung (`json_key_data`) und landet nie im
+  Workspace; der Step läuft **nach** dem Keystore-Löschen und **nach** dem
+  GitHub-Release (ein Google-Ausfall darf die Sideload-Nutzer nicht ihr APK
+  kosten). Fehlt das Secret, bleibt es bei einer Warnung. Trockenlauf ohne
+  Veröffentlichung: Workflow manuell mit `play_dry_run = true` starten (Lane
+  `play_validate` → `validate_only`).
+- **Store-Text-Vorprüfung:** Weil ein Tag ungebremst an alle Nutzer geht, prüft
+  die CI **vor** dem Bauen: Changelog `<versionCode>.txt` muss in **beiden**
+  Sprachen existieren und die Play-Zeichenlimits müssen halten (Titel 30, Kurz
+  80, Lang 4000, Changelog 500 — die Langbeschreibungen liegen bei ~3995, es ist
+  also praktisch keine Luft mehr). Verletzung = roter Build, bevor irgendwas
+  veröffentlicht ist.
 - **Release-Notes:** Der Schritt „Compose release notes" liest den **fastlane-
   Changelog** des aktuellen versionCode (`fastlane/…/{de-DE,en-US}/changelogs/
   <code>.txt`, `<code>` = `+NN` aus der pubspec-Version) in `RELEASE_NOTES.md`
@@ -543,10 +566,12 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
 ## 9. Verteilung & Recht
 
 - `fastlane/metadata/**` — **einzige** Textquelle für Store-Listing (Titel ohne
-  „evcc"/„Pi-hole" → Markenrecht). IzzyOnDroid zieht sie automatisch + das
-  signierte APK aus den Releases (HRB-unabhängig).
+  „evcc"/„Pi-hole" → Markenrecht). **Play liest sie direkt:** die CI schiebt
+  Titel/Beschreibungen/Changelog beim Release per `supply` ins Listing (§8) —
+  eine Änderung hier ist nach dem nächsten Tag live, nicht nur Doku.
 - `store/**` — Play-Playbook (Data-Safety = „keine Daten", Foreground-Service-
-  Deklaration Pflicht), `launch-kit.md`, `izzyondroid-rfp.md`.
+  Deklaration Pflicht), `launch-kit.md`; `izzyondroid-rfp.md` ist nur noch
+  **Historie** (Kanal abgelehnt, siehe oben) — nicht als To-do lesen.
 - `docs/**` — GitHub-Pages: Landing + `privacy.html` + `impressum.html` (URLs im
   Play-Listing verankert — nicht umbenennen; kein Google-Fonts/Tracking).
   Ausgeliefert unter der **Custom Domain `pi-tool.kyth.systems`** (`docs/CNAME`,

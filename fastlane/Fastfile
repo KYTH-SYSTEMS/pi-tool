@@ -1,0 +1,47 @@
+# fastlane — Play-Store-Upload (Details: ARCHITECTURE.md §8)
+#
+# Aufgerufen von der CI (.github/workflows/build.yml) NACH dem Bauen des
+# signierten AAB. Die Zugangsdaten kommen als roher JSON-String über die
+# Umgebungsvariable PLAY_SERVICE_ACCOUNT_JSON herein — der Service-Account-Key
+# wird also NIE in den Workspace geschrieben (gleiche Begründung wie das
+# Löschen des Keystores vor den Dritt-Actions).
+#
+# Textquelle ist ausschließlich fastlane/metadata/android/** (Titel, Kurz-/
+# Langbeschreibung, Changelog pro versionCode). Bilder und Screenshots werden
+# bewusst übersprungen: die liegen von Hand in der Play Console und dürfen von
+# einem automatischen Lauf nicht überschrieben oder geleert werden.
+
+default_platform(:android)
+
+PACKAGE_NAME = "systems.kyth.pitool"
+# Pfad relativ zum fastlane/-Ordner (fastlane arbeitet aus diesem Verzeichnis).
+AAB_PATH = "../build/app/outputs/bundle/release/app-release.aab"
+
+platform :android do
+  desc "AAB + Store-Texte in die Produktions-Spur laden (voller Rollout)"
+  lane :play_release do
+    play_upload(validate_only: false)
+  end
+
+  desc "Trockenlauf: Bundle + Metadaten von der Play-API prüfen lassen, nichts veröffentlichen"
+  lane :play_validate do
+    play_upload(validate_only: true)
+  end
+
+  private_lane :play_upload do |options|
+    supply(
+      package_name: PACKAGE_NAME,
+      json_key_data: ENV.fetch("PLAY_SERVICE_ACCOUNT_JSON"),
+      aab: AAB_PATH,
+      track: "production",
+      release_status: "completed", # voller Rollout, keine Staffelung
+      metadata_path: "./metadata/android",
+      skip_upload_apk: true,
+      skip_upload_metadata: false,
+      skip_upload_changelogs: false,
+      skip_upload_images: true,      # Grafiken bleiben wie von Hand hochgeladen
+      skip_upload_screenshots: true, # dito — CI darf sie nie wegräumen
+      validate_only: options[:validate_only],
+    )
+  end
+end

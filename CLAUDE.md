@@ -48,3 +48,14 @@ Commit-Liste selbst nicht von Hand pflegen.
   Feature-Änderung die Docs oben mitziehen** (README/Pages/fastlane/Changelog),
   `git commit -F <datei>` (PowerShell-Heredocs brechen), main-Build abwarten,
   dann `v*`-Tag → CI baut signiertes APK + Release.
+- **Der Tag veröffentlicht auch bei Google Play** (Produktions-Spur, 100 %
+  Rollout, `fastlane supply` — siehe ARCHITECTURE.md §8). Konsequenzen:
+  - Der fastlane-Changelog `<versionCode>.txt` muss in **de-DE UND en-US**
+    existieren, sonst bricht der Build ab (Vorprüfung vor dem Bauen).
+  - Play-Zeichenlimits sind hart: Titel 30, Kurzbeschreibung 80,
+    Langbeschreibung 4000 (aktuell ~3995 — beim Erweitern anderswo kürzen),
+    Changelog 500.
+  - Store-Texte in `fastlane/metadata/**` gehen mit dem Tag **live** — kein
+    Draft, keine Zwischenkontrolle. Screenshots/Grafiken bleiben unberührt.
+  - Zweifel? Workflow vorher manuell mit `play_dry_run = true` starten
+    (validiert Bundle + Texte gegen die Play-API, veröffentlicht nichts).

@@ -5,6 +5,11 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      play_dry_run:
+        description: 'Play-Upload nur validieren (validate_only) — lädt nichts hoch'
+        type: boolean
+        default: false
 
 permissions:
   contents: write # needed to create a Release on tag pushes
@@ -19,6 +24,11 @@ jobs:
       # cleanup step) so the later third-party upload/publish actions can't read
       # them from the workspace either.
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      # Same pattern for the Play publishing credentials: only the boolean is
+      # job-wide, the JSON itself is env-scoped to the publish step.
+      HAS_PLAY_SA: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+      # Publishing needs BOTH secrets: without the keystore there is no AAB.
+      CAN_PUBLISH_PLAY: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
 
     steps:
       # Third-party actions pinned to full commit SHAs (a mutable @vX tag could
@@ -46,6 +56,38 @@ jobs:
 
       - name: Test
         run: flutter test
+
+      # A tagged build publishes straight to the Play production track at 100 %,
+      # so the store texts go live with it. Validate them BEFORE building: the
+      # changelog for this versionCode must exist and every text must fit the
+      # Play limits (title 30, short 80, full 4000, changelog 500 characters —
+      # counted after trailing whitespace, exactly as Play counts them).
+      - name: Check store texts against Play limits
+        if: startsWith(github.ref, 'refs/tags/') || inputs.play_dry_run
+        run: |
+          CODE="$(grep -m1 '^version:' pubspec.yaml | sed 's/.*+//' | tr -d '[:space:]')"
+          echo "versionCode: ${CODE}"
+          python3 - "$CODE" <<'PY'
+          import sys, pathlib
+          code = sys.argv[1]
+          limits = [('title.txt', 30), ('short_description.txt', 80),
+                    ('full_description.txt', 4000), (f'changelogs/{code}.txt', 500)]
+          bad = False
+          for loc in ('de-DE', 'en-US'):
+              for rel, limit in limits:
+                  p = pathlib.Path('fastlane/metadata/android') / loc / rel
+                  if not p.is_file():
+                      print(f'::error::missing {p}')
+                      bad = True
+                      continue
+                  n = len(p.read_text(encoding='utf-8').rstrip())
+                  flag = '::error::' if n > limit else ''
+                  print(f'{flag}{p}: {n}/{limit} characters')
+                  bad = bad or n > limit
+          if bad:
+              print('::error::store texts are not publishable — fix them before tagging')
+              sys.exit(1)
+          PY
 
       - name: Require signing secret for tagged releases
         if: startsWith(github.ref, 'refs/tags/') && env.HAS_KEYSTORE != 'true'
@@ -131,3 +173,43 @@ jobs:
           # below it (generate_release_notes).
           body_path: RELEASE_NOTES.md
           generate_release_notes: true
+
+      # ---- Play Store ------------------------------------------------------
+      # Deliberately the LAST steps: a hiccup on Google's side must not cost the
+      # sideload users their .apk download, so the GitHub release is created
+      # first. The signing keystore is already wiped from the workspace here,
+      # and the service-account JSON is handed to fastlane as raw env data
+      # (fastlane/Fastfile reads PLAY_SERVICE_ACCOUNT_JSON) — it never touches
+      # the disk. Uploads the AAB to production at 100 % plus the store texts
+      # from fastlane/metadata/**; images/screenshots are skipped on purpose.
+      - name: Warn if Play publishing is not configured
+        if: startsWith(github.ref, 'refs/tags/') && env.HAS_PLAY_SA != 'true'
+        run: echo "::warning::PLAY_SERVICE_ACCOUNT_JSON is not set — skipping the Play Store upload (the GitHub release was still published)."
+
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        if: (startsWith(github.ref, 'refs/tags/') || inputs.play_dry_run) && env.CAN_PUBLISH_PLAY == 'true'
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        if: (startsWith(github.ref, 'refs/tags/') || inputs.play_dry_run) && env.CAN_PUBLISH_PLAY == 'true'
+        run: gem install fastlane -N -v 2.237.0
+
+      - name: Publish to Play Store (production, 100 % rollout)
+        if: startsWith(github.ref, 'refs/tags/') && env.CAN_PUBLISH_PLAY == 'true'
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          FASTLANE_SKIP_UPDATE_CHECK: '1'
+          FASTLANE_OPT_OUT_USAGE: '1'
+        run: fastlane android play_release
+
+      # Manual smoke test for the whole publish chain (credentials, permissions,
+      # metadata) without releasing anything: run the workflow via
+      # "Run workflow" with play_dry_run = true.
+      - name: Validate Play upload only (dry run)
+        if: inputs.play_dry_run && env.CAN_PUBLISH_PLAY == 'true'
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          FASTLANE_SKIP_UPDATE_CHECK: '1'
+          FASTLANE_OPT_OUT_USAGE: '1'
+        run: fastlane android play_validate

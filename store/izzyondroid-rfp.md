@@ -1,4 +1,9 @@
-# IzzyOnDroid — Request for Packaging (fertig zum Einstellen)
+# IzzyOnDroid — Request for Packaging (ERLEDIGT/ABGELEHNT — nur Historie)
+
+> ⛔ **Dieser Kanal ist zu.** IzzyOnDroid hat die Aufnahme am **2026-07-12** unter
+> seiner KI-Policy abgelehnt („the level of LLM assistance used"), Details in
+> `launch-kit.md` §7. Das Folgende ist **nicht** mehr umzusetzen — es steht nur
+> als Referenz hier. Nicht erneut einreichen.
 
 **HRB-unabhängig:** IzzyOnDroid zieht die signierte APK direkt aus den GitHub-Releases.
 Kein Entwicklerkonto, keine D-U-N-S, kein Handelsregister nötig.
