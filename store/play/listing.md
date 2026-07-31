@@ -95,7 +95,7 @@ Erst ändern, wenn die App selbst zu ntfy spricht — dann ist diese Zeile hinf�
   (Secrets `KEYSTORE_*` sind schon gesetzt; der CI-Build erzeugt das `.aab`).
 
 ## Artefakt
-- Das `app-release.aab` kommt aus dem GitHub-Actions-Lauf (Artifact **evcc-pi-tool-playstore-aab**)
+- Das `app-release.aab` kommt aus dem GitHub-Actions-Lauf (Artifact **pi-tool-playstore-aab**)
   des jeweiligen `v*`-Tags. Herunterladen → in der Play Console als Bundle hochladen.
 
 ## Checkliste (nur du)

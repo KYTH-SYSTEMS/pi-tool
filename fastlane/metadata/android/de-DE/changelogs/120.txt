@@ -1,0 +1,3 @@
+Das Projekt ist umgezogen: Quellcode und Releases liegen jetzt unter github.com/KYTH-SYSTEMS/pi-tool statt beim privaten Konto des Entwicklers. Herausgeberin der App ist die KYTH. Systems UG — jetzt liegt auch die Quellcode-Ablage dort.
+
+Für dich ändert sich nichts: Update-Check und die GitHub-Links im Menü zeigen automatisch auf den neuen Ort, alte Adressen leiten weiter. Datenschutzerklärung, Impressum und Nutzungsbedingungen bleiben unverändert unter pi-tool.kyth.systems erreichbar.

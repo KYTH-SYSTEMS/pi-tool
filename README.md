@@ -333,7 +333,7 @@ Beide Wege funktionieren parallel, ohne sich zu stören:
   [`systems.kyth.pitool`](https://play.google.com/store/apps/details?id=systems.kyth.pitool)
   — veröffentlicht von der **KYTH. Systems UG (haftungsbeschränkt)**. Updates
   kommen automatisch über Play. Hochgeladen wird das **`.aab`** (App Bundle),
-  das derselbe CI-Lauf als Artifact **`evcc-pi-tool-playstore-aab`** erzeugt.
+  das derselbe CI-Lauf als Artifact **`pi-tool-playstore-aab`** erzeugt.
   - Datenschutzerklärung: <https://pi-tool.kyth.systems/privacy.html>
   - Store-Assets + Texte + Data-Safety: [`store/play/listing.md`](store/play/listing.md)
 - **Sideload (Alternative):** Die signierte **`app-release.apk`** am `v*`-Release —

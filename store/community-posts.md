@@ -61,7 +61,7 @@ kein Tracking. Zugangsdaten bleiben verschlüsselt auf dem Gerät, Host-Key wird
 beim ersten Verbinden bestätigt (TOFU). Code ist offen (MIT).
 
 Play Store: https://play.google.com/store/apps/details?id=systems.kyth.pitool
-Quellcode + APK: https://github.com/profex1337/evcc-pi-tool
+Quellcode + APK: https://github.com/KYTH-SYSTEMS/pi-tool
 
 Wer's ohne Pi anschauen will: auf dem ersten Bildschirm gibt's einen
 Demo-Modus mit Beispieldaten.
@@ -159,7 +159,7 @@ Two design decisions people here might care about:
 
 Also does config editing (atomic, with backup), a file browser and a terminal.
 
-https://github.com/profex1337/evcc-pi-tool
+https://github.com/KYTH-SYSTEMS/pi-tool
 https://play.google.com/store/apps/details?id=systems.kyth.pitool
 
 There's a demo mode on the first screen if you want to poke around without a Pi.

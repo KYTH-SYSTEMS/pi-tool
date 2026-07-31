@@ -31,7 +31,7 @@ Kein Entwicklerkonto, keine D-U-N-S, kein Handelsregister nötig.
 
 **App name:** Pi-Tool (unofficial)
 **Package ID:** systems.kyth.pitool
-**Source code:** https://github.com/profex1337/evcc-pi-tool
+**Source code:** https://github.com/KYTH-SYSTEMS/pi-tool
 **License:** MIT
 **Upstream releases:** GitHub Releases, signed APK asset `app-release.apk` per `v*` tag
 **Description:** Manage a Raspberry Pi over SSH — detect, install and update evcc,

@@ -45,13 +45,13 @@ void main() {
     test('reads tag, html url and the .apk asset url', () {
       final info = parseLatestRelease({
         'tag_name': 'v0.1.3',
-        'html_url': 'https://github.com/profex1337/evcc-updater/releases/tag/v0.1.3',
+        'html_url': 'https://github.com/KYTH-SYSTEMS/pi-tool/releases/tag/v0.1.3',
         'assets': [
           {'name': 'something.txt', 'browser_download_url': 'https://x/t.txt'},
           {
             'name': 'app-release.apk',
             'browser_download_url':
-                'https://github.com/profex1337/evcc-updater/releases/download/v0.1.3/app-release.apk'
+                'https://github.com/KYTH-SYSTEMS/pi-tool/releases/download/v0.1.3/app-release.apk'
           },
         ],
       });
@@ -123,7 +123,7 @@ void main() {
 
     final releaseJson = {
       'tag_name': 'v0.1.3',
-      'html_url': 'https://github.com/profex1337/evcc-updater/releases/tag/v0.1.3',
+      'html_url': 'https://github.com/KYTH-SYSTEMS/pi-tool/releases/tag/v0.1.3',
       'assets': [
         {
           'name': 'app-release.apk',

@@ -18,6 +18,13 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.63.6': [
+    'The project has a new home: source code and releases now live at '
+        'github.com/KYTH-SYSTEMS/pi-tool instead of a personal account — the app '
+        'is published by KYTH. Systems UG, and now the repository sits there '
+        'too. Nothing changes for you: the update check and the links in the '
+        'menu point at the new location automatically, old addresses redirect.',
+  ],
   '0.63.5': [
     '"Restart DNS" on the Pi-hole card really does it again. On Pi-hole v6 the '
         'command the app used no longer exists — and because v6 answers unknown '
@@ -93,6 +100,13 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.63.6': [
+    'Das Projekt hat eine neue Heimat: Quellcode und Releases liegen jetzt unter '
+        'github.com/KYTH-SYSTEMS/pi-tool statt beim privaten Konto — die App '
+        'wird von der KYTH. Systems UG herausgegeben, jetzt ist die Ablage auch '
+        'dort. Für dich ändert sich nichts: Der Update-Check und die Links im '
+        'Menü zeigen automatisch auf den neuen Ort, alte Adressen leiten weiter.',
+  ],
   '0.63.5': [
     '„DNS neu starten" auf der Pi-hole-Karte tut es wieder wirklich. Unter '
         'Pi-hole v6 gibt es den bisher verwendeten Befehl nicht mehr — und weil '

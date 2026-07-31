@@ -1,0 +1,3 @@
+The project has moved: source code and releases now live at github.com/KYTH-SYSTEMS/pi-tool instead of the developer's personal account. The app is published by KYTH. Systems UG — now the source repository sits there too.
+
+Nothing changes for you: the update check and the GitHub links in the menu point at the new location automatically, and old addresses redirect. The privacy policy, legal notice and terms of use remain reachable unchanged at pi-tool.kyth.systems.

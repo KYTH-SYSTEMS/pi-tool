@@ -576,14 +576,24 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
 - `docs/**` — GitHub-Pages: Landing + `privacy.html` + `impressum.html` (URLs im
   Play-Listing verankert — nicht umbenennen; kein Google-Fonts/Tracking).
   Ausgeliefert unter der **Custom Domain `pi-tool.kyth.systems`** (`docs/CNAME`,
-  DNS-CNAME in Cloudflare auf `profex1337.github.io`, **DNS-only** — proxied
-  kann GitHub kein Zertifikat ausstellen). Die Domain gehört KYTH und ist damit
-  unabhängig von Repo-Owner und -Name: Pages wird bei Transfer/Rename **nicht**
-  weitergeleitet, die Rechts-URLs sind aber in Play hinterlegt und in jedem
+  DNS-CNAME in Cloudflare, **DNS-only** — proxied kann GitHub kein Zertifikat
+  ausstellen). Die Domain gehört KYTH und ist damit unabhängig von Repo-Owner
+  und -Name — genau deshalb hat der Org-Transfer (2026-07-31, siehe unten) die
+  Rechts-URLs nicht angefasst: Pages wird bei Transfer/Rename **nicht**
+  weitergeleitet, die URLs sind aber in Play hinterlegt und in jedem
   ausgelieferten Build verdrahtet (`main.dart` `kPrivacyUrl`/`kImpressumUrl`/
-  `kAgbUrl`). Beim Org-Transfer muss das Cloudflare-Target auf
-  `kyth-systems.github.io` wechseln; die alte `profex1337.github.io`-Adresse
-  wird nur bis dahin von Pages per 301 weitergeleitet (Alt-Installationen!).
+  `kAgbUrl`).
+- **Repo-Heimat (seit 2026-07-31): `KYTH-SYSTEMS/pi-tool`.** Zwei Altlasten
+  bleiben dauerhaft zu beachten:
+  - **Unter `profex1337` nie wieder ein Repo `evcc-pi-tool` anlegen.** Jede
+    installierte Version ≤ v0.63.5 fragt den Update-Check über
+    `api.github.com/repos/profex1337/evcc-pi-tool/releases/latest` ab und lebt
+    von GitHubs Repo-Redirect (301). Ein Repo dieses Namens killt den Redirect
+    sofort — und damit den Update-Pfad dieser Installationen.
+  - Die alten Pages-Pfade `profex1337.github.io/evcc-pi-tool/*.html` (in
+    Builds ≤ v0.63.3 als Rechts-Links verdrahtet) bedient die **User-Site**
+    `profex1337/profex1337.github.io` per Weiterleitung — bewusst als User-Site
+    und nicht als Stub-Repo, weil nur so der Repo-Redirect oben überlebt.
 - **HRB eingetragen** (2026: Amtsgericht Nürnberg, HRB 46313) — die UG ist keine
   „i.G." mehr, die Haftungsbeschränkung greift. Der Launch-Blocker „Haftung"
   ist damit weg; Impressum/Datenschutz führen HRB + Registergericht.
