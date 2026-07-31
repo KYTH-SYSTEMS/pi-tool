@@ -18,6 +18,11 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.64.3': [
+    'The footer now has "Rate the app" — if Pi-Tool is useful to you, a Play '
+        'Store rating is the single most helpful thing you can give it. Ratings '
+        'are how anyone else finds it in the first place.',
+  ],
   '0.64.2': [
     'When Raspberry Pi Connect or Tailscale has an update waiting, the card\'s '
         'main button now reads "Update" — the same as evcc, Pi-hole, Grafana '
@@ -141,6 +146,11 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.64.3': [
+    'Unten in der Fußzeile liegt jetzt „App bewerten" — falls dir Pi-Tool hilft, '
+        'ist eine Bewertung im Play Store das, was der App am meisten bringt. '
+        'Sie ist der Grund, warum andere sie überhaupt finden.',
+  ],
   '0.64.2': [
     'Steht bei Raspberry Pi Connect oder Tailscale ein Update an, heißt der '
         'Hauptknopf der Karte jetzt „Aktualisieren" — wie bei evcc, Pi-hole, '

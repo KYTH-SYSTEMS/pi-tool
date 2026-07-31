@@ -5104,6 +5104,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                                   () => _openUrl(kImpressumUrl)),
                               _legalLink(
                                   context.l10n.legalLicenses, _showLicenses),
+                              // Ratings are what Play actually ranks on. Here in
+                              // the footer, deliberately not in the ⋮ menu —
+                              // that one is full, and an extra entry pushed
+                              // others out of view (26.07.2026, 15 red tests).
+                              _legalLink(context.l10n.legalRateApp,
+                                  () => _openUrl(kPlayStoreUrl)),
                             ],
                           ),
                         ],

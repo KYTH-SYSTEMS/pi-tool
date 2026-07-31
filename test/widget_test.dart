@@ -197,6 +197,10 @@ void main() {
     expect(find.byType(KythWordmark), findsOneWidget);
     expect(find.text('Datenschutz'), findsOneWidget);
     expect(find.text('Open-Source-Lizenzen'), findsOneWidget);
+    // Bewertungen treiben das Play-Ranking; der Link gehört in die Fußzeile.
+    // NICHT ins ⋮-Menü — der Versuch am 26.07.2026 kippte 15 Tests, weil das
+    // Menü voll ist und andere Einträge aus dem Bild geschoben wurden.
+    expect(find.text('App bewerten'), findsOneWidget);
   });
 
   testWidgets('⋮ → "Auf Update prüfen" reports up to date on the current version',

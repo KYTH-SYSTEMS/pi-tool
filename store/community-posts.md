@@ -1,6 +1,6 @@
 # Community-Posts (fertige Entwürfe)
 
-Stand: 2026-07-29. Der größte Reichweiten-Hebel für Pi-Tool liegt **nicht** in der
+Stand: 2026-07-31 (Texte auf v0.64.2 nachgezogen). Der größte Reichweiten-Hebel für Pi-Tool liegt **nicht** in der
 Play-Suche — die Suchmenge nach „evcc" & Co. ist winzig —, sondern dort, wo die
 Zielgruppe ohnehin sitzt. Play verstärkt danach über Bewertungen und
 Installationsrate. Reihenfolge und fertige Texte stehen hier; Hintergrund in
@@ -28,6 +28,18 @@ Installationsrate. Reihenfolge und fertige Texte stehen hier; Hintergrund in
 **Timing:** erst posten, wenn das jeweils aktuelle Release live ist — sonst
 sehen die Leute im Store einen anderen Stand als beschrieben.
 
+**Seit dem letzten Stand dazugekommen** (in den Texten unten eingearbeitet):
+- **Fernzugriff mit einem Knopf** (v0.64.0): richtet Tailscale auf dem Pi ein und
+  prüft danach nach, ob das Handy den Pi wirklich erreicht. Der stärkste
+  Aufhänger für r/selfhosted und Mastodon — „von unterwegs" ist das, was die
+  Leute wirklich wollen.
+- **Ehrliche Update-Anzeige** (v0.63.7): Die App las den Update-Stand aus dem
+  lokalen apt-Index, und der ist auf einem Standard-Pi oft wochenalt — sie
+  meldete „aktuell", während Sicherheitsupdates warteten. Jetzt sagt sie „Stand
+  unbekannt" statt zu raten. **Diese Geschichte ehrlich zu erzählen ist bei
+  r/selfhosted mehr wert als jedes Feature** — dort zählt, ob jemand seine
+  eigenen Fehler benennt.
+
 ---
 
 ## 1. evcc GitHub Discussions (General)
@@ -53,6 +65,9 @@ etwas mehr:
   auf dem Handy: geplante Updates mit Selbstheilung, nächtliche Backups,
   Health-Alerts per ntfy
 - evcc.yaml direkt bearbeiten (atomar, mit Backup), Terminal, Dateibrowser
+- Fernzugriff mit einem Knopf: richtet Tailscale auf dem Pi ein, und prüft
+  danach nach, ob das Handy den Pi über das Tailnet auch wirklich erreicht —
+  statt „fertig" zu behaupten und dich unterwegs auflaufen zu lassen
 
 Was sie nicht ist: eine Lade-Steuerung. Dafür gibt's die offizielle evcc-App.
 
@@ -94,6 +109,11 @@ nächtliche Backups laufen als systemd-Timer auf dem Pi selbst — das Handy mus
 also nicht mitspielen. Und wenn die Platte volläuft oder ein Dienst stirbt,
 kommt eine Push-Nachricht per ntfy.
 
+Neu ist ein Knopf „Fernzugriff einrichten": Der richtet Tailscale auf dem Pi ein
+und prüft anschließend nach, ob das Handy den Pi von außen auch wirklich
+erreicht. Damit kommt man auch von unterwegs an die Kiste, ohne irgendeinen Port
+im Router aufzumachen.
+
 Kostenlos, keine Werbung, kein Tracking, kein Konto, kein Server von mir. Alles
 läuft über eure eigene SSH-Verbindung. Quellcode ist offen (MIT).
 
@@ -119,7 +139,8 @@ Ich wollte evcc nicht mehr jedes Mal per SSH vom Laptop aktualisieren, also
 gibt's jetzt eine Android-App dafür: verbinden, sie erkennt was auf dem Pi
 läuft, ein Tap pro Dienst. Mit Backup vor dem evcc-Update, optional
 zeitgesteuert per systemd-Timer auf dem Pi, plus Push-Warnung wenn die Platte
-volläuft oder ein Dienst weg ist.
+volläuft oder ein Dienst weg ist. Neu: ein Knopf richtet den Fernzugriff über
+Tailscale ein — ohne offenen Port im Router.
 
 Kostenlos, ohne Werbung/Tracking/Konto, Quellcode offen (MIT), läuft
 ausschließlich über eure eigene SSH-Verbindung.
@@ -157,6 +178,18 @@ Two design decisions people here might care about:
   the phone. Scheduled updates (with a backup + self-heal), nightly backups
   with rotation, and health alerts pushed via ntfy. Your phone can be off.
 
+One button sets up remote access: it installs Tailscale on the Pi, walks the
+login, and then actually verifies that THIS phone can reach the Pi over the
+tailnet before claiming success. No port forwarding, no open SSH to the internet.
+
+One thing I'd rather say out loud than hide: for a while the app cheerfully
+reported "up to date" because it read the Pi's local apt index — which a stock
+Raspberry Pi OS often leaves untouched for weeks. On my own box that meant a
+green checkmark sitting on top of 27 pending updates, security fixes included.
+It now reports "state unknown" when the index is stale instead of guessing, and
+offers to refresh it. If you run something similar, check when your boxes last
+ran apt update.
+
 Also does config editing (atomic, with backup), a file browser and a terminal.
 
 https://github.com/KYTH-SYSTEMS/pi-tool
@@ -178,6 +211,10 @@ Raspberry Pi zu aktualisieren. Also: Android-App, reines SSH, kein Backend,
 kein Konto, kein Tracking. Erkennt selbst was läuft — evcc, Pi-hole, Home
 Assistant, Docker & Co. Automatik läuft als systemd-Timer auf dem Pi, nicht auf
 dem Handy. Quelloffen (MIT).
+
+Neu: Ein Knopf richtet den Fernzugriff via Tailscale ein — und prüft danach
+nach, ob das Handy den Pi auch wirklich erreicht, statt einfach „fertig" zu
+sagen. Kein Port im Router.
 
 https://play.google.com/store/apps/details?id=systems.kyth.pitool
 

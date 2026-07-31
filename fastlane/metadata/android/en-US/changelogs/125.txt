@@ -1,0 +1,5 @@
+Small but important: the footer now has "Rate the app".
+
+Pi-Tool has no marketing budget and no ads. Whether anyone finds the app at all depends almost entirely on its Play Store ratings. So if the app saves you work, a rating is the most helpful thing you can give it — it costs you a minute.
+
+Nothing else changed in this version.
