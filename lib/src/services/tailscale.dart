@@ -56,6 +56,25 @@ bool isTailnetHost(String host) {
   return h.startsWith('100.') || h.endsWith('.ts.net');
 }
 
+/// Ordered connect candidates for a Pi that has both a home address and a
+/// tailnet IP. Home first — it is the fast path and needs no VPN on the phone —
+/// unless the tailnet is what worked last time. A [lastGood] matching neither
+/// known address is stale (the Pi moved to a new LAN IP) and is ignored.
+///
+/// Fewer than two known addresses are returned as-is, so a Pi without remote
+/// access behaves exactly as before and never pays a fallback delay.
+List<String> remoteAccessCandidates({
+  required String lanHost,
+  required String tailscaleIp,
+  required String lastGood,
+}) {
+  final lan = lanHost.trim();
+  final ts = tailscaleIp.trim();
+  final known = [if (lan.isNotEmpty) lan, if (ts.isNotEmpty) ts];
+  if (known.length < 2) return known;
+  return lastGood.trim() == ts ? [ts, lan] : [lan, ts];
+}
+
 typedef TailscaleStatus = ({bool installed, bool up, String? ip});
 
 /// Parses [tailscaleStatusCommand] output. "up" = has a tailnet IP.

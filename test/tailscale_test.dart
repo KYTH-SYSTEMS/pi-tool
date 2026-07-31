@@ -78,4 +78,54 @@ void main() {
       expect(s.installed, isFalse);
     });
   });
+
+  group('remoteAccessCandidates', () {
+    test('beide bekannt: Heim-Adresse zuerst (schnell, ohne VPN)', () {
+      expect(
+        remoteAccessCandidates(
+            lanHost: '192.168.178.125', tailscaleIp: '100.64.0.5', lastGood: ''),
+        ['192.168.178.125', '100.64.0.5'],
+      );
+    });
+
+    test('zuletzt erfolgreich war das Tailnet: dann das zuerst', () {
+      expect(
+        remoteAccessCandidates(
+            lanHost: '192.168.178.125',
+            tailscaleIp: '100.64.0.5',
+            lastGood: '100.64.0.5'),
+        ['100.64.0.5', '192.168.178.125'],
+      );
+    });
+
+    test('veralteter lastGood (Pi hat eine neue LAN-IP) wird ignoriert', () {
+      expect(
+        remoteAccessCandidates(
+            lanHost: '192.168.178.125',
+            tailscaleIp: '100.64.0.5',
+            lastGood: '192.168.178.99'),
+        ['192.168.178.125', '100.64.0.5'],
+      );
+    });
+
+    test('nur eine Adresse bekannt: kein Rückfall, also keine Wartezeit', () {
+      expect(
+        remoteAccessCandidates(
+            lanHost: '192.168.178.125', tailscaleIp: '', lastGood: ''),
+        ['192.168.178.125'],
+      );
+      expect(
+        remoteAccessCandidates(
+            lanHost: '', tailscaleIp: '100.64.0.5', lastGood: ''),
+        ['100.64.0.5'],
+      );
+    });
+
+    test('nichts bekannt: leer', () {
+      expect(
+        remoteAccessCandidates(lanHost: '  ', tailscaleIp: '', lastGood: ''),
+        isEmpty,
+      );
+    });
+  });
 }
