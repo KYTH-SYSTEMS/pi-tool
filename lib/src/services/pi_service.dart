@@ -105,9 +105,16 @@ List<ServiceStatus> applyLatestEvccVersion(
       if (s.id == 'evcc' &&
           s.installed &&
           s.version != null &&
-          s.detail.startsWith('apt') &&
-          isNewerVersion(latestEvccVersion, s.version!))
-        s.copyWith(updateAvailable: true, updateKnown: true)
+          s.detail.startsWith('apt'))
+        // A compare that SUCCEEDS is knowledge either way — including "you are
+        // current", which is what rescues the "Aktuell ✓" when the Pi's apt
+        // index is too old for detection to tell. Never downgrade an update apt
+        // already found: the local index knowing more is not a contradiction.
+        s.copyWith(
+          updateAvailable: s.updateAvailable ||
+              isNewerVersion(latestEvccVersion, s.version!),
+          updateKnown: true,
+        )
       else
         s,
   ];

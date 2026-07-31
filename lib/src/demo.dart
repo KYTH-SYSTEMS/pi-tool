@@ -119,6 +119,10 @@ const String _detectDoc = '$_m'
     '0\n'
     '${_m}PENDING$_m\n'
     '0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n'
+    // Package index refreshed an hour ago, so the demo Pi may legitimately
+    // claim "aktuell" instead of "Stand unbekannt".
+    '${_m}APTAGE$_m\n'
+    '3600\n'
     '${_m}EVCC_V$_m\n'
     'installed 0.207.0\n'
     '${_m}EVCC_SVC$_m\n'

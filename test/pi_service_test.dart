@@ -51,6 +51,17 @@ void main() {
           .first.updateAvailable, isFalse);
     });
 
+    test('a successful compare restores certainty lost to a stale apt index',
+        () {
+      // Stale index → detection could not tell (updateKnown false). GitHub
+      // answering "you are current" IS knowledge, so the card may show
+      // "Aktuell ✓" instead of falling back to "Stand unbekannt".
+      final stale = evccApt('0.310.0').copyWith(updateKnown: false);
+      final out = applyLatestEvccVersion([stale], '0.310.0');
+      expect(out.first.updateAvailable, isFalse);
+      expect(out.first.updateKnown, isTrue);
+    });
+
     test('never touches a Docker evcc (image tag, not a comparable version)',
         () {
       final docker = ServiceStatus(

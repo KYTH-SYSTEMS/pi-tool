@@ -127,6 +127,7 @@ class FakeEvccUpdater extends EvccUpdater {
 
   int runCalls = 0, dockerCalls = 0, backupCalls = 0, forgetCalls = 0;
   int piholeUpdateCalls = 0, systemUpgradeCalls = 0;
+  int detectCalls = 0, aptRefreshCalls = 0;
   int haInstallCalls = 0, haUpdateCalls = 0;
   SshConfig? forgotConfig;
 
@@ -137,6 +138,7 @@ class FakeEvccUpdater extends EvccUpdater {
     bool allowSudoForDocker = true,
     void Function()? onConnected,
   }) async {
+    detectCalls++;
     if (detectGate != null) await detectGate!.future;
     onConnected?.call();
     if (detectError != null) throw detectError!;
@@ -653,6 +655,13 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       systemUpgradeCalls++;
+
+  @override
+  Future<void> refreshAptIndex({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      aptRefreshCalls++;
 
   @override
   Future<void> installHomeAssistant({
@@ -2863,6 +2872,36 @@ void main() {
     expect(find.text('var'), findsOneWidget);
     expect(find.text('huge.img'), findsOneWidget);
     expect(find.text('2.0 GB'), findsOneWidget); // human-readable size
+  });
+
+  testWidgets(
+      'System-Karte → „Paketlisten aktualisieren" frischt den Index auf und erkennt neu',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            updateKnown: false,
+            detail: 'Paketlisten 10 Tage alt — Stand unbekannt')
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    final detectsBefore = u.detectCalls;
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paketlisten aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.aptRefreshCalls, 1);
+    // Re-read afterwards — otherwise the stale line would sit there unchanged
+    // and the refresh would look like it did nothing.
+    expect(u.detectCalls, greaterThan(detectsBefore));
   });
 
   testWidgets('System-Karte → Sicherheits-Check zeigt die Ampel-Befunde',

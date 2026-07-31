@@ -11,6 +11,20 @@ const String systemOsCommand = 'cat /etc/os-release';
 /// refresh) — matches the `apt-get full-upgrade` the System action runs.
 const String systemPendingCommand = 'LC_ALL=C apt-get -s full-upgrade';
 
+/// How old the Pi's package index may be before the app stops claiming to know
+/// whether a service is current. [systemPendingCommand] simulates against the
+/// LOCAL index and never refreshes it, so beyond this age "0 upgraded" only
+/// means "nothing new is known here" — not "up to date". Found the hard way:
+/// a 10-day-old index reported 0 pending while 27 updates (incl. security)
+/// waited, and the System card showed a green "aktuell".
+const Duration kAptIndexMaxAge = Duration(days: 3);
+
+/// Age of the package index in seconds, computed ON THE PI — comparing its
+/// mtime against the phone's clock would break on any clock/timezone skew.
+/// No sudo: /var/lib/apt/lists is world-readable.
+const String systemAptAgeCommand =
+    'expr \$(date +%s) - \$(stat -c %Y /var/lib/apt/lists) 2>/dev/null';
+
 /// Human-readable uptime (no sudo).
 const String systemUptimeCommand = 'uptime -p';
 
@@ -199,6 +213,27 @@ String? parseOsPrettyName(String osRelease) {
   final name = _name.firstMatch(osRelease);
   return name?.group(1)?.trim();
 }
+
+/// Parses [systemAptAgeCommand] into seconds. Null when the probe produced
+/// nothing usable, or when the age is negative (index mtime in the future =
+/// broken clock) — both mean "age unknown".
+int? parseAptListsAgeSeconds(String out) {
+  final m = RegExp(r'^\s*(-?\d+)\s*$', multiLine: true).firstMatch(out);
+  final v = m == null ? null : int.tryParse(m.group(1)!);
+  return (v == null || v < 0) ? null : v;
+}
+
+/// Whether the package index is recent enough that "no pending upgrade" can be
+/// trusted. Unknown age counts as NOT fresh: the app never claims a currency it
+/// cannot back (same fail-safe as `isPiConnectCompatible`).
+bool isAptIndexFresh(int? ageSeconds) =>
+    ageSeconds != null && ageSeconds < kAptIndexMaxAge.inSeconds;
+
+/// The System card's detail line while the index is too old to trust. Always
+/// ≥ [kAptIndexMaxAge] here, so the day count never reads "1 Tage".
+String aptIndexStaleDetail(int? ageSeconds) => ageSeconds == null
+    ? 'Paketlisten-Stand unbekannt'
+    : 'Paketlisten ${ageSeconds ~/ Duration.secondsPerDay} Tage alt — Stand unbekannt';
 
 /// The "N upgraded" count from an `apt-get -s upgrade` summary, or null when no
 /// summary line is present.

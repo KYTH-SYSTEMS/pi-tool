@@ -109,7 +109,7 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
   (`buildConfigWriteScript`) → beliebige Bytes, kein Injection-Risiko. Schreibt
   in `mktemp` + `mv -f` (atomar), `chmod/chown --reference` vorher (Rechte
   erhalten), rotiert Backups (neueste 5), Marker `CONFIG_SAVED`.
-- **Detection-Batch**: `buildDetectBatch`/`splitDetectSections` bündeln ~13
+- **Detection-Batch**: `buildDetectBatch`/`splitDetectSections` bündeln ~14
   Probes in **eine** SSH-Runde (`@@PT@@key@@PT@@`-Marker, `{ cmd ; } 2>&1 || true`
   isoliert einzelne Fehlschläge). Ausgeführt via `detectShellCommand`
   (`LC_ALL=C bash -s`).
@@ -135,8 +135,21 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   `updateKnown == true` aussagekräftig (Tri-State: Docker-evcc / nicht-gepinnte
   HA-Tags zeigen „Aktualisieren" statt falsch „Aktuell"). Reconciler
   `applyLatestEvccVersion` (nur apt-evcc, gegen stalen lokalen apt-Index) /
-  `applyLatestHomeAssistantVersion` (nur calver-vs-calver). `compatible=false`
-  → Karte ausgegraut mit Grund (z.B. Pi Connect < Bookworm).
+  `applyLatestHomeAssistantVersion` (nur calver-vs-calver). **Beide setzen bei
+  jedem GELUNGENEN Vergleich `updateKnown=true`** — auch bei „du bist aktuell";
+  genau das rettet das „Aktuell ✓", wenn der apt-Index zu alt ist (unten).
+  `compatible=false` → Karte ausgegraut mit Grund (z.B. Pi Connect < Bookworm).
+- **Frische des apt-Index ist eine Sicherheits-Invariante** (`system_service.dart`,
+  v0.63.7): `systemPendingCommand` simuliert gegen den **lokalen** Index und
+  frischt ihn nie auf — auf einem Standard-Pi läuft `apt-daily` ohne
+  `APT::Periodic::Update-Package-Lists "1"` ins Leere, der Index wird also
+  wochenalt. Deshalb misst die Probe `APTAGE` (`systemAptAgeCommand`) das Alter
+  **auf dem Pi** (`expr $(date +%s) - $(stat -c %Y /var/lib/apt/lists)` — gegen
+  die Handy-Uhr zu rechnen bräche bei Zeitversatz), und `aptKnown` gilt nur mit
+  `isAptIndexFresh` (< `kAptIndexMaxAge`, 3 Tage). Alter unbekannt ⇒ **nicht**
+  frisch (Fail-safe). Ohne das meldete die System-Karte ein grünes „aktuell"
+  über einem Pi mit 27 offenen Updates inkl. Sicherheitsfixes. Gegenmittel für
+  Nutzer: `refreshAptIndex` (⋮ → „Paketlisten aktualisieren").
 - **`apt_services.dart`** — Grafana/InfluxDB/Mosquitto. **Supply-Chain:**
   InfluxDB prüft den GPG-**Fingerprint** vor dem Vertrauen; Grafana speichert den
   armored Key ohne dearmor (aktueller offizieller Flow).

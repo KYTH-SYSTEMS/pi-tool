@@ -1544,6 +1544,7 @@ void main() {
         piholeStatusCommand: [_r('[✓] Pi-hole blocking is enabled')],
         systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"')],
         systemPendingCommand: [_r('3 upgraded, 0 newly installed, 0 to remove.')],
+        systemAptAgeCommand: [_r('3600')], // fresh index — currency is knowable
       });
 
       final list =
@@ -1574,6 +1575,7 @@ void main() {
         ],
         piholeVersionCommand: [_r('')],
         systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+        systemAptAgeCommand: [_r('3600')], // fresh index — currency is knowable
       });
 
       final list =
@@ -1600,6 +1602,53 @@ void main() {
       expect(list.firstWhere((s) => s.id == 'evcc').updateAvailable, isTrue);
     });
 
+    test('a stale package index stops every apt card from claiming currency',
+        () async {
+      // The v0.63.6 bug: a 10-day-old index answered "0 upgraded", so every
+      // apt-backed card showed a green "aktuell" — including System, while 27
+      // updates (incl. security) waited in the repo.
+      final runner = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n')],
+        _svc: [_r('active\n')],
+        piConnectStatusCommand: [_r('Signed in: yes')],
+        tailscaleStatusCommand: [_r('100.64.0.5   mypi   linux\n100.64.0.5')],
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 13 (trixie)"')],
+        systemPendingCommand: [_r('0 upgraded, 0 newly installed, 0 to remove.')],
+        systemAptAgeCommand: [_r('${10 * 24 * 3600}')],
+      });
+
+      final list =
+          await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      final byId = {for (final s in list) s.id: s};
+
+      for (final id in ['evcc', 'piconnect', 'tailscale', 'system']) {
+        expect(byId[id]!.updateKnown, isFalse,
+            reason: '$id must not claim currency on a stale index');
+      }
+      // …and the System card says why, with the age.
+      expect(byId['system']!.detail, contains('10 Tage'));
+    });
+
+    test('a fresh package index keeps the cards authoritative', () async {
+      final runner = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n')],
+        _svc: [_r('active\n')],
+        piConnectStatusCommand: [_r('Signed in: yes')],
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 13 (trixie)"')],
+        systemPendingCommand: [_r('0 upgraded, 0 newly installed, 0 to remove.')],
+        systemAptAgeCommand: [_r('3600')],
+      });
+
+      final list =
+          await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      final byId = {for (final s in list) s.id: s};
+
+      expect(byId['evcc']!.updateKnown, isTrue);
+      expect(byId['piconnect']!.updateKnown, isTrue);
+      expect(byId['system']!.updateKnown, isTrue);
+      expect(byId['system']!.detail, 'aktuell');
+    });
+
     test('Pi Connect + Tailscale (apt) flag an update when the apt sim upgrades them',
         () async {
       final runner = FakeSshRunner({
@@ -1611,6 +1660,7 @@ void main() {
               '2 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.')
         ],
         systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"')],
+        systemAptAgeCommand: [_r('3600')], // fresh index — currency is knowable
       });
 
       final byId = {
@@ -1634,6 +1684,7 @@ void main() {
         tailscaleStatusCommand: [_r('100.64.0.5   mypi\n100.64.0.5')],
         systemPendingCommand: [_r('0 upgraded, 0 newly installed, 0 to remove.')],
         systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+        systemAptAgeCommand: [_r('3600')], // fresh index — currency is knowable
       });
       final byId = {
         for (final s in await _updaterWith(runner)

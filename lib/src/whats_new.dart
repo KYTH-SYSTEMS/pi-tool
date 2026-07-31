@@ -18,6 +18,16 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.63.7': [
+    'The update display no longer claims "up to date" when it cannot possibly '
+        'know. It reads the state from the Pi\'s package index — and a stock '
+        'Raspberry Pi OS often leaves that untouched for weeks. Older than '
+        'three days, and you now get "state unknown" instead of a green check, '
+        'plus "Refresh package lists" in the System card\'s ⋮ menu.',
+    'Why it matters: a reassuring "up to date" could sit on top of a Pi with '
+        'security updates already waiting. It affected every apt-managed card '
+        '— Pi Connect, Tailscale, Grafana, InfluxDB, Mosquitto and System.',
+  ],
   '0.63.6': [
     'The project has a new home: source code and releases now live at '
         'github.com/KYTH-SYSTEMS/pi-tool instead of a personal account — the app '
@@ -100,6 +110,18 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.63.7': [
+    'Die Update-Anzeige sagt nicht mehr „aktuell", wenn sie es gar nicht wissen '
+        'kann. Sie liest den Stand aus dem Paketverzeichnis des Pi — und das '
+        'erneuert ein Raspberry Pi OS von sich aus oft wochenlang nicht. Ist es '
+        'älter als drei Tage, steht jetzt „Stand unbekannt" statt eines grünen '
+        'Hakens, und die System-Karte bietet im ⋮-Menü „Paketlisten '
+        'aktualisieren" an.',
+    'Warum das zählt: Vorher konnte ein beruhigendes „aktuell" über einem Pi '
+        'stehen, auf dem längst Sicherheitsupdates warteten. Betroffen waren '
+        'alle per apt gepflegten Karten — Pi Connect, Tailscale, Grafana, '
+        'InfluxDB, Mosquitto und System.',
+  ],
   '0.63.6': [
     'Das Projekt hat eine neue Heimat: Quellcode und Releases liegen jetzt unter '
         'github.com/KYTH-SYSTEMS/pi-tool statt beim privaten Konto — die App '

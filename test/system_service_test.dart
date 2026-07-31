@@ -34,6 +34,51 @@ void main() {
     });
   });
 
+  group('parseAptListsAgeSeconds', () {
+    test('reads the age the Pi computed for its package lists', () {
+      expect(parseAptListsAgeSeconds('864000\n'), 864000);
+      expect(parseAptListsAgeSeconds('  42  '), 42);
+    });
+    test('zero (just refreshed) is a real answer, not "unknown"', () {
+      expect(parseAptListsAgeSeconds('0'), 0);
+    });
+    test('null when the probe produced nothing usable', () {
+      // stat/expr failed, path missing, permission denied, empty section.
+      expect(parseAptListsAgeSeconds(''), isNull);
+      expect(parseAptListsAgeSeconds('stat: cannot stat ...: No such file'),
+          isNull);
+      expect(parseAptListsAgeSeconds('expr: syntax error'), isNull);
+    });
+    test('null on a negative age (mtime in the future = broken clock)', () {
+      expect(parseAptListsAgeSeconds('-120'), isNull);
+    });
+  });
+
+  group('isAptIndexFresh', () {
+    test('fresh below the 3-day threshold', () {
+      expect(isAptIndexFresh(0), isTrue);
+      expect(isAptIndexFresh(2 * 24 * 3600), isTrue);
+    });
+    test('stale at or beyond 3 days — this is the bug that shipped', () {
+      // A 10-day-old index reported "0 upgraded" while 27 updates waited.
+      expect(isAptIndexFresh(3 * 24 * 3600), isFalse);
+      expect(isAptIndexFresh(10 * 24 * 3600), isFalse);
+    });
+    test('unknown age counts as NOT fresh (never claim what you cannot back)',
+        () {
+      expect(isAptIndexFresh(null), isFalse);
+    });
+  });
+
+  group('aptIndexStaleDetail', () {
+    test('names the age so the number is actionable', () {
+      expect(aptIndexStaleDetail(10 * 24 * 3600), 'Paketlisten 10 Tage alt — Stand unbekannt');
+    });
+    test('says plainly when even the age is unknown', () {
+      expect(aptIndexStaleDetail(null), 'Paketlisten-Stand unbekannt');
+    });
+  });
+
   group('parseTemperatureC', () {
     test("reads vcgencmd output (temp=48.3'C)", () {
       expect(parseTemperatureC("temp=48.3'C\n"), 48.3);

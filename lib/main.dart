@@ -2782,6 +2782,26 @@ class _UpdaterPageState extends State<UpdaterPage>
     }, backgroundMessage: l10n.busyInstallingPihole);
   }
 
+  /// Refreshes the Pi's package index, then re-reads the cards. Without this
+  /// the app can only report what a possibly weeks-old index knows — see
+  /// [kAptIndexMaxAge] and the "Stand unbekannt" hint on the System card.
+  Future<void> _refreshAptIndex() async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _refreshAptIndex;
+    await _guard(() async {
+      await _updater.refreshAptIndex(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = context.l10n.statusAptIndexRefreshed;
+        _statusOk = true;
+      });
+      await _refreshServices(config);
+    }, backgroundMessage: l10n.busyRefreshingAptIndex);
+  }
+
   Future<void> _upgradeSystem() async {
     if (_busy) return;
     final l10n = context.l10n;
@@ -3893,6 +3913,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                   context.l10n.actionShowLogs, () => _showServiceLogs(s)),
               if (upToDate)
                 _CardAction(context.l10n.actionUpdateAnyway, _upgradeSystem),
+              // The remedy for "Stand unbekannt": refresh the index the whole
+              // update detection reads from, then re-read the cards.
+              _CardAction(
+                  context.l10n.actionRefreshPackageLists, _refreshAptIndex),
               _CardAction(context.l10n.actionCleanup,
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction(context.l10n.actionSecurityCheck, _securityCheck),

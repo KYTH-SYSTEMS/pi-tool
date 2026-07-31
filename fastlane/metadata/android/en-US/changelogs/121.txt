@@ -1,0 +1,5 @@
+Bug fix: the app showed "up to date" while updates were waiting — security updates included.
+
+The reason: the state comes from the Pi's package index, and Raspberry Pi OS often leaves that untouched for weeks. Older than three days, you now get "state unknown" instead of a green check — no answer beats a wrong one. New in the System card's ⋮ menu: "Refresh package lists".
+
+Affected every apt card: Pi Connect, Tailscale, Grafana, InfluxDB, Mosquitto, System.

@@ -134,6 +134,11 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   ungenutzte Docker-Images, Journal >7 Tage) und zeigt, wie viel frei wurde.
 - **„Aktuell"-Anzeige** — bei evcc/Pi-hole/System zeigt die Karte „Aktuell", wenn
   keine neue Version ansteht (statt „Aktualisieren"); erzwingen geht über das ⋮-Menü.
+  **Aber nur, wenn der Paket-Index des Pi frisch ist:** die apt-gestützten Karten
+  rechnen gegen den lokalen Index, und der wird auf einem Standard-Raspberry-Pi-OS
+  oft wochenlang nicht erneuert. Ist er älter als drei Tage, sagt die App „Stand
+  unbekannt" statt „Aktuell" — lieber keine Auskunft als eine falsche. Die
+  System-Karte bietet dann im ⋮-Menü **„Paketlisten aktualisieren"**.
 - **Abbrechen** — eine laufende Aktion lässt sich abbrechen (schließt die
   SSH-Verbindung).
 - **Verbindung herstellen** — Host/Zugang in Sekunden prüfen, ohne etwas zu ändern.

@@ -1,0 +1,5 @@
+Fehlerbehebung: Die App zeigte „aktuell", obwohl Updates anstanden — auch Sicherheitsupdates.
+
+Grund: Der Stand kommt aus dem Paketverzeichnis des Pi, und Raspberry Pi OS erneuert das von sich aus oft wochenlang nicht. Ist es älter als drei Tage, steht jetzt „Stand unbekannt" statt eines grünen Hakens — lieber keine Auskunft als eine falsche. Neu im ⋮-Menü der System-Karte: „Paketlisten aktualisieren".
+
+Betraf alle apt-Karten: Pi Connect, Tailscale, Grafana, InfluxDB, Mosquitto, System.

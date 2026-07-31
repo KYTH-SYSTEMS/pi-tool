@@ -375,6 +375,7 @@ class EvccUpdater {
         final probes = <(String, String)>[
           ('DOCKER', dockerListCommand),
           ('PENDING', systemPendingCommand),
+          ('APTAGE', systemAptAgeCommand),
           ('EVCC_V', versionQuery),
           ('EVCC_SVC', serviceStatus),
           ('PIHOLE_V', piholeVersionCommand),
@@ -414,9 +415,13 @@ class EvccUpdater {
         // Simulated full-upgrade: pending count + which packages have an update
         // in the local index. Trust it (updateKnown) only when it parsed.
         final pending = parsePendingUpdates(sec['PENDING'] ?? '');
-        final aptKnown = pending != null;
         final pendingCount = pending ?? 0;
         final aptUpgrades = parseAptUpgrades(sec['PENDING'] ?? '');
+        // The simulation reads the LOCAL index and never refreshes it, so its
+        // "nothing pending" is only worth something while that index is recent
+        // — otherwise every apt card would claim a currency nobody checked.
+        final aptAge = parseAptListsAgeSeconds(sec['APTAGE'] ?? '');
+        final aptKnown = pending != null && isAptIndexFresh(aptAge);
 
         // ---- evcc (apt or docker) ----
         final aptV = parseInstalledVersion(sec['EVCC_V'] ?? '');
@@ -588,7 +593,11 @@ class EvccUpdater {
           active: true,
           updateAvailable: pendingCount > 0,
           updateKnown: aptKnown,
-          detail: pendingCount > 0 ? '$pendingCount Updates verfügbar' : 'aktuell',
+          detail: pendingCount > 0
+              ? '$pendingCount Updates verfügbar'
+              : aptKnown
+                  ? 'aktuell'
+                  : aptIndexStaleDetail(aptAge),
           health: health.summary,
           healthWarning: health.warning,
         ));
@@ -1585,6 +1594,28 @@ class EvccUpdater {
       },
     );
   }
+
+  /// Refreshes the package index only (`apt-get update`) — installs nothing.
+  /// Detection simulates against that index and never refreshes it, so once it
+  /// ages past [kAptIndexMaxAge] the app stops claiming to know a service's
+  /// currency; this is the one-tap remedy behind that hint.
+  Future<void> refreshAptIndex({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Paketlisten aktualisieren …');
+          // Same tolerance as the upgrade path: one flaky third-party repo must
+          // not sink a refresh that updated everything else.
+          await _sudoCommand(runner, log, config,
+              'LC_ALL=C sudo -S apt-get update -qq', 'apt-get update',
+              checkExit: false);
+          log('Paketlisten aktualisiert.');
+        },
+      );
 
   /// Whole-system upgrade: refresh lists (tolerant) then `apt-get full-upgrade`.
   Future<void> upgradeSystem({
