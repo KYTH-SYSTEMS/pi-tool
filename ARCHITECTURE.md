@@ -180,6 +180,26 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   deckt Headless-/SSH-Verhalten nicht ab → Parser tolerant, **Gerätecheck nötig**.
 - **`tailscale.dart`** — VPN/Mesh, **System-Service** (einfacher als Pi Connect).
   `up` detached (Login-URL). „up" = hat 100.x-Tailnet-IP. down/logout via sudo.
+  `remoteAccessCandidates` ordnet die Verbindungsversuche: Heim-Adresse zuerst
+  (schnell, ohne VPN), es sei denn das Tailnet hat zuletzt geantwortet; ein
+  `lastGood`, das zu keiner der beiden bekannten Adressen passt, ist veraltet
+  (Pi hat eine neue LAN-IP) und wird ignoriert. **Unter zwei bekannten Adressen
+  wird gar nicht sondiert** — ein Pi ohne Fernzugriff darf keine Latenz für ein
+  Feature zahlen, das er nicht nutzt.
+- **Fernzugriff-Karte (v0.64.0, `main.dart`)** — verkettet Installation, `up`
+  und Browser-Login und **misst danach den Erfolg**, statt ihn zu behaupten:
+  `EvccUpdater.probeConnection` verbindet sich vom **Handy** aus auf die
+  Tailnet-IP. Ohne diesen Beweis hält sich der Nutzer für fertig und merkt es
+  erst unterwegs. Der Beweis wird als `Profile.remoteAccessProven` persistiert,
+  damit die Karte endgültig verschwindet statt zum Dauer-Hinweis zu werden.
+  Zwei Phasen = zwei Handler, weil zwischen Login und Prüfung auf eine Handlung
+  **außerhalb** der App gewartet wird; ein modaler Wizard müsste dafür `_busy`
+  halten oder loslassen — beides bricht das Handler-Pflichtmuster.
+  **Invariante:** `probeConnection` liefert `false` für die gewöhnlichen
+  Fehlschläge, reicht aber `UpdateErrorKind.hostKeyChanged` **durch** — ein
+  gewechselter Host-Key darf nie zu „nicht erreichbar" verflacht werden.
+  **Nicht-Ziel:** kein Portforwarding/DynDNS — offene SSH-Ports ins Internet
+  sind genau das, was der Sicherheits-Check der App anprangert.
 
 ## 5. On-Pi-Automatik (`auto_update.dart`, `alerts.dart`, `files.dart`, `notifications.dart`)
 

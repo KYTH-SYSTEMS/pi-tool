@@ -64,6 +64,17 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,
   InfluxDB, Mosquitto) und installiert den gewählten (experimentell). So bleibt
   die Übersicht schlank, egal wie viele Dienste unterstützt werden.
+- **Fernzugriff mit einem Knopf einrichten** — bist du mit dem Pi verbunden,
+  bietet die Verwaltung „Fernzugriff einrichten" an: Die App installiert
+  Tailscale auf dem Pi, startet die Anmeldung und öffnet den Login im Browser.
+  Danach **prüft sie nach, ob dieses Handy den Pi über das Tailnet wirklich
+  erreicht** — sie meldet Erfolg erst, wenn sie ihn gemessen hat. Fehlt auf dem
+  Handy noch die Tailscale-App, sagt sie genau das (samt Store-Link); Android
+  erlaubt keiner App, ein fremdes VPN für dich einzurichten. Ab dann wählt die
+  App beim Verbinden selbst die richtige Adresse: erst die Heim-IP, sonst die
+  Tailnet-IP — kein manuelles Umschalten mehr. Bewusst **kein Portforwarding**:
+  offene SSH-Ports ins Internet sind genau das, was der Sicherheits-Check der
+  App anprangert.
 - **Fernzugriff mit einem Tap (Tailscale)** — im ⋮-Menü liegt „Fernzugriff:
   Tailscale öffnen" (erreichbar, wenn du unterwegs und nicht verbunden bist): es
   setzt die zuletzt gemerkte Tailnet-IP (100.x) des Pi als Host und öffnet die

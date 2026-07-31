@@ -1,0 +1,5 @@
+Neu: Fernzugriff mit einem Knopf.
+
+Bist du mit deinem Pi verbunden, richtet die App den Zugriff von unterwegs komplett ein — Tailscale installieren, anmelden, Login im Browser bestätigen. Danach prüft sie nach, ob dein Handy den Pi wirklich erreicht, und meldet Erfolg erst, wenn sie ihn gemessen hat. Fehlt auf dem Handy noch die Tailscale-App, sagt sie genau das.
+
+Und du schaltest nie wieder um: Beim Verbinden wird zuerst die Heim-Adresse probiert, sonst die Tailnet-IP.

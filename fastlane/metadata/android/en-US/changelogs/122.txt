@@ -1,0 +1,5 @@
+New: remote access in one button.
+
+While you are connected to your Pi, the app sets up access from anywhere — install Tailscale, sign in, confirm the login in your browser. It then checks whether your phone actually reaches the Pi, and reports success only once it has measured it. If your phone is still missing the Tailscale app, it says so.
+
+And you never switch addresses again: connecting tries the home address first, then the tailnet IP.

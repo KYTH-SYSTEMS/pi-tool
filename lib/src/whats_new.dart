@@ -18,6 +18,19 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.64.0': [
+    'Remote access in one button: while you are connected to your Pi, the app '
+        'sets up access from anywhere — install Tailscale, sign in, confirm the '
+        'login in your browser. It then checks whether your phone actually '
+        'reaches the Pi over the tailnet, and reports success only once it has '
+        'measured it.',
+    'If your phone is still missing the Tailscale app, the app says so instead '
+        'of claiming "done" — otherwise you would find out on the road, where '
+        'nothing can be fixed.',
+    'And you never switch addresses again: connecting tries the home address '
+        'first and falls back to the tailnet IP. With only one known address '
+        'nothing is probed at all, so nobody pays for a feature they do not use.',
+  ],
   '0.63.7': [
     'The update display no longer claims "up to date" when it cannot possibly '
         'know. It reads the state from the Pi\'s package index — and a stock '
@@ -110,6 +123,19 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.64.0': [
+    'Fernzugriff mit einem Knopf: Bist du mit deinem Pi verbunden, richtet die '
+        'App den Zugriff von unterwegs komplett ein — Tailscale installieren, '
+        'anmelden, Login im Browser bestätigen. Danach prüft sie nach, ob dein '
+        'Handy den Pi über das Tailnet wirklich erreicht, und meldet Erfolg '
+        'erst, wenn sie ihn gemessen hat.',
+    'Fehlt auf dem Handy noch die Tailscale-App, sagt die App genau das statt '
+        '„fertig" zu behaupten — sonst merkst du es erst unterwegs, wo du nichts '
+        'mehr reparieren kannst.',
+    'Und du musst nie wieder umschalten: Beim Verbinden probiert die App zuerst '
+        'die Heim-Adresse und fällt sonst auf die Tailnet-IP zurück. Wer nur '
+        'eine Adresse hat, merkt davon nichts — dort wird gar nicht gesucht.',
+  ],
   '0.63.7': [
     'Die Update-Anzeige sagt nicht mehr „aktuell", wenn sie es gar nicht wissen '
         'kann. Sie liest den Stand aus dem Paketverzeichnis des Pi — und das '
