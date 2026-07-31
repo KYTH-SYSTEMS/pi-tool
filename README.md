@@ -87,8 +87,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   (VPN/Mesh, per Login-Link verbinden). Beides installieren/verbinden/trennen
   direkt in der App; die Tailnet-IP (100.x) lässt sich mit einem Tap ins
   Host-Feld übernehmen — so erreichst du den Pi von überall. Beide Karten
-  **melden verfügbare apt-Updates** und bieten „Aktualisieren" direkt an (wie
-  Grafana, InfluxDB und Mosquitto).
+  **melden verfügbare apt-Updates**: Steht eines an, wird „Aktualisieren" zum
+  Hauptknopf der Karte (die sonstige Aktion rückt ins ⋮-Menü) — dieselbe Regel
+  wie bei evcc, Pi-hole, Grafana, InfluxDB und Mosquitto: *Der Knopf zeigt, was
+  als Nächstes dran ist.*
 - **Geplante Backups** — nächtliche evcc- + Pi-hole-Sicherung mit Rotation als
   On-Pi-systemd-Timer (Pro).
 - **Automatik** (läuft autonom auf dem Pi, **kein** Handy-Hintergrunddienst) —

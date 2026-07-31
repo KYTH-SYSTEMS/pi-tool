@@ -191,6 +191,12 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   jeder Befehl mit `XDG_RUNTIME_DIR=/run/user/$(id -u)`, **nie sudo**. `signin`
   läuft **detached** (`setsid … &`, sleep, cat) — sonst hängt der SSH-Call. Doku
   deckt Headless-/SSH-Verhalten nicht ab → Parser tolerant, **Gerätecheck nötig**.
+- **Karten-Regel „der Knopf zeigt, was als Nächstes dran ist"** (v0.64.2): Steht
+  ein Update an, ist `actionUpdate` der **Primär-Knopf** — auch auf Pi Connect
+  und Tailscale, deren Primär sonst am Anmelde-/Verbindungszustand hängt. Die
+  verdrängte Aktion wandert ins ⋮ und kommt danach zurück. Vorher lag das Update
+  dort nur als `_CardAction`, sichtbar allein an der ambernen LED — zu leise
+  (real übersehen: Pi Connect 2.12.1 → 2.12.2 hinter „Web öffnen").
 - **`tailscale.dart`** — VPN/Mesh, **System-Service** (einfacher als Pi Connect).
   `up` detached (Login-URL). „up" = hat 100.x-Tailnet-IP. down/logout via sudo.
   `remoteAccessCandidates` ordnet die Verbindungsversuche: Heim-Adresse zuerst

@@ -1,0 +1,5 @@
+Verbesserung: Steht bei Raspberry Pi Connect oder Tailscale ein Update an, heißt der Hauptknopf der Karte jetzt „Aktualisieren" — wie bei evcc, Pi-hole, Grafana und den anderen Diensten.
+
+Bisher stand dort weiter „Web öffnen" bzw. „Verbinden", und das verfügbare Update versteckte sich im ⋮-Menü hinter einer kleinen gelben Lampe. Leicht zu übersehen.
+
+Die verdrängte Aktion liegt solange im ⋮-Menü und ist nach dem Update wieder am gewohnten Platz.

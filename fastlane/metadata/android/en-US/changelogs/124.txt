@@ -1,0 +1,5 @@
+Improvement: when Raspberry Pi Connect or Tailscale has an update waiting, the card's main button now reads "Update" — the same as evcc, Pi-hole, Grafana and the other services.
+
+It used to keep saying "Open web" or "Connect" while the available update hid in the ⋮ menu behind a small amber light. Easy to miss.
+
+The displaced action sits in the ⋮ menu meanwhile and returns to its usual place once the update is done.

@@ -4002,15 +4002,29 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.cast,
             enabled: !_busy,
-            primaryLabel:
-                signedIn ? context.l10n.actionOpenWeb : context.l10n.actionSignIn,
-            onPrimary: signedIn
-                ? () => _openUrl('https://connect.raspberrypi.com')
-                : _piConnectSignin,
+            // A pending update takes over the primary button, like on every
+            // other card — the amber LED alone was too quiet, and "Web öffnen"
+            // sat there while 2.12.2 was waiting. The displaced action moves
+            // into ⋮ and comes back once the update is done.
+            primaryLabel: s.updateAvailable
+                ? context.l10n.actionUpdate
+                : signedIn
+                    ? context.l10n.actionOpenWeb
+                    : context.l10n.actionSignIn,
+            onPrimary: s.updateAvailable
+                ? () => _updateAptService(s)
+                : signedIn
+                    ? () => _openUrl('https://connect.raspberrypi.com')
+                    : _piConnectSignin,
             actions: [
               if (s.updateAvailable)
                 _CardAction(
-                    context.l10n.actionUpdate, () => _updateAptService(s)),
+                    signedIn
+                        ? context.l10n.actionOpenWeb
+                        : context.l10n.actionSignIn,
+                    signedIn
+                        ? () => _openUrl('https://connect.raspberrypi.com')
+                        : _piConnectSignin),
               if (signedIn) ...[
                 _CardAction(context.l10n.actionEnableRemoteAccess,
                     () => _piConnectSet(true)),
@@ -4027,17 +4041,29 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.vpn_key,
             enabled: !_busy,
-            primaryLabel:
-                up ? context.l10n.actionDisconnect : context.l10n.actionConnect,
-            onPrimary:
-                up ? () => _tailscaleSet(logout: false) : _tailscaleUp,
+            // Same rule as Pi Connect: the button shows what is next in line.
+            primaryLabel: s.updateAvailable
+                ? context.l10n.actionUpdate
+                : up
+                    ? context.l10n.actionDisconnect
+                    : context.l10n.actionConnect,
+            onPrimary: s.updateAvailable
+                ? () => _updateAptService(s)
+                : up
+                    ? () => _tailscaleSet(logout: false)
+                    : _tailscaleUp,
             onOpenWeb: up
                 ? () => _openUrl('https://login.tailscale.com/admin/machines')
                 : null,
             actions: [
               if (s.updateAvailable)
                 _CardAction(
-                    context.l10n.actionUpdate, () => _updateAptService(s)),
+                    up
+                        ? context.l10n.actionDisconnect
+                        : context.l10n.actionConnect,
+                    up
+                        ? () => _tailscaleSet(logout: false)
+                        : _tailscaleUp),
               if (up && s.version != null)
                 _CardAction(context.l10n.actionUseIpAsHost(s.version!),
                     () => _useTailscaleIp(s.version!)),

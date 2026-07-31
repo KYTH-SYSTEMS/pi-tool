@@ -18,6 +18,13 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.64.2': [
+    'When Raspberry Pi Connect or Tailscale has an update waiting, the card\'s '
+        'main button now reads "Update" — the same as evcc, Pi-hole, Grafana '
+        'and the rest. It used to keep saying "Open web" or "Connect" while the '
+        'update hid in the ⋮ menu behind a small amber light. The displaced '
+        'action lives in ⋮ meanwhile and returns once the update is done.',
+  ],
   '0.64.1': [
     'If an apt or dpkg run on the Pi was ever killed mid-way (power cut, '
         'cancelled update), apt refuses every further install — including '
@@ -134,6 +141,14 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.64.2': [
+    'Steht bei Raspberry Pi Connect oder Tailscale ein Update an, heißt der '
+        'Hauptknopf der Karte jetzt „Aktualisieren" — wie bei evcc, Pi-hole, '
+        'Grafana und den anderen. Bisher stand dort weiter „Web öffnen" bzw. '
+        '„Verbinden", und das Update versteckte sich im ⋮-Menü hinter einer '
+        'kleinen gelben Lampe. Die verdrängte Aktion findest du solange im '
+        '⋮-Menü; nach dem Update ist sie wieder am gewohnten Platz.',
+  ],
   '0.64.1': [
     'Wurde auf dem Pi einmal ein apt- oder dpkg-Lauf abgewürgt (Stromausfall, '
         'abgebrochenes Update), verweigert apt danach jede weitere '

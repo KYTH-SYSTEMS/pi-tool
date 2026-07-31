@@ -2902,6 +2902,99 @@ void main() {
     expect(find.text('2.0 GB'), findsOneWidget); // human-readable size
   });
 
+  testWidgets('Pi Connect: anstehendes Update übernimmt den Primär-Knopf',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: true,
+            active: true, // angemeldet → Primär wäre sonst „Web öffnen"
+            updateAvailable: true,
+            updateKnown: true,
+            aptPackage: 'rpi-connect-lite'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.aptUpdates, ['rpi-connect-lite']);
+  });
+
+  testWidgets('Pi Connect: „Web öffnen" geht dabei nicht verloren, es wandert ins ⋮',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: true,
+            active: true,
+            updateAvailable: true,
+            updateKnown: true,
+            aptPackage: 'rpi-connect-lite'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-piconnect')));
+    await tester.pumpAndSettle();
+    expect(find.text('Web öffnen'), findsOneWidget);
+  });
+
+  testWidgets('Pi Connect ohne anstehendes Update: Primär bleibt „Web öffnen"',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        // updateKnown: false = Stand unbekannt (z. B. veralteter apt-Index).
+        // Bei bekanntem „aktuell" zeigt die Karte stattdessen „Aktuell ✓".
+        ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: true,
+            active: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.widgetWithText(OutlinedButton, 'Web öffnen'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Aktualisieren'), findsNothing);
+  });
+
+  testWidgets('Tailscale: anstehendes Update übernimmt den Primär-Knopf',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5',
+            updateAvailable: true,
+            updateKnown: true,
+            aptPackage: 'tailscale'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.aptUpdates, ['tailscale']);
+  });
+
   testWidgets('Fernzugriff einrichten: installiert Tailscale und meldet an',
       (tester) async {
     useTallScreen(tester);
