@@ -1,5 +1,3 @@
-Klein, aber wichtig: Unten in der Fußzeile liegt jetzt „App bewerten".
+Behoben: Der Einstieg „Demo ausprobieren" verschwand, sobald Host und Passwort ausgefüllt waren — der Pi galt dann als eingerichtet. Wer sich vertippt hatte oder nur schauen wollte, stand vor einer Wand ohne Ausweg. Der Einstieg bleibt jetzt, bis eine Verbindung wirklich steht.
 
-Pi-Tool hat kein Marketing-Budget und keine Werbung. Ob jemand die App überhaupt findet, hängt fast ausschließlich an den Bewertungen im Play Store. Wenn dir die App also Arbeit abnimmt, ist eine Bewertung das Hilfreichste, was du für sie tun kannst — sie kostet dich eine Minute.
-
-Sonst hat sich an dieser Version nichts geändert.
+Neu: Unten in der Fußzeile liegt „App bewerten". Pi-Tool hat kein Marketing und keine Werbung — ob die App gefunden wird, hängt an den Bewertungen.

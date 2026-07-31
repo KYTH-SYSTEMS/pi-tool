@@ -1,5 +1,3 @@
-Small but important: the footer now has "Rate the app".
+Fixed: the "Try the demo" entry disappeared as soon as host and password were filled in, because the Pi then counted as configured. Anyone who mistyped something — or just wanted to look around — was left facing a wall with no way past it. The entry now stays until a connection is actually established.
 
-Pi-Tool has no marketing budget and no ads. Whether anyone finds the app at all depends almost entirely on its Play Store ratings. So if the app saves you work, a rating is the most helpful thing you can give it — it costs you a minute.
-
-Nothing else changed in this version.
+New: the footer has "Rate the app". Pi-Tool has no marketing and no ads — whether anyone finds it depends on its ratings. If it saves you work, that is the most useful minute you can give it.

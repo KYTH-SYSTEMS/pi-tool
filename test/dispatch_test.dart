@@ -821,8 +821,13 @@ void main() {
             'Googles Screenshot; der Weg in die App muss bleiben');
   });
 
-  // Gegenprobe: fertig eingerichtet (Host + Passwort) → weg, wie gewünscht.
-  testWidgets('Demo-Einstieg ist weg, sobald der Pi fertig konfiguriert ist',
+  // Ausgefüllte Zugangsdaten dürfen den Einstieg NICHT schließen. Genau daran
+  // scheiterte die Prüfung am 31.07.2026 (dritte Ablehnung derselben Art): Der
+  // Prüfer tippte Host UND Passwort ein — damit galt der Pi als „fertig
+  // konfiguriert", der Demo-Knopf verschwand, und die App war für ihn eine
+  // Anmeldewand ohne Ausweg. Bequemlichkeit für eingerichtete Nutzer wiegt das
+  // nicht auf: solange keine Sitzung steht, bleibt der Weg in die App offen.
+  testWidgets('Demo-Einstieg bleibt, auch wenn Host UND Passwort gesetzt sind',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -840,6 +845,39 @@ void main() {
         updateChecker: _noUpdateChecker,
       ),
     ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('demoEntry')), findsOneWidget,
+        reason: 'ohne stehende Verbindung muss der Weg in die App offen sein');
+  });
+
+  // Erst eine echte Sitzung räumt ihn weg — dann ist der Nutzer ohnehin drin.
+  testWidgets('Demo-Einstieg verschwindet erst nach dem Verbinden',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [
+            Profile(name: 'S', host: '192.168.178.64', password: 'pw')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('demoEntry')), findsOneWidget);
+
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('demoEntry')), findsNothing);
   });
@@ -2391,7 +2429,10 @@ void main() {
 
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Pi im WLAN suchen'));
+    // Der Text steht jetzt zweimal da: im ⋮-Menü und als Knopf unter dem
+    // Demo-Einstieg (der bleibt seit v0.64.3 auch bei gesetzten Zugangsdaten).
+    // Gemeint ist hier der Menüeintrag.
+    await tester.tap(find.text('Pi im WLAN suchen').last);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Keine SSH-Geräte'), findsOneWidget);

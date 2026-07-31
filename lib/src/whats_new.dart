@@ -19,6 +19,11 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
   '0.64.3': [
+    'Fixed: "Try the demo" disappeared as soon as host and password were '
+        'filled in, because the Pi then counted as configured. Anyone who '
+        'mistyped something — or just wanted to look around — was left facing '
+        'a wall with no way past it. The entry now stays until a connection is '
+        'actually established.',
     'The footer now has "Rate the app" — if Pi-Tool is useful to you, a Play '
         'Store rating is the single most helpful thing you can give it. Ratings '
         'are how anyone else finds it in the first place.',
@@ -147,6 +152,10 @@ const Map<String, List<String>> _whatsNewEn = {
 
 const Map<String, List<String>> _whatsNew = {
   '0.64.3': [
+    'Behoben: „Demo ausprobieren" verschwand, sobald Host und Passwort '
+        'ausgefüllt waren — der Pi galt dann als eingerichtet. Wer sich '
+        'vertippt hatte oder nur schauen wollte, stand vor einer Wand ohne '
+        'Ausweg. Der Einstieg bleibt jetzt, bis eine Verbindung wirklich steht.',
     'Unten in der Fußzeile liegt jetzt „App bewerten" — falls dir Pi-Tool hilft, '
         'ist eine Bewertung im Play Store das, was der App am meisten bringt. '
         'Sie ist der Grund, warum andere sie überhaupt finden.',

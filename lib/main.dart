@@ -4981,9 +4981,15 @@ class _UpdaterPageState extends State<UpdaterPage>
             AnimatedBuilder(
               animation: Listenable.merge([_host, _password, _privateKey]),
               builder: (context, _) {
-                if (_connected || _credsComplete()) {
-                  return const SizedBox.shrink();
-                }
+                // ONLY a live session removes it. Not "credentials look
+                // complete": the reviewer typed a host AND a password, that
+                // counted as configured, the entry vanished — and the connect
+                // form became a login wall with no way past it (rejection
+                // 31.07.2026, the third of this kind). Keeping a tonal button
+                // on the connect screen of a configured Pi is a rounding error
+                // next to losing a release; the form above it is collapsed for
+                // those users anyway.
+                if (_connected) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.only(top: 10),
                   child: Column(
