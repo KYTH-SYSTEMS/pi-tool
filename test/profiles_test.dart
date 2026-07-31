@@ -3,6 +3,21 @@ import 'package:evcc_updater/src/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('Profile.lastGoodHost', () {
+    test('survives the JSON round-trip', () {
+      const p = Profile(
+          name: 'Pi',
+          lanHost: '192.168.178.125',
+          tailscaleIp: '100.64.0.5',
+          lastGoodHost: '100.64.0.5');
+      expect(Profile.fromJson(p.toJson()).lastGoodHost, '100.64.0.5');
+    });
+
+    test('a profile written before this field loads empty, not broken', () {
+      expect(Profile.fromJson(const {'name': 'Pi'}).lastGoodHost, '');
+    });
+  });
+
   group('AppConfig encode/parse', () {
     test('round-trips profiles + globals', () {
       const cfg = AppConfig(

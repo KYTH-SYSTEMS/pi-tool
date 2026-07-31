@@ -26,6 +26,11 @@ class Profile {
   /// home IP with one tap after using remote access.
   final String lanHost;
 
+  /// Which of [lanHost]/[tailscaleIp] answered on the last successful connect.
+  /// Only an ordering hint for the next attempt — never a source of truth, and
+  /// never shown to the user.
+  final String lastGoodHost;
+
   const Profile({
     required this.name,
     this.host = '',
@@ -38,9 +43,14 @@ class Profile {
     this.fullUpgrade = false,
     this.tailscaleIp = '',
     this.lanHost = '',
+    this.lastGoodHost = '',
   });
 
-  Profile copyWith({String? name, String? tailscaleIp, String? lanHost}) =>
+  Profile copyWith(
+          {String? name,
+          String? tailscaleIp,
+          String? lanHost,
+          String? lastGoodHost}) =>
       Profile(
         name: name ?? this.name,
         host: host,
@@ -53,6 +63,7 @@ class Profile {
         fullUpgrade: fullUpgrade,
         tailscaleIp: tailscaleIp ?? this.tailscaleIp,
         lanHost: lanHost ?? this.lanHost,
+        lastGoodHost: lastGoodHost ?? this.lastGoodHost,
       );
 
   Map<String, dynamic> toJson() => {
@@ -67,6 +78,7 @@ class Profile {
         'fullUpgrade': fullUpgrade,
         'tailscaleIp': tailscaleIp,
         'lanHost': lanHost,
+        'lastGoodHost': lastGoodHost,
       };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -81,6 +93,7 @@ class Profile {
         fullUpgrade: j['fullUpgrade'] == true,
         tailscaleIp: (j['tailscaleIp'] ?? '').toString(),
         lanHost: (j['lanHost'] ?? '').toString(),
+        lastGoodHost: (j['lastGoodHost'] ?? '').toString(),
       );
 }
 

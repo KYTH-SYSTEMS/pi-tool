@@ -261,6 +261,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _fullUpgrade = false;
   String _tailscaleIp = ''; // remembered 100.x tailnet IP of the active Pi
   String _lanHost = ''; // remembered home/LAN address of the active Pi
+  // Which of the two answered last — an ordering hint for the next connect,
+  // never a source of truth and never shown.
+  String _lastGoodHost = '';
   bool _obscure = true;
   bool _connExpanded = true; // connection form collapses once creds are set
   bool _busy = false;
@@ -477,6 +480,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     _fullUpgrade = p.fullUpgrade;
     _tailscaleIp = p.tailscaleIp;
     _lanHost = p.lanHost;
+    _lastGoodHost = p.lastGoodHost;
     // Collapse the (space-hungry) connection form when this Pi is already set up;
     // expand it for a fresh/empty profile that still needs input.
     _connExpanded = !_credsComplete();
@@ -531,6 +535,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         fullUpgrade: _fullUpgrade,
         tailscaleIp: _tailscaleIp,
         lanHost: _lanHost,
+        lastGoodHost: _lastGoodHost,
       );
 
   /// Remembers the Pi's Tailscale tailnet IP from a detection, so the remote-
@@ -1334,10 +1339,44 @@ class _UpdaterPageState extends State<UpdaterPage>
     }, backgroundMessage: dryRun ? null : l10n.busyEvccUpdate);
   }
 
+  /// Picks the address to connect with when a Pi has BOTH a home address and a
+  /// tailnet IP: try the likelier one first with a short deadline, fall back to
+  /// the other, and remember which won so the next connect starts there.
+  ///
+  /// With only one known address this returns [entered] untouched — a Pi without
+  /// remote access must not pay a probe's latency for a feature it doesn't use.
+  /// If neither answers we also return [entered], so the normal connect reports
+  /// a real error instead of us inventing one here.
+  Future<SshConfig> _pickReachableHost(SshConfig entered) async {
+    final candidates = remoteAccessCandidates(
+      lanHost: _lanHost,
+      tailscaleIp: _tailscaleIp,
+      lastGood: _lastGoodHost,
+    );
+    if (candidates.length < 2) return entered;
+    for (final host in candidates) {
+      final reachable = await _updater.probeConnection(
+        config: entered.copyWith(
+            host: host, timeout: const Duration(seconds: 4)),
+        onLog: _appendLog,
+      );
+      if (!reachable) continue;
+      if (mounted) {
+        setState(() {
+          _host.text = host;
+          _lastGoodHost = host;
+        });
+        _scheduleSave();
+      }
+      return entered.copyWith(host: host);
+    }
+    return entered;
+  }
+
   Future<void> _testConnection() async {
     if (_busy) return;
-    final config = _prepare();
-    if (config == null) return; // invalid port → keep any demo session intact
+    final entered = _prepare();
+    if (entered == null) return; // invalid port → keep any demo session intact
     // A real connect always uses the real backend, even if we were in a demo.
     if (_demoMode) setState(_restoreRealBackend);
     _lastAction = _testConnection;
@@ -1347,6 +1386,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _testing = true;
       _busyMessage = context.l10n.busyConnecting;
     });
+    final config = await _pickReachableHost(entered);
     await _guard(() async {
       final detected = await _updater.detectServices(
         config: config,

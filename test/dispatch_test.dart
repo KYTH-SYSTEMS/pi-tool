@@ -128,6 +128,11 @@ class FakeEvccUpdater extends EvccUpdater {
   int runCalls = 0, dockerCalls = 0, backupCalls = 0, forgetCalls = 0;
   int piholeUpdateCalls = 0, systemUpgradeCalls = 0;
   int detectCalls = 0, aptRefreshCalls = 0;
+
+  /// Hosts that answer [probeConnection]; everything else is "unreachable".
+  Set<String> reachableHosts = {};
+  final List<String> probedHosts = [];
+  final List<String> detectHosts = []; // which address detection actually used
   int haInstallCalls = 0, haUpdateCalls = 0;
   SshConfig? forgotConfig;
 
@@ -139,6 +144,7 @@ class FakeEvccUpdater extends EvccUpdater {
     void Function()? onConnected,
   }) async {
     detectCalls++;
+    detectHosts.add(config.host);
     if (detectGate != null) await detectGate!.future;
     onConnected?.call();
     if (detectError != null) throw detectError!;
@@ -664,6 +670,15 @@ class FakeEvccUpdater extends EvccUpdater {
       aptRefreshCalls++;
 
   @override
+  Future<bool> probeConnection({
+    required SshConfig config,
+    void Function(String line)? onLog,
+  }) async {
+    probedHosts.add(config.host);
+    return reachableHosts.contains(config.host);
+  }
+
+  @override
   Future<void> installHomeAssistant({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -870,13 +885,14 @@ void main() {
           EntitlementService? entitlement,
           KeepAliveService? keepAlive,
           FilePickerService? filePicker,
+          AppConfig? config,
           Future<void> Function(String name, Uint8List bytes)? fileSaver}) =>
       MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       locale: const Locale('de'),
         home: UpdaterPage(
-          store: _FakeStore(_ready),
+          store: _FakeStore(config ?? _ready),
           updater: updater,
           updateChecker: _noUpdateChecker,
           evccReleaseFetcher: rel ?? () async => null,
@@ -2872,6 +2888,43 @@ void main() {
     expect(find.text('var'), findsOneWidget);
     expect(find.text('huge.img'), findsOneWidget);
     expect(find.text('2.0 GB'), findsOneWidget); // human-readable size
+  });
+
+  testWidgets('Verbinden fällt auf die Tailnet-IP zurück, wenn die Heim-IP tot ist',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..reachableHosts = {'100.64.0.5'};
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.125',
+                password: 'pw',
+                lanHost: '192.168.178.125',
+                tailscaleIp: '100.64.0.5')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Heim zuerst (schnell, ohne VPN), dann das Tailnet …
+    expect(u.probedHosts, ['192.168.178.125', '100.64.0.5']);
+    // … und die eigentliche Erkennung läuft über die Adresse, die geantwortet hat.
+    expect(u.detectHosts.last, '100.64.0.5');
+  });
+
+  testWidgets('nur eine bekannte Adresse: gar kein Sondieren, keine Wartezeit',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(u.probedHosts, isEmpty);
   });
 
   testWidgets(
