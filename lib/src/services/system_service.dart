@@ -235,6 +235,14 @@ String aptIndexStaleDetail(int? ageSeconds) => ageSeconds == null
     ? 'Paketlisten-Stand unbekannt'
     : 'Paketlisten ${ageSeconds ~/ Duration.secondsPerDay} Tage alt — Stand unbekannt';
 
+/// True when apt refused to do anything because a previous dpkg run was killed
+/// mid-way (power loss, cancelled update, full disk). Until `dpkg --configure
+/// -a` runs, EVERY install on that Pi fails — so this deserves a named error
+/// with the remedy, not a bare exit code.
+bool isDpkgInterrupted(String output) =>
+    output.contains('dpkg was interrupted') ||
+    output.contains('dpkg --configure -a');
+
 /// The "N upgraded" count from an `apt-get -s upgrade` summary, or null when no
 /// summary line is present.
 int? parsePendingUpdates(String aptSimulateOutput) {

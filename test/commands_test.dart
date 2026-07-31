@@ -106,4 +106,24 @@ void main() {
       expect(script, contains('EVCC_BACKUP_FAIL'));
     });
   });
+
+  group('buildRootStdin', () {
+    test('sends the password only when sudo actually asks for it', () {
+      expect(
+        buildRootStdin(
+            sudoNeedsPassword: true, password: 'geheim', script: 'echo hi'),
+        'geheim\necho hi\n',
+      );
+    });
+
+    test('NOPASSWD sudo gets the script alone — never the password', () {
+      // Otherwise sudo consumes nothing, the line falls through to `bash -s`
+      // and the password is executed as a command:
+      //   bash: line 1: <password>: command not found
+      final out = buildRootStdin(
+          sudoNeedsPassword: false, password: 'geheim', script: 'echo hi');
+      expect(out, 'echo hi\n');
+      expect(out, isNot(contains('geheim')));
+    });
+  });
 }

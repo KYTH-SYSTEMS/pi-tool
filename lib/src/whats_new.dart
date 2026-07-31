@@ -18,6 +18,17 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.64.1': [
+    'If an apt or dpkg run on the Pi was ever killed mid-way (power cut, '
+        'cancelled update), apt refuses every further install — including '
+        'updates that have nothing to do with it. The app now names that '
+        'instead of just reporting "Exit 100", and clears it up: System card → '
+        '⋮ → "Repair package state".',
+    'Also fixed: on Pis whose sudo needs no password, a "command not found" '
+        'showed up in the log. The app was sending the password even though '
+        'sudo never asked for it — it now asks first and sends it only when '
+        'it is actually needed.',
+  ],
   '0.64.0': [
     'Remote access in one button: while you are connected to your Pi, the app '
         'sets up access from anywhere — install Tailscale, sign in, confirm the '
@@ -123,6 +134,17 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.64.1': [
+    'Wurde auf dem Pi einmal ein apt- oder dpkg-Lauf abgewürgt (Stromausfall, '
+        'abgebrochenes Update), verweigert apt danach jede weitere '
+        'Installation — auch Updates, die nichts damit zu tun haben. Die App '
+        'nennt das jetzt beim Namen statt nur „Exit 100" zu melden, und räumt '
+        'es auf: System-Karte → ⋮ → „Paketzustand reparieren".',
+    'Außerdem behoben: Auf Pis, deren sudo kein Passwort verlangt, tauchte im '
+        'Log ein „command not found" auf. Die App schickte das Passwort mit, '
+        'obwohl sudo gar nicht danach fragte — jetzt fragt sie vorher nach und '
+        'schickt es nur, wenn es gebraucht wird.',
+  ],
   '0.64.0': [
     'Fernzugriff mit einem Knopf: Bist du mit deinem Pi verbunden, richtet die '
         'App den Zugriff von unterwegs komplett ein — Tailscale installieren, '

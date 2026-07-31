@@ -245,7 +245,8 @@ class EvccUpdater {
 
         final result = await runner.run(
           installShellCommand,
-          stdin: '${config.password}\n${buildInstallScript(channel: channel)}\n',
+          stdin: await _rootStdin(
+              runner, config, buildInstallScript(channel: channel)),
           onOutput: (chunk) {
             final trimmed = chunk.trimRight();
             if (trimmed.isNotEmpty) log(trimmed);
@@ -634,6 +635,18 @@ class EvccUpdater {
         'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
       );
     }
+    if (isDpkgInterrupted(combined)) {
+      // Not our failure and not fixable by retrying: apt refuses every install
+      // until the half-finished dpkg run is completed. Say so, and name the
+      // one-tap remedy the System card offers.
+      throw const EvccUpdateException(
+        UpdateErrorKind.unknown,
+        'Auf dem Pi steckt ein abgebrochener dpkg-Lauf fest — solange der nicht '
+        'aufgeräumt ist, schlägt JEDE Installation fehl, nicht nur diese. '
+        'System-Karte → ⋮ → „Paketzustand reparieren" führt '
+        '`dpkg --configure -a` aus; danach klappt das Update.',
+      );
+    }
     if (checkExit && r.exitCode != null && r.exitCode != 0) {
       throw EvccUpdateException(
         UpdateErrorKind.unknown,
@@ -965,7 +978,7 @@ class EvccUpdater {
         body: (runner, log) async {
           log('Verbinde mit Tailscale …');
           final r = await runner.run(installShellCommand,
-              stdin: '${config.password}\n$tailscaleUpScript\n');
+              stdin: await _rootStdin(runner, config, tailscaleUpScript));
           // A rejected sudo password yields no login URL — don't report that as
           // "already connected"; surface it as a real auth error.
           final combined = '${r.stdout}\n${r.stderr}';
@@ -1449,7 +1462,7 @@ class EvccUpdater {
           log('Räume auf (apt, Docker-Images, Journal) …');
           final result = await runner.run(
             installShellCommand,
-            stdin: '${config.password}\n${buildCleanupScript()}\n',
+            stdin: await _rootStdin(runner, config, buildCleanupScript()),
             onOutput: (chunk) {
               final t = chunk.trimRight();
               if (t.isNotEmpty) log(t);
@@ -1625,6 +1638,24 @@ class EvccUpdater {
       },
     );
   }
+
+  /// Completes a dpkg run that was killed mid-way (`dpkg --configure -a`).
+  /// Until this has run, apt refuses EVERY install on that Pi — see
+  /// [isDpkgInterrupted]. Installs and upgrades nothing by itself.
+  Future<void> repairPackageState({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Repariere Paketzustand (dpkg --configure -a) …');
+          await _sudoCommand(runner, log, config,
+              'LC_ALL=C sudo -S dpkg --configure -a', 'Reparatur fehlgeschlagen');
+          log('Paketzustand repariert.');
+        },
+      );
 
   /// Refreshes the package index only (`apt-get update`) — installs nothing.
   /// Detection simulates against that index and never refreshes it, so once it
@@ -1836,7 +1867,7 @@ class EvccUpdater {
     final shell = sudo ? installShellCommand : 'bash -s';
     final result = await runner.run(
       shell,
-      stdin: sudo ? '${config.password}\n$script\n' : '$script\n',
+      stdin: sudo ? await _rootStdin(runner, config, script) : '$script\n',
       onOutput: (chunk) {
         final t = chunk.trimRight();
         if (t.isNotEmpty) log(t);
@@ -1873,7 +1904,7 @@ class EvccUpdater {
   }) async {
     final result = await runner.run(
       installShellCommand,
-      stdin: '${config.password}\n$script\n',
+      stdin: await _rootStdin(runner, config, script),
       onOutput: (chunk) {
         final t = chunk.trimRight();
         if (t.isNotEmpty) log(t);
@@ -1904,7 +1935,7 @@ class EvccUpdater {
   }) async {
     final result = await runner.run(
       installShellCommand,
-      stdin: '${config.password}\n$script\n',
+      stdin: await _rootStdin(runner, config, script),
       onOutput: (chunk) {
         final t = chunk.trimRight();
         if (t.isNotEmpty) log(t);
@@ -1939,7 +1970,7 @@ class EvccUpdater {
         log('Erstelle Backup (Config + Datenbank) …');
         final result = await runner.run(
           installShellCommand,
-          stdin: '${config.password}\n${buildBackupScript()}\n',
+          stdin: await _rootStdin(runner, config, buildBackupScript()),
           onOutput: (chunk) {
             final t = chunk.trimRight();
             if (t.isNotEmpty) log(t);
@@ -2405,6 +2436,29 @@ class EvccUpdater {
 
   /// Opens the connection, runs [body], and maps any SSH/IO failure to an
   /// [EvccUpdateException]. The runner is always closed afterwards.
+  /// Whether sudo on this Pi asks for a password — probed once per connection
+  /// (see [_sudoNeedsPassword]). Null = not asked yet.
+  bool? _sudoNeedsPw;
+
+  /// Asks sudo itself instead of assuming. Cached for the connection: the
+  /// answer cannot change mid-session in any way that matters, and one probe
+  /// per root script would be pure noise on the wire.
+  Future<bool> _sudoNeedsPassword(SshRunner runner) async {
+    final cached = _sudoNeedsPw;
+    if (cached != null) return cached;
+    final r = await runner.run(sudoNoPasswordProbe);
+    return _sudoNeedsPw = r.exitCode != 0;
+  }
+
+  /// stdin for a root script: password first only when sudo will consume it.
+  Future<String> _rootStdin(
+          SshRunner runner, SshConfig config, String script) async =>
+      buildRootStdin(
+        sudoNeedsPassword: await _sudoNeedsPassword(runner),
+        password: config.password,
+        script: script,
+      );
+
   Future<T> _withConnection<T>({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -2414,6 +2468,7 @@ class EvccUpdater {
     final runner = runnerFactory(config);
     _active = runner;
     _cancelRequested = false;
+    _sudoNeedsPw = null; // a fresh connection re-asks
     void log(String s) => onLog(redactPassword(s, config.password));
 
     try {

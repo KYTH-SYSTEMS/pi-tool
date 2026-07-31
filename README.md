@@ -143,6 +143,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   überleben Backups auch einen SD-Karten-Ausfall.
 - **Aufräumen** — die System-Karte gibt Speicher frei (apt autoremove/clean,
   ungenutzte Docker-Images, Journal >7 Tage) und zeigt, wie viel frei wurde.
+- **Paketzustand reparieren** — wurde ein apt-/dpkg-Lauf einmal abgewürgt
+  (Stromausfall, abgebrochenes Update), verweigert apt danach **jede**
+  Installation. Die App erkennt das, sagt es im Klartext statt „Exit 100" und
+  räumt es über die System-Karte mit `dpkg --configure -a` auf.
 - **„Aktuell"-Anzeige** — bei evcc/Pi-hole/System zeigt die Karte „Aktuell", wenn
   keine neue Version ansteht (statt „Aktualisieren"); erzwingen geht über das ⋮-Menü.
   **Aber nur, wenn der Paket-Index des Pi frisch ist:** die apt-gestützten Karten

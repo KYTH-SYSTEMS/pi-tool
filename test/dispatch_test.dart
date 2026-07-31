@@ -672,6 +672,15 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       aptRefreshCalls++;
 
+  int repairPackageCalls = 0;
+
+  @override
+  Future<void> repairPackageState({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      repairPackageCalls++;
+
   @override
   Future<bool> probeConnection({
     required SshConfig config,
@@ -3030,6 +3039,26 @@ void main() {
     // Re-read afterwards — otherwise the stale line would sit there unchanged
     // and the refresh would look like it did nothing.
     expect(u.detectCalls, greaterThan(detectsBefore));
+  });
+
+  testWidgets('System-Karte → „Paketzustand reparieren" führt dpkg --configure aus',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paketzustand reparieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.repairPackageCalls, 1);
   });
 
   testWidgets('System-Karte → Sicherheits-Check zeigt die Ampel-Befunde',

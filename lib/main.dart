@@ -2850,6 +2850,26 @@ class _UpdaterPageState extends State<UpdaterPage>
     }, backgroundMessage: l10n.busyRefreshingAptIndex);
   }
 
+  /// Completes an interrupted dpkg run. Offered unconditionally rather than
+  /// only after a failure: by the time the user hits the error they are in the
+  /// middle of something else, and the repair has no downside on a healthy Pi.
+  Future<void> _repairPackageState() async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _repairPackageState;
+    await _guard(() async {
+      await _updater.repairPackageState(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = context.l10n.statusPackagesRepaired;
+        _statusOk = true;
+      });
+      await _refreshServices(config);
+    }, backgroundMessage: l10n.busyRepairingPackages);
+  }
+
   Future<void> _upgradeSystem() async {
     if (_busy) return;
     final l10n = context.l10n;
@@ -4044,6 +4064,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               // update detection reads from, then re-read the cards.
               _CardAction(
                   context.l10n.actionRefreshPackageLists, _refreshAptIndex),
+              // The way out of "dpkg was interrupted" — without it apt refuses
+              // every install on this Pi and the user is simply stuck.
+              _CardAction(
+                  context.l10n.actionRepairPackages, _repairPackageState),
               _CardAction(context.l10n.actionCleanup,
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction(context.l10n.actionSecurityCheck, _securityCheck),

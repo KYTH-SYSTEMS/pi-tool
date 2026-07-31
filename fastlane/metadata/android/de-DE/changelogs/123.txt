@@ -1,0 +1,5 @@
+Fehlerbehebung: Wurde auf dem Pi einmal ein apt- oder dpkg-Lauf abgewürgt (Stromausfall, abgebrochenes Update), verweigert apt danach jede weitere Installation — auch Updates, die nichts damit zu tun haben.
+
+Die App meldete dafür nur „Exit 100". Jetzt nennt sie Ursache und Ausweg: System-Karte → ⋮ → „Paketzustand reparieren".
+
+Außerdem: Auf Pis, deren sudo kein Passwort verlangt, stand im Log ein „command not found". Das Passwort geht jetzt nur noch raus, wenn sudo es verlangt.

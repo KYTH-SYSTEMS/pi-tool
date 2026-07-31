@@ -76,6 +76,19 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   matcht englische Meldungen; ohne LC_ALL=C bricht die Passwort-Fehlererkennung
   auf lokalisierten Pis still.
 - **Redaction**: `_withConnection` wickelt jedes `onLog` in `redactPassword`.
+- **Passwort nur, wenn sudo danach fragt** (v0.64.1): `sudo -S` frisst die erste
+  stdin-Zeile als Passwort — **aber nur, wenn es fragt**. Bei NOPASSWD-sudo (oder
+  noch gültigem Timestamp) fragt es nicht, die Zeile fällt durch zu `bash -s` und
+  das Passwort wird als Befehl ausgeführt (`bash: line 1: ****: command not
+  found` — real gesehen am 2026-07-31). Deshalb einmal pro Verbindung
+  `sudoNoPasswordProbe` (`sudo -n true`), Ergebnis für die Verbindung gecacht,
+  und die stdin baut `buildRootStdin`. **Fail-safe:** Probe nicht erfolgreich ⇒
+  Passwort wird mitgeschickt. Betrifft die Skript-Pfade (`bash -s`); bei
+  einfachen Befehlen verwirft der Befehl die Zeile ohnehin.
+- **Abgebrochener dpkg-Lauf** (`isDpkgInterrupted`): danach verweigert apt
+  **jede** Installation auf diesem Pi. Der Fehler nennt Ursache und Ausweg statt
+  nur „Exit 100"; `repairPackageState` (System-Karte ⋮ → „Paketzustand
+  reparieren") führt `dpkg --configure -a` aus.
 - **Marker-Disziplin** — drei Root-Skript-Helfer, aufsteigend streng:
   - `_runRootScript`: prüft nur Sudo-Ablehnung + Exit-Code.
   - `_runRootScriptExpectMarker`: für **destruktive** Skripte (Restore,

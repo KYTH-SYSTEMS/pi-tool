@@ -1,0 +1,5 @@
+Bug fix: if an apt or dpkg run on the Pi was ever killed mid-way (power cut, cancelled update), apt refuses every further install — including updates that have nothing to do with it.
+
+The app used to report only "Exit 100". It now names the cause and the way out, and clears it up: System card → ⋮ → "Repair package state".
+
+Also: on Pis whose sudo needs no password, a "command not found" showed up in the log. The password is now sent only when sudo actually asks for it.

@@ -446,6 +446,22 @@ List<SshStep> buildUpdateSteps({
 /// keeps the password out of the command line entirely.
 const String installShellCommand = 'LC_ALL=C sudo -S bash -s';
 
+/// Asks whether sudo needs a password at all, without prompting for one:
+/// exit 0 = passwordless (NOPASSWD or a still-valid timestamp).
+const String sudoNoPasswordProbe = 'sudo -n true 2>/dev/null';
+
+/// Builds the stdin for [installShellCommand]. `sudo -S` eats the first line as
+/// the password — but ONLY when it actually asks. On a passwordless sudo it
+/// asks nothing, the line falls through to `bash -s`, and the password gets
+/// executed as a command (`bash: line 1: <password>: command not found`, seen
+/// in the wild on 2026-07-31). So the password goes in only when it is needed.
+String buildRootStdin({
+  required bool sudoNeedsPassword,
+  required String password,
+  required String script,
+}) =>
+    sudoNeedsPassword ? '$password\n$script\n' : '$script\n';
+
 /// The root install script: official evcc apt-repo setup + package install +
 /// service enable. Mirrors https://docs.evcc.io/en/installation/linux.
 /// Runs as root (via [installShellCommand]), so it uses no inner `sudo`.

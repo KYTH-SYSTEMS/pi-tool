@@ -82,7 +82,10 @@ class FakeSshRunner implements SshRunner {
     final queue = responses[command];
     final CommandResult result;
     if (queue == null || queue.isEmpty) {
-      result = _r('');
+      // Default for the sudo probe: a password IS required — that is the normal
+      // Pi, and it's what every test that asserts on the password assumes. A
+      // test for the passwordless case says so explicitly.
+      result = command == sudoNoPasswordProbe ? _r('', exitCode: 1) : _r('');
     } else {
       result = queue.length > 1 ? queue.removeAt(0) : queue.first;
     }
@@ -1531,6 +1534,71 @@ void main() {
         f,
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.kind, 'kind', UpdateErrorKind.cancelled)),
+      );
+    });
+  });
+
+  group('sudo password handling', () {
+    test('passwordless sudo: the root script stdin carries NO password',
+        () async {
+      // Seen in the wild: sudo consumed nothing, the password line fell through
+      // to `bash -s` and was executed — "bash: line 1: ****: command not found".
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('')], // exit 0 → no password needed
+        installShellCommand: [_r('TAILSCALE_INSTALLED')],
+      });
+      await _updaterWith(runner)
+          .installTailscale(config: _config, onLog: (_) {});
+      expect(runner.stdinByCommand[installShellCommand],
+          isNot(contains(_config.password)));
+    });
+
+    test('sudo that asks for a password still gets it as the first line',
+        () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: 1)], // needs a password
+        installShellCommand: [_r('TAILSCALE_INSTALLED')],
+      });
+      await _updaterWith(runner)
+          .installTailscale(config: _config, onLog: (_) {});
+      expect(runner.stdinByCommand[installShellCommand],
+          startsWith('${_config.password}\n'));
+    });
+
+    test('the probe runs once per connection, not once per script', () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('')],
+        installShellCommand: [_r('TAILSCALE_INSTALLED')],
+      });
+      await _updaterWith(runner)
+          .installTailscale(config: _config, onLog: (_) {});
+      expect(runner.commandsRun.where((c) => c == sudoNoPasswordProbe).length,
+          1);
+    });
+  });
+
+  group('interrupted dpkg', () {
+    test('names the cause and the remedy instead of a bare exit code',
+        () async {
+      // A killed apt/dpkg run blocks EVERY install on that Pi until
+      // `dpkg --configure -a` has run — "Exit 100" alone leaves the user stuck.
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('')],
+        'LC_ALL=C sudo -S apt-get update -qq': [_r('')],
+        "LC_ALL=C sudo -S apt-get install --only-upgrade -y 'evcc'": [
+          _r('',
+              stderr: "E: dpkg was interrupted, you must manually run 'sudo "
+                  "dpkg --configure -a' to correct the problem.",
+              exitCode: 100)
+        ],
+      });
+
+      await expectLater(
+        () => _updaterWith(runner)
+            .updateAptPackage(config: _config, package: 'evcc', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('dpkg'))
+            .having((e) => e.message, 'message', contains('reparieren'))),
       );
     });
   });

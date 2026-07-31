@@ -267,4 +267,22 @@ void main() {
           isEmpty);
     });
   });
+
+  group('isDpkgInterrupted', () {
+    test('recognises the apt refusal after a killed dpkg run', () {
+      const out =
+          "E: dpkg was interrupted, you must manually run 'sudo dpkg "
+          "--configure -a' to correct the problem.";
+      expect(isDpkgInterrupted(out), isTrue);
+    });
+
+    test('recognises it when only the remedy is echoed', () {
+      expect(isDpkgInterrupted('run: sudo dpkg --configure -a'), isTrue);
+    });
+
+    test('an ordinary apt failure is NOT this case', () {
+      expect(isDpkgInterrupted('E: Unable to locate package evcc'), isFalse);
+      expect(isDpkgInterrupted(''), isFalse);
+    });
+  });
 }
