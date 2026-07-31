@@ -389,6 +389,7 @@ class FakeEvccUpdater extends EvccUpdater {
       piConnectSignedOut = true;
 
   bool tailscaleInstalled = false;
+  int tailscaleInstallCalls = 0;
   int tailscaleUpCalls = 0;
   String? tailscaleUpUrl;
   bool? tailscaleLoggedOut;
@@ -397,8 +398,10 @@ class FakeEvccUpdater extends EvccUpdater {
   Future<void> installTailscale({
     required SshConfig config,
     required void Function(String line) onLog,
-  }) async =>
-      tailscaleInstalled = true;
+  }) async {
+    tailscaleInstallCalls++;
+    tailscaleInstalled = true;
+  }
 
   @override
   Future<String?> tailscaleUp({
@@ -2888,6 +2891,78 @@ void main() {
     expect(find.text('var'), findsOneWidget);
     expect(find.text('huge.img'), findsOneWidget);
     expect(find.text('2.0 GB'), findsOneWidget); // human-readable size
+  });
+
+  testWidgets('Fernzugriff einrichten: installiert Tailscale und meldet an',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ]
+      ..tailscaleUpUrl = null; // schon angemeldet → kein Browser nötig
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.text('Fernzugriff einrichten'));
+    await tester.pumpAndSettle();
+
+    expect(u.tailscaleInstallCalls, 1);
+    expect(u.tailscaleUpCalls, 1);
+    // Noch keine Tailnet-IP erkannt → der Nutzer muss die Anmeldung abschließen.
+    expect(find.text('Jetzt prüfen'), findsOneWidget);
+  });
+
+  testWidgets('Fernzugriff meldet erst Erfolg, wenn das HANDY den Pi erreicht',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5'),
+      ]
+      ..tailscaleUpUrl = null
+      ..reachableHosts = {}; // Handy ist NICHT im Tailnet
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Pi trägt schon eine Tailnet-IP → die Karte bietet direkt die Prüfung an.
+    await tester.tap(find.text('Jetzt prüfen'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('fehlt noch Tailscale'), findsOneWidget);
+    expect(find.textContaining('Fernzugriff steht'), findsNothing);
+  });
+
+  testWidgets('Fernzugriff steht, sobald das Handy die Tailnet-IP erreicht',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5'),
+      ]
+      ..tailscaleUpUrl = null
+      ..reachableHosts = {'100.64.0.5'};
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.text('Jetzt prüfen'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Fernzugriff steht'), findsOneWidget);
   });
 
   testWidgets('Verbinden fällt auf die Tailnet-IP zurück, wenn die Heim-IP tot ist',

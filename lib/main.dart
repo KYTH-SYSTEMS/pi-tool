@@ -152,6 +152,10 @@ class EvccPiToolApp extends StatelessWidget {
   }
 }
 
+/// Where the remote-access setup stands. In memory only: after a restart the
+/// remembered tailnet IP decides what to show, not a stale phase.
+enum _RemoteAccessPhase { idle, awaitingBrowser, phoneMissing, done }
+
 class UpdaterPage extends StatefulWidget {
   /// All collaborators are injectable so widget tests avoid real platform
   /// channels, SSH, network and biometrics.
@@ -264,6 +268,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   // Which of the two answered last — an ordering hint for the next connect,
   // never a source of truth and never shown.
   String _lastGoodHost = '';
+  _RemoteAccessPhase _remoteAccessPhase = _RemoteAccessPhase.idle;
+  bool _remoteAccessProven = false; // this phone reached the tailnet once
   bool _obscure = true;
   bool _connExpanded = true; // connection form collapses once creds are set
   bool _busy = false;
@@ -481,6 +487,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     _tailscaleIp = p.tailscaleIp;
     _lanHost = p.lanHost;
     _lastGoodHost = p.lastGoodHost;
+    _remoteAccessProven = p.remoteAccessProven;
     // Collapse the (space-hungry) connection form when this Pi is already set up;
     // expand it for a fresh/empty profile that still needs input.
     _connExpanded = !_credsComplete();
@@ -536,6 +543,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         tailscaleIp: _tailscaleIp,
         lanHost: _lanHost,
         lastGoodHost: _lastGoodHost,
+        remoteAccessProven: _remoteAccessProven,
       );
 
   /// Remembers the Pi's Tailscale tailnet IP from a detection, so the remote-
@@ -3738,6 +3746,83 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   /// Builds a card per detected service (or a hint before the first test).
+  /// The "Fernzugriff" card — offered only while it is actually useful: a live
+  /// connection and no tailnet IP known yet, or the Pi is ready but this phone
+  /// isn't on the tailnet. Once remote access works the card disappears instead
+  /// of sitting there as permanent furniture.
+  Widget? _remoteAccessCard() {
+    if (!_connected) return null;
+    if (_remoteAccessPhase == _RemoteAccessPhase.done) return null;
+    final phoneMissing = _remoteAccessPhase == _RemoteAccessPhase.phoneMissing;
+    // Proven once (persisted) → gone for good. A "check it again" card on a
+    // working setup is the kind of permanent furniture people learn to ignore.
+    if (_remoteAccessProven && !phoneMissing) return null;
+
+    final cs = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final awaiting = _remoteAccessPhase == _RemoteAccessPhase.awaitingBrowser;
+    // The Pi already carries a tailnet IP, but nothing proved that THIS phone
+    // can use it — that gap is the whole point of the check.
+    final piReady = _tailscaleIp.isNotEmpty;
+    final body = phoneMissing
+        ? context.l10n.remoteAccessPhoneMissing
+        : awaiting
+            ? context.l10n.remoteAccessConfirmInBrowser
+            : piReady
+                ? context.l10n.remoteAccessCheckPhone
+                : context.l10n.remoteAccessIntro;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: dark ? kCard : cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: dark ? Colors.white10 : cs.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.travel_explore, size: 20, color: cs.onSurfaceVariant),
+              const SizedBox(width: 10),
+              Text(context.l10n.remoteAccessTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(body, style: TextStyle(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (phoneMissing)
+                OutlinedButton(
+                  onPressed: _busy
+                      ? null
+                      : () => _openUrl(
+                          'https://play.google.com/store/apps/details?id=com.tailscale.ipn'),
+                  child: Text(context.l10n.actionGetTailscaleApp),
+                ),
+              FilledButton(
+                onPressed: _busy
+                    ? null
+                    : () => _proGate(awaiting || phoneMissing || piReady
+                        ? _checkRemoteAccess
+                        : _setupRemoteAccess),
+                child: Text(awaiting || phoneMissing || piReady
+                    ? context.l10n.actionCheckRemoteAccess
+                    : context.l10n.actionSetupRemoteAccess),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _serviceCards() {
     if (_services.isEmpty) {
       final cs = Theme.of(context).colorScheme;
@@ -3767,6 +3852,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       ];
     }
     final cards = <Widget>[];
+    final remote = _remoteAccessCard();
+    if (remote != null) cards.add(remote);
     final addable = <_AddableService>[];
     // System (Pi) card always first; the rest keep their detected order.
     for (final s in orderServicesForDisplay(_services)) {
@@ -4315,6 +4402,76 @@ class _UpdaterPageState extends State<UpdaterPage>
       _addHistory(context.l10n.historyTailscaleInstalled);
       await _refreshServices(config);
     }, backgroundMessage: context.l10n.busyInstallingTailscale);
+  }
+
+  /// Phase 1 of the remote-access setup: get Tailscale onto the Pi and signed
+  /// in. When `tailscale up` returns a login URL the user has to confirm it in
+  /// a browser, so the phase ends there; an already-authenticated node skips
+  /// straight to the check.
+  Future<void> _setupRemoteAccess() async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _setupRemoteAccess;
+    String? url;
+    await _guard(() async {
+      final installed =
+          _services.any((s) => s.id == 'tailscale' && s.installed);
+      if (!installed) {
+        await _updater.installTailscale(config: config, onLog: _appendLog);
+      }
+      url = await _updater.tailscaleUp(config: config, onLog: _appendLog);
+    }, backgroundMessage: l10n.busySettingUpRemoteAccess);
+    if (!mounted || !_statusOk) return;
+    if (url == null) {
+      await _checkRemoteAccess(); // already signed in — no browser detour
+      return;
+    }
+    setState(() => _remoteAccessPhase = _RemoteAccessPhase.awaitingBrowser);
+    await _openUrl(url!);
+  }
+
+  /// Phase 2: read the tailnet IP — and PROVE this phone reaches it. Without
+  /// that proof the user would believe they are done and only find out on the
+  /// road, where nothing can be fixed.
+  Future<void> _checkRemoteAccess() async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _checkRemoteAccess;
+    await _guard(() async {
+      final services =
+          await _updater.detectServices(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _services = services;
+        _rememberTailscaleIp(services);
+      });
+      if (_tailscaleIp.isEmpty) {
+        // Sign-in not finished yet — stay on "confirm in the browser".
+        setState(() => _remoteAccessPhase = _RemoteAccessPhase.awaitingBrowser);
+        return;
+      }
+      final reachable = await _updater.probeConnection(
+        config: config.copyWith(
+            host: _tailscaleIp, timeout: const Duration(seconds: 8)),
+        onLog: _appendLog,
+      );
+      if (!mounted) return;
+      setState(() {
+        _remoteAccessPhase = reachable
+            ? _RemoteAccessPhase.done
+            : _RemoteAccessPhase.phoneMissing;
+        if (reachable) {
+          _remoteAccessProven = true;
+          _statusMessage = context.l10n.statusRemoteAccessReady(_tailscaleIp);
+          _statusOk = true;
+        }
+      });
+      if (reachable) _scheduleSave();
+    }, backgroundMessage: l10n.busySettingUpRemoteAccess);
   }
 
   Future<void> _tailscaleUp() async {

@@ -31,6 +31,11 @@ class Profile {
   /// never shown to the user.
   final String lastGoodHost;
 
+  /// Whether THIS phone was ever proven to reach the Pi over the tailnet. Set
+  /// only by a successful reachability check, so the remote-access card can
+  /// disappear for good instead of becoming permanent furniture.
+  final bool remoteAccessProven;
+
   const Profile({
     required this.name,
     this.host = '',
@@ -44,13 +49,15 @@ class Profile {
     this.tailscaleIp = '',
     this.lanHost = '',
     this.lastGoodHost = '',
+    this.remoteAccessProven = false,
   });
 
   Profile copyWith(
           {String? name,
           String? tailscaleIp,
           String? lanHost,
-          String? lastGoodHost}) =>
+          String? lastGoodHost,
+          bool? remoteAccessProven}) =>
       Profile(
         name: name ?? this.name,
         host: host,
@@ -64,6 +71,7 @@ class Profile {
         tailscaleIp: tailscaleIp ?? this.tailscaleIp,
         lanHost: lanHost ?? this.lanHost,
         lastGoodHost: lastGoodHost ?? this.lastGoodHost,
+        remoteAccessProven: remoteAccessProven ?? this.remoteAccessProven,
       );
 
   Map<String, dynamic> toJson() => {
@@ -79,6 +87,7 @@ class Profile {
         'tailscaleIp': tailscaleIp,
         'lanHost': lanHost,
         'lastGoodHost': lastGoodHost,
+        'remoteAccessProven': remoteAccessProven,
       };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -94,6 +103,7 @@ class Profile {
         tailscaleIp: (j['tailscaleIp'] ?? '').toString(),
         lanHost: (j['lanHost'] ?? '').toString(),
         lastGoodHost: (j['lastGoodHost'] ?? '').toString(),
+        remoteAccessProven: j['remoteAccessProven'] == true,
       );
 }
 
