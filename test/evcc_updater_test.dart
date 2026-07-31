@@ -1535,6 +1535,39 @@ void main() {
     });
   });
 
+  group('EvccUpdater.probeConnection', () {
+    test('true when the host answers', () async {
+      final runner = FakeSshRunner({'true': [_r('')]});
+      expect(
+          await _updaterWith(runner).probeConnection(config: _config), isTrue);
+    });
+
+    test('false when the connection fails — never throws', () async {
+      final runner = FakeSshRunner(const {},
+          connectError: const SocketException('no route to host'));
+      expect(
+          await _updaterWith(runner).probeConnection(config: _config), isFalse);
+    });
+
+    test('a CHANGED HOST KEY still throws — never a silent "unreachable"',
+        () async {
+      // Swallowing this would turn a possible MITM into a shrug.
+      final runner = FakeSshRunner(const {},
+          connectError: const HostKeyChangedException(
+              host: '192.168.178.125',
+              port: 22,
+              presented: 'SHA256:new',
+              stored: 'SHA256:old'));
+      // _withConnection translates it into this kind; the probe must let it
+      // through instead of reporting a plain "unreachable".
+      expect(
+        () => _updaterWith(runner).probeConnection(config: _config),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.kind, 'kind', UpdateErrorKind.hostKeyChanged)),
+      );
+    });
+  });
+
   group('EvccUpdater.detectServices', () {
     test('detects evcc(apt) + Pi-hole + System in one pass', () async {
       final runner = FakeSshRunner({

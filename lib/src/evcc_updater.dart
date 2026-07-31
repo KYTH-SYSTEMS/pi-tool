@@ -906,6 +906,37 @@ class EvccUpdater {
       );
 
   /// Installs Tailscale via the official installer + enables the daemon. Root.
+  /// Cheap reachability check: connect, run `true`, done. Used by the
+  /// home/tailnet fallback and to PROVE that this phone reaches the tailnet
+  /// before the app claims the remote access is set up.
+  ///
+  /// Returns false instead of throwing — "not reachable" is an answer, not an
+  /// error. The one exception is [HostKeyChangedException]: a changed host key
+  /// is a security event and must never be flattened into "unreachable".
+  Future<bool> probeConnection({
+    required SshConfig config,
+    void Function(String line)? onLog,
+  }) async {
+    try {
+      await _withConnection<void>(
+        config: config,
+        onLog: onLog ?? (_) {},
+        body: (runner, log) async {
+          await runner.run('true');
+        },
+      );
+      return true;
+    } on EvccUpdateException catch (e) {
+      // _withConnection already translated the raw HostKeyChangedException into
+      // this kind. Everything else ("no route", auth, timeout) legitimately
+      // means "not reachable" — a changed host key does not.
+      if (e.kind == UpdateErrorKind.hostKeyChanged) rethrow;
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> installTailscale({
     required SshConfig config,
     required void Function(String line) onLog,

@@ -39,6 +39,20 @@ class SshConfig {
     this.keyPassphrase = '',
   });
 
+  /// Same connection, different address or deadline — used by the home/tailnet
+  /// fallback (short deadline for the first attempt) and by the reachability
+  /// probe. Everything else, credentials included, is carried over unchanged.
+  SshConfig copyWith({String? host, Duration? timeout}) => SshConfig(
+        host: host ?? this.host,
+        port: port,
+        username: username,
+        password: password,
+        timeout: timeout ?? this.timeout,
+        commandTimeout: commandTimeout,
+        privateKey: privateKey,
+        keyPassphrase: keyPassphrase,
+      );
+
   bool get usesKeyAuth => privateKey.trim().isNotEmpty;
 }
 
