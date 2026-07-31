@@ -4937,6 +4937,35 @@ class _UpdaterPageState extends State<UpdaterPage>
               ),
               const SizedBox(height: 8),
             ],
+            // THE WAY INTO THE APP — above the credentials, always, until a
+            // session actually exists. Three Play rejections came from this one
+            // widget: first it sat below the fold on a small screen, then it was
+            // a quiet text link, then it vanished the moment someone typed a
+            // host and a password. Every one of those was a clever condition or
+            // a tidy placement. So: no conditions beyond "not connected yet",
+            // and the one position where nobody has to scroll to find it.
+            // A returning user sees one extra button on the connect screen for
+            // the seconds until they tap Connect. That is the price, and it is
+            // far cheaper than another rejected release.
+            if (!_connected) ...[
+              FilledButton.tonalIcon(
+                key: const Key('demoEntry'),
+                onPressed: _busy ? null : _startDemo,
+                icon: const Icon(Icons.play_circle_outline, size: 18),
+                label: Text(context.l10n.demoButton),
+                style:
+                    FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 10),
+                child: Text(
+                  context.l10n.demoEntryHint,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+            ],
             // Profile management moved to the app-bar switcher (visible on every
             // tab). The Dienste tab goes straight to the connection settings.
             _ConnectionCard(
@@ -4994,32 +5023,6 @@ class _UpdaterPageState extends State<UpdaterPage>
                   padding: const EdgeInsets.only(top: 10),
                   child: Column(
                     children: [
-                      // FIRST and a real button, not fine print: without a Pi
-                      // this is the only way into the app — for a curious user
-                      // AND for the Play reviewer. v0.63.0 was rejected because
-                      // v0.62.0 had demoted it to a quiet text link below two
-                      // other entries: on the reviewer's small screen it sat
-                      // under the fold and they never found it (LoginWall.png),
-                      // so the connect form read as a login wall. Keep it above
-                      // "Pi im WLAN suchen" and keep it looking tappable.
-                      FilledButton.tonalIcon(
-                        key: const Key('demoEntry'),
-                        onPressed: _busy ? null : _startDemo,
-                        icon: const Icon(Icons.play_circle_outline, size: 18),
-                        label: Text(context.l10n.demoButton),
-                        style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(44)),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2, bottom: 2),
-                        child: Text(
-                          context.l10n.demoEntryHint,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurfaceVariant),
-                        ),
-                      ),
                       OutlinedButton.icon(
                         onPressed: _busy ? null : _findPi,
                         icon: const Icon(Icons.wifi_find, size: 18),

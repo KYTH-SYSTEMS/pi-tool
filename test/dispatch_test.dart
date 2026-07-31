@@ -889,7 +889,7 @@ void main() {
   // screen with the entry out of view), so pin both position and prominence.
   testWidgets(
       'Demo-Einstieg ist bei einer Frisch-Installation ohne Scrollen sichtbar '
-      'und steht VOR „Pi im WLAN suchen"', (tester) async {
+      'und steht VOR den Zugangsdaten', (tester) async {
     tester.view.physicalSize = const Size(1080, 1920); // 360x640 logisch
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -921,12 +921,12 @@ void main() {
         reason: 'Demo-Einstieg liegt unter der Falz — genau der Ablehnungsgrund '
             'von versionCode 114');
 
-    // Vor der WLAN-Suche, damit er nicht wieder nach unten rutscht.
-    expect(
-        demoRect.top,
-        lessThan(tester
-            .getRect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'))
-            .top));
+    // VOR dem Anmeldeformular. Genau das ist der Unterschied zwischen
+    // „theoretisch erreichbar" und „der Prüfer sieht es sofort": Wer erst am
+    // Passwortfeld vorbeiscrollen muss, hält den Bildschirm für eine
+    // Anmeldewand — dreimal so passiert (versionCode 114, v0.63.0, v0.64.2).
+    expect(demoRect.top, lessThan(tester.getRect(find.text('Host / IP')).top),
+        reason: 'der Weg in die App gehört über die Zugangsdaten, nicht darunter');
   });
 
   Widget page(FakeEvccUpdater updater,
