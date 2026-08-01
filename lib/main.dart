@@ -300,6 +300,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   // A connection to some Pi has succeeded at least once on this install.
   // Persisted — that is what "the Pi is really set up" means.
   bool _everConnected = false;
+  bool _remoteAccessDismissed = false; // ✕ auf dem Fernzugriff-Einstieg
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
   // Demo mode: canned data via the demo updater/API, everything unlocked, no
   // real Pi. In-memory only (like _connected); never persisted.
@@ -402,6 +403,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _lastSeenVersion = cfg.lastSeenVersion;
       _firstSeenVersionCode = cfg.firstSeenVersionCode;
       _everConnected = cfg.everConnected;
+      _remoteAccessDismissed = cfg.remoteAccessDismissed;
       _consoleHistory = List.of(cfg.consoleHistory);
       _customCommands = List.of(cfg.customCommands);
       _alertsServer = cfg.alertsNtfyServer;
@@ -602,6 +604,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       alertsNtfyTopic: _alertsTopic,
       firstSeenVersionCode: _firstSeenVersionCode,
       everConnected: _everConnected,
+      remoteAccessDismissed: _remoteAccessDismissed,
     );
   }
 
@@ -3790,6 +3793,55 @@ class _UpdaterPageState extends State<UpdaterPage>
     final cs = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final awaiting = _remoteAccessPhase == _RemoteAccessPhase.awaitingBrowser;
+
+    // At rest this is an OFFER, not an announcement: one line, one button, one
+    // ✕. Not everyone wants remote access, and until now there was no way to
+    // say so — it came back on every single connect, which is what made it feel
+    // pushy. Once a flow is actually running (browser confirmation pending, or
+    // the phone cannot reach the Pi) the explanatory text earns its space again.
+    if (!awaiting && !phoneMissing) {
+      if (_remoteAccessDismissed) return null;
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+        decoration: BoxDecoration(
+          color: dark ? kCard : cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: dark ? Colors.white10 : cs.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.travel_explore, size: 18, color: cs.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(context.l10n.remoteAccessTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            // Pi already carries a tailnet IP → the open question is whether
+            // THIS phone reaches it, so offer the check, not the setup.
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => _proGate(_tailscaleIp.isNotEmpty
+                      ? _checkRemoteAccess
+                      : _setupRemoteAccess),
+              child: Text(_tailscaleIp.isNotEmpty
+                  ? context.l10n.actionCheckRemoteAccess
+                  : context.l10n.actionSetupRemoteAccess),
+            ),
+            IconButton(
+              key: const ValueKey('remoteAccessDismiss'),
+              tooltip: context.l10n.wDismiss,
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: () {
+                setState(() => _remoteAccessDismissed = true);
+                _scheduleSave();
+              },
+            ),
+          ],
+        ),
+      );
+    }
     // The Pi already carries a tailnet IP, but nothing proved that THIS phone
     // can use it — that gap is the whole point of the check.
     final piReady = _tailscaleIp.isNotEmpty;
@@ -4082,6 +4134,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                     up
                         ? () => _tailscaleSet(logout: false)
                         : _tailscaleUp),
+              // The way back after dismissing the entry with ✕ — otherwise the
+              // ✕ would be a dead end for anyone who changes their mind.
+              if (!_remoteAccessProven)
+                _CardAction(context.l10n.actionSetupRemoteAccess,
+                    () => _proGate(_setupRemoteAccess)),
               if (up && s.version != null)
                 _CardAction(context.l10n.actionUseIpAsHost(s.version!),
                     () => _useTailscaleIp(s.version!)),

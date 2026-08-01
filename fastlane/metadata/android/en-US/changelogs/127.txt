@@ -1,0 +1,5 @@
+The remote-access entry is now a slim row instead of a large card — and you can dismiss it with ✕. It then stays gone, restarts included.
+
+Not everyone wants remote access, and until now there was no way to say so: the prompt came back on every single connect.
+
+If you change your mind later, "Set up remote access" lives in the ⋮ menu of the Tailscale card. During the setup itself the full explanation stays put.

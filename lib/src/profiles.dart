@@ -155,6 +155,12 @@ class AppConfig {
   /// only proof that someone no longer needs the way in.
   final bool everConnected;
 
+  /// The user tapped ✕ on the remote-access entry. A "no thanks" that sticks —
+  /// without it the entry returned on every single connect, which is what made
+  /// it feel pushy. Still reachable afterwards from the Tailscale card, so the
+  /// ✕ is a dismissal, not a dead end.
+  final bool remoteAccessDismissed;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -175,6 +181,7 @@ class AppConfig {
     this.alertsNtfyTopic = '',
     this.firstSeenVersionCode,
     this.everConnected = false,
+    this.remoteAccessDismissed = false,
   });
 
   static const initial =
@@ -206,6 +213,7 @@ class AppConfig {
     String? alertsNtfyTopic,
     int? firstSeenVersionCode,
     bool? everConnected,
+    bool? remoteAccessDismissed,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -228,6 +236,8 @@ class AppConfig {
         firstSeenVersionCode:
             firstSeenVersionCode ?? this.firstSeenVersionCode,
         everConnected: everConnected ?? this.everConnected,
+        remoteAccessDismissed:
+            remoteAccessDismissed ?? this.remoteAccessDismissed,
       );
 
   Map<String, dynamic> toJson() => {
@@ -250,6 +260,7 @@ class AppConfig {
         'alertsNtfyTopic': alertsNtfyTopic,
         'firstSeenVersionCode': firstSeenVersionCode,
         'everConnected': everConnected,
+        'remoteAccessDismissed': remoteAccessDismissed,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -288,6 +299,7 @@ class AppConfig {
           ? j['firstSeenVersionCode'] as int
           : null,
       everConnected: j['everConnected'] == true,
+      remoteAccessDismissed: j['remoteAccessDismissed'] == true,
     );
   }
 }

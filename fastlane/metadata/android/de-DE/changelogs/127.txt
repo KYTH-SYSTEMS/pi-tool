@@ -1,0 +1,5 @@
+Der Fernzugriff-Einstieg ist jetzt eine schmale Zeile statt einer großen Karte — und du kannst ihn mit ✕ wegtippen. Dann ist er dauerhaft weg, auch nach einem Neustart.
+
+Nicht jeder will Fernzugriff, und bisher gab es keine Möglichkeit, das zu sagen: Der Hinweis kam bei jedem Verbinden wieder.
+
+Wer es sich später anders überlegt, findet „Fernzugriff einrichten" im ⋮-Menü der Tailscale-Karte. Während der Einrichtung selbst bleibt die ausführliche Erklärung stehen.

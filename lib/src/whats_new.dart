@@ -18,6 +18,15 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.64.5': [
+    'The remote-access entry is now a slim row instead of a large card — and '
+        'you can dismiss it with ✕. It then stays gone, restarts included. Not '
+        'everyone wants remote access, and until now there was simply no way to '
+        'say so.',
+    'If you change your mind later, "Set up remote access" lives in the ⋮ menu '
+        'of the Tailscale card. During the setup itself the full explanation '
+        'stays — that is where it helps.',
+  ],
   '0.64.4': [
     '"Try the demo" disappears for good again — but only once a connection to '
         'your Pi has actually succeeded. Before, it keyed on whether the fields '
@@ -164,6 +173,15 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.64.5': [
+    'Der Fernzugriff-Einstieg ist jetzt eine schmale Zeile statt einer großen '
+        'Karte — und du kannst ihn mit ✕ wegtippen. Dann ist er dauerhaft weg, '
+        'auch nach einem Neustart. Nicht jeder will Fernzugriff, und bisher gab '
+        'es schlicht keine Möglichkeit, das zu sagen.',
+    'Wer es sich später anders überlegt, findet „Fernzugriff einrichten" im '
+        '⋮-Menü der Tailscale-Karte. Während der Einrichtung selbst bleibt die '
+        'ausführliche Erklärung stehen — dort hilft sie.',
+  ],
   '0.64.4': [
     '„Demo ausprobieren" verschwindet wieder ganz — aber erst, wenn eine '
         'Verbindung zu deinem Pi tatsächlich einmal gestanden hat. Vorher hing '

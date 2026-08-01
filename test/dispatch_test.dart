@@ -3063,6 +3063,72 @@ void main() {
     expect(u.aptUpdates, ['tailscale']);
   });
 
+  testWidgets('Fernzugriff: ✕ blendet den Einstieg dauerhaft aus',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.text('Fernzugriff einrichten'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('remoteAccessDismiss')));
+    await tester.pumpAndSettle();
+    expect(find.text('Fernzugriff einrichten'), findsNothing);
+  });
+
+  testWidgets('Fernzugriff: einmal ausgeblendet bleibt über Neustarts weg',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ];
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          remoteAccessDismissed: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.text('Fernzugriff einrichten'), findsNothing);
+  });
+
+  testWidgets('Fernzugriff bleibt über die Tailscale-Karte erreichbar',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5',
+            updateKnown: true),
+      ];
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          remoteAccessDismissed: true, // weggetippt — das ✕ ist keine Sackgasse
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    expect(find.text('Fernzugriff einrichten'), findsOneWidget);
+  });
+
   testWidgets('Fernzugriff einrichten: installiert Tailscale und meldet an',
       (tester) async {
     useTallScreen(tester);
