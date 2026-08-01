@@ -906,12 +906,12 @@
   "actionInstallUpdates": "Install updates",
   "actionSetupRemoteAccess": "Set up remote access",
   "actionCheckRemoteAccess": "Check now",
-  "actionGetTailscaleApp": "Get the Tailscale app",
+  "actionGetTailscaleApp": "Open Tailscale",
   "remoteAccessTitle": "Remote access",
-  "remoteAccessIntro": "Reach your Pi from anywhere — Pi-Tool then works away from home exactly as it does at home.",
+  "remoteAccessIntro": "Reach your Pi from anywhere — Pi-Tool then works away from home exactly as it does at home. It takes two sides: I set up Tailscale on the Pi, and this phone needs the Tailscale app signed in to the same account. Best do both now.",
   "remoteAccessConfirmInBrowser": "Confirm the sign-in in your browser, then continue here.",
   "remoteAccessCheckPhone": "The Pi is ready. Check whether this phone reaches it — Tailscale has to run here too.",
-  "remoteAccessPhoneMissing": "The Pi is ready. This phone is still missing Tailscale — install the app and sign in with the same account.",
+  "remoteAccessPhoneMissing": "The Pi is ready, but this phone cannot reach it over the tailnet yet. Open Tailscale, sign in with the same account and switch the connection on — then check again here.",
   "statusRemoteAccessReady": "Remote access is live: {ip}",
   "@statusRemoteAccessReady": {
     "placeholders": { "ip": { "type": "String" } }

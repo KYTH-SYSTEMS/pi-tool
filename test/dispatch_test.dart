@@ -850,6 +850,31 @@ void main() {
         reason: 'ohne stehende Verbindung muss der Weg in die App offen sein');
   });
 
+  // Wer den Pi WIRKLICH eingerichtet hat (schon mal verbunden), braucht den
+  // Einstieg nie wieder — auch nicht nach einem Neustart der App.
+  testWidgets('Demo-Einstieg ist dauerhaft weg, wenn schon mal verbunden wurde',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [
+            Profile(name: 'S', host: '192.168.178.64', password: 'pw')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          everConnected: true, // frühere Sitzung, aus dem Speicher geladen
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('demoEntry')), findsNothing);
+  });
+
   // Erst eine echte Sitzung räumt ihn weg — dann ist der Nutzer ohnehin drin.
   testWidgets('Demo-Einstieg verschwindet erst nach dem Verbinden',
       (tester) async {
@@ -936,6 +961,7 @@ void main() {
           KeepAliveService? keepAlive,
           FilePickerService? filePicker,
           AppConfig? config,
+          AppLauncher? appLauncher,
           Future<void> Function(String name, Uint8List bytes)? fileSaver}) =>
       MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -950,6 +976,7 @@ void main() {
           entitlement: entitlement,
           keepAlive: keepAlive,
           filePicker: filePicker,
+          appLauncher: appLauncher,
           fileSaver: fileSaver,
         ),
       );
@@ -3071,8 +3098,9 @@ void main() {
             version: '100.64.0.5'),
       ]
       ..tailscaleUpUrl = null
-      ..reachableHosts = {}; // Handy ist NICHT im Tailnet
-    await tester.pumpWidget(page(u));
+      ..reachableHosts = {}; // Handy erreicht das Tailnet NICHT
+    final launcher = _FakeLauncher();
+    await tester.pumpWidget(page(u, appLauncher: launcher));
     await tester.pumpAndSettle();
     await detect(tester);
 
@@ -3080,8 +3108,17 @@ void main() {
     await tester.tap(find.text('Jetzt prüfen'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('fehlt noch Tailscale'), findsOneWidget);
+    // NICHT „App fehlt" behaupten: Die App misst Erreichbarkeit, nicht
+    // Installation. Tailscale kann installiert und nur das VPN aus sein —
+    // Stefans Meldung vom 01.08.2026.
+    expect(find.textContaining('erreicht ihn noch nicht'), findsOneWidget);
     expect(find.textContaining('Fernzugriff steht'), findsNothing);
+
+    // Ein Knopf deckt beide Fälle ab: installiert → Tailscale öffnet sich;
+    // nicht installiert → der Launcher fällt auf den Play Store zurück.
+    await tester.tap(find.text('Tailscale öffnen'));
+    await tester.pumpAndSettle();
+    expect(launcher.opened, ['com.tailscale.ipn']);
   });
 
   testWidgets('Fernzugriff steht, sobald das Handy die Tailnet-IP erreicht',

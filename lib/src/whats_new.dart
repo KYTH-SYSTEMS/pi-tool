@@ -18,6 +18,19 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.64.4': [
+    '"Try the demo" disappears for good again — but only once a connection to '
+        'your Pi has actually succeeded. Before, it keyed on whether the fields '
+        'looked filled in, which is not the same thing and left people facing a '
+        'wall.',
+    'Remote access no longer claims the Tailscale app is missing from your '
+        'phone. It can only measure whether your phone reaches the Pi, and that '
+        'also fails when Tailscale is installed but the VPN is switched off. '
+        'One button now covers both: it opens Tailscale, or the Play Store if '
+        'it really is missing.',
+    'And the setup says up front that it takes two sides — Pi and phone. You '
+        'used to find that out only after the check.',
+  ],
   '0.64.3': [
     'Fixed: "Try the demo" disappeared as soon as host and password were '
         'filled in, because the Pi then counted as configured. Anyone who '
@@ -151,6 +164,19 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.64.4': [
+    '„Demo ausprobieren" verschwindet wieder ganz — aber erst, wenn eine '
+        'Verbindung zu deinem Pi tatsächlich einmal gestanden hat. Vorher hing '
+        'das daran, ob die Felder ausgefüllt aussahen; das ist nicht dasselbe '
+        'und hat schon Nutzer vor eine Wand laufen lassen.',
+    'Beim Fernzugriff behauptet die App nicht mehr, die Tailscale-App fehle auf '
+        'dem Handy. Sie kann nur messen, ob dein Handy den Pi erreicht — und '
+        'das schlägt auch fehl, wenn Tailscale installiert, das VPN aber aus '
+        'ist. Ein Knopf deckt jetzt beides ab: Er öffnet Tailscale, oder den '
+        'Play Store, falls es wirklich fehlt.',
+    'Und die Einrichtung sagt gleich zu Beginn, dass zwei Seiten dazugehören — '
+        'Pi und Handy. Bisher erfuhr man das erst nach der Prüfung.',
+  ],
   '0.64.3': [
     'Behoben: „Demo ausprobieren" verschwand, sobald Host und Passwort '
         'ausgefüllt waren — der Pi galt dann als eingerichtet. Wer sich '

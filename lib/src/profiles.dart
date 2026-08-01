@@ -148,6 +148,13 @@ class AppConfig {
   /// grandfathering (null = not yet stamped). See early_adopter.dart.
   final int? firstSeenVersionCode;
 
+  /// Whether a connection to any Pi has EVER succeeded on this install. Gates
+  /// the demo entry: "the fields look filled in" is not the same as "this works"
+  /// — a Play reviewer typed a host and password that never connected, the entry
+  /// vanished, and the app was rejected as a login wall. A real session is the
+  /// only proof that someone no longer needs the way in.
+  final bool everConnected;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -167,6 +174,7 @@ class AppConfig {
     this.alertsNtfyServer = 'https://ntfy.sh',
     this.alertsNtfyTopic = '',
     this.firstSeenVersionCode,
+    this.everConnected = false,
   });
 
   static const initial =
@@ -197,6 +205,7 @@ class AppConfig {
     String? alertsNtfyServer,
     String? alertsNtfyTopic,
     int? firstSeenVersionCode,
+    bool? everConnected,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -218,6 +227,7 @@ class AppConfig {
         alertsNtfyTopic: alertsNtfyTopic ?? this.alertsNtfyTopic,
         firstSeenVersionCode:
             firstSeenVersionCode ?? this.firstSeenVersionCode,
+        everConnected: everConnected ?? this.everConnected,
       );
 
   Map<String, dynamic> toJson() => {
@@ -239,6 +249,7 @@ class AppConfig {
         'alertsNtfyServer': alertsNtfyServer,
         'alertsNtfyTopic': alertsNtfyTopic,
         'firstSeenVersionCode': firstSeenVersionCode,
+        'everConnected': everConnected,
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -276,6 +287,7 @@ class AppConfig {
       firstSeenVersionCode: j['firstSeenVersionCode'] is int
           ? j['firstSeenVersionCode'] as int
           : null,
+      everConnected: j['everConnected'] == true,
     );
   }
 }

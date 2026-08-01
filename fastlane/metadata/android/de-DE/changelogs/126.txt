@@ -1,0 +1,5 @@
+„Demo ausprobieren" verschwindet wieder ganz — aber erst, wenn eine Verbindung zu deinem Pi tatsächlich einmal gestanden hat. Vorher hing das nur daran, ob die Felder ausgefüllt aussahen.
+
+Beim Fernzugriff behauptet die App nicht mehr, die Tailscale-App fehle. Sie kann nur messen, ob dein Handy den Pi erreicht — das schlägt auch fehl, wenn Tailscale installiert, das VPN aber aus ist. Ein Knopf deckt jetzt beides ab.
+
+Und die Einrichtung sagt gleich zu Beginn, dass Pi und Handy dazugehören.

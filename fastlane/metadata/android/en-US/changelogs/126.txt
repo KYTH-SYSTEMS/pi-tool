@@ -1,0 +1,5 @@
+"Try the demo" disappears for good again — but only once a connection to your Pi has actually succeeded. Before, it keyed on whether the fields merely looked filled in.
+
+Remote access no longer claims the Tailscale app is missing. It can only measure whether your phone reaches the Pi, and that also fails when Tailscale is installed but the VPN is off. One button now covers both cases.
+
+And the setup says up front that it takes both the Pi and the phone.

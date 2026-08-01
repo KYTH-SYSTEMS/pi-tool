@@ -297,6 +297,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   // The app build (versionCode) first seen by this install — Pro grandfathering
   // marker; null until stamped once at startup. See early_adopter.dart.
   int? _firstSeenVersionCode;
+  // A connection to some Pi has succeeded at least once on this install.
+  // Persisted — that is what "the Pi is really set up" means.
+  bool _everConnected = false;
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
   // Demo mode: canned data via the demo updater/API, everything unlocked, no
   // real Pi. In-memory only (like _connected); never persisted.
@@ -398,6 +401,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _disclaimerAccepted = cfg.disclaimerAccepted;
       _lastSeenVersion = cfg.lastSeenVersion;
       _firstSeenVersionCode = cfg.firstSeenVersionCode;
+      _everConnected = cfg.everConnected;
       _consoleHistory = List.of(cfg.consoleHistory);
       _customCommands = List.of(cfg.customCommands);
       _alertsServer = cfg.alertsNtfyServer;
@@ -597,6 +601,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       alertsNtfyServer: _alertsServer,
       alertsNtfyTopic: _alertsTopic,
       firstSeenVersionCode: _firstSeenVersionCode,
+      everConnected: _everConnected,
     );
   }
 
@@ -1417,6 +1422,10 @@ class _UpdaterPageState extends State<UpdaterPage>
         _rememberLanHost();
         _connExpanded = false; // connected → free up space for the service cards
         _connected = true; // explicit session established → unlock gated tabs
+        // First successful session: the demo entry has done its job and is
+        // retired for good. Deliberately tied to a session, never to "the
+        // fields look complete" — see the demo-entry comment above.
+        _everConnected = true;
         final found =
             services.where((s) => s.installed).map((s) => s.name).join(', ');
         _statusMessage = context.l10n.statusConnectionOk(found);
@@ -3818,12 +3827,21 @@ class _UpdaterPageState extends State<UpdaterPage>
             spacing: 8,
             runSpacing: 8,
             children: [
+              // One button for both cases, because the app cannot tell them
+              // apart: the probe measures REACHABILITY, not installation.
+              // Tailscale may well be installed with the VPN simply switched
+              // off — claiming "not installed" there was wrong (reported
+              // 01.08.2026). openApp opens it when present and falls back to
+              // the Play Store when it isn't.
               if (phoneMissing)
                 OutlinedButton(
                   onPressed: _busy
                       ? null
-                      : () => _openUrl(
-                          'https://play.google.com/store/apps/details?id=com.tailscale.ipn'),
+                      : () => _appLauncher.openApp(
+                            'com.tailscale.ipn',
+                            fallbackUrl:
+                                'https://play.google.com/store/apps/details?id=com.tailscale.ipn',
+                          ),
                   child: Text(context.l10n.actionGetTailscaleApp),
                 ),
               FilledButton(
@@ -4937,17 +4955,20 @@ class _UpdaterPageState extends State<UpdaterPage>
               ),
               const SizedBox(height: 8),
             ],
-            // THE WAY INTO THE APP — above the credentials, always, until a
-            // session actually exists. Three Play rejections came from this one
-            // widget: first it sat below the fold on a small screen, then it was
-            // a quiet text link, then it vanished the moment someone typed a
-            // host and a password. Every one of those was a clever condition or
-            // a tidy placement. So: no conditions beyond "not connected yet",
-            // and the one position where nobody has to scroll to find it.
-            // A returning user sees one extra button on the connect screen for
-            // the seconds until they tap Connect. That is the price, and it is
-            // far cheaper than another rejected release.
-            if (!_connected) ...[
+            // THE WAY INTO THE APP — above the credentials, until a connection
+            // has ACTUALLY succeeded once ([_everConnected], persisted).
+            //
+            // Three Play rejections came from this one widget: below the fold on
+            // a small screen (versionCode 114), demoted to a text link (v0.63.0),
+            // and gone the moment someone typed a host and password (v0.64.2).
+            // That last one is the trap to remember: filled-in fields are NOT
+            // proof of a working setup — the reviewer's credentials never
+            // connected to anything, yet they closed the only door.
+            //
+            // A real session is proof. So it disappears for good after the first
+            // successful connect (what a user means by "I set up my Pi"), and it
+            // stays for anyone who never got in — reviewer included.
+            if (!_connected && !_everConnected) ...[
               FilledButton.tonalIcon(
                 key: const Key('demoEntry'),
                 onPressed: _busy ? null : _startDemo,
