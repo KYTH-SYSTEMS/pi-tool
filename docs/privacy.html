@@ -5,18 +5,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pi-Tool — Datenschutzerklärung / Privacy Policy</title>
   <style>
-    :root { color-scheme: dark; }
-    body { background:#0B0E0C; color:#E8ECE8; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-           line-height:1.6; margin:0; padding:32px 20px; }
+    /* KYTH Corporate Identity (no Google Fonts / no tracking — DSGVO).
+       Identical to impressum.html and agb.html: the legal pages are one set
+       and must not look like three different companies. */
+    :root {
+      color-scheme: dark;
+      --black:#0A0A0B; --surface:#141416;
+      --white:#FFFFFF; --white-60:rgba(255,255,255,.6); --white-40:rgba(255,255,255,.55);
+      --green:#22C55E; --green-light:#4ADE80; --border:rgba(255,255,255,.06);
+      --font-display:'Bricolage Grotesque',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+      --font-body:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+      --font-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    }
+    * { box-sizing:border-box; }
+    body { background:var(--black); color:var(--white); font-family:var(--font-body);
+           line-height:1.7; margin:0; padding:64px 20px; }
     main { max-width:760px; margin:0 auto; }
-    h1 { font-size:1.6rem; } h2 { font-size:1.15rem; margin-top:2rem; color:#1FD65F; }
-    a { color:#1FD65F; } code { background:#161A17; padding:2px 6px; border-radius:6px; }
-    .muted { color:#9AA39B; font-size:.9rem; }
-    hr { border:none; border-top:1px solid #ffffff1f; margin:2.5rem 0; }
+    a { color:var(--green); text-decoration:none; }
+    a:hover { color:var(--green-light); }
+    a:focus-visible { outline:2px solid var(--green); outline-offset:3px; border-radius:4px; }
+
+    .wordmark { font-family:var(--font-display); font-weight:700; font-size:1.6rem;
+                letter-spacing:-0.04em; color:var(--white); display:inline-block; }
+    .wordmark .yt { letter-spacing:-0.12em; }
+    .wordmark .dot { color:var(--green); text-shadow:0 0 12px rgba(34,197,94,.6),0 0 32px rgba(34,197,94,.25);
+                     animation:dotPulse 3s ease-in-out infinite; }
+    @keyframes dotPulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+
+    .eyebrow { font-family:var(--font-mono); font-size:12px; font-weight:500;
+               letter-spacing:.08em; text-transform:uppercase; color:var(--green); margin:40px 0 4px; }
+    h1 { font-family:var(--font-display); font-size:clamp(30px,5vw,44px); font-weight:700;
+         letter-spacing:-0.04em; margin:8px 0 0; }
+    h2 { font-family:var(--font-display); font-size:22px; font-weight:600; letter-spacing:-0.03em;
+         margin:36px 0 8px; }
+    p, li { color:var(--white-60); }
+    p { margin:8px 0; }
+    code { font-family:var(--font-mono); background:var(--surface); padding:2px 6px; border-radius:6px;
+           font-size:.9em; }
+    .muted { color:var(--white-40); font-size:.9rem; }
+    hr { border:none; border-top:1px solid var(--border); margin:40px 0; }
+
+    @media (prefers-reduced-motion: reduce) { .wordmark .dot { animation:none; } }
   </style>
 </head>
 <body>
 <main>
+  <a href="https://kyth.systems" class="wordmark">K<span class="yt">Y</span>TH<span class="dot">.</span></a>
+
+  <p class="eyebrow">Datenschutz</p>
   <h1>Pi-Tool — Datenschutzerklärung</h1>
   <p class="muted">Stand: 26. Juli 2026. Diese App ist ein <strong>inoffizielles</strong> Community-Tool und
   steht in keiner Verbindung zum evcc-Projekt. <strong>Nutzung auf eigene Gefahr — keine Haftung

@@ -5,22 +5,43 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pi-Tool (inoffiziell) – Raspberry-Pi-Cockpit</title>
   <style>
-    :root { color-scheme: dark; }
-    body { background:#0B0E0C; color:#E8ECE8; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-           margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+    /* KYTH Corporate Identity — same tokens as privacy/impressum/agb, so the
+       landing page and the legal pages read as one company. The green used to
+       be #1FD65F here, which is NOT the CI green. */
+    :root {
+      color-scheme: dark;
+      --black:#0A0A0B;
+      --white:#FFFFFF; --white-60:rgba(255,255,255,.6); --white-40:rgba(255,255,255,.55);
+      --green:#22C55E; --green-light:#4ADE80;
+      --font-display:'Bricolage Grotesque',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+      --font-body:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+      --font-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    }
+    * { box-sizing:border-box; }
+    body { background:var(--black); color:var(--white); font-family:var(--font-body);
+           margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+           padding:24px; }
     main { max-width:560px; text-align:center; }
-    h1 { font-size:2rem; margin:.2rem 0; }
-    h1 .accent { color:#1FD65F; }
-    p.tag { color:#9AA39B; margin-top:0; }
-    .mark { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-            font-size:56px; font-weight:700; letter-spacing:.04em; line-height:1; }
-    .mark .chev { color:#E8EDE9; }
-    .mark .dot { color:#1FD65F; }
+    h1 { font-family:var(--font-display); font-size:clamp(32px,6vw,44px); font-weight:700;
+         letter-spacing:-0.04em; margin:.2rem 0; }
+    h1 .accent { color:var(--white); }
+    p.tag { color:var(--white-60); margin-top:0; line-height:1.7; }
+    .mark { font-family:var(--font-mono); font-size:56px; font-weight:700;
+            letter-spacing:.04em; line-height:1; }
+    .mark .chev { color:var(--white); }
+    .mark .dot { color:var(--green); text-shadow:0 0 12px rgba(34,197,94,.6),0 0 32px rgba(34,197,94,.25);
+                 animation:dotPulse 3s ease-in-out infinite; }
+    @keyframes dotPulse { 0%,100%{opacity:1} 50%{opacity:.55} }
     a.btn { display:inline-block; margin:10px 6px; padding:14px 22px; border-radius:12px;
-            background:#1FD65F; color:#04210F; font-weight:700; text-decoration:none; }
-    a.ghost { background:transparent; color:#1FD65F; border:1px solid #1FD65F44; }
-    .muted { color:#9AA39B; font-size:.85rem; margin-top:1.5rem; }
-    a { color:#1FD65F; }
+            background:var(--green); color:#04210F; font-weight:700; text-decoration:none; }
+    a.ghost { background:transparent; color:var(--green); border:1px solid rgba(34,197,94,.27); }
+    a.btn:hover { background:var(--green-light); }
+    a.ghost:hover { background:rgba(34,197,94,.08); color:var(--green-light); }
+    a:focus-visible { outline:2px solid var(--green); outline-offset:3px; border-radius:12px; }
+    .muted { color:var(--white-40); font-size:.85rem; margin-top:1.5rem; line-height:1.7; }
+    a { color:var(--green); }
+
+    @media (prefers-reduced-motion: reduce) { .mark .dot { animation:none; } }
   </style>
 </head>
 <body>
