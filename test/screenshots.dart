@@ -24,10 +24,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _scratch =
-    r'C:\Users\stefa\AppData\Local\Temp\claude\C--EVCC-Updater\79a77802-f206-4f4d-bc62-b61342f0388e\scratchpad';
-const _materialIcons =
-    r'C:\Users\stefa\flutterdev\flutter\bin\cache\artifacts\material_fonts\materialicons-regular.otf';
+// Every font comes from the Flutter SDK itself. The previous build pointed at a
+// throwaway scratch directory, and those files were gone by the next session —
+// the generator then failed for a reason that had nothing to do with the app.
+const _sdkFonts =
+    r'C:\Users\stefa\flutterdev\flutter\bin\cache\artifacts\material_fonts';
+const _materialIcons = '$_sdkFonts\\materialicons-regular.otf';
 
 Future<void> _loadFont(String family, String path) async {
   final bytes = await File(path).readAsBytes();
@@ -167,8 +169,8 @@ const _config = AppConfig(
 
 void main() {
   setUpAll(() async {
-    await _loadFont('Roboto', '$_scratch\\Roboto.ttf');
-    await _loadFont('monospace', '$_scratch\\RobotoMono.ttf');
+    await _loadFont('Roboto', '$_sdkFonts\\roboto-regular.ttf');
+    await _loadFont('monospace', '$_sdkFonts\\robotocondensed-regular.ttf');
     await _loadFont('Bricolage Grotesque', 'assets/fonts/BricolageGrotesque.ttf');
     await _loadFont('MaterialIcons', _materialIcons);
   });
@@ -181,6 +183,55 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
   }
+
+  /// Wraps a rendered app frame in a caption band for the FIRST store
+  /// screenshots. Someone arriving from a forum post decides in about three
+  /// seconds, and a bare app screenshot makes them work out what they are
+  /// looking at. The line says it for them; the app below proves it.
+  ///
+  /// Same 1080x2160 frame — the band takes its height from the app view, it is
+  /// not added on top, so the 2:1 ratio Play requires still holds.
+  Widget captioned(Widget child, String headline, String sub) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Container(
+        key: const Key('shot'), // capture THIS, not just the app inside
+        color: const Color(0xFF0A0A0B), // CI black, same as the legal pages
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 34, 28, 22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    headline,
+                    style: const TextStyle(
+                      fontFamily: 'Bricolage Grotesque',
+                      fontSize: 34,
+                      height: 1.15,
+                      letterSpacing: -0.8,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFFFFFFF),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    sub,
+                    style: const TextStyle(
+                      fontFamily: 'Roboto',
+                      fontSize: 15,
+                      height: 1.45,
+                      color: Color(0xFF22C55E), // CI green
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // The app itself, clipped to whatever height is left.
+            Expanded(child: ClipRect(child: child)),
+          ],
+        ),
+      ));
 
   Widget app(EvccUpdater u, {Locale locale = const Locale('de')}) {
     return MaterialApp(
@@ -199,19 +250,36 @@ void main() {
   // Generate BOTH a German and an English set → shots/de/* and shots/en/*.
   // Tab switches use icons (locale-independent); button/menu taps use the
   // per-locale labels below.
-  const sets =
-      <({String lang, String connect, String addService, String allPis})>[
+  const sets = <({
+    String lang,
+    String connect,
+    String addService,
+    String allPis,
+    String heroHead,
+    String heroSub,
+    String updHead,
+    String updSub,
+  })>[
     (
       lang: 'de',
       connect: 'Verbindung herstellen',
       addService: 'Dienst hinzufügen',
-      allPis: 'Alle Pis (Überblick)'
+      allPis: 'Alle Pis (Überblick)',
+      // Erste Zeile = das Versprechen, nicht der Funktionsumfang.
+      heroHead: 'Dein Raspberry Pi,\nvom Sofa aus',
+      heroSub: 'Verbinden — die App erkennt selbst, was läuft.',
+      updHead: 'Updates mit\neinem Tipp',
+      updSub: 'Backup davor — evcc, Pi-hole, Home Assistant, Docker.',
     ),
     (
       lang: 'en',
       connect: 'Connect',
       addService: 'Add service',
-      allPis: 'All Pis (overview)'
+      allPis: 'All Pis (overview)',
+      heroHead: 'Your Raspberry Pi,\nfrom the couch',
+      heroSub: 'Connect — the app finds what is running by itself.',
+      updHead: 'Updates in\none tap',
+      updSub: 'With a backup first — evcc, Pi-hole, Home Assistant, Docker.',
     ),
   ];
 
@@ -223,6 +291,29 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, s.connect));
       await tester.pumpAndSettle();
     }
+
+    // --- The two the store shows first, with a statement line on top. ---
+    testWidgets('[${s.lang}] 00a hero (captioned)', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(captioned(
+          app(_ShotUpdater(s.lang), locale: loc), s.heroHead, s.heroSub));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await expectLater(
+          find.byKey(const Key('shot')), matchesGoldenFile('$dir/00a_hero.png'));
+    });
+
+    testWidgets('[${s.lang}] 00b updates (captioned)', (tester) async {
+      phone(tester);
+      await tester.pumpWidget(captioned(
+          app(_ShotUpdater(s.lang), locale: loc), s.updHead, s.updSub));
+      await tester.pumpAndSettle();
+      await connect(tester);
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -880));
+      await tester.pumpAndSettle();
+      await expectLater(find.byKey(const Key('shot')),
+          matchesGoldenFile('$dir/00b_updates.png'));
+    });
 
     testWidgets('[${s.lang}] 01 cockpit', (tester) async {
       phone(tester);
