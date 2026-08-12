@@ -31,6 +31,11 @@ class Profile {
   /// never shown to the user.
   final String lastGoodHost;
 
+  /// Connect to this Pi automatically when the app starts. Off by default —
+  /// a connection runs sudo-capable commands, so it stays an explicit choice
+  /// per Pi rather than a global convenience.
+  final bool autoConnect;
+
   /// Whether THIS phone was ever proven to reach the Pi over the tailnet. Set
   /// only by a successful reachability check, so the remote-access card can
   /// disappear for good instead of becoming permanent furniture.
@@ -50,6 +55,7 @@ class Profile {
     this.lanHost = '',
     this.lastGoodHost = '',
     this.remoteAccessProven = false,
+    this.autoConnect = false,
   });
 
   Profile copyWith(
@@ -57,7 +63,8 @@ class Profile {
           String? tailscaleIp,
           String? lanHost,
           String? lastGoodHost,
-          bool? remoteAccessProven}) =>
+          bool? remoteAccessProven,
+          bool? autoConnect}) =>
       Profile(
         name: name ?? this.name,
         host: host,
@@ -88,6 +95,7 @@ class Profile {
         'lanHost': lanHost,
         'lastGoodHost': lastGoodHost,
         'remoteAccessProven': remoteAccessProven,
+        'autoConnect': autoConnect,
       };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -104,6 +112,7 @@ class Profile {
         lanHost: (j['lanHost'] ?? '').toString(),
         lastGoodHost: (j['lastGoodHost'] ?? '').toString(),
         remoteAccessProven: j['remoteAccessProven'] == true,
+        autoConnect: j['autoConnect'] == true,
       );
 }
 

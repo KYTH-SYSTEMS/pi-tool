@@ -301,6 +301,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   // Persisted — that is what "the Pi is really set up" means.
   bool _everConnected = false;
   bool _remoteAccessDismissed = false; // ✕ auf dem Fernzugriff-Einstieg
+  bool _autoConnect = false; // dieser Pi verbindet beim Start von allein
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
   // Demo mode: canned data via the demo updater/API, everything unlocked, no
   // real Pi. In-memory only (like _connected); never persisted.
@@ -424,6 +425,15 @@ class _UpdaterPageState extends State<UpdaterPage>
       c.addListener(_invalidateConnTest);
     }
     if (_locked) _unlockAfterSplash();
+    // Auto-connect: only at app start, only for a Pi that asked for it, and
+    // never past the lock screen — the whole point of the lock is that nothing
+    // reaches the Pi before the user is authenticated. Fires once; switching
+    // profiles later stays a manual connect.
+    if (!_locked && _autoConnect && _credsComplete()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_busy && !_connected) _testConnection();
+      });
+    }
     // Stamp the early-adopter marker as a best-effort BACKGROUND task —
     // deliberately after the unlock is scheduled and fully off the boot-critical
     // path (no setState, no lock interaction, per the "nothing untested in the
@@ -494,6 +504,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lanHost = p.lanHost;
     _lastGoodHost = p.lastGoodHost;
     _remoteAccessProven = p.remoteAccessProven;
+    _autoConnect = p.autoConnect;
     // Collapse the (space-hungry) connection form when this Pi is already set up;
     // expand it for a fresh/empty profile that still needs input.
     _connExpanded = !_credsComplete();
@@ -550,6 +561,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         lanHost: _lanHost,
         lastGoodHost: _lastGoodHost,
         remoteAccessProven: _remoteAccessProven,
+        autoConnect: _autoConnect,
       );
 
   /// Remembers the Pi's Tailscale tailnet IP from a detection, so the remote-
@@ -1180,6 +1192,22 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Validates, builds the config, remembers it, saves settings and enters the
   /// busy state. Returns the config, or null when validation failed.
+  /// Turns auto-connect on for the active Pi — and off for every other one.
+  /// Exactly one Pi may start by itself: two would race at launch, both writing
+  /// the host field, and the user would have no way to tell which one won.
+  void _setAutoConnect(bool on) {
+    setState(() {
+      _autoConnect = on;
+      if (!on) return;
+      for (var i = 0; i < _profiles.length; i++) {
+        if (i != _activeIndex && _profiles[i].autoConnect) {
+          _profiles[i] = _profiles[i].copyWith(autoConnect: false);
+        }
+      }
+    });
+    _scheduleSave();
+  }
+
   SshConfig? _prepare() {
     final port = _validatedPort();
     if (port == null) return null;
@@ -5061,6 +5089,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                 setState(() => _authMode = m);
                 _scheduleSave();
               },
+              autoConnect: _autoConnect,
+              onAutoConnect: _setAutoConnect,
               onSetupKey: _setupSshKey,
               expanded: _connExpanded,
               onToggleExpanded: () =>

@@ -811,9 +811,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('demoEntry')), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'));
+    // Der Auto-Verbinden-Schalter hat die Zugangsdaten-Karte höher gemacht —
+    // der Knopf liegt jetzt unterhalb des gebauten Bereichs und muss erst
+    // herangeholt werden, sonst findet die ListView ihn gar nicht.
+    final wifi = find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen');
+    await tester.scrollUntilVisible(wifi, 200,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(wifi);
     await tester.pumpAndSettle();
     await tester.tap(find.text('192.168.97.1'));
+    await tester.pumpAndSettle();
+
+    // Zurück nach oben: der Einstieg steht über den Zugangsdaten, und die
+    // ListView baut nur, was sichtbar ist.
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, 600));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('demoEntry')), findsOneWidget,
@@ -3061,6 +3072,78 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(u.aptUpdates, ['tailscale']);
+  });
+
+  testWidgets('Auto-Verbinden: gesetzter Pi verbindet beim Start von allein',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                autoConnect: true)
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+
+    // Ohne einen einzigen Tipp: die Erkennung lief.
+    expect(u.detectCalls, greaterThan(0));
+  });
+
+  testWidgets('Auto-Verbinden: ohne Schalter passiert beim Start nichts',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    expect(u.detectCalls, 0);
+  });
+
+  testWidgets('Auto-Verbinden: Einschalten nimmt es dem anderen Pi weg',
+      (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [
+        Profile(name: 'A', host: '192.168.178.64', password: 'pw'),
+        Profile(name: 'B', host: '192.168.178.65', password: 'pw',
+            autoConnect: true),
+      ],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: store,
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // Zugangsdaten aufklappen, damit der Schalter sichtbar ist.
+    await tester.tap(find.text('Zugangsdaten'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+        find.byKey(const Key('autoConnectSwitch')), 200,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byKey(const Key('autoConnectSwitch')));
+    await tester.pumpAndSettle();
+
+    // Genau einer darf es sein — A an, B automatisch aus.
+    expect(store.saved.profiles.where((p) => p.autoConnect).length, 1);
+    expect(store.saved.profiles.firstWhere((p) => p.name == 'A').autoConnect,
+        isTrue);
+    expect(store.saved.profiles.firstWhere((p) => p.name == 'B').autoConnect,
+        isFalse);
   });
 
   testWidgets('Fernzugriff: ✕ blendet den Einstieg dauerhaft aus',

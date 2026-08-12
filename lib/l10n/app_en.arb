@@ -17,6 +17,8 @@
   "wAlertsExplain": "The Pi notifies you via push (through ntfy) when the disk fills up, a service goes down, it gets too hot or updates are due — checked every 30 min. Free and no account needed.",
   "wAlertsNtfyLink": "How ntfy works (install the app, subscribe to the topic) →",
   "wAllPis": "All Pis",
+  "wAutoConnect": "Connect automatically on start",
+  "wAutoConnectHint": "Only one Pi can do this — switching it on here turns it off for the others.",
   "wBattery": "Battery",
   "wChargingPower": "charging {power}",
   "@wChargingPower": {

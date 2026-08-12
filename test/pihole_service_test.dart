@@ -68,6 +68,19 @@ void main() {
       expect(s, contains('setupVars.conf'));
       expect(s, contains('mktemp'));
     });
+
+    test('hands /etc/pihole back to the pihole user AFTER the installer', () {
+      // We create /etc/pihole as root to pre-seed setupVars.conf, and the
+      // official installer adopts an existing directory without fixing its
+      // ownership. FTL then runs as `pihole` and cannot write its own config —
+      // a customer had to chown it by hand (Rückmeldung 12.08.2026).
+      expect(s, contains('chown'), reason: 'ownership is never handed over');
+      expect(s, contains('id -u pihole'),
+          reason: 'chown must be guarded — the user only exists after a '
+              'successful install');
+      // Order matters: fixing ownership before the installer runs is pointless.
+      expect(s.indexOf('chown'), greaterThan(s.indexOf('--unattended')));
+    });
   });
 
   group('isPiholeBlocking', () {

@@ -7,6 +7,8 @@
   "wAlertsExplain": "Der Pi meldet sich per Push (via ntfy), wenn die Platte vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.",
   "wAlertsNtfyLink": "So funktioniert ntfy (App installieren, Thema abonnieren) →",
   "wAllPis": "Alle Pis",
+  "wAutoConnect": "Beim Start automatisch verbinden",
+  "wAutoConnectHint": "Nur ein Pi kann das — beim Einschalten wird es bei den anderen abgeschaltet.",
   "wBattery": "Batterie",
   "wChargingPower": "lädt {power}",
   "wChecking": "Prüfe …",

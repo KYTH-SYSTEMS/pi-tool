@@ -1526,6 +1526,8 @@ class _ConnectionCard extends StatelessWidget {
     required this.onAuthMode,
     required this.expanded,
     required this.onToggleExpanded,
+    required this.autoConnect,
+    required this.onAutoConnect,
     this.onSetupKey,
   });
 
@@ -1545,6 +1547,11 @@ class _ConnectionCard extends StatelessWidget {
   /// (the big SSH-key PEM field otherwise eats a lot of vertical space).
   final bool expanded;
   final VoidCallback onToggleExpanded;
+
+  /// Whether THIS Pi connects by itself when the app starts. At most one Pi
+  /// may — see [onAutoConnect].
+  final bool autoConnect;
+  final ValueChanged<bool> onAutoConnect;
 
   /// Runs the automatic per-Pi SSH-key setup (generate → install → switch).
   /// Offered inline while the SSH-Key segment is selected but no key exists yet.
@@ -1759,6 +1766,17 @@ class _ConnectionCard extends StatelessWidget {
                   tooltip: obscure ? context.l10n.wShow : context.l10n.wHide,
                 ),
               ),
+            ),
+            // Belongs to SETTING UP a Pi, not to switching between them — so it
+            // sits with the credentials rather than in the Pi picker.
+            SwitchListTile(
+              key: const Key('autoConnectSwitch'),
+              value: autoConnect,
+              onChanged: enabled ? onAutoConnect : null,
+              contentPadding: EdgeInsets.zero,
+              title: Text(context.l10n.wAutoConnect),
+              subtitle: Text(context.l10n.wAutoConnectHint,
+                  style: Theme.of(context).textTheme.bodySmall),
             ),
                 ],
               ),

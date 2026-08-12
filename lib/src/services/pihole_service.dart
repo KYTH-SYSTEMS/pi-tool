@@ -172,6 +172,17 @@ setup=$(mktemp)
 curl -fsSL https://install.pi-hole.net -o "$setup"
 bash "$setup" --unattended
 rm -f "$setup"
+# Hand /etc/pihole back. We created it above as root to pre-seed
+# setupVars.conf, and the official installer ADOPTS an existing directory
+# without correcting its ownership — so FTL, which runs as the `pihole` user,
+# could not write its own config directory and the user had to chown it by hand
+# (customer report 2026-08-12). Guarded: the user only exists once the install
+# actually succeeded, and a failure here must not fail the whole install.
+if id -u pihole >/dev/null 2>&1; then
+  chown -R pihole:pihole /etc/pihole 2>/dev/null \
+    || chown -R pihole /etc/pihole 2>/dev/null || true
+fi
+chmod 0755 /etc/pihole 2>/dev/null || true
 ''';
 }
 
