@@ -1,0 +1,9 @@
+Thanks to the user who sent the first detailed feedback — this release is almost entirely his suggestions.
+
+One Pi can now connect by itself at startup (switch with the credentials, exactly one Pi, never past the app lock).
+
+The app no longer opens empty: it shows the last known state right away, clearly marked as remembered.
+
+Screenshots work again — only the connection screen, where passwords can appear, stays protected.
+
+Pi-hole install: /etc/pihole is now owned by Pi-hole instead of root.

@@ -18,6 +18,22 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.65.0': [
+    'Thanks to the user who sent the first detailed feedback — this release is '
+        'almost entirely his suggestions.',
+    'One Pi can now connect by itself at startup. The switch sits with the '
+        'credentials, exactly one Pi may use it, and it never runs past the '
+        'app lock.',
+    'The app no longer opens empty: it shows the last known state of your Pi '
+        'right away — clearly marked as remembered — and replaces it once the '
+        'real detection lands.',
+    'Screenshots work again. They used to be blocked everywhere because the '
+        'connection screen can show passwords. Now only that screen and the '
+        'lock screen are protected; the rest of the app is yours to share.',
+    'Pi-hole install: /etc/pihole stayed owned by root, so Pi-hole could not '
+        'write to it and the permissions had to be fixed by hand. It is handed '
+        'over properly now.',
+  ],
   '0.64.5': [
     'The remote-access entry is now a slim row instead of a large card — and '
         'you can dismiss it with ✕. It then stays gone, restarts included. Not '
@@ -173,6 +189,23 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.65.0': [
+    'Danke an den Nutzer, von dem die erste ausführliche Rückmeldung kam — '
+        'diese Version besteht fast komplett aus seinen Vorschlägen.',
+    'Ein Pi kann sich beim Start jetzt von allein verbinden. Der Schalter sitzt '
+        'bei den Zugangsdaten; genau ein Pi darf es sein, und an der App-Sperre '
+        'vorbei passiert es nie.',
+    'Die App öffnet nicht mehr leer: Sie zeigt sofort den zuletzt bekannten '
+        'Stand deines Pi — deutlich als Erinnerung gekennzeichnet — und '
+        'ersetzt ihn, sobald die echte Erkennung durch ist.',
+    'Screenshots gehen wieder. Bisher waren sie überall gesperrt, weil auf dem '
+        'Verbindungsbildschirm Passwörter stehen können. Gesperrt ist jetzt nur '
+        'noch genau dort und auf dem Sperrbildschirm — den Rest der App darfst '
+        'du zeigen und teilen.',
+    'Pi-hole-Installation: Das Verzeichnis /etc/pihole blieb dem Benutzer root '
+        'zugeordnet, sodass Pi-hole nicht hineinschreiben konnte und man die '
+        'Rechte von Hand nachziehen musste. Wird jetzt korrekt übergeben.',
+  ],
   '0.64.5': [
     'Der Fernzugriff-Einstieg ist jetzt eine schmale Zeile statt einer großen '
         'Karte — und du kannst ihn mit ✕ wegtippen. Dann ist er dauerhaft weg, '

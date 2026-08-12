@@ -40,6 +40,7 @@ import 'src/language.dart';
 import 'src/network_scan.dart';
 import 'src/parsing.dart';
 import 'src/profiles.dart';
+import 'src/secure_screen.dart';
 import 'src/services/apt_services.dart';
 import 'src/services/pi_service.dart';
 import 'src/services/tailscale.dart';
@@ -174,6 +175,7 @@ class UpdaterPage extends StatefulWidget {
     this.filePicker,
     this.fileSaver,
     this.appLauncher,
+    this.secureScreen,
   });
 
   final AppConfigStore? store;
@@ -212,6 +214,7 @@ class UpdaterPage extends StatefulWidget {
   /// Opens another app (Tailscale) for the remote-access helper. Injectable so
   /// widget tests don't hit the native channel.
   final AppLauncher? appLauncher;
+  final SecureScreen? secureScreen;
 
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
@@ -250,6 +253,16 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.fileSaver ?? _saveAndShareBytes;
   late final AppLauncher _appLauncher =
       widget.appLauncher ?? const ChannelAppLauncher();
+  late final SecureScreen _secureScreen =
+      widget.secureScreen ?? const ChannelSecureScreen();
+
+  /// Screenshots are blocked only while credentials can be on screen: the lock
+  /// screen, and the expanded connection card with its password and key fields.
+  /// Everything else — service cards, logs (passwords are redacted), terminal,
+  /// files — is fair game, so users can show the app to other people.
+  void _applyScreenshotPolicy() {
+    _secureScreen.setSecure(_locked || _connExpanded);
+  }
   final HistoryStore _historyStore = HistoryStore();
 
   final _host = TextEditingController();
@@ -302,6 +315,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _everConnected = false;
   bool _remoteAccessDismissed = false; // ✕ auf dem Fernzugriff-Einstieg
   bool _autoConnect = false; // dieser Pi verbindet beim Start von allein
+  // Die angezeigten Karten stammen aus dem Speicher, nicht aus einer laufenden
+  // Sitzung — bis die erste echte Erkennung sie ersetzt.
+  bool _servicesFromCache = false;
   bool _isPro = true; // Pro entitlement (dormant default: everyone Pro)
   // Demo mode: canned data via the demo updater/API, everything unlocked, no
   // real Pi. In-memory only (like _connected); never persisted.
@@ -381,6 +397,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         Navigator.of(context, rootNavigator: true)
             .popUntil((r) => r.isFirst);
         setState(() => _locked = true);
+        _applyScreenshotPolicy();
       }
     } else if (state == AppLifecycleState.resumed && _locked && !_unlocking) {
       _tryUnlock();
@@ -413,6 +430,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (_lockEnabled) _locked = true;
       _booting = false; // settings + lock state resolved → reveal the UI
     });
+    _applyScreenshotPolicy();
     themeModeNotifier.value = parseThemeMode(_themeMode);
     localeNotifier.value = localeForLanguageMode(_languageMode);
     // Attach auto-save listeners after initial values are set.
@@ -505,6 +523,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastGoodHost = p.lastGoodHost;
     _remoteAccessProven = p.remoteAccessProven;
     _autoConnect = p.autoConnect;
+    // Sofort etwas zeigen statt eines leeren Bildschirms: der zuletzt bekannte
+    // Stand dieses Pi. Er wird ersetzt, sobald eine echte Erkennung landet.
+    _services = [for (final j in p.cachedServices) ServiceStatus.fromJson(j)];
+    _servicesFromCache = _services.isNotEmpty;
     // Collapse the (space-hungry) connection form when this Pi is already set up;
     // expand it for a fresh/empty profile that still needs input.
     _connExpanded = !_credsComplete();
@@ -562,6 +584,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         lastGoodHost: _lastGoodHost,
         remoteAccessProven: _remoteAccessProven,
         autoConnect: _autoConnect,
+        cachedServices: [for (final s in _services) s.toJson()],
       );
 
   /// Remembers the Pi's Tailscale tailnet IP from a detection, so the remote-
@@ -1074,6 +1097,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _tryUnlock() async {
     if (!_lockEnabled) {
       if (mounted) setState(() => _locked = false);
+      _applyScreenshotPolicy();
       return;
     }
     if (_unlocking) return; // re-entrancy guard: avoid overlapping prompts
@@ -1081,6 +1105,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     try {
       final ok = await _authenticator.authenticate(context.l10n.authUnlockReason);
       if (ok && mounted) setState(() => _locked = false);
+      if (mounted) _applyScreenshotPolicy();
     } finally {
       _unlocking = false;
     }
@@ -1449,6 +1474,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (!mounted) return;
       setState(() {
         _services = services;
+        _servicesFromCache = false; // ab jetzt echt
         _rememberTailscaleIp(services);
         _rememberLanHost();
         _connExpanded = false; // connected → free up space for the service cards
@@ -3970,6 +3996,25 @@ class _UpdaterPageState extends State<UpdaterPage>
       ];
     }
     final cards = <Widget>[];
+    // Say plainly that these cards are remembered, not measured. Showing a
+    // stale state as if it were current is the mistake we already made once
+    // with the apt index — not repeating it here.
+    if (_servicesFromCache && !_connected) {
+      final cs = Theme.of(context).colorScheme;
+      cards.add(Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(
+          children: [
+            Icon(Icons.history, size: 16, color: cs.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(context.l10n.wCachedState,
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+            ),
+          ],
+        ),
+      ));
+    }
     final remote = _remoteAccessCard();
     if (remote != null) cards.add(remote);
     final addable = <_AddableService>[];
@@ -5093,8 +5138,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               onAutoConnect: _setAutoConnect,
               onSetupKey: _setupSshKey,
               expanded: _connExpanded,
-              onToggleExpanded: () =>
-                  setState(() => _connExpanded = !_connExpanded),
+              onToggleExpanded: () {
+                setState(() => _connExpanded = !_connExpanded);
+                _applyScreenshotPolicy();
+              },
             ),
             const SizedBox(height: 8),
             // Connect. The cancel affordance lives in the shared running bar

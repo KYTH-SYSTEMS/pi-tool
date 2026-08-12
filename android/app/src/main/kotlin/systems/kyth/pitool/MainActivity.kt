@@ -26,8 +26,9 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // FLAG_SECURE blanks the recent-apps thumbnail and blocks screenshots /
-        // screen recording — the app shows SSH keys and passwords on screen.
+        // Start SECURE, always. Dart relaxes this per screen via the
+        // "pi_tool/secure" channel below — but only after it is running, so a
+        // slow start, a crash or a broken channel can never expose a password.
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE,
@@ -76,6 +77,25 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("launch_failed", e.message, null)
                         }
                     }
+                } else {
+                    result.notImplemented()
+                }
+            }
+
+        // Screenshots: blocked only where credentials can be on screen. Blocking
+        // the whole app also blocked users from showing it to anyone — and word
+        // of mouth is this app's only distribution. Handler runs on the UI
+        // thread, so touching the window here is safe.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pi_tool/secure")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "setSecure") {
+                    val secure = call.argument<Boolean>("secure") ?: true
+                    if (secure) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                    result.success(null)
                 } else {
                     result.notImplemented()
                 }

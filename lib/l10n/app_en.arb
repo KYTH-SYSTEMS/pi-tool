@@ -18,6 +18,7 @@
   "wAlertsNtfyLink": "How ntfy works (install the app, subscribe to the topic) →",
   "wAllPis": "All Pis",
   "wAutoConnect": "Connect automatically on start",
+  "wCachedState": "Remembered state — connect to refresh it.",
   "wAutoConnectHint": "Only one Pi can do this — switching it on here turns it off for the others.",
   "wBattery": "Battery",
   "wChargingPower": "charging {power}",

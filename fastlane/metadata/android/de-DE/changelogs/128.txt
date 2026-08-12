@@ -1,0 +1,9 @@
+Danke an den Nutzer mit der ersten ausführlichen Rückmeldung — diese Version besteht fast komplett aus seinen Vorschlägen.
+
+Ein Pi kann sich beim Start von allein verbinden (Schalter bei den Zugangsdaten, genau ein Pi, nie an der App-Sperre vorbei).
+
+Die App öffnet nicht mehr leer: Sie zeigt sofort den zuletzt bekannten Stand, als Erinnerung gekennzeichnet.
+
+Screenshots gehen wieder — gesperrt bleibt nur der Verbindungsbildschirm.
+
+Pi-hole: /etc/pihole gehört jetzt Pi-hole statt root.

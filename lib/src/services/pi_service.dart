@@ -73,6 +73,41 @@ class ServiceStatus {
       ServiceStatus(
           id: id, name: name, installed: false, compatible: compatible);
 
+  /// Round-trips a detection so the app can show the LAST KNOWN state the
+  /// moment it opens, instead of an empty screen while the SSH round trip runs.
+  /// Deliberately carries no secrets — every field here is already on screen.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'installed': installed,
+        'version': version,
+        'active': active,
+        'updateAvailable': updateAvailable,
+        'updateKnown': updateKnown,
+        'detail': detail,
+        'health': health,
+        'healthWarning': healthWarning,
+        'webPort': webPort,
+        'aptPackage': aptPackage,
+        'compatible': compatible,
+      };
+
+  static ServiceStatus fromJson(Map<String, dynamic> j) => ServiceStatus(
+        id: (j['id'] ?? '').toString(),
+        name: (j['name'] ?? '').toString(),
+        installed: j['installed'] == true,
+        version: j['version']?.toString(),
+        active: j['active'] == true,
+        updateAvailable: j['updateAvailable'] == true,
+        updateKnown: j['updateKnown'] == true,
+        detail: (j['detail'] ?? '').toString(),
+        health: (j['health'] ?? '').toString(),
+        healthWarning: j['healthWarning'] == true,
+        webPort: j['webPort'] is int ? j['webPort'] as int : null,
+        aptPackage: j['aptPackage']?.toString(),
+        compatible: j['compatible'] != false,
+      );
+
   ServiceStatus copyWith({bool? updateAvailable, bool? updateKnown}) =>
       ServiceStatus(
         id: id,

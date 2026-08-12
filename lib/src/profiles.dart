@@ -36,6 +36,12 @@ class Profile {
   /// per Pi rather than a global convenience.
   final bool autoConnect;
 
+  /// Last successful detection for this Pi, as raw JSON. Shown immediately on
+  /// start so the app opens with something instead of an empty screen, then
+  /// replaced by the live result. Marked as a remembered state in the UI —
+  /// never presented as current. Holds no credentials.
+  final List<Map<String, dynamic>> cachedServices;
+
   /// Whether THIS phone was ever proven to reach the Pi over the tailnet. Set
   /// only by a successful reachability check, so the remote-access card can
   /// disappear for good instead of becoming permanent furniture.
@@ -56,6 +62,7 @@ class Profile {
     this.lastGoodHost = '',
     this.remoteAccessProven = false,
     this.autoConnect = false,
+    this.cachedServices = const [],
   });
 
   Profile copyWith(
@@ -64,7 +71,8 @@ class Profile {
           String? lanHost,
           String? lastGoodHost,
           bool? remoteAccessProven,
-          bool? autoConnect}) =>
+          bool? autoConnect,
+          List<Map<String, dynamic>>? cachedServices}) =>
       Profile(
         name: name ?? this.name,
         host: host,
@@ -96,6 +104,7 @@ class Profile {
         'lastGoodHost': lastGoodHost,
         'remoteAccessProven': remoteAccessProven,
         'autoConnect': autoConnect,
+        'cachedServices': cachedServices,
       };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -113,6 +122,12 @@ class Profile {
         lastGoodHost: (j['lastGoodHost'] ?? '').toString(),
         remoteAccessProven: j['remoteAccessProven'] == true,
         autoConnect: j['autoConnect'] == true,
+        cachedServices: (j['cachedServices'] is List)
+            ? [
+                for (final e in (j['cachedServices'] as List))
+                  if (e is Map) Map<String, dynamic>.from(e)
+              ]
+            : const [],
       );
 }
 

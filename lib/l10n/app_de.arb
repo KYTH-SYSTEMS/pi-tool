@@ -8,6 +8,7 @@
   "wAlertsNtfyLink": "So funktioniert ntfy (App installieren, Thema abonnieren) →",
   "wAllPis": "Alle Pis",
   "wAutoConnect": "Beim Start automatisch verbinden",
+  "wCachedState": "Stand von vorhin — verbinde, um ihn zu aktualisieren.",
   "wAutoConnectHint": "Nur ein Pi kann das — beim Einschalten wird es bei den anderen abgeschaltet.",
   "wBattery": "Batterie",
   "wChargingPower": "lädt {power}",

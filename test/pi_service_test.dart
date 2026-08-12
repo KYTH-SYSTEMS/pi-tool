@@ -117,4 +117,40 @@ void main() {
           .first.updateKnown, isFalse);
     });
   });
+
+  group('ServiceStatus JSON (Zwischenspeicher)', () {
+    test('round-trips every field', () {
+      const s = ServiceStatus(
+          id: 'system',
+          name: 'System (Pi)',
+          installed: true,
+          version: 'Debian 13',
+          active: true,
+          updateAvailable: true,
+          updateKnown: true,
+          detail: '3 Updates verfügbar',
+          health: '48 °C',
+          healthWarning: true,
+          webPort: 3000,
+          aptPackage: 'evcc',
+          compatible: false);
+      final b = ServiceStatus.fromJson(s.toJson());
+      expect(b.id, s.id);
+      expect(b.version, s.version);
+      expect(b.updateAvailable, isTrue);
+      expect(b.updateKnown, isTrue);
+      expect(b.healthWarning, isTrue);
+      expect(b.webPort, 3000);
+      expect(b.aptPackage, 'evcc');
+      expect(b.compatible, isFalse);
+    });
+
+    test('a half-written entry loads with safe defaults, it does not throw', () {
+      final b = ServiceStatus.fromJson(const {'id': 'evcc'});
+      expect(b.installed, isFalse);
+      expect(b.updateAvailable, isFalse);
+      expect(b.compatible, isTrue); // unbekannt heißt nicht "inkompatibel"
+      expect(b.webPort, isNull);
+    });
+  });
 }
