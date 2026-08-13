@@ -18,6 +18,14 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.65.1': [
+    'Thanks again to the same user: the log no longer drowns in noise while '
+        'installing or updating.',
+    'apt had dpkg paint a progress bar for a terminal that is not there — some '
+        'twenty lines of "(Reading database ... 5% ... 10% ..." per package. '
+        'Those are no longer produced at all, and whatever a third-party '
+        'installer still sends is filtered out. Every real message stays.',
+  ],
   '0.65.0': [
     'Thanks to the user who sent the first detailed feedback — this release is '
         'almost entirely his suggestions.',
@@ -189,6 +197,15 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.65.1': [
+    'Schon wieder Dank an denselben Nutzer: Das Log ist beim Installieren und '
+        'Aktualisieren nicht mehr zugemüllt.',
+    'apt hat dpkg bisher einen Fortschrittsbalken für ein Terminal malen '
+        'lassen, das es hier gar nicht gibt — pro Paket rund zwanzig Zeilen '
+        '„(Reading database ... 5% ... 10% ...". Die entstehen jetzt gar nicht '
+        'mehr, und was ein fremder Installer trotzdem schickt, filtert die App '
+        'heraus. Die echten Meldungen bleiben alle stehen.',
+  ],
   '0.65.0': [
     'Danke an den Nutzer, von dem die erste ausführliche Rückmeldung kam — '
         'diese Version besteht fast komplett aus seinen Vorschlägen.',

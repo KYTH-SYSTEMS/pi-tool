@@ -1,0 +1,5 @@
+Danke an denselben Nutzer für die zweite Rückmeldung — diese Version geht auf seinen Hinweis zurück.
+
+Beim Installieren und Aktualisieren ist das Log nicht mehr zugemüllt: apt ließ dpkg einen Fortschrittsbalken für ein Terminal malen, das es hier gar nicht gibt — rund zwanzig Zeilen "(Reading database ... 5% ... 10%" pro Paket.
+
+Die entstehen jetzt gar nicht mehr, und was ein fremder Installer trotzdem schickt, filtert die App heraus. Alle echten Meldungen bleiben.

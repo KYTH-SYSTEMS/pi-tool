@@ -61,6 +61,49 @@ bool isSudoPasswordFailure(String output) {
   return out.contains('incorrect password') || out.contains('sorry, try again');
 }
 
+/// dpkg's "(Reading database ... 45%" painting — matched without relying on the
+/// English wording, so the German translation ("(Lese Datenbank ... 45%") from a
+/// third-party installer that doesn't set `LC_ALL=C` disappears just the same.
+/// The informative summary ("… 214428 files and directories currently
+/// installed.)") does NOT match: it ends in text, not in the bare `...`/`NN%`.
+final _dpkgReadProgress = RegExp(r'^\([^()]{0,60}\.\.\.\s*(?:\d{1,3}\s*%)?$');
+
+/// debconf unpacking its templates, and apt's own progress bar. Same story:
+/// both only ever appear because dpkg thinks it is painting a terminal.
+final _debconfTemplates =
+    RegExp(r'^Extracting templates from packages:\s*\d{1,3}%$');
+final _aptProgressBar = RegExp(r'^Progress: \[\s*\d{1,3}%\]$');
+
+bool _isProgressPainting(String line) {
+  final t = line.trim();
+  if (t.isEmpty) return false;
+  return _dpkgReadProgress.hasMatch(t) ||
+      _debconfTemplates.hasMatch(t) ||
+      _aptProgressBar.hasMatch(t);
+}
+
+/// Strips the progress painting apt/dpkg emit for a terminal that isn't there.
+///
+/// apt hands dpkg a pseudo-terminal by default (`Dpkg::Use-Pty`, on even when
+/// nothing is attached to a terminal — Debian #860931), so dpkg repaints its
+/// read-database line every 5 %, separated by carriage returns. On a terminal
+/// those overwrite each other; in a log view they pile up as
+/// "(Reading database ... 5% (Reading database ... 10% …" and bury the output
+/// that actually matters.
+///
+/// Two things happen here: carriage returns become line breaks (so pty output
+/// can't collapse into one endless line), and lines that are nothing but
+/// progress painting are dropped. Every informative line survives — including
+/// dpkg's file-count summary. Display only: parsing always sees the raw output.
+String stripProgressNoise(String text) {
+  if (text.isEmpty) return text;
+  final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  return normalized
+      .split('\n')
+      .where((line) => !_isProgressPainting(line))
+      .join('\n');
+}
+
 /// Replaces every literal occurrence of [password] in [text] with
 /// [passwordMask]. An empty [password] leaves [text] untouched.
 String redactPassword(String text, String password) {

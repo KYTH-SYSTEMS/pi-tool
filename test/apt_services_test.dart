@@ -62,7 +62,7 @@ void main() {
       // Current official key is the full keyring, stored armored (no dearmor).
       expect(s.installScript, contains('gpg-full.key'));
       expect(s.installScript, contains('grafana.asc'));
-      expect(s.installScript, contains('apt-get install -y grafana'));
+      expect(s.installScript, contains('install -y grafana'));
       expect(s.installScript, contains('grafana-server'));
     });
 
@@ -81,8 +81,25 @@ void main() {
 
     test('mosquitto install is a plain apt install of the broker', () {
       final s = knownAptServices.firstWhere((s) => s.id == 'mosquitto');
-      expect(s.installScript, contains('apt-get install -y mosquitto'));
+      expect(s.installScript, contains('install -y mosquitto'));
       expect(s.installScript, contains('systemctl enable --now mosquitto'));
+    });
+
+    test('every apt call that runs dpkg switches the pty off', () {
+      // Without this, dpkg paints "(Reading database ... 5% … 100%" per package
+      // and floods the log over SSH (see stripProgressNoise). Guard test: a new
+      // install script must not silently reintroduce the noise.
+      for (final s in knownInstallableServices) {
+        for (final line in s.installScript!.split('\n')) {
+          if (!line.contains('apt-get')) continue;
+          if (!RegExp(r'\b(install|upgrade|remove|purge|autoremove)\b')
+              .hasMatch(line)) {
+            continue; // `apt-get update` runs no dpkg
+          }
+          expect(line, contains('-o Dpkg::Use-Pty=0'),
+              reason: '${s.id}: "$line" would flood the log');
+        }
+      }
     });
   });
 }

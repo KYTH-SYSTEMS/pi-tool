@@ -1,0 +1,5 @@
+Thanks to the same user for a second round of feedback — this release comes straight from his report.
+
+The log no longer drowns in noise while installing or updating: apt had dpkg paint a progress bar for a terminal that is not there — some twenty lines of "(Reading database ... 5% ... 10% ..." per package.
+
+Those lines are no longer produced at all, and whatever a third-party installer still sends is filtered out. Every real message stays.

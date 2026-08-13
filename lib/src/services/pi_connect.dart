@@ -37,7 +37,7 @@ const String piConnectInstallScript = '''
 set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y rpi-connect-lite
+apt-get -o Dpkg::Use-Pty=0 install -y rpi-connect-lite
 u="\$SUDO_USER"; [ -z "\$u" ] && u="\$(logname 2>/dev/null)"
 [ -n "\$u" ] && loginctl enable-linger "\$u" 2>/dev/null || true
 echo PICONNECT_INSTALLED

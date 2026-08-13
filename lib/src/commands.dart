@@ -32,6 +32,20 @@ class SshStep {
 /// How evcc is installed on the Pi.
 enum InstallKind { apt, docker, unknown }
 
+/// Keeps apt from handing dpkg a pseudo-terminal.
+///
+/// `Dpkg::Use-Pty` defaults to true even when nothing is attached to a terminal
+/// (Debian #860931), so dpkg paints "(Reading database ... 5% … 100%" roughly
+/// twenty times per package — noise that here would cross the SSH link only to
+/// clutter the log. Without the pty dpkg prints the single summary line it
+/// means to print. Belongs on every apt call that actually runs dpkg (install,
+/// upgrade, remove); `apt-get update` touches no packages and doesn't need it.
+///
+/// Third-party installers (Pi-hole, evcc's setup.deb.sh, …) run their own apt
+/// and can't be given this flag — [stripProgressNoise] catches those on the way
+/// into the log.
+const String aptNoPty = '-o Dpkg::Use-Pty=0';
+
 /// Reads the installed version of the `evcc` package (no sudo needed).
 const String versionQuery =
     r"dpkg-query -W -f='${db:Status-Status} ${Version}' evcc";
@@ -473,13 +487,13 @@ String buildInstallScript({String channel = 'stable'}) {
 set -e
 export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C
-apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+apt-get $aptNoPty install -y debian-keyring debian-archive-keyring apt-transport-https curl
 setup=\$(mktemp)
 curl -1sLf 'https://dl.evcc.io/public/evcc/$repo/setup.deb.sh' -o "\$setup"
 bash "\$setup"
 rm -f "\$setup"
 apt-get update
-apt-get install -y evcc
+apt-get $aptNoPty install -y evcc
 systemctl enable --now evcc
 ''';
 }
@@ -636,7 +650,7 @@ String serviceBackupDeleteCommand(String path) =>
 String buildCleanupScript() => r'''
 export DEBIAN_FRONTEND=noninteractive
 before=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
-apt-get autoremove -y 2>&1 || true
+apt-get -o Dpkg::Use-Pty=0 autoremove -y 2>&1 || true
 apt-get clean 2>&1 || true
 docker image prune -f 2>&1 || true
 journalctl --vacuum-time=7d 2>&1 || true
@@ -818,9 +832,9 @@ String _upgradeCommand({required bool fullUpgrade, required bool dryRun}) {
   if (fullUpgrade) {
     return dryRun
         ? 'LC_ALL=C sudo -S apt-get full-upgrade --dry-run'
-        : 'LC_ALL=C sudo -S apt-get full-upgrade -y';
+        : 'LC_ALL=C sudo -S apt-get $aptNoPty full-upgrade -y';
   }
   return dryRun
       ? 'LC_ALL=C sudo -S apt-get install --only-upgrade --dry-run evcc'
-      : 'LC_ALL=C sudo -S apt-get install --only-upgrade -y evcc';
+      : 'LC_ALL=C sudo -S apt-get $aptNoPty install --only-upgrade -y evcc';
 }

@@ -75,7 +75,10 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
 - **`LC_ALL=C`** auf sudo/apt-Befehlen ist load-bearing: `isSudoPasswordFailure`
   matcht englische Meldungen; ohne LC_ALL=C bricht die Passwort-Fehlererkennung
   auf lokalisierten Pis still.
-- **Redaction**: `_withConnection` wickelt jedes `onLog` in `redactPassword`.
+- **Redaction**: `_withConnection` wickelt jedes `onLog` in `redactPassword` —
+  **dieselbe Stelle** filtert auch das apt/dpkg-Fortschrittsgemalte
+  (`stripProgressNoise`, siehe §3). Eine Naht für alle Aktionen; Parser sehen
+  weiterhin die rohe Ausgabe.
 - **Passwort nur, wenn sudo danach fragt** (v0.64.1): `sudo -S` frisst die erste
   stdin-Zeile als Passwort — **aber nur, wenn es fragt**. Bei NOPASSWD-sudo (oder
   noch gültigem Timestamp) fragt es nicht, die Zeile fällt durch zu `bash -s` und
@@ -133,6 +136,15 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
   `pull` zuerst → altes Container zu `<name>-evccpitool-old` **umbenennen**
   (Rollback, nie `-v` löschen) → neu starten → `.State.Running` prüfen → bei
   Crash zurückrollen.
+- **apt ohne Pty** (v0.65.1): `Dpkg::Use-Pty` steht per Default auf true, auch
+  wenn kein Terminal hängt (Debian #860931) — dpkg malt dann pro Paket ~20×
+  „(Reading database … N%". Deshalb trägt **jeder** apt-Aufruf, der dpkg
+  startet, `aptNoPty` (`-o Dpkg::Use-Pty=0`); `apt-get update` und `--dry-run`
+  brauchen es nicht. Fremde Installer (Pi-hole, evcc-`setup.deb.sh`) bekommen
+  den Schalter nicht — deren Rest fängt **`stripProgressNoise`** im Log-Seam ab:
+  `\r` → Zeilenumbruch, reine Fortschrittszeilen raus (locale-unabhängig, also
+  auch „(Lese Datenbank …"), Zusammenfassungen bleiben. Guard-Tests in
+  `commands_test.dart`/`apt_services_test.dart` verhindern Rückfall.
 - **`parseInstalledVersion`** liefert Version nur bei dpkg-Status exakt
   `installed` (ein `rc`-Zustand trägt noch eine Version → sonst falscher Update-
   Vorschlag). `isAlreadyNewest` nutzt Negative-Lookbehind (`10 upgraded` matcht

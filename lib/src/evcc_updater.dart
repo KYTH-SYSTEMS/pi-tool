@@ -1695,7 +1695,7 @@ class EvccUpdater {
               'LC_ALL=C sudo -S apt-get update -qq', 'apt-get update',
               checkExit: false);
           await _sudoCommand(runner, log, config,
-              'LC_ALL=C sudo -S apt-get full-upgrade -y',
+              'LC_ALL=C sudo -S apt-get $aptNoPty full-upgrade -y',
               'System-Upgrade fehlgeschlagen');
           log('System aktualisiert.');
         },
@@ -1721,7 +1721,7 @@ class EvccUpdater {
               runner,
               log,
               config,
-              'LC_ALL=C sudo -S apt-get install --only-upgrade -y ${shSingleQuote(package)}',
+              'LC_ALL=C sudo -S apt-get $aptNoPty install --only-upgrade -y ${shSingleQuote(package)}',
               '$package-Update fehlgeschlagen');
           log('$package ist aktuell.');
         },
@@ -2469,7 +2469,16 @@ class EvccUpdater {
     _active = runner;
     _cancelRequested = false;
     _sudoNeedsPw = null; // a fresh connection re-asks
-    void log(String s) => onLog(redactPassword(s, config.password));
+    // The one seam every log line passes through — so the pty progress painting
+    // apt/dpkg emit (see [stripProgressNoise]) is filtered once here, for every
+    // action and every consumer of the log, instead of at each call site. Only
+    // the display is cleaned: parsing keeps working on the raw command output.
+    void log(String s) {
+      final clean = stripProgressNoise(s);
+      // A chunk that was nothing but painting is dropped, not logged as blank.
+      if (clean.trim().isEmpty && s.trim().isNotEmpty) return;
+      onLog(redactPassword(clean, config.password));
+    }
 
     try {
       await runner.connect();

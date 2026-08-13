@@ -25,7 +25,7 @@ import 'package:flutter_test/flutter_test.dart';
 // Exact command strings the updater is expected to run (see commands.dart).
 const _vQuery = r"dpkg-query -W -f='${db:Status-Status} ${Version}' evcc";
 const _aptUpdate = 'LC_ALL=C sudo -S apt-get update -qq';
-const _aptUpgrade = 'LC_ALL=C sudo -S apt-get install --only-upgrade -y evcc';
+const _aptUpgrade = 'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 install --only-upgrade -y evcc';
 const _aptDryRun =
     'LC_ALL=C sudo -S apt-get install --only-upgrade --dry-run evcc';
 const _svc = 'systemctl is-active evcc';
@@ -222,6 +222,45 @@ void main() {
       expect(runner.closed, isTrue);
     });
 
+    test('dpkg progress painting never reaches the log', () async {
+      // Reported from the field: the log filled up with
+      // "(Reading database ... 5% (Reading database ... 10% …". The flag keeps
+      // most of it off the wire, but a third-party installer can still send it,
+      // so the log seam filters what arrives. Everything else must survive.
+      final runner = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.311.0\n')],
+        _aptUpdate: [_r('')],
+        _aptUpgrade: [
+          _r('(Reading database ... \r'
+              '(Reading database ... 5%\r'
+              '(Reading database ... 50%\r'
+              '(Reading database ... 100%\r'
+              '(Reading database ... 214428 files and directories '
+              'currently installed.)\n'
+              'Preparing to unpack .../evcc_0.311.0_arm64.deb ...\n'
+              'Setting up evcc (0.311.0) ...\n'
+              '1 upgraded, 0 newly installed, 0 to remove and 27 not upgraded.')
+        ],
+        _svc: [_r('active\n')],
+      });
+      final log = <String>[];
+
+      final result = await _updaterWith(runner).run(
+        config: _config,
+        fullUpgrade: false,
+        dryRun: false,
+        onLog: log.add,
+      );
+
+      final joined = log.join('\n');
+      expect(joined, isNot(contains('%')));
+      expect(joined, contains('214428 files and directories'));
+      expect(joined, contains('Setting up evcc (0.311.0) ...'));
+      // The filter is cosmetic — parsing still sees the raw output.
+      expect(result.status, UpdateStatus.updated);
+      expect(result.after, '0.311.0');
+    });
+
     test('real run without a newer version reports already current', () async {
       final runner = FakeSshRunner({
         _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.310.0\n')],
@@ -245,7 +284,7 @@ void main() {
 
     test('full system upgrade: evcc unchanged, system packages upgraded',
         () async {
-      const fullCmd = 'LC_ALL=C sudo -S apt-get full-upgrade -y';
+      const fullCmd = 'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 full-upgrade -y';
       final runner = FakeSshRunner({
         _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.310.0\n')],
         _aptUpdate: [_r('')],
@@ -353,7 +392,7 @@ void main() {
       expect(res.serviceActive, isTrue);
       // Password is the FIRST stdin line (for sudo -S), not in the command.
       expect(runner.stdinByCommand[installCmd], startsWith('sekret\n'));
-      expect(runner.stdinByCommand[installCmd], contains('apt-get install -y evcc'));
+      expect(runner.stdinByCommand[installCmd], contains('install -y evcc'));
       expect(runner.commandsRun.any((c) => c.contains('sekret')), isFalse);
     });
 
@@ -1003,7 +1042,7 @@ void main() {
       expect(freed, 250000000);
       final stdin = runner.stdinByCommand[installShellCommand]!;
       expect(stdin, startsWith('sekret\n'));
-      expect(stdin, contains('apt-get autoremove -y'));
+      expect(stdin, contains('autoremove -y'));
     });
 
     test('a missing marker is a clear failure', () async {
@@ -1585,7 +1624,7 @@ void main() {
       final runner = FakeSshRunner({
         sudoNoPasswordProbe: [_r('')],
         'LC_ALL=C sudo -S apt-get update -qq': [_r('')],
-        "LC_ALL=C sudo -S apt-get install --only-upgrade -y 'evcc'": [
+        "LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 install --only-upgrade -y 'evcc'": [
           _r('',
               stderr: "E: dpkg was interrupted, you must manually run 'sudo "
                   "dpkg --configure -a' to correct the problem.",
@@ -1923,7 +1962,7 @@ void main() {
         () async {
       const upd = 'LC_ALL=C sudo -S apt-get update -qq';
       const upg =
-          "LC_ALL=C sudo -S apt-get install --only-upgrade -y 'grafana'";
+          "LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 install --only-upgrade -y 'grafana'";
       final runner = FakeSshRunner({
         upd: [_r('', stderr: 'Failed to fetch', exitCode: 100)], // tolerated
         upg: [_r('1 upgraded, 0 newly installed', exitCode: 0)],
@@ -2160,7 +2199,7 @@ void main() {
     test('upgradeSystem runs full-upgrade and tolerates a failed apt update',
         () async {
       const upd = 'LC_ALL=C sudo -S apt-get update -qq';
-      const full = 'LC_ALL=C sudo -S apt-get full-upgrade -y';
+      const full = 'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 full-upgrade -y';
       final runner = FakeSshRunner({
         upd: [_r('', stderr: 'Failed to fetch', exitCode: 100)],
         full: [_r('12 upgraded, 0 newly installed', exitCode: 0)],

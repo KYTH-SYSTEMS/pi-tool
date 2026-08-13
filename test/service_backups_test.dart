@@ -156,7 +156,7 @@ void main() {
     test('cleans apt, dangling docker images and old journal, reports space',
         () {
       final s = buildCleanupScript();
-      expect(s, contains('apt-get autoremove -y'));
+      expect(s, contains('autoremove -y'));
       expect(s, contains('apt-get clean'));
       // Only dangling images — container prune would delete our rollback
       // containers (…-evccpitool-old)!

@@ -9,7 +9,7 @@ void main() {
       expect(steps.map((s) => s.command).toList(), [
         r"dpkg-query -W -f='${db:Status-Status} ${Version}' evcc",
         'LC_ALL=C sudo -S apt-get update -qq',
-        'LC_ALL=C sudo -S apt-get install --only-upgrade -y evcc',
+        'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 install --only-upgrade -y evcc',
         'systemctl is-active evcc',
         r"dpkg-query -W -f='${db:Status-Status} ${Version}' evcc",
       ]);
@@ -25,7 +25,8 @@ void main() {
     test('full upgrade swaps the upgrade step for apt-get full-upgrade -y', () {
       final steps = buildUpdateSteps(fullUpgrade: true, dryRun: false);
 
-      expect(steps[2].command, 'LC_ALL=C sudo -S apt-get full-upgrade -y');
+      expect(steps[2].command,
+          'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 full-upgrade -y');
     });
 
     test('dry-run (evcc-only) adds --dry-run and drops -y', () {
@@ -52,7 +53,7 @@ void main() {
     final script = buildInstallScript();
 
     test('installs the evcc package', () {
-      expect(script, contains('apt-get install -y evcc'));
+      expect(script, contains('install -y evcc'));
     });
 
     test('adds the official evcc apt repo via the setup script', () {
@@ -124,6 +125,47 @@ void main() {
           sudoNeedsPassword: false, password: 'geheim', script: 'echo hi');
       expect(out, 'echo hi\n');
       expect(out, isNot(contains('geheim')));
+    });
+  });
+
+  group('apt without a pty', () {
+    // apt hands dpkg a pty even with no terminal attached (Debian #860931), and
+    // dpkg then repaints "(Reading database ... N%" ~20× per package. Over SSH
+    // that is pure log flooding, so every call that runs dpkg turns it off.
+    bool runsDpkg(String line) =>
+        line.contains('apt-get') &&
+        RegExp(r'\b(install|full-upgrade|upgrade|remove|purge|autoremove)\b')
+            .hasMatch(line);
+
+    test('the real upgrade commands carry the flag', () {
+      for (final full in [true, false]) {
+        final cmd = buildUpdateSteps(fullUpgrade: full, dryRun: false)[2].command;
+        expect(cmd, contains(aptNoPty));
+      }
+    });
+
+    test('a dry run stays untouched — it never reaches dpkg', () {
+      for (final full in [true, false]) {
+        final cmd = buildUpdateSteps(fullUpgrade: full, dryRun: true)[2].command;
+        expect(cmd, contains('--dry-run'));
+        expect(cmd, isNot(contains(aptNoPty)));
+      }
+    });
+
+    test('install and cleanup scripts carry it on every dpkg-running line', () {
+      for (final script in [buildInstallScript(), buildCleanupScript()]) {
+        for (final line in script.split('\n')) {
+          if (!runsDpkg(line)) continue;
+          expect(line, contains('-o Dpkg::Use-Pty=0'),
+              reason: '"$line" would flood the log');
+        }
+      }
+    });
+
+    test('plain `apt-get update` is left alone (no dpkg, nothing to paint)', () {
+      final refresh = buildUpdateSteps(fullUpgrade: true, dryRun: false)[1];
+      expect(refresh.command, contains('apt-get update'));
+      expect(refresh.command, isNot(contains(aptNoPty)));
     });
   });
 }

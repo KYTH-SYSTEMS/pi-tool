@@ -231,4 +231,64 @@ void main() {
       expect(r.message, 'evcc 0.310.0 → 0.311.0 aktualisiert.');
     });
   });
+
+  group('stripProgressNoise', () {
+    test('drops dpkg\'s read-database progress painting', () {
+      // What a user reported from the log: apt hands dpkg a pty, dpkg repaints
+      // the same line every 5 % — over SSH that arrives as pure noise.
+      const raw = '(Reading database ... \r'
+          '(Reading database ... 5%\r'
+          '(Reading database ... 10%\r'
+          '(Reading database ... 15%\r'
+          '(Reading database ... 20%';
+      expect(stripProgressNoise(raw).trim(), '');
+    });
+
+    test('keeps the informative summary line', () {
+      const raw = '(Reading database ... 45%\r'
+          '(Reading database ... 214428 files and directories '
+          'currently installed.)';
+      expect(
+        stripProgressNoise(raw).trim(),
+        '(Reading database ... 214428 files and directories '
+        'currently installed.)',
+      );
+    });
+
+    test('carriage returns become line breaks instead of one endless line', () {
+      expect(stripProgressNoise('Setting up evcc ...\rDone.'),
+          'Setting up evcc ...\nDone.');
+      expect(stripProgressNoise('a\r\nb'), 'a\nb'); // CRLF stays one break
+    });
+
+    test('drops the other pty-only progress painters', () {
+      expect(
+          stripProgressNoise('Extracting templates from packages: 60%').trim(),
+          '');
+      expect(stripProgressNoise('Progress: [ 45%]').trim(), '');
+    });
+
+    test('real dpkg output around the noise survives intact', () {
+      const raw = 'Selecting previously unselected package evcc.\r\n'
+          '(Reading database ... 5%\r'
+          '(Reading database ... 100%\r'
+          'Preparing to unpack .../evcc_0.311.0_arm64.deb ...\n'
+          'Unpacking evcc (0.311.0) ...\n'
+          'Setting up evcc (0.311.0) ...';
+      expect(stripProgressNoise(raw), '''
+Selecting previously unselected package evcc.
+Preparing to unpack .../evcc_0.311.0_arm64.deb ...
+Unpacking evcc (0.311.0) ...
+Setting up evcc (0.311.0) ...''');
+    });
+
+    test('leaves ordinary text (and our own log lines) untouched', () {
+      expect(stripProgressNoise('Verbunden. Starte Update …'),
+          'Verbunden. Starte Update …');
+      expect(stripProgressNoise(''), '');
+      // A line that only mentions the database is not progress painting.
+      expect(stripProgressNoise('Reading database is fun'),
+          'Reading database is fun');
+    });
+  });
 }

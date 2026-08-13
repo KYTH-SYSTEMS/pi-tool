@@ -84,12 +84,12 @@ List<AptService> get knownInstallableServices =>
 const String _grafanaInstall = '''
 set -e
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y wget
+apt-get -o Dpkg::Use-Pty=0 install -y wget
 mkdir -p /etc/apt/keyrings
 wget -q -O /etc/apt/keyrings/grafana.asc https://apt.grafana.com/gpg-full.key
 echo "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main" > /etc/apt/sources.list.d/grafana.list
 apt-get update
-apt-get install -y grafana
+apt-get -o Dpkg::Use-Pty=0 install -y grafana
 systemctl daemon-reload
 systemctl enable --now grafana-server
 ''';
@@ -99,7 +99,7 @@ systemctl enable --now grafana-server
 const String _influxdbInstall = r'''
 set -e
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y wget gnupg
+apt-get -o Dpkg::Use-Pty=0 install -y wget gnupg
 mkdir -p /etc/apt/keyrings
 wget -q -O /tmp/influxdata-archive.key https://repos.influxdata.com/influxdata-archive.key
 gpg --show-keys --with-fingerprint --with-colons /tmp/influxdata-archive.key 2>&1 | grep -q '^fpr:\+24C975CBA61A024EE1B631787C3D57159FC2F927:$'
@@ -107,7 +107,7 @@ gpg --dearmor < /tmp/influxdata-archive.key > /etc/apt/keyrings/influxdata-archi
 rm -f /tmp/influxdata-archive.key
 echo "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main" > /etc/apt/sources.list.d/influxdata.list
 apt-get update
-apt-get install -y influxdb2
+apt-get -o Dpkg::Use-Pty=0 install -y influxdb2
 systemctl enable --now influxdb
 ''';
 
@@ -115,7 +115,7 @@ const String _mosquittoInstall = '''
 set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y mosquitto mosquitto-clients
+apt-get -o Dpkg::Use-Pty=0 install -y mosquitto mosquitto-clients
 systemctl enable --now mosquitto
 ''';
 
