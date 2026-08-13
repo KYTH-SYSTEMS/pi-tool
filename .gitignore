@@ -54,6 +54,11 @@ key.properties
 play-service-account*.json
 fastlane/*.json
 
+# Release-Archiv: pro Version ein Ordner mit dem signierten AAB (~60 MB), das
+# die CI beim Tag gebaut hat. Notfall-/Archivkopie des Play-Uploads — gehört
+# NIE ins Repo (Größe + signiertes Artefakt).
+/play-uploads/
+
 # fastlane run artifacts
 fastlane/report.xml
 fastlane/README.md
