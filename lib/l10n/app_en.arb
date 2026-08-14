@@ -885,6 +885,8 @@
   "actionRestartService": "Restart service",
   "actionEditConfig": "Edit configuration",
   "actionOfficialEvccApp": "Official evcc app",
+  "actionProjectWebsite": "Project website",
+  "actionOfficialApp": "Official app",
   "actionBackupTeleporter": "Back up (Teleporter)",
   "actionManageBackups": "Manage backups",
   "actionUpdateBlocklists": "Update blocklists",

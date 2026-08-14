@@ -1,0 +1,5 @@
+Wieder ein Wunsch aus der Rückmeldung desselben Nutzers — danke dafür.
+
+Von jeder Dienst-Karte kommst du jetzt zum Projekt dahinter: Im ⋮-Menü steht "Projekt-Website", bei evcc, Home Assistant und Tailscale zusätzlich "Offizielle App". Die öffnet die App direkt, wenn du sie hast, sonst ihren Play-Eintrag.
+
+Wo ein Projekt keine offizielle App hat, steht auch keine da. Und "Web öffnen" bleibt, was es war: die Oberfläche auf deinem Pi.

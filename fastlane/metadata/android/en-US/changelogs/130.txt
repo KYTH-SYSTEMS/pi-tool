@@ -1,0 +1,5 @@
+Another wish from the same user's feedback — thank you for it.
+
+Every service card now leads to the project behind it: its menu has "Project website", and for evcc, Home Assistant and Tailscale also "Official app" — which opens the app if you have it, and its Play listing if you don't.
+
+Where a project ships no official app, none is claimed. And "Open web" stays what it was: the interface on your own Pi.

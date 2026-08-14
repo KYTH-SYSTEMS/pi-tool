@@ -59,6 +59,11 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Grafana, InfluxDB & Mosquitto** — werden automatisch erkannt, wenn per apt
   installiert: eigene Karte mit Update (apt `--only-upgrade`) und Web-UI
   (Grafana :3000, InfluxDB v2 :8086; Mosquitto ist ein MQTT-Broker ohne Web-UI).
+- **Zu den Projekten springen** — jede Dienst-Karte führt über ihr ⋮-Menü zur
+  **Website des Projekts** und, wo es sie wirklich gibt, zur **offiziellen App**
+  (evcc, Home Assistant, Tailscale). Die App wird direkt geöffnet, wenn sie
+  installiert ist, sonst öffnet sich ihr Play-Eintrag. Nicht zu verwechseln mit
+  „Web öffnen" — das ist die Oberfläche auf deinem Pi.
 - **Dienst hinzufügen** — der Hauptbildschirm zeigt nur **installierte** Dienste
   als Karte; ein „+ Dienst hinzufügen"-Knopf öffnet eine Auswahl **aller noch
   nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,

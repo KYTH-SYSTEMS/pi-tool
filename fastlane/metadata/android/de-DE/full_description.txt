@@ -10,11 +10,12 @@ Dienste:
 * Tailscale – VPN/Mesh installieren, aktualisieren und per Login-Link verbinden. Fernzugriff mit einem Tap: Tailnet-IP als Host – von überall auf den Pi, per Tap zurück zur Heim-IP
 * Docker-Container – laufende Container ansehen und neustarten
 * „Dienst hinzufügen" – alle noch nicht installierten Dienste an einer Stelle; der Hauptbildschirm zeigt nur, was wirklich läuft
-* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige (Temperatur, Speicher, RAM, Uptime) mit Speicher-Warnung und SD-Check
+* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige mit Speicher-Warnung und SD-Check
 
 Funktionen:
 * Cockpit mit vier Tabs; der aktive Pi steht oben und ist antippbar (umschalten/hinzufügen/umbenennen)
 * Auto-Erkennung aller Dienste in einer SSH-Sitzung
+* Menü jeder Dienst-Karte: Sprung zur Projekt-Website und zur offiziellen App
 * Dateien: Datei-Browser deines Pi – durchsuchen, ansehen, vom Handy hochladen, löschen
 * Config-Editor: Konfigdateien (z. B. evcc.yaml) direkt bearbeiten, atomar mit Backup
 * Backups inkl. Wiederherstellen & Verwalten: evcc (Config + DB), Pi-hole (Teleporter), Home Assistant (/config); autom. Rotation; aufs Handy laden
@@ -26,7 +27,7 @@ Funktionen:
 * SSH-Key mit einem Tap: Schlüssel wird auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil auf Key-Login umgestellt
 * Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import für den Gerätewechsel
-* Bewusst verbinden: „Verbindung herstellen" hält die Sitzung zum aktiven Pi bis zum Profilwechsel; Automatik, Terminal und Dateien werden erst nach dem Verbinden freigeschaltet. Grün/rot-Status; laufende Aktion abbrechbar
+* Bewusst verbinden: die Sitzung zum aktiven Pi hält bis zum Profilwechsel; Automatik, Terminal und Dateien erst nach dem Verbinden. Grün/rot-Status; laufende Aktion abbrechbar
 * Demo-Modus: die App mit Beispieldaten testen – ohne echten Pi
 * Deutsch & Englisch: folgt der Handy-Sprache, in den Einstellungen umschaltbar (System/Deutsch/English)
 

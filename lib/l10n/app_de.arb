@@ -406,6 +406,8 @@
   "actionRestartService": "Dienst neu starten",
   "actionEditConfig": "Konfiguration bearbeiten",
   "actionOfficialEvccApp": "Offizielle evcc-App",
+  "actionProjectWebsite": "Projekt-Website",
+  "actionOfficialApp": "Offizielle App",
   "actionBackupTeleporter": "Sichern (Teleporter)",
   "actionManageBackups": "Backups verwalten",
   "actionUpdateBlocklists": "Blocklisten aktualisieren",

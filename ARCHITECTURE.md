@@ -175,6 +175,15 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   frisch (Fail-safe). Ohne das meldete die System-Karte ein grünes „aktuell"
   über einem Pi mit 27 offenen Updates inkl. Sicherheitsfixes. Gegenmittel für
   Nutzer: `refreshAptIndex` (⋮ → „Paketlisten aktualisieren").
+- **`service_links.dart`** (v0.65.2) — statische Tabelle „wo lebt das Projekt":
+  Website je Karten-id und, **nur wo es sie wirklich gibt**, die offizielle App
+  (Package + Play-Eintrag: evcc, Home Assistant, Tailscale). Speist die zwei
+  ⋮-Einträge „Projekt-Website"/„Offizielle App" (`_projectLinkActions`); die App
+  wird über `AppLauncher` geöffnet, Play nur als Fallback. Bewusst Tabelle statt
+  Erkennung — der Dienst-Katalog ist endlich, nichts kann pro Pi driften. Kein
+  Drittanbieter-App-Link (sonst wäre „offiziell" gelogen); die System-Karte hat
+  keinen Eintrag (der Pi ist keine Anwendung). Guard-Test:
+  `test/service_links_test.dart` (jede Karten-id braucht einen Eintrag).
 - **`apt_services.dart`** — Grafana/InfluxDB/Mosquitto. **Supply-Chain:**
   InfluxDB prüft den GPG-**Fingerprint** vor dem Vertrauen; Grafana speichert den
   armored Key ohne dearmor (aktueller offizieller Flow).
@@ -671,6 +680,8 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
    bauen; Orchestrierungs-Methoden über `_runRootScriptExpectMarker`.
 3. `FakeEvccUpdater` um die neuen Methoden erweitern; UI-Dispatch-Test.
 4. UI: Karte im `_serviceCards`-Switch bzw. `_AddableService`-Picker; Pro-Features
-   über `_proGate`.
+   über `_proGate`. **Eintrag in `service_links.dart`** (Website, ggf. offizielle
+   App) und `..._projectLinkActions(<id>)` ans Ende der `actions` — der Guard-Test
+   erzwingt es ohnehin.
 5. Version bumpen, `whats_new.dart` ergänzen, **diese Doku aktualisieren**,
    analyze+test grün, main-Build, taggen.

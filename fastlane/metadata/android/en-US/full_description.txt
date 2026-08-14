@@ -10,23 +10,24 @@ Services:
 * Tailscale – VPN/mesh: install, update, connect via login link. One-tap remote access: adopts the remembered tailnet IP as the host – reach your Pi from anywhere; one tap returns to the home IP
 * Docker containers – view running containers and restart them
 * "Add service" – every not-yet-installed service in one picker; the main screen shows only what's actually running
-* System (whole Pi) – update all packages (apt full-upgrade), reboot or shut down, health readout (temperature, disk, RAM, uptime) with a low-disk warning and an SD-card check
+* System (whole Pi) – update all packages (apt full-upgrade), reboot or shut down, health readout with a low-disk warning and an SD-card check
 
 Features:
 * Cockpit with four tabs; the active Pi sits on top and is tappable (switch/add/rename)
 * Auto-detects all services in one SSH session
+* Menu on every service card: jump to the project's website and official app
 * Files: your Pi's file browser – browse, preview, upload from the phone, delete
 * Config editor: edit config files (e.g. evcc.yaml) in-app, atomic with a backup
 * Backups incl. in-app restore & management: evcc (config + DB), Pi-hole (Teleporter) and Home Assistant (/config); automatic rotation; download to the phone (share sheet)
 * Analyze disk usage – the largest directories at a glance
-* Security check – rates your Pi's hardening (SSH configuration, automatic security updates, fail2ban and more) as a traffic light
+* Security check – rates your Pi's hardening (SSH, automatic security updates, fail2ban) as a traffic light
 * System cleanup: free disk space (apt, unused Docker images, journal)
 * Automation on the Pi (systemd timers, no background service on the phone): scheduled updates (with evcc backup + self-heal), nightly backups (with rotation) and health alerts via ntfy (full disk, dead service, heat, updates)
 * Terminal: run your own commands over SSH (sudo supported) with history + quick commands
 * Set up an SSH key with one tap: the key is generated on the phone, installed on the Pi and the profile switched to key login
 * "Set up Pi" guide (Raspberry Pi Imager) for beginners
-* Multiple Pi profiles, quick switching; an "All Pis" overview as a traffic light (reachable/updates/warning); encrypted export/import for moving to a new phone
-* Connect deliberately: "Connect" keeps the session to the active Pi until you switch profiles; Automation, Terminal and Files unlock only once connected. Green/red status; a running action can be cancelled
+* Multiple Pi profiles, quick switching; an "All Pis" overview as a traffic light; encrypted export/import for moving to a new phone
+* Connect deliberately: the session to the active Pi holds until you switch profiles; Automation, Terminal and Files unlock only once connected. Green/red status; a running action can be cancelled
 * Demo mode: try the whole app with sample data – no real Pi needed
 * German & English: follows your phone language automatically, switchable in Settings (System/German/English)
 

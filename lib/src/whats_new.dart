@@ -18,6 +18,15 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.65.2': [
+    'Another wish from the same user: every service card now leads to the '
+        'project behind it.',
+    'A card\'s ⋮ menu has "Project website" — and for evcc, Home Assistant and '
+        'Tailscale also "Official app", which opens the app if you have it and '
+        'its Play listing if you don\'t. Where a project ships no official app, '
+        'none is claimed.',
+    '"Open web" stays what it was: the interface on your own Pi.',
+  ],
   '0.65.1': [
     'Thanks again to the same user: the log no longer drowns in noise while '
         'installing or updating.',
@@ -197,6 +206,15 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.65.2': [
+    'Wieder ein Wunsch aus der Rückmeldung desselben Nutzers: Von jeder '
+        'Dienst-Karte kommst du jetzt zum Projekt dahinter.',
+    'Im ⋮-Menü einer Karte findest du „Projekt-Website" — und bei evcc, Home '
+        'Assistant und Tailscale zusätzlich „Offizielle App". Die öffnet die '
+        'App direkt, wenn du sie hast, sonst ihren Play-Eintrag. Wo es keine '
+        'offizielle App gibt, steht auch keine da.',
+    '„Web öffnen" bleibt, was es war: die Oberfläche auf deinem Pi.',
+  ],
   '0.65.1': [
     'Schon wieder Dank an denselben Nutzer: Das Log ist beim Installieren und '
         'Aktualisieren nicht mehr zugemüllt.',

@@ -1809,7 +1809,8 @@ void main() {
   testWidgets('evcc ⋮ links the official evcc app', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater();
-    await tester.pumpWidget(page(u));
+    final launcher = _FakeLauncher();
+    await tester.pumpWidget(page(u, appLauncher: launcher));
     await tester.pumpAndSettle();
     await detect(tester);
 
@@ -1817,6 +1818,38 @@ void main() {
     await tester.pumpAndSettle();
     // Moved out of the footer into the evcc card's ⋮ menu.
     expect(find.text('Offizielle evcc-App'), findsOneWidget);
+
+    // Opens the installed app (Play listing only as the fallback), so it is
+    // useful to someone who already has it — not just an install link.
+    await tester.tap(find.text('Offizielle evcc-App'));
+    await tester.pumpAndSettle();
+    expect(launcher.opened, ['io.evcc.android']);
+  });
+
+  testWidgets('every service card ⋮ jumps to the project behind it',
+      (tester) async {
+    // User wish (2026-08-14): from the card to the application's own site.
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            version: 'v6.0.4',
+            active: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Projekt-Website'), findsOneWidget);
+    // Pi-hole ships no official Android app — a third-party one must never be
+    // offered as "the official app", so that entry stays away.
+    expect(find.text('Offizielle App'), findsNothing);
   });
 
   testWidgets('Automatik → Health-Alerts: enable installs with the topic',

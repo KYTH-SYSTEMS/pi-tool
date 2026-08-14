@@ -43,6 +43,7 @@ import 'src/profiles.dart';
 import 'src/secure_screen.dart';
 import 'src/services/apt_services.dart';
 import 'src/services/pi_service.dart';
+import 'src/services/service_links.dart';
 import 'src/services/tailscale.dart';
 import 'src/session.dart';
 import 'src/settings_store.dart';
@@ -69,8 +70,6 @@ const kGreen = KythWordmark.kWordmarkGreen;
 const kBlack = Color(0xFF0B0E0C);
 const kCard = Color(0xFF161A17);
 
-const kEvccPlayStoreUrl =
-    'https://play.google.com/store/apps/details?id=io.evcc.android';
 /// Our own Play listing — where a Play build gets its updates.
 const kPlayStoreUrl =
     'https://play.google.com/store/apps/details?id=systems.kyth.pitool';
@@ -3514,6 +3513,33 @@ class _UpdaterPageState extends State<UpdaterPage>
     _openUrl(_evccUiUrl());
   }
 
+  /// The outward jumps at the bottom of a service card's ⋮: the project's own
+  /// website and — only where the project ships one — its official app. Asked
+  /// for by a user (2026-08-14) who administers his services here but had no
+  /// way from a card to the application behind it. The "Web öffnen" button
+  /// stays what it is: the Pi's own web UI, not the project.
+  ///
+  /// The app entry opens the installed app and falls back to its Play listing,
+  /// so it is useful whether or not the user has it yet. Services without an
+  /// entry (the System card = the Pi itself) simply get nothing.
+  List<_CardAction> _projectLinkActions(String serviceId) {
+    final links = linksFor(serviceId);
+    if (links == null) return const [];
+    return [
+      _CardAction(
+          context.l10n.actionProjectWebsite, () => _openUrl(links.website)),
+      if (links.hasApp)
+        _CardAction(
+          // evcc keeps its more specific wording; the rest read generically.
+          serviceId == 'evcc'
+              ? context.l10n.actionOfficialEvccApp
+              : context.l10n.actionOfficialApp,
+          () => _appLauncher.openApp(links.appPackage!,
+              fallbackUrl: links.appUrl!),
+        ),
+    ];
+  }
+
   Future<void> _openUrl(String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null) return;
@@ -4093,8 +4119,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                       _CardAction(context.l10n.actionRestoreBackup,
                           () => _proGate(_restoreBackup), pro: true),
                     ],
-                    _CardAction(context.l10n.actionOfficialEvccApp,
-                        () => _openUrl(kEvccPlayStoreUrl)),
+                    ..._projectLinkActions('evcc'),
                   ]
                 : const [],
           ));
@@ -4118,6 +4143,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   () => _proGate(_managePiholeBackups), pro: true),
               _CardAction(context.l10n.actionUpdateBlocklists, _piholeGravity),
               _CardAction(context.l10n.actionRestartDns, _piholeRestartDns),
+              ..._projectLinkActions('pihole'),
             ],
           ));
         case 'homeassistant':
@@ -4136,6 +4162,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   () => _proGate(_backupHomeAssistant), pro: true),
               _CardAction(context.l10n.actionManageBackups,
                   () => _proGate(_manageHomeAssistantBackups), pro: true),
+              ..._projectLinkActions('homeassistant'),
             ],
           ));
         case 'piconnect':
@@ -4175,6 +4202,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                     () => _piConnectSet(false)),
                 _CardAction(context.l10n.actionSignOut, _piConnectSignout),
               ],
+              ..._projectLinkActions('piconnect'),
             ],
           ));
         case 'tailscale':
@@ -4219,6 +4247,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               // logout — labelled distinctly so the two aren't confused.
               _CardAction(context.l10n.actionSignOutTailscale,
                   () => _tailscaleSet(logout: true)),
+              ..._projectLinkActions('tailscale'),
             ],
           ));
         case 'system':
@@ -4269,6 +4298,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               _CardAction(
                   context.l10n.actionShowLogs, () => _showServiceLogs(s)),
+              ..._projectLinkActions(s.id),
             ],
           ));
         default:
@@ -4289,6 +4319,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (upToDate)
                 _CardAction(context.l10n.actionUpdateAnyway,
                     () => _updateAptService(s)),
+              ..._projectLinkActions(s.id),
             ],
           ));
       }
