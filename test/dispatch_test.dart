@@ -218,13 +218,17 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       containers;
+  Object? restartContainerError;
+
   @override
   Future<void> restartDockerContainer({
     required SshConfig config,
     required String name,
     required void Function(String line) onLog,
-  }) async =>
-      restartedContainers.add(name);
+  }) async {
+    restartedContainers.add(name);
+    if (restartContainerError != null) throw restartContainerError!;
+  }
   @override
   Future<String> fetchDockerLogs({
     required SshConfig config,
@@ -3042,6 +3046,49 @@ void main() {
     await tester.tap(find.text('Neustart'));
     await tester.pumpAndSettle();
     expect(u.restartedContainers, contains('evcc'));
+  });
+
+  testWidgets('Docker-Übersicht: ein gescheiterter Neustart wird gemeldet',
+      (tester) async {
+    // Audit 2026-08-15 (Altlast): der Fehler verschwand lautlos — der Spinner
+    // drehte kurz, danach passierte nichts.
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..containers = const [
+        (
+          name: 'nodered',
+          state: 'exited',
+          status: 'Exited (1)',
+          image: 'nodered/node-red:latest'
+        ),
+      ]
+      ..restartContainerError = const EvccUpdateException(
+          UpdateErrorKind.unknown, 'Neustart von nodered fehlgeschlagen.');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Docker-Container'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, 'nodered'),
+        matching: find.byType(PopupMenuButton<String>)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Neustart'));
+    // No pumpAndSettle: the sheet's busy spinner keeps animating underneath
+    // the error dialog, so settle would never return.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(u.restartedContainers, contains('nodered'));
+    expect(find.textContaining('fehlgeschlagen'), findsWidgets);
   });
 
   testWidgets('Docker-Übersicht → Aktualisieren updated einen Container',

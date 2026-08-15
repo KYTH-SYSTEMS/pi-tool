@@ -626,6 +626,11 @@ class _DockerSheetState extends State<_DockerSheet> {
     setState(() => _busy = true);
     try {
       await body();
+    } catch (_) {
+      // Reporting belongs to the caller (it owns the l10n + dialog context);
+      // swallowing here only stops an unawaited future from tearing down the
+      // zone. Never leave this without the catch: the callers are fired as
+      // `_run(...).then(...)`, so a throw would vanish unhandled.
     } finally {
       if (mounted) setState(() => _busy = false);
     }

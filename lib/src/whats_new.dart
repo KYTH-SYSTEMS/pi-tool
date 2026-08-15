@@ -18,6 +18,12 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.66.3': [
+    'Last item from the self-audit, a long-standing one: when a restart in the '
+        'Docker overview failed, visibly nothing happened — the spinner turned, '
+        'then silence. The app now says what went wrong, and the error lands '
+        'in the log as well.',
+  ],
   '0.66.2': [
     'I put the big update through a systematic audit against itself — before '
         'any of you would hit it. Sixteen findings; the important ones are '
@@ -239,6 +245,12 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.66.3': [
+    'Letzter Punkt aus der Selbstprüfung, eine Altlast: Scheiterte in der '
+        'Docker-Übersicht ein Neustart, passierte sichtbar gar nichts — der '
+        'Spinner drehte kurz, dann Stille. Jetzt sagt die App, was schiefging, '
+        'und der Fehler steht auch im Log.',
+  ],
   '0.66.2': [
     'Ich habe das große Update noch einmal systematisch gegen sich selbst '
         'geprüft — bevor es jemand von euch findet. Sechzehn Befunde, hier '

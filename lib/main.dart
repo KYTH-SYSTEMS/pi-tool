@@ -1787,10 +1787,17 @@ class _UpdaterPageState extends State<UpdaterPage>
         initial: list!,
         refresh: () =>
             _updater.dockerContainers(config: config, onLog: (_) {}),
-        onRestart: (name) => _updater.restartDockerContainer(
-            config: config, name: name, onLog: _appendLog),
+        // These two stay INSIDE the sheet (one quick command each, and the
+        // user usually acts on several containers in a row), so they cannot
+        // use _guard — which means they must report their own failures.
+        // Before, a failed restart was swallowed entirely: the spinner turned,
+        // then nothing happened at all (audit 2026-08-15).
+        onRestart: (name) => _sheetAction(
+            () => _updater.restartDockerContainer(
+                config: config, name: name, onLog: _appendLog),
+            title: name),
         onUpdate: (name) => Navigator.pop(ctx, name),
-        onLogs: (name) async {
+        onLogs: (name) => _sheetAction(() async {
           final logs = await _updater.fetchDockerLogs(
               config: config, name: name, onLog: (_) {});
           if (!mounted) return;
@@ -1805,7 +1812,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                   config: config, name: name, onLog: (_) {}),
             ),
           );
-        },
+        }, title: name),
       ),
     );
     if (toUpdate == null || !mounted) return;
@@ -1814,6 +1821,34 @@ class _UpdaterPageState extends State<UpdaterPage>
       return;
     }
     await _updateContainer(toUpdate);
+  }
+
+  /// Runs a short action that happens WHILE a sheet is open, where `_guard`
+  /// (and with it the running bar and the error banner) isn't available. A
+  /// snack would render underneath the sheet, so failures surface as a dialog
+  /// — and land in the log, like every other error.
+  Future<void> _sheetAction(Future<void> Function() body,
+      {required String title}) async {
+    final l10n = context.l10n; // captured: the body awaits
+    try {
+      await body();
+    } on EvccUpdateException catch (e) {
+      _appendLog(l10n.logError(e.message));
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(title),
+          content: Text(e.message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(MaterialLocalizations.of(ctx).okButtonLabel),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   /// Updates one container from the Docker overview — house pattern, so the

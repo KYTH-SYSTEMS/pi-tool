@@ -1,0 +1,3 @@
+Last item from the self-audit — a long-standing one:
+
+When a restart in the Docker overview failed, visibly nothing happened: the spinner turned, then silence. The app now shows the error, and it lands in the log as well.
