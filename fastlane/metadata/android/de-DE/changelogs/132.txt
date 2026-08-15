@@ -1,0 +1,5 @@
+Feinschliff nach dem Test am echten Pi (Debian 13):
+
+Der Sicherheits-Check erkennt "PermitRootLogin without-password" jetzt als das, was es ist — Root nur mit Schlüssel, also grün. Vorher wurde die Debian-13-Schreibweise nur als neutraler Hinweis eingestuft.
+
+Das große v0.66.0-Update wurde komplett am echten Pi durchgespielt: Sicherheits-Fixes, Grafana/InfluxDB-Installation und Stack-Verdrahtung liefen im ersten Anlauf — evcc schreibt, das Dashboard zeigt echte Daten.

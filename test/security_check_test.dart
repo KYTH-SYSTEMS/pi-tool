@@ -74,6 +74,19 @@ __SEC_PORTS__
       expect(by(r, 'ports').detail, contains('80'));
     });
 
+    test('without-password (Debian 13 wording) counts as ok, like '
+        'prohibit-password', () {
+      // Seen on the real test Pi 2026-08-15: sshd -T on Debian 13/trixie
+      // reports the legacy alias `without-password`. Same meaning (root only
+      // with key) — must be green, not an "info" shrug.
+      final r = parseSecurityReport(
+          '__SEC_SSHD__\npermitrootlogin without-password\n');
+      final root = r.firstWhere((f) => f.title.contains('Root'));
+      expect(root.level, SecurityLevel.ok);
+      // And correctly no fix offered — it is already safe.
+      expect(securityFixFor(root), isNull);
+    });
+
     test('missing/garbled sections degrade to info, never crash', () {
       final r = parseSecurityReport('nonsense without markers');
       expect(r, isNotEmpty);

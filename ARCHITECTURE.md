@@ -186,7 +186,12 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   App-seitiges wird interpoliert. Fehlendes Grafana/`evcc.yaml` (Docker-evcc)
   = Skip mit Meldung; handeingerichtetes InfluxDB ohne Root-CLI-Config =
   ehrlicher Fehler. Einstieg: Grafana-Karte ⋮ → „Mit evcc verdrahten".
-  `EvccUpdater.wireMonitoringStack` orchestriert.
+  `EvccUpdater.wireMonitoringStack` orchestriert. **E2E-validiert am
+  2026-08-15 auf dem Test-Pi (Debian 13/trixie, evcc 0.313.3):** Installs +
+  Wiring liefen im ersten Anlauf (`WIRE_OK`), evcc schreibt real in den
+  Bucket, alle fünf Panel-Measurements (gridPower/pvPower/homePower/
+  chargePower/batterySoc) existieren in evccs echtem Schema, Grafana 13
+  lädt das Provisioning fehlerfrei. Das Token tauchte in keiner Ausgabe auf.
 - **Umzugshelfer** (v0.66.0, `_migrateToOtherPi` in main.dart — reine
   Orchestrierung vorhandener Bausteine, kein neues Skript): frische Backups
   auf dem Quell-Pi (`backup` + `backupPihole`) → `downloadFile` aufs Handy →

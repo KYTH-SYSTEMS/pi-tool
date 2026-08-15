@@ -149,7 +149,9 @@ List<SecurityFinding> parseSecurityReport(String output) {
     );
   } else {
     final v = rootM.group(1)!;
-    if (v == 'no' || v == 'prohibit-password') {
+    // `without-password` is the legacy alias of `prohibit-password` — Debian
+    // 13's sshd -T reports it (seen on the real test Pi 2026-08-15).
+    if (v == 'no' || v == 'prohibit-password' || v == 'without-password') {
       root = (
         title: 'SSH-Root-Login',
         level: SecurityLevel.ok,

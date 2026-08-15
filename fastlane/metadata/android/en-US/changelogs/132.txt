@@ -1,0 +1,5 @@
+Polish after testing on a real Pi (Debian 13):
+
+The security check now recognizes "PermitRootLogin without-password" for what it is — root with key only, hence green. The Debian 13 wording was previously rated as a neutral note only.
+
+The big v0.66.0 update was played through end to end on a real Pi: security fixes, Grafana/InfluxDB install and stack wiring all worked first try — evcc writes, the dashboard shows real data.
