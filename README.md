@@ -118,13 +118,18 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten,
   Pi herunterfahren (mit Sicherheitsabfrage — der Pi bleibt danach aus).
-- **Sicherheits-Check** — reine Nur-Lesen-Prüfung mit Ampel: SSH-Root-Login,
-  Passwort- vs. Key-Login, automatische Sicherheitsupdates, fail2ban, offene
-  Ports. Zeigt nur an und empfiehlt — ändert nichts.
+- **Sicherheits-Check mit „Beheben"** — Nur-Lesen-Prüfung mit Ampel: SSH-Root-
+  Login, Passwort- vs. Key-Login, automatische Sicherheitsupdates, fail2ban,
+  offene Ports. Fixbare Befunde tragen einen „Beheben"-Knopf (fail2ban
+  installieren, Auto-Updates aktivieren, Root-Login abschalten — als Drop-in,
+  mit `sshd -t` geprüft und bei Problemen automatisch zurückgenommen); danach
+  läuft die Prüfung neu. Das Abschalten des Passwort-Logins bleibt bewusst
+  Handarbeit (Aussperr-Risiko ohne bewiesenen Key-Login).
 - **Speicherplatz-Explorer** — „Was frisst meinen Platz?": größte Ordner/Dateien
   nach Größe, zum Reinzoomen antippbar.
 - **Docker-Übersicht** — alle Container (laufend/gestoppt) mit Status + Image;
-  pro Container neustarten und Logs ansehen.
+  pro Container neustarten, Logs ansehen und **aktualisieren** (Image-Pull +
+  Neuanlage mit Rollback; Compose-Container via `docker compose`, experimentell).
 - **Live-Logs** — die Log-Ansicht hat einen „Live"-Schalter, der die Ausgabe
   alle paar Sekunden neu lädt (Polling, kein Hintergrunddienst).
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
@@ -133,6 +138,18 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **SD-Karten-Check** — warnt bei den klassischen Anzeichen einer sterbenden
   SD-Karte: nur-lesend gewordenes Root-Dateisystem oder gehäufte I/O-Fehler im
   Kernel-Log. Fließt auch in die Health-Alerts ein (Push via ntfy).
+- **Monitoring-Stack verdrahten** — die Grafana-Karte kann den Stack in einem
+  Rutsch scharf schalten: InfluxDB einrichten (Org `pi-tool`, Bucket `evcc`),
+  Zugriffs-Token auf dem Pi erzeugen (verlässt ihn nie), `influx:`-Block in die
+  `evcc.yaml` (mit Backup und automatischem Rückbau bei Ablehnung) und in
+  Grafana Datenquelle + fertiges evcc-Dashboard provisionieren. Charts ab
+  Minute eins statt leerer Dienste (experimentell).
+- **Umzugshelfer** — „Auf anderen Pi umziehen" (System-Karte): frische Backups
+  von evcc + Pi-hole, aufs Handy geholt, auf dem Ziel-Profil fehlende Dienste
+  installiert und die Backups eingespielt. Der Quell-Pi bleibt unverändert
+  (experimentell; apt-evcc und Pi-hole).
+- **Release-Notes** — die evcc-Karte zeigt die vollständigen GitHub-Release-
+  Notes der neuesten Version im ⋮ — lesbar, ohne ein Update zu starten.
 - **Probelauf** (`--dry-run`) — zeigt gefahrlos, ob ein Update verfügbar ist.
 - **Backup vor Update** — sichert vor einem apt-Update automatisch `evcc.yaml` +
   die Datenbank als zeitgestempeltes Archiv auf dem Pi (abschaltbar); schlägt es

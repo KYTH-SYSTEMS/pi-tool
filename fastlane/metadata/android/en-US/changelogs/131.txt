@@ -1,0 +1,7 @@
+The biggest update yet — five new abilities:
+
+• The Grafana card wires up the whole monitoring stack: InfluxDB + evcc + a ready-made dashboard, charts from minute one
+• Security check with "Fix": fail2ban, auto-updates, root login — one tap, with an automatic rollback net
+• Migration helper: carry evcc + Pi-hole and their backups to a new Pi
+• The Docker overview now updates any container (with rollback)
+• evcc release notes readable without starting an update

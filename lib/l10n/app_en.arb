@@ -103,7 +103,7 @@
   "wPrivacyPolicy": "Privacy policy",
   "wPrivateKeyLabel": "Private SSH key (PEM)",
   "wPvGeneration": "PV generation",
-  "wReadOnlyCheckNote": "Read-only check — the app changes nothing. You can apply the recommendations via the console.",
+  "wReadOnlyCheckNote": "The check itself changes nothing — changes only happen via \"Fix\", each confirmed first.",
   "wRecheck": "Re-check",
   "wRefresh": "Refresh",
   "wRepeatPassphrase": "Repeat passphrase",
@@ -887,6 +887,60 @@
   "actionOfficialEvccApp": "Official evcc app",
   "actionProjectWebsite": "Project website",
   "actionOfficialApp": "Official app",
+  "actionReleaseNotes": "Release notes",
+  "releaseNotesTitle": "evcc {version} — release notes",
+  "@releaseNotesTitle": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "snackReleaseNotesUnavailable": "Could not load the release notes.",
+  "actionFixSecurity": "Fix",
+  "dialogFixSecurityTitle": "Fix \"{title}\"?",
+  "@dialogFixSecurityTitle": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "busySecurityFix": "Applying security fix …",
+  "statusSecurityFixApplied": "Security fix applied.",
+  "fixDescFail2ban": "Installs fail2ban and enables it — blocks SSH brute-force attempts automatically.",
+  "fixDescAutoUpdates": "Installs unattended-upgrades and turns on daily automatic security updates.",
+  "fixDescRootLogin": "Sets PermitRootLogin no (as a drop-in, validated with sshd -t; the change is rolled back if anything is off). Your current connection stays up.",
+  "dialogUpdateContainerTitle": "Update container \"{name}\"?",
+  "@dialogUpdateContainerTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogUpdateContainerBody": "Pulls the new image and recreates the container; compose-managed containers are updated via docker compose. The old container is kept as a rollback. Experimental — data in volumes stays untouched.",
+  "statusContainerUpdated": "Container updated and running.",
+  "actionWireStack": "Wire up with evcc (dashboard)",
+  "dialogWireStackTitle": "Wire up the monitoring stack?",
+  "dialogWireStackBody": "Sets up InfluxDB (org pi-tool, bucket evcc), creates an access token on the Pi, adds InfluxDB to evcc.yaml (backed up; rolled back automatically if evcc rejects it) and provisions Grafana with the datasource plus a ready-made evcc dashboard. evcc and Grafana restart once. Experimental.",
+  "busyWiringStack": "Wiring up the monitoring stack …",
+  "statusStackWired": "Stack wired — the \"evcc\" dashboard is waiting in Grafana.",
+  "actionMigratePi": "Move to another Pi",
+  "migrateTargetTitle": "Choose the target Pi",
+  "snackMigrationNeedsTarget": "This needs a second Pi profile (with a host) — create it first.",
+  "snackMigrationNothing": "Nothing movable found on this Pi (neither apt evcc nor Pi-hole).",
+  "dialogMigrateTitle": "Move to \"{name}\"?",
+  "@dialogMigrateTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogMigrateBody": "Creates fresh backups (evcc, Pi-hole), fetches them to the phone, installs the services on the target Pi where missing and restores the backups there. THIS Pi stays untouched. Takes several minutes. Experimental.",
+  "busyMigrating": "Migration running …",
+  "statusMigrated": "Migration finished — check the target Pi via its profile.",
   "actionBackupTeleporter": "Back up (Teleporter)",
   "actionManageBackups": "Manage backups",
   "actionUpdateBlocklists": "Update blocklists",

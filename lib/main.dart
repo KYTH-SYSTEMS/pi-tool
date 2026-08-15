@@ -1784,6 +1784,35 @@ class _UpdaterPageState extends State<UpdaterPage>
             _updater.dockerContainers(config: config, onLog: (_) {}),
         onRestart: (name) => _updater.restartDockerContainer(
             config: config, name: name, onLog: _appendLog),
+        onUpdate: (name) async {
+          if (!await _confirm(context.l10n.dialogUpdateContainerTitle(name),
+              context.l10n.dialogUpdateContainerBody)) {
+            return;
+          }
+          try {
+            await _updater.updateDockerContainer(
+                config: config, name: name, onLog: _appendLog);
+            if (!mounted) return;
+            _addHistory('${context.l10n.statusContainerUpdated} ($name)');
+          } on EvccUpdateException catch (e) {
+            // A dialog, not a snack: snacks render underneath the open sheet.
+            if (!mounted) return;
+            await showDialog<void>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: Text(context.l10n.dialogUpdateContainerTitle(name)),
+                content: Text(e.message),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(
+                        MaterialLocalizations.of(ctx).okButtonLabel),
+                  ),
+                ],
+              ),
+            );
+          }
+        },
         onLogs: (name) async {
           final logs = await _updater.fetchDockerLogs(
               config: config, name: name, onLog: (_) {});
@@ -1841,12 +1870,189 @@ class _UpdaterPageState extends State<UpdaterPage>
           await _updater.runSecurityCheck(config: config, onLog: _appendLog);
     }, backgroundMessage: context.l10n.busySecurityCheck);
     if (!mounted || findings == null) return;
-    await showModalBottomSheet<void>(
+    // Fixable findings carry a "Beheben" button: sheet closes, the user
+    // confirms what will happen, the fix runs, and the check re-runs so the
+    // finding visibly turns green (or honestly stays red).
+    final choice = await showModalBottomSheet<(SecurityFinding, SecurityFix)>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (_) => _SecurityReportSheet(findings: findings!),
+      builder: (ctx) => _SecurityReportSheet(
+        findings: findings!,
+        onFix: (f, fix) => Navigator.pop(ctx, (f, fix)),
+      ),
     );
+    if (choice == null || !mounted) return;
+    final (finding, fix) = choice;
+    final desc = switch (fix) {
+      SecurityFix.fail2ban => context.l10n.fixDescFail2ban,
+      SecurityFix.autoUpdates => context.l10n.fixDescAutoUpdates,
+      SecurityFix.rootLogin => context.l10n.fixDescRootLogin,
+    };
+    if (!await _confirm(
+        context.l10n.dialogFixSecurityTitle(finding.title), desc)) {
+      return;
+    }
+    await _fixSecurity(fix);
+  }
+
+  /// Moves evcc + Pi-hole from THIS Pi to another saved profile (v0.66.0):
+  /// fresh backups → phone → install-where-missing on the target → restore.
+  /// The source Pi is never written to; the closing chapter of the SD-death
+  /// story the SD check begins. Only apt-evcc moves (a Docker-evcc has no
+  /// backup/restore path here) — Pi-hole moves either way.
+  Future<void> _migrateToOtherPi() async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final srcEvcc = _services.any(
+        (s) => s.id == 'evcc' && s.installed && s.detail.startsWith('apt'));
+    final srcPihole = _services.any((s) => s.id == 'pihole' && s.installed);
+    if (!srcEvcc && !srcPihole) {
+      _snack(l10n.snackMigrationNothing);
+      return;
+    }
+    final candidates = <int>[
+      for (var i = 0; i < _profiles.length; i++)
+        if (i != _activeIndex && _profiles[i].host.trim().isNotEmpty) i
+    ];
+    if (candidates.isEmpty) {
+      _snack(l10n.snackMigrationNeedsTarget);
+      return;
+    }
+    final targetIdx = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              title: Text(l10n.migrateTargetTitle,
+                  style: Theme.of(ctx).textTheme.titleMedium),
+            ),
+            for (final i in candidates)
+              ListTile(
+                leading: const Icon(Icons.developer_board),
+                title: Text(_profiles[i].name),
+                subtitle: Text(_profiles[i].host),
+                onTap: () => Navigator.pop(ctx, i),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (targetIdx == null || !mounted) return;
+    final target = _profiles[targetIdx];
+    if (!await _confirm(
+        l10n.dialogMigrateTitle(target.name), l10n.dialogMigrateBody)) {
+      return;
+    }
+    final source = _prepare();
+    if (source == null) return;
+    final targetCfg = _configForProfile(target);
+    _lastAction = _migrateToOtherPi;
+    await _guard(() async {
+      // -- Source: fresh backups, fetched to the phone. Read-only otherwise. --
+      Uint8List? evccBytes;
+      String? evccFile;
+      Uint8List? piBytes;
+      String? piFile;
+      if (srcEvcc) {
+        final p = await _updater.backup(config: source, onLog: _appendLog);
+        if (p != null) {
+          evccBytes = await _updater.downloadFile(
+              config: source, path: p, onLog: _appendLog);
+          evccFile = p.split('/').last;
+        }
+      }
+      if (srcPihole) {
+        final p = await _updater.backupPihole(config: source, onLog: _appendLog);
+        piBytes = await _updater.downloadFile(
+            config: source, path: p, onLog: _appendLog);
+        piFile = p.split('/').last;
+      }
+      // -- Target: take stock, install what's missing, restore. --
+      _appendLog('— Ziel-Pi „${target.name}" (${target.host}) —');
+      final targetServices = await _updater.detectServices(
+          config: targetCfg, onLog: _appendLog);
+      if (srcEvcc) {
+        final has = targetServices.any((s) => s.id == 'evcc' && s.installed);
+        if (!has) {
+          await _updater.install(
+              config: targetCfg, onLog: _appendLog, channel: _channel);
+        }
+        if (evccBytes != null && evccFile != null) {
+          final dest = '$evccBackupDir/$evccFile';
+          await _updater.uploadFile(
+              config: targetCfg, path: dest, bytes: evccBytes, onLog: _appendLog);
+          await _updater.restoreBackup(
+              config: targetCfg, path: dest, onLog: _appendLog);
+        }
+      }
+      if (srcPihole) {
+        final has = targetServices.any((s) => s.id == 'pihole' && s.installed);
+        if (!has) {
+          await _updater.installPihole(config: targetCfg, onLog: _appendLog);
+        }
+        if (piBytes != null && piFile != null) {
+          final dest = '/var/backups/pi-tool/$piFile';
+          await _updater.uploadFile(
+              config: targetCfg, path: dest, bytes: piBytes, onLog: _appendLog);
+          await _updater.restorePiholeBackup(
+              config: targetCfg, path: dest, onLog: _appendLog);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = l10n.statusMigrated;
+        _statusOk = true;
+      });
+      _addHistory(l10n.statusMigrated);
+    }, backgroundMessage: l10n.busyMigrating);
+  }
+
+  /// One-tap wiring of the monitoring stack (v0.66.0 user wish): InfluxDB →
+  /// evcc.yaml → Grafana dashboard, all in one root script on the Pi.
+  Future<void> _wireStack() async {
+    if (_busy) return;
+    if (!await _confirm(context.l10n.dialogWireStackTitle,
+        context.l10n.dialogWireStackBody)) {
+      return;
+    }
+    if (!mounted) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _wireStack;
+    final busyMsg = context.l10n.busyWiringStack;
+    await _guard(() async {
+      await _updater.wireMonitoringStack(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = context.l10n.statusStackWired;
+        _statusOk = true;
+      });
+      _addHistory(context.l10n.statusStackWired);
+    }, backgroundMessage: busyMsg);
+  }
+
+  Future<void> _fixSecurity(SecurityFix fix) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _fixSecurity(fix);
+    var ok = false;
+    await _guard(() async {
+      await _updater.fixSecurity(config: config, fix: fix, onLog: _appendLog);
+      ok = true;
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = context.l10n.statusSecurityFixApplied;
+        _statusOk = true;
+      });
+      _addHistory(context.l10n.statusSecurityFixApplied);
+    }, backgroundMessage: context.l10n.busySecurityFix);
+    // Re-run the check: the user sees the effect, not just a toast.
+    if (ok && mounted) await _securityCheck();
   }
 
   Future<void> _shutdown() async {
@@ -3513,6 +3719,64 @@ class _UpdaterPageState extends State<UpdaterPage>
     _openUrl(_evccUiUrl());
   }
 
+  /// Shows evcc's latest release notes in a sheet — readable WITHOUT starting
+  /// an update (the update confirm shows only a 500-char excerpt). Network
+  /// only, no SSH; busy is held during the fetch to block concurrent actions.
+  Future<void> _showEvccReleaseNotes() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _busyMessage = context.l10n.busyLoadingEvccRelease;
+    });
+    EvccRelease? rel;
+    try {
+      rel = _evccLatest ??= await _fetchEvccRelease();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyMessage = null;
+        });
+      }
+    }
+    if (!mounted) return;
+    if (rel == null) {
+      _snack(context.l10n.snackReleaseNotesUnavailable);
+      return;
+    }
+    final notes = rel.notes.trim();
+    final title = context.l10n.releaseNotesTitle(rel.version);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: Theme.of(ctx).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: SelectableText(notes.isEmpty
+                        ? context.l10n.evccNewVersionAvailable
+                        : notes),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// The outward jumps at the bottom of a service card's ⋮: the project's own
   /// website and — only where the project ships one — its official app. Asked
   /// for by a user (2026-08-14) who administers his services here but had no
@@ -4106,6 +4370,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                     _CardAction(
                         context.l10n.actionDryRun, () => _run(dryRun: true)),
                     _CardAction(context.l10n.actionLiveStatus, _showApiStatus),
+                    _CardAction(context.l10n.actionReleaseNotes,
+                        _showEvccReleaseNotes),
                     _CardAction(
                         context.l10n.actionRestartService, _restartService),
                     // Backups are made only for apt installs; restore would also
@@ -4275,6 +4541,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   () => _proGate(_cleanupSystem), pro: true),
               _CardAction(context.l10n.actionSecurityCheck, _securityCheck),
               _CardAction(context.l10n.actionAnalyzeStorage, _storageExplorer),
+              _CardAction(context.l10n.actionMigratePi,
+                  () => _proGate(_migrateToOtherPi), pro: true),
               _CardAction(context.l10n.actionDockerContainers, _dockerContainers),
               _CardAction(context.l10n.actionRebootPi, _reboot),
               _CardAction(context.l10n.actionShutdownPi, _shutdown,
@@ -4319,6 +4587,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (upToDate)
                 _CardAction(context.l10n.actionUpdateAnyway,
                     () => _updateAptService(s)),
+              // Grafana is where the wired-up stack becomes visible — so the
+              // one-tap wiring (InfluxDB → evcc.yaml → dashboard) lives here.
+              if (s.id == 'grafana')
+                _CardAction(context.l10n.actionWireStack, _wireStack),
               ..._projectLinkActions(s.id),
             ],
           ));

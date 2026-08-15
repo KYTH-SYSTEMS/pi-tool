@@ -1,14 +1,14 @@
-Pi-Tool installs, updates, backs up and monitors self-hosted services on your Raspberry Pi over SSH, with a single tap. Plus set up remote access and manage files. A cockpit with four tabs (Management, Automation, Terminal, Files); "Connect" auto-detects what's running and shows a card per service. Unofficial, not affiliated with the mentioned projects.
+Pi-Tool installs, updates, backs up and monitors self-hosted services on your Raspberry Pi over SSH, with a single tap. Plus set up remote access and manage files. A cockpit with four tabs (Management, Automation, Terminal, Files); "Connect" auto-detects what's running and shows a card per service.
 
 Services:
 * evcc – update (apt or Docker, auto-detected), install, live status, restart service, open web UI
 * Pi-hole – update (pihole -up), rebuild blocklists, restart DNS, install (experimental), open /admin
 * Home Assistant – install as a Docker container (experimental) and update, open the web UI (port 8123)
-* Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI
+* Grafana, InfluxDB & Mosquitto – install + update via apt (official repo, experimental), open the web UI; optionally wired up with evcc end to end: InfluxDB + token + a ready-made Grafana dashboard
 * AdGuard Home, Node-RED & Zigbee2MQTT – auto-detected: open the web UI, view logs, restart the service
 * Raspberry Pi Connect – official remote access (Raspberry Pi OS Bookworm+): install, sign in via link, toggle on/off, updates, open web
 * Tailscale – VPN/mesh: install, update, connect via login link. One-tap remote access: adopts the remembered tailnet IP as the host – reach your Pi from anywhere; one tap returns to the home IP
-* Docker containers – view running containers and restart them
+* Docker containers – view, restart and update them (with rollback)
 * "Add service" – every not-yet-installed service in one picker; the main screen shows only what's actually running
 * System (whole Pi) – update all packages (apt full-upgrade), reboot or shut down, health readout with a low-disk warning and an SD-card check
 
@@ -20,14 +20,15 @@ Features:
 * Config editor: edit config files (e.g. evcc.yaml) in-app, atomic with a backup
 * Backups incl. in-app restore & management: evcc (config + DB), Pi-hole (Teleporter) and Home Assistant (/config); automatic rotation; download to the phone (share sheet)
 * Analyze disk usage – the largest directories at a glance
-* Security check – rates your Pi's hardening (SSH, automatic security updates, fail2ban) as a traffic light
+* Security check – rates your Pi's hardening (SSH, updates, fail2ban) as a traffic light; fixable findings take one tap
+* Migration helper – carry evcc + Pi-hole and their backups to a new Pi
 * System cleanup: free disk space (apt, unused Docker images, journal)
-* Automation on the Pi (systemd timers, no background service on the phone): scheduled updates (with evcc backup + self-heal), nightly backups (with rotation) and health alerts via ntfy (full disk, dead service, heat, updates)
+* Automation on the Pi (systemd timers, no background service on the phone): scheduled updates, nightly backups (rotation) and health alerts via ntfy
 * Terminal: run your own commands over SSH (sudo supported) with history + quick commands
-* Set up an SSH key with one tap: the key is generated on the phone, installed on the Pi and the profile switched to key login
+* Set up an SSH key with one tap: generated on the phone, installed on the Pi, profile switched over
 * "Set up Pi" guide (Raspberry Pi Imager) for beginners
 * Multiple Pi profiles, quick switching; an "All Pis" overview as a traffic light; encrypted export/import for moving to a new phone
-* Connect deliberately: the session to the active Pi holds until you switch profiles; Automation, Terminal and Files unlock only once connected. Green/red status; a running action can be cancelled
+* Connect deliberately: the session to the active Pi holds until you switch profiles; Automation, Terminal and Files unlock only once connected
 * Demo mode: try the whole app with sample data – no real Pi needed
 * German & English: follows your phone language automatically, switchable in Settings (System/German/English)
 

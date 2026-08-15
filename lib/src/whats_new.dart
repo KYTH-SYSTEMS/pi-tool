@@ -18,6 +18,21 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.66.0': [
+    'The biggest update yet — five new abilities at once.',
+    'Monitoring at the push of a button: the Grafana card now wires up the '
+        'whole stack — set up InfluxDB, connect evcc, provision a ready-made '
+        'Grafana dashboard. Charts from minute one instead of empty services.',
+    'Security check with "Fix": install fail2ban, enable automatic security '
+        'updates, disable root login — one tap, with a safety net (rolled '
+        'back automatically if anything is off).',
+    'Migration helper: "Move to another Pi" carries evcc + Pi-hole and their '
+        'backups to a new Pi. The old one stays untouched.',
+    'The Docker overview can now update any container — with the same '
+        'rollback net as the evcc update.',
+    'And the evcc card shows the full release notes — readable without '
+        'starting an update.',
+  ],
   '0.65.2': [
     'Another wish from the same user: every service card now leads to the '
         'project behind it.',
@@ -206,6 +221,21 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.66.0': [
+    'Das größte Update bisher — fünf neue Fähigkeiten auf einmal.',
+    'Monitoring auf Knopfdruck: Die Grafana-Karte verdrahtet den Stack jetzt '
+        'komplett — InfluxDB einrichten, evcc anschließen, fertiges Dashboard '
+        'in Grafana. Charts ab Minute eins statt leerer Dienste.',
+    'Sicherheits-Check mit „Beheben": fail2ban installieren, automatische '
+        'Sicherheitsupdates aktivieren, Root-Login abschalten — ein Tap, mit '
+        'Netz und doppeltem Boden (wird bei Problemen zurückgenommen).',
+    'Umzugshelfer: „Auf anderen Pi umziehen" bringt evcc + Pi-hole samt '
+        'Backups auf einen neuen Pi. Der alte bleibt unverändert.',
+    'Die Docker-Übersicht kann jetzt jeden Container aktualisieren — mit '
+        'demselben Rollback-Netz wie beim evcc-Update.',
+    'Und die evcc-Karte zeigt die vollständigen Release-Notes — lesbar, ohne '
+        'ein Update zu starten.',
+  ],
   '0.65.2': [
     'Wieder ein Wunsch aus der Rückmeldung desselben Nutzers: Von jeder '
         'Dienst-Karte kommst du jetzt zum Projekt dahinter.',

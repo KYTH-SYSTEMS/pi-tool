@@ -175,6 +175,26 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   frisch (Fail-safe). Ohne das meldete die System-Karte ein grünes „aktuell"
   über einem Pi mit 27 offenen Updates inkl. Sicherheitsfixes. Gegenmittel für
   Nutzer: `refreshAptIndex` (⋮ → „Paketlisten aktualisieren").
+- **`stack_wiring.dart`** (v0.66.0) — verdrahtet den Monitoring-Stack in
+  **einem** Root-Skript (Marker `WIRE_OK`): InfluxDB-Setup (Org `pi-tool`,
+  Bucket `evcc`; Admin-Passwort wird AUF dem Pi generiert), Token via
+  `influx auth create --json`, `influx:`-Block in `evcc.yaml` (nur wenn keiner
+  existiert; Backup + automatischer Rückbau, falls evcc den Restart verweigert),
+  Grafana-Provisioning (Flux-Datasource `pitool-influx` + Dashboard
+  `grafanaEvccDashboardJson`, gequotetes Heredoc). **Invariante: das Token
+  verlässt den Pi nie** — deshalb ein Skript statt mehrerer Runden; nichts
+  App-seitiges wird interpoliert. Fehlendes Grafana/`evcc.yaml` (Docker-evcc)
+  = Skip mit Meldung; handeingerichtetes InfluxDB ohne Root-CLI-Config =
+  ehrlicher Fehler. Einstieg: Grafana-Karte ⋮ → „Mit evcc verdrahten".
+  `EvccUpdater.wireMonitoringStack` orchestriert.
+- **Umzugshelfer** (v0.66.0, `_migrateToOtherPi` in main.dart — reine
+  Orchestrierung vorhandener Bausteine, kein neues Skript): frische Backups
+  auf dem Quell-Pi (`backup` + `backupPihole`) → `downloadFile` aufs Handy →
+  auf dem Ziel-Profil `detectServices`, fehlendes installieren (`install`/
+  `installPihole`) → `uploadFile` an die erwarteten Backup-Pfade →
+  `restoreBackup`/`restorePiholeBackup`. Quell-Pi bleibt unangetastet; nur
+  apt-evcc zieht um (Docker-evcc hat hier keinen Restore-Pfad). System-Karte ⋮,
+  Pro-gated. Braucht ein zweites Profil mit Host.
 - **`service_links.dart`** (v0.65.2) — statische Tabelle „wo lebt das Projekt":
   Website je Karten-id und, **nur wo es sie wirklich gibt**, die offizielle App
   (Package + Play-Eintrag: evcc, Home Assistant, Tailscale). Speist die zwei
@@ -326,8 +346,15 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   + `parseDockerPs` (Pipe-Format wie die evcc-Docker-Probe; Fehler-/Daemon-Zeilen
   ohne Pipe → leer). `buildDockerRestartCommand`/`buildDockerLogsCommand`
   (Name shell-gequotet). `EvccUpdater.dockerContainers/restartDockerContainer/
-  fetchDockerLogs`; `_DockerSheet` (Liste + pro Container Neustart/Logs → nutzt
-  `_LiveLogSheet`). System-Karten-Aktion; leer, wenn Docker fehlt.
+  fetchDockerLogs`; `_DockerSheet` (Liste + pro Container Neustart/Logs/
+  **Aktualisieren** → nutzt `_LiveLogSheet`). System-Karten-Aktion; leer, wenn
+  Docker fehlt. **Generisches Container-Update (v0.66.0):**
+  `updateDockerContainer` fährt für JEDEN Container denselben Weg wie das
+  evcc-Docker-Update — Compose-Label → `dockerComposeUpdateScript`, sonst
+  Digest-Pin-Ablehnung + `dockerRunRecreateScript` (Rollback-Netz) — und prüft
+  danach via `buildDockerRunningProbe` (`{{.State.Running}}`), dass wirklich
+  etwas läuft. Eigene `-evccpitool-old`-Rollback-Container werden verweigert
+  (und im Sheet-Menü gar nicht erst angeboten).
 - **`storage_explorer.dart`** — „Was frisst meinen Platz?". `buildStorageProbe`
   = sudo `du -x -b -d1` (Unterordner) + `find -maxdepth 1 -type f` (Dateien) in
   Markern; `parseStorageBreakdown` → nach Größe sortierte `DiskEntry`s (Query-
@@ -338,13 +365,22 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
 - **`_LiveLogSheet`** (`ui_widgets.dart`) — Service-Logs mit „Live"-Schalter:
   `Timer.periodic` (3 s) re-fetcht `fetchServiceLogs` (Polling, kein PTY/Dienst),
   Timer wird in `dispose` abgebrochen.
-- **`security_check.dart`** — Nur-Lesen-Audit. `buildSecurityProbe` = **ein**
+- **`security_check.dart`** — Audit + One-Tap-Fixes. `buildSecurityProbe` = **ein**
   `sudo sh -c`-Probe (Skript via `shSingleQuote` sicher gequotet) mit Section-
   Markern (`__SEC_SSHD__/UNATT/F2B/PORTS__`); `parseSecurityReport` macht daraus
   fünf Ampel-`SecurityFinding`s (SSH-Root-Login, Passwort-Login, Auto-Updates,
-  fail2ban, offene Ports). **Nichts wird verändert**; Unbekanntes degradiert zu
-  `info` (nie falsches ok/warn). `EvccUpdater.runSecurityCheck` orchestriert;
-  `_SecurityReportSheet` rendert (System-Karten-Aktion).
+  fail2ban, offene Ports). **Die Prüfung verändert nichts**; Unbekanntes
+  degradiert zu `info` (nie falsches ok/warn). `EvccUpdater.runSecurityCheck`
+  orchestriert; `_SecurityReportSheet` rendert (System-Karten-Aktion).
+  **„Beheben" (v0.66.0):** `securityFixFor` mappt fixbare Befunde auf
+  `SecurityFix` (fail2ban, autoUpdates, rootLogin); `buildSecurityFixScript`
+  liefert das Root-Skript (Marker `SECFIX_OK`, apt mit `Dpkg::Use-Pty=0`).
+  Invarianten: Passwort-Login-Abschalten wird NIE angeboten (ohne bewiesenen
+  Key-Login = Aussperr-Risiko); der rootLogin-Fix läuft als **Drop-in** unter
+  `sshd_config.d/`, `sshd -t` VOR dem Reload, Effekt via `sshd -T` verifiziert,
+  bei Abweichung automatischer Rückbau — und `fixSecurity` verweigert ihn ganz,
+  wenn die App selbst als root verbunden ist. Nach jedem Fix läuft der Check
+  neu (Befund wird sichtbar grün statt nur Toast).
 - **`app_launcher.dart` + native `MainActivity`** — `AppLauncher`-Seam (Default
   `ChannelAppLauncher` über MethodChannel `pi_tool/launcher`): öffnet eine andere
   installierte App per `getLaunchIntentForPackage` (Play-Store-URL-Fallback via

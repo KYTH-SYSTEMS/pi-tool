@@ -1496,6 +1496,72 @@ void main() {
     });
   });
 
+  group('EvccUpdater.wireMonitoringStack', () {
+    test('runs the wiring script as root and requires WIRE_OK', () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('InfluxDB eingerichtet\nWIRE_OK\n')],
+      });
+      await _updaterWith(runner)
+          .wireMonitoringStack(config: _config, onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, contains('influx setup'));
+      expect(stdin, contains('grafana'));
+    });
+
+    test('a script that ends without the marker is a failure', () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('InfluxDB laeuft nicht.\nWIRE_FAIL\n')],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .wireMonitoringStack(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+  });
+
+  group('EvccUpdater.fixSecurity', () {
+    test('runs the fix script as root and requires the marker', () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('SECFIX_OK\n')],
+      });
+      await _updaterWith(runner).fixSecurity(
+          config: _config, fix: SecurityFix.fail2ban, onLog: (_) {});
+      expect(runner.stdinByCommand[installShellCommand],
+          contains('install -y fail2ban'));
+    });
+
+    test('no marker → failure, even with exit 0', () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('something else\n')],
+      });
+      await expectLater(
+        _updaterWith(runner).fixSecurity(
+            config: _config, fix: SecurityFix.autoUpdates, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('refuses the root-login fix when connected AS root', () async {
+      // The fix would lock out the very login the app is using.
+      final rootConfig = SshConfig(
+          host: _config.host,
+          port: _config.port,
+          username: 'root',
+          password: _config.password);
+      await expectLater(
+        _updaterWith(FakeSshRunner({})).fixSecurity(
+            config: rootConfig, fix: SecurityFix.rootLogin, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('aussperren'))),
+      );
+    });
+  });
+
   group('EvccUpdater.shutdown', () {
     test('treats a dropped connection as success', () async {
       final runner = FakeSshRunner({},
@@ -2307,6 +2373,76 @@ void main() {
       // sudo command (which carries the password) was never run.
       expect(d.kind, InstallKind.unknown);
       expect(runner.commandsRun, isNot(contains(dockerListSudoCommand)));
+    });
+  });
+
+  group('EvccUpdater.updateDockerContainer (generic overview update)', () {
+    String plainInspect(String name, {String image = 'nginx:latest'}) =>
+        jsonEncode([
+          {
+            'Name': '/$name',
+            'Config': {
+              'Image': image,
+              'Labels': <String, dynamic>{},
+            },
+            'HostConfig': {
+              'RestartPolicy': {'Name': 'unless-stopped'},
+            },
+          }
+        ]);
+
+    test('plain container: pull + recreate as root, then verifies running',
+        () async {
+      final runner = FakeSshRunner({
+        dockerInspectJsonSudoCommand('web'): [_r(plainInspect('web'))],
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('done')],
+        buildDockerRunningProbe('web'): [_r('true\n')],
+      });
+      await _updaterWith(runner).updateDockerContainer(
+          config: _config, name: 'web', onLog: (_) {});
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, contains('docker pull'));
+      expect(stdin, contains("'nginx:latest'"));
+      expect(stdin, contains('web-evccpitool-old')); // rollback net
+    });
+
+    test('not running after the update → serviceInactive error', () async {
+      final runner = FakeSshRunner({
+        dockerInspectJsonSudoCommand('web'): [_r(plainInspect('web'))],
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('done')],
+        buildDockerRunningProbe('web'): [_r('false\n')],
+      });
+      await expectLater(
+        _updaterWith(runner).updateDockerContainer(
+            config: _config, name: 'web', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.kind, 'kind', UpdateErrorKind.serviceInactive)),
+      );
+    });
+
+    test('refuses our own rollback containers', () async {
+      await expectLater(
+        _updaterWith(FakeSshRunner({})).updateDockerContainer(
+            config: _config, name: 'evcc-evccpitool-old', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.message, 'message', contains('Rollback-Container'))),
+      );
+    });
+
+    test('refuses digest-pinned images', () async {
+      final runner = FakeSshRunner({
+        dockerInspectJsonSudoCommand('web'): [
+          _r(plainInspect('web', image: 'nginx@sha256:abc123'))
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).updateDockerContainer(
+            config: _config, name: 'web', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('Digest'))),
+      );
     });
   });
 

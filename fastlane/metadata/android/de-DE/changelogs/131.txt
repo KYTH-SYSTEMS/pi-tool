@@ -1,0 +1,7 @@
+Das größte Update bisher — fünf neue Fähigkeiten:
+
+• Grafana-Karte verdrahtet den Monitoring-Stack komplett: InfluxDB + evcc + fertiges Dashboard, Charts ab Minute eins
+• Sicherheits-Check mit "Beheben": fail2ban, Auto-Updates, Root-Login — ein Tap, mit Rückbau-Netz
+• Umzugshelfer: evcc + Pi-hole samt Backups auf einen neuen Pi bringen
+• Docker-Übersicht aktualisiert jetzt jeden Container (mit Rollback)
+• evcc-Release-Notes lesbar ohne Update-Start

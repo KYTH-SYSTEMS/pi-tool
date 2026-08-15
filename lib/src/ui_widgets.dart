@@ -590,11 +590,16 @@ class _DockerSheet extends StatefulWidget {
     required this.refresh,
     required this.onRestart,
     required this.onLogs,
+    required this.onUpdate,
   });
   final List<DockerContainer> initial;
   final Future<List<DockerContainer>> Function() refresh;
   final Future<void> Function(String name) onRestart;
   final Future<void> Function(String name) onLogs;
+
+  /// Update this container (image pull + recreate / compose). The callback
+  /// owns confirm + error display; the sheet only reloads afterwards.
+  final Future<void> Function(String name) onUpdate;
 
   @override
   State<_DockerSheet> createState() => _DockerSheetState();
@@ -678,9 +683,18 @@ class _DockerSheetState extends State<_DockerSheet> {
                                   .then((_) => _reload());
                             } else if (v == 'logs') {
                               _run(() => widget.onLogs(c.name));
+                            } else if (v == 'update') {
+                              _run(() => widget.onUpdate(c.name))
+                                  .then((_) => _reload());
                             }
                           },
                           itemBuilder: (_) => [
+                            // Our own rollback containers are the safety net of
+                            // the LAST update — never offered for updating.
+                            if (!c.name.endsWith('-evccpitool-old'))
+                              PopupMenuItem(
+                                  value: 'update',
+                                  child: Text(context.l10n.actionUpdate)),
                             PopupMenuItem(
                                 value: 'restart',
                                 child: Text(context.l10n.actionRestart)),
@@ -802,8 +816,12 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
 
 /// Read-only security-audit result sheet: one traffic-light row per finding.
 class _SecurityReportSheet extends StatelessWidget {
-  const _SecurityReportSheet({required this.findings});
+  const _SecurityReportSheet({required this.findings, this.onFix});
   final List<SecurityFinding> findings;
+
+  /// Called when the user taps "Beheben" on a fixable finding. Null renders
+  /// the sheet read-only (e.g. demo mode).
+  final void Function(SecurityFinding f, SecurityFix fix)? onFix;
 
   @override
   Widget build(BuildContext context) {
@@ -831,11 +849,18 @@ class _SecurityReportSheet extends StatelessWidget {
           for (final f in findings)
             Builder(builder: (context) {
               final (icon, color) = visual(f.level);
+              final fix = securityFixFor(f);
               return ListTile(
                 contentPadding: const EdgeInsets.symmetric(vertical: 4),
                 leading: Icon(icon, color: color),
                 title: Text(f.title),
                 subtitle: Text(f.detail),
+                trailing: (fix != null && onFix != null)
+                    ? TextButton(
+                        onPressed: () => onFix!(f, fix),
+                        child: Text(context.l10n.actionFixSecurity),
+                      )
+                    : null,
               );
             }),
           const SizedBox(height: 4),

@@ -81,4 +81,115 @@ __SEC_PORTS__
       expect(r.every((f) => f.level == SecurityLevel.info), isTrue);
     });
   });
+
+  group('securityFixFor', () {
+    test('warn findings map to their fix', () {
+      expect(
+          securityFixFor((
+            title: 'SSH-Root-Login',
+            level: SecurityLevel.warn,
+            detail: 'Root darf sich per SSH anmelden.'
+          )),
+          SecurityFix.rootLogin);
+      expect(
+          securityFixFor((
+            title: 'Automatische Sicherheitsupdates',
+            level: SecurityLevel.warn,
+            detail: 'Keine automatischen Sicherheitsupdates.'
+          )),
+          SecurityFix.autoUpdates);
+    });
+
+    test('inactive fail2ban is fixable even though it is only info', () {
+      expect(
+          securityFixFor((
+            title: 'fail2ban (Brute-Force-Schutz)',
+            level: SecurityLevel.info,
+            detail: 'fail2ban nicht aktiv — optionaler Schutz.'
+          )),
+          SecurityFix.fail2ban);
+    });
+
+    test('ok and undetermined findings offer no fix', () {
+      expect(
+          securityFixFor((
+            title: 'SSH-Root-Login',
+            level: SecurityLevel.ok,
+            detail: 'Root-Login per SSH ist deaktiviert.'
+          )),
+          isNull);
+      expect(
+          securityFixFor((
+            title: 'fail2ban (Brute-Force-Schutz)',
+            level: SecurityLevel.info,
+            detail: 'Konnte nicht ermittelt werden.'
+          )),
+          isNull);
+      // Password auth off is NOT a one-tap fix: without a working key login
+      // it would lock the user out. Never offered.
+      expect(
+          securityFixFor((
+            title: 'SSH-Passwort-Login',
+            level: SecurityLevel.info,
+            detail: 'Passwort-Login ist an.'
+          )),
+          isNull);
+      expect(
+          securityFixFor((
+            title: 'Offene Ports',
+            level: SecurityLevel.info,
+            detail: 'Lauschende TCP-Ports: 22'
+          )),
+          isNull);
+    });
+  });
+
+  group('buildSecurityFixScript', () {
+    test('every fix ends in the success marker', () {
+      for (final fix in SecurityFix.values) {
+        expect(buildSecurityFixScript(fix), contains('SECFIX_OK'));
+      }
+    });
+
+    test('installs run apt without a pty (log noise)', () {
+      for (final fix in [SecurityFix.fail2ban, SecurityFix.autoUpdates]) {
+        final s = buildSecurityFixScript(fix);
+        for (final line in s.split('\n')) {
+          if (line.contains('apt-get') && line.contains('install')) {
+            expect(line, contains('-o Dpkg::Use-Pty=0'));
+          }
+        }
+      }
+    });
+
+    test('fail2ban: install + enable now', () {
+      final s = buildSecurityFixScript(SecurityFix.fail2ban);
+      expect(s, contains('install -y fail2ban'));
+      expect(s, contains('systemctl enable --now fail2ban'));
+    });
+
+    test('auto updates: package + the two periodic switches', () {
+      final s = buildSecurityFixScript(SecurityFix.autoUpdates);
+      expect(s, contains('install -y unattended-upgrades'));
+      expect(s, contains('20auto-upgrades'));
+      expect(s, contains('APT::Periodic::Update-Package-Lists "1"'));
+      expect(s, contains('APT::Periodic::Unattended-Upgrade "1"'));
+      expect(s, contains('systemctl enable --now unattended-upgrades'));
+    });
+
+    test('root login: drop-in + sshd -t gate + verified effect + rollback', () {
+      final s = buildSecurityFixScript(SecurityFix.rootLogin);
+      // Change goes into a drop-in, never edits sshd_config itself.
+      expect(s, contains('/etc/ssh/sshd_config.d/'));
+      expect(s, contains('PermitRootLogin no'));
+      // Config validated BEFORE reload; a bad config removes the drop-in.
+      expect(s.indexOf('sshd -t'), lessThan(s.indexOf('reload')));
+      expect(s, contains('rm -f'));
+      // And the effective value is verified afterwards (Include might miss).
+      expect(s, contains('sshd -T'));
+      expect(s, contains('permitrootlogin'));
+      // No set -e: the script must reach its own rollback branches.
+      expect(s.split('\n').first.trim(), isNot('set -e'));
+    });
+  });
 }

@@ -23,6 +23,7 @@ import 'services/pi_connect.dart';
 import 'services/tailscale.dart';
 import 'services/pi_service.dart';
 import 'services/pihole_service.dart';
+import 'services/stack_wiring.dart';
 import 'services/system_service.dart';
 import 'settings_store.dart';
 import 'systemd_services.dart';
@@ -2297,6 +2298,94 @@ class EvccUpdater {
     );
   }
 
+  /// Updates ANY container from the Docker overview by name: compose-managed
+  /// ones via `docker compose pull` + `up -d` of just that service, plain ones
+  /// via image-pull + recreate with the same rollback net as the evcc path
+  /// (old container renamed, restored on a crashing start). Refused: Pi-Tool's
+  /// own rollback containers and digest-pinned images. Experimental — the
+  /// recreate reconstructs `docker run` from `docker inspect` (whitelist).
+  Future<void> updateDockerContainer({
+    required SshConfig config,
+    required String name,
+    required void Function(String line) onLog,
+  }) async {
+    if (name.endsWith('-evccpitool-old')) {
+      throw const EvccUpdateException(
+        UpdateErrorKind.unknown,
+        'Das ist ein Pi-Tool-Rollback-Container — er ist die Rückfalllinie '
+        'des letzten Updates und wird nicht selbst aktualisiert.',
+      );
+    }
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        final inspectCmd = dockerInspectJsonSudoCommand(name);
+        log('\$ $inspectCmd');
+        final inspect =
+            await runner.run(inspectCmd, stdin: '${config.password}\n');
+        if (isSudoPasswordFailure('${inspect.stdout}\n${inspect.stderr}')) {
+          throw const EvccUpdateException(UpdateErrorKind.sudo,
+              'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+        }
+        final obj = firstInspectObject(inspect.stdout);
+        if (obj == null) {
+          throw EvccUpdateException(UpdateErrorKind.unknown,
+              'Konnte den Container "$name" nicht inspizieren.');
+        }
+
+        final compose = composeInfoFromInspect(obj);
+        final String script;
+        if (compose != null) {
+          log('Aktualisiere via docker compose in ${compose.workingDir} '
+              '(Dienst ${compose.service}) …');
+          script = dockerComposeUpdateScript(compose);
+        } else {
+          final image =
+              ((obj['Config'] is Map) ? (obj['Config'] as Map)['Image'] : null)
+                      ?.toString() ??
+                  '';
+          if (image.isEmpty) {
+            throw EvccUpdateException(UpdateErrorKind.unknown,
+                'Konnte das Image von "$name" nicht ermitteln.');
+          }
+          if (image.contains('@sha256:')) {
+            throw const EvccUpdateException(
+              UpdateErrorKind.unknown,
+              'Das Image ist per Digest gepinnt (@sha256:…) und kann nicht '
+              'automatisch aktualisiert werden – bitte in der Container-'
+              'Definition ein Image-Tag setzen und manuell neu ziehen.',
+            );
+          }
+          log('Container ohne docker compose – aktualisiere per Image-Pull + '
+              'Neuanlage. Der alte Container bleibt als Backup erhalten.');
+          script = dockerRunRecreateScript(
+            name: name,
+            image: image,
+            runCommand: buildDockerRunCommand(obj, image: image),
+          );
+        }
+
+        await _runRootScript(runner, log, config,
+            sudo: true,
+            script: script,
+            failMsg: 'Container-Update fehlgeschlagen');
+
+        // The recreate script verifies internally; the compose path doesn't —
+        // probe either way so "fertig" always means "läuft".
+        final probe = await runner.run(buildDockerRunningProbe(name),
+            stdin: '${config.password}\n');
+        if (probe.stdout.trim() != 'true') {
+          throw EvccUpdateException(
+            UpdateErrorKind.serviceInactive,
+            'Container "$name" läuft nach dem Update nicht. Details im Log.',
+          );
+        }
+        log('Container "$name" aktualisiert und läuft.');
+      },
+    );
+  }
+
   /// Last 200 log lines of a container.
   Future<String> fetchDockerLogs({
     required SshConfig config,
@@ -2382,6 +2471,56 @@ class EvccUpdater {
           );
         }
         return parseSecurityReport(result.stdout);
+      },
+    );
+  }
+
+  /// Wires the monitoring stack (InfluxDB → evcc.yaml → Grafana dashboard) in
+  /// one root script — see stack_wiring.dart for why it is a single script
+  /// (the access token never leaves the Pi). Marker-gated; fail-soft for
+  /// missing parts, hard fail with evcc.yaml rollback on a rejected config.
+  Future<void> wireMonitoringStack({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Verdrahte Monitoring-Stack (InfluxDB → evcc → Grafana) …');
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildStackWiringScript(),
+              successMarker: 'WIRE_OK',
+              failMsg: 'Stack-Verdrahtung fehlgeschlagen');
+        },
+      );
+
+  /// Applies one [SecurityFix] as root (marker-gated). The root-login fix is
+  /// refused when the app itself is connected as root — the fix would lock
+  /// this very login out on the next connect.
+  Future<void> fixSecurity({
+    required SshConfig config,
+    required SecurityFix fix,
+    required void Function(String line) onLog,
+  }) async {
+    if (fix == SecurityFix.rootLogin &&
+        config.username.trim().toLowerCase() == 'root') {
+      throw const EvccUpdateException(
+        UpdateErrorKind.unknown,
+        'Du bist als root verbunden — diesen Login abzuschalten würde dich '
+        'aussperren. Lege zuerst einen eigenen Benutzer an.',
+      );
+    }
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Wende Sicherheits-Fix an …');
+        await _runRootScriptExpectMarker(runner, log, config,
+            script: buildSecurityFixScript(fix),
+            successMarker: 'SECFIX_OK',
+            failMsg: 'Sicherheits-Fix fehlgeschlagen');
+        log('Sicherheits-Fix angewendet.');
       },
     );
   }

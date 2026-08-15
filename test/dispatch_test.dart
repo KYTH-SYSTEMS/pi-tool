@@ -202,6 +202,15 @@ class FakeEvccUpdater extends EvccUpdater {
 
   List<DockerContainer> containers = const [];
   final restartedContainers = <String>[];
+  final updatedContainers = <String>[];
+
+  @override
+  Future<void> updateDockerContainer({
+    required SshConfig config,
+    required String name,
+    required void Function(String line) onLog,
+  }) async =>
+      updatedContainers.add(name);
   @override
   Future<List<DockerContainer>> dockerContainers({
     required SshConfig config,
@@ -232,7 +241,33 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       disk;
 
+  int stackWirings = 0;
+
+  @override
+  Future<void> wireMonitoringStack({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      stackWirings++;
+
   List<SecurityFinding> securityFindings = const [];
+  final securityFixes = <SecurityFix>[];
+
+  @override
+  Future<void> fixSecurity(
+      {required SshConfig config,
+      required SecurityFix fix,
+      required void Function(String line) onLog}) async {
+    securityFixes.add(fix);
+    // The fix worked: the re-check that follows sees the finding green.
+    securityFindings = const [
+      (
+        title: 'SSH-Root-Login',
+        level: SecurityLevel.ok,
+        detail: 'Root-Login per SSH ist deaktiviert.'
+      ),
+    ];
+  }
   @override
   Future<List<SecurityFinding>> runSecurityCheck({
     required SshConfig config,
@@ -1826,6 +1861,28 @@ void main() {
     expect(launcher.opened, ['io.evcc.android']);
   });
 
+  testWidgets('evcc ⋮ → Release-Notes zeigt die GitHub-Notes im Sheet',
+      (tester) async {
+    // Wunsch v0.66.0: die Notes auch OHNE Update-Absicht lesen können — bisher
+    // gab es nur den 500-Zeichen-Auszug im Bestätigungsdialog des Updates.
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u,
+        rel: () async => const EvccRelease(
+            version: '0.212.0',
+            notes: 'Neue Ladeplanung\n- PV-Ueberschuss besser verteilt')));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Release-Notes'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Neue Ladeplanung'), findsOneWidget);
+    expect(find.textContaining('0.212.0'), findsOneWidget);
+  });
+
   testWidgets('every service card ⋮ jumps to the project behind it',
       (tester) async {
     // User wish (2026-08-14): from the card to the application's own site.
@@ -2983,6 +3040,62 @@ void main() {
     expect(u.restartedContainers, contains('evcc'));
   });
 
+  testWidgets('Docker-Übersicht → Aktualisieren updated einen Container',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..containers = const [
+        (
+          name: 'nodered',
+          state: 'running',
+          status: 'Up 4 days',
+          image: 'nodered/node-red:latest'
+        ),
+        (
+          // Pi-Tool's own rollback container — must NOT offer an update.
+          name: 'evcc-evccpitool-old',
+          state: 'exited',
+          status: 'Exited (0)',
+          image: 'evcc/evcc:0.123'
+        ),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Docker-Container'));
+    await tester.pumpAndSettle();
+
+    // The rollback container's menu has no update entry.
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, 'evcc-evccpitool-old'),
+        matching: find.byType(PopupMenuButton<String>)));
+    await tester.pumpAndSettle();
+    expect(find.text('Aktualisieren'), findsNothing);
+    await tester.tapAt(const Offset(5, 5)); // close the menu
+    await tester.pumpAndSettle();
+
+    // A normal container: update → confirm → the updater runs.
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, 'nodered'),
+        matching: find.byType(PopupMenuButton<String>)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aktualisieren'));
+    // No pumpAndSettle: the sheet's busy spinner animates while the confirm
+    // dialog is open, so settle would time out. Pump the dialog in instead.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.updatedContainers, ['nodered']);
+  });
+
   testWidgets('System-Karte → Speicherplatz zeigt die größten Posten',
       (tester) async {
     useTallScreen(tester);
@@ -3412,6 +3525,130 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(u.repairPackageCalls, 1);
+  });
+
+  testWidgets('System ⋮ → Umzugshelfer zieht evcc + Pi-hole aufs Ziel um',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+        ServiceStatus(
+            id: 'evcc',
+            name: 'evcc',
+            installed: true,
+            version: '0.211.0',
+            active: true,
+            detail: 'apt · Dienst aktiv'),
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            version: 'v6.0.4',
+            active: true),
+      ]
+      ..downloadBytes = Uint8List.fromList([1, 2, 3]);
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [
+            Profile(name: 'S', host: '192.168.178.64', password: 'pw'),
+            Profile(name: 'Zweiter', host: '192.168.178.99', password: 'pw'),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Auf anderen Pi umziehen'));
+    await tester.pumpAndSettle();
+
+    // Target picker lists the OTHER profile only.
+    expect(find.text('Zweiter'), findsOneWidget);
+    await tester.tap(find.text('Zweiter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    // Fresh backups from the source, both fetched to the phone …
+    expect(u.backupCalls, 1);
+    expect(u.piholeBackupCalls, 1);
+    expect(u.downloadedPaths, hasLength(2));
+    // … uploaded to the target's expected locations and restored there.
+    expect(u.uploadedTo, contains('/var/backups/evcc/x.tar.gz'));
+    expect(u.uploadedTo,
+        contains('/var/backups/pi-tool/pihole-backup-x.tar.gz'));
+    expect(u.restoredPath, '/var/backups/evcc/x.tar.gz');
+    expect(u.restoredPihole,
+        contains('/var/backups/pi-tool/pihole-backup-x.tar.gz'));
+  });
+
+  testWidgets('Grafana ⋮ → „Mit evcc verdrahten" verdrahtet den Stack',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'grafana',
+            name: 'Grafana',
+            installed: true,
+            version: '11.1.0',
+            active: true,
+            detail: 'apt · grafana · Dienst aktiv'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-grafana')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mit evcc verdrahten (Dashboard)'));
+    await tester.pumpAndSettle();
+    // The confirm names the moving parts before anything runs.
+    expect(find.textContaining('evcc.yaml'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.stackWirings, 1);
+  });
+
+  testWidgets('Sicherheits-Check → „Beheben" wendet den Fix an und prüft neu',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..securityFindings = const [
+        (
+          title: 'SSH-Root-Login',
+          level: SecurityLevel.warn,
+          detail: 'Root darf sich per SSH anmelden.'
+        ),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sicherheits-Check'));
+    await tester.pumpAndSettle();
+
+    // The warn finding carries a fix button; tap → confirm → fix runs.
+    await tester.tap(find.text('Beheben'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.securityFixes, [SecurityFix.rootLogin]);
+    // The automatic re-check shows the finding green now.
+    expect(find.text('Root-Login per SSH ist deaktiviert.'), findsOneWidget);
+    expect(find.text('Beheben'), findsNothing);
   });
 
   testWidgets('System-Karte → Sicherheits-Check zeigt die Ampel-Befunde',

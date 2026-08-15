@@ -38,5 +38,12 @@ void main() {
       expect(buildDockerLogsCommand("x';reboot;'"), contains(r"'\''"));
       expect(buildDockerLogsCommand('evcc'), contains('logs --tail'));
     });
+
+    test('running probe single-quotes the name and asks the State', () {
+      expect(buildDockerRunningProbe('grafana'),
+          contains('{{.State.Running}}'));
+      expect(buildDockerRunningProbe("x';reboot;'"), contains(r"'\''"));
+      expect(buildDockerRunningProbe('grafana'), startsWith('LC_ALL=C sudo -S'));
+    });
   });
 }

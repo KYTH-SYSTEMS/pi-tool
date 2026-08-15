@@ -1,7 +1,8 @@
-/// Read-only security audit of the Pi: a single sudo probe + a pure parser that
-/// turns its output into traffic-light findings. No mutation — the app only
-/// reads state and recommends. Pure logic here (unit-testable); the UI renders
-/// the findings and the orchestration runs the probe over SSH.
+/// Security audit of the Pi: a single read-only sudo probe + a pure parser that
+/// turns its output into traffic-light findings — and, since v0.66.0, one-tap
+/// fixes for the findings that are safe to automate. The check itself never
+/// mutates; a fix only runs when the user taps "Beheben" on a finding. Pure
+/// logic here (unit-testable); the orchestration runs probe/fix over SSH.
 library;
 
 import 'commands.dart' show shSingleQuote;
@@ -27,6 +28,86 @@ echo __SEC_PORTS__
 ss -H -tln 2>/dev/null | awk '{print $4}'
 ''';
   return 'LC_ALL=C sudo -S sh -c ${shSingleQuote(script)}';
+}
+
+/// The findings the app can remedy with one tap. Deliberately NOT on the list:
+/// turning SSH password auth off — without a proven key login that locks the
+/// user out, so it stays a recommendation.
+enum SecurityFix { fail2ban, autoUpdates, rootLogin }
+
+/// Maps a finding to its one-tap fix, or null when there is nothing safe to
+/// offer (finding is ok, undetermined, or intentionally manual).
+SecurityFix? securityFixFor(SecurityFinding f) {
+  // "Konnte nicht ermittelt werden" — don't offer to fix unknown state.
+  if (f.detail.startsWith('Konnte nicht')) return null;
+  if (f.title == 'SSH-Root-Login' && f.level == SecurityLevel.warn) {
+    return SecurityFix.rootLogin;
+  }
+  if (f.title == 'Automatische Sicherheitsupdates' &&
+      f.level == SecurityLevel.warn) {
+    return SecurityFix.autoUpdates;
+  }
+  if (f.title.startsWith('fail2ban') &&
+      f.level != SecurityLevel.ok &&
+      f.detail.contains('nicht aktiv')) {
+    return SecurityFix.fail2ban;
+  }
+  return null;
+}
+
+/// Root script for one [SecurityFix]. Success marker `SECFIX_OK` (run via
+/// `_runRootScriptExpectMarker` — success only with the marker).
+String buildSecurityFixScript(SecurityFix fix) {
+  switch (fix) {
+    case SecurityFix.fail2ban:
+      return '''
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export LC_ALL=C
+apt-get update -qq 2>&1 || true
+apt-get -o Dpkg::Use-Pty=0 install -y fail2ban
+systemctl enable --now fail2ban
+echo SECFIX_OK
+''';
+    case SecurityFix.autoUpdates:
+      return '''
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export LC_ALL=C
+apt-get update -qq 2>&1 || true
+apt-get -o Dpkg::Use-Pty=0 install -y unattended-upgrades
+printf 'APT::Periodic::Update-Package-Lists "1";\\nAPT::Periodic::Unattended-Upgrade "1";\\n' > /etc/apt/apt.conf.d/20auto-upgrades
+systemctl enable --now unattended-upgrades
+echo SECFIX_OK
+''';
+    case SecurityFix.rootLogin:
+      // Deliberately NO `set -e`: the script must reach its own rollback
+      // branches. The change lives in a drop-in (sshd_config stays untouched),
+      // is validated with `sshd -t` BEFORE the reload, and the effective value
+      // is re-read with `sshd -T` afterwards — if the Include didn't take
+      // effect, the drop-in is removed again and the fix reports failure
+      // instead of pretending. The current SSH session survives a reload.
+      return r'''
+export LC_ALL=C
+f=/etc/ssh/sshd_config.d/60-pitool-hardening.conf
+mkdir -p /etc/ssh/sshd_config.d
+printf 'PermitRootLogin no\n' > "$f"
+if ! sshd -t 2>/dev/null; then
+  rm -f "$f"
+  echo "sshd -t lehnt die Konfiguration ab - Aenderung zurueckgenommen."
+  exit 1
+fi
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+eff=$(sshd -T 2>/dev/null | grep -i '^permitrootlogin ' | awk '{print $2}')
+if [ "$eff" != "no" ]; then
+  rm -f "$f"
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+  echo "PermitRootLogin blieb '$eff' (sshd_config.d greift nicht?) - Aenderung zurueckgenommen."
+  exit 1
+fi
+echo SECFIX_OK
+''';
+  }
 }
 
 /// Parses the probe output. Always returns the same five findings; anything it

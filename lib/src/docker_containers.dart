@@ -44,3 +44,9 @@ String buildDockerRestartCommand(String name) =>
 /// Last 200 log lines of a container (sudo, name shell-quoted, stderr merged).
 String buildDockerLogsCommand(String name) =>
     'LC_ALL=C sudo -S docker logs --tail 200 ${shSingleQuote(name)} 2>&1';
+
+/// Is the container actually running? (sudo, name shell-quoted.) Used to
+/// verify a container update really left a living container behind.
+String buildDockerRunningProbe(String name) =>
+    "LC_ALL=C sudo -S docker inspect -f '{{.State.Running}}' "
+    '${shSingleQuote(name)}';
