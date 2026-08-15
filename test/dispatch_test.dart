@@ -22,6 +22,7 @@ import 'package:evcc_updater/src/scheduled_backup.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/storage_explorer.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
+import 'package:evcc_updater/src/services/stack_wiring.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
@@ -242,13 +243,16 @@ class FakeEvccUpdater extends EvccUpdater {
       disk;
 
   int stackWirings = 0;
+  StackWiringOutcome stackOutcome = StackWiringOutcome.wired;
 
   @override
-  Future<void> wireMonitoringStack({
+  Future<StackWiringOutcome> wireMonitoringStack({
     required SshConfig config,
     required void Function(String line) onLog,
-  }) async =>
-      stackWirings++;
+  }) async {
+    stackWirings++;
+    return stackOutcome;
+  }
 
   List<SecurityFinding> securityFindings = const [];
   final securityFixes = <SecurityFix>[];

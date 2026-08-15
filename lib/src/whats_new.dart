@@ -18,6 +18,24 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.66.2': [
+    'I put the big update through a systematic audit against itself — before '
+        'any of you would hit it. Sixteen findings; the important ones are '
+        'fixed here.',
+    'The migration helper would have failed at its core case: on a fresh '
+        'target Pi the backup directory did not exist, so the upload aborted — '
+        'after the services had already been installed there. Fixed.',
+    'The stack wiring now tells the truth: if a half is skipped (evcc in '
+        'Docker, no Grafana) it says "only partly wired" instead of a green '
+        'tick above an empty dashboard. And an evcc without a systemd service '
+        'is recognized as such instead of "configuration rejected".',
+    'Container updates now run in the normal flow with progress, cancel and '
+        'background protection — Android could previously freeze the app '
+        'mid-recreate. A recreated container also keeps its command, user and '
+        'hostname now.',
+    'The security check no longer reports a green "running" when '
+        'unattended-upgrades is installed but switched off.',
+  ],
   '0.66.0': [
     'The biggest update yet — five new abilities at once.',
     'Monitoring at the push of a button: the Grafana card now wires up the '
@@ -221,6 +239,25 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.66.2': [
+    'Ich habe das große Update noch einmal systematisch gegen sich selbst '
+        'geprüft — bevor es jemand von euch findet. Sechzehn Befunde, hier '
+        'sind die wichtigsten behoben.',
+    'Der Umzugshelfer wäre in seinem Kernfall gescheitert: Auf einem frischen '
+        'Ziel-Pi fehlte das Backup-Verzeichnis, der Upload brach ab — nachdem '
+        'die Dienste dort schon installiert waren. Behoben.',
+    'Die Stack-Verdrahtung sagt jetzt die Wahrheit: Wird eine Hälfte '
+        'übersprungen (evcc im Docker, kein Grafana), steht da „nur teilweise '
+        'verdrahtet" statt eines grünen Hakens über einem leeren Dashboard. '
+        'Und ein evcc ohne systemd-Dienst wird als solches erkannt, statt als '
+        '„Konfiguration abgelehnt".',
+    'Container-Updates laufen jetzt im normalen Ablauf mit Fortschritt, '
+        'Abbrechen und Hintergrund-Absicherung — vorher konnte Android die App '
+        'mitten im Neuanlegen einfrieren. Außerdem behält ein neu angelegter '
+        'Container jetzt Kommando, Benutzer und Hostname.',
+    'Der Sicherheits-Check meldet kein grünes „läuft" mehr, wenn '
+        'unattended-upgrades zwar installiert, aber abgeschaltet ist.',
+  ],
   '0.66.0': [
     'Das größte Update bisher — fünf neue Fähigkeiten auf einmal.',
     'Monitoring auf Knopfdruck: Die Grafana-Karte verdrahtet den Stack jetzt '

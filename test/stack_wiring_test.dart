@@ -54,6 +54,52 @@ void main() {
       expect(s, contains('[ -d /etc/grafana ]'));
       expect(s, contains('[ -f /etc/evcc.yaml ]'));
     });
+
+    // --- audit 2026-08-15: honesty of the final verdict ---------------------
+
+    test('a skipped half ends in WIRE_PARTIAL, never in a plain WIRE_OK', () {
+      // Both halves must be wired for WIRE_OK; the flags decide.
+      expect(s, contains('evcc_wired=0'));
+      expect(s, contains('grafana_wired=0'));
+      expect(s, contains('WIRE_PARTIAL'));
+      expect(s, contains(r'if [ "$evcc_wired" = "1" ] && [ "$grafana_wired" = "1" ]'));
+      // WIRE_OK must sit INSIDE that condition, not at the tail.
+      expect(s.indexOf(r'if [ "$evcc_wired"'), lessThan(s.lastIndexOf('WIRE_OK')));
+    });
+
+    test('an evcc without a systemd unit is named as such, not as "rejected"',
+        () {
+      // Docker-evcc with a mounted /etc/evcc.yaml used to run into the restart
+      // error and be reported as "evcc akzeptiert die Aenderung nicht".
+      expect(s, contains('systemctl cat evcc'));
+      expect(s.indexOf('systemctl cat evcc'),
+          lessThan(s.indexOf('systemctl restart evcc')));
+    });
+
+    test('no backup, no change: a failed cp aborts before touching evcc.yaml',
+        () {
+      expect(s, contains(r'if ! cp /etc/evcc.yaml "$bak"'));
+      expect(s.indexOf(r'if ! cp /etc/evcc.yaml "$bak"'),
+          lessThan(s.indexOf('>> /etc/evcc.yaml')));
+    });
+
+    test('waits before believing systemctl is-active (Restart=always masks a '
+        'crash loop)', () {
+      expect(s, contains('sleep 5'));
+      expect(s.indexOf('sleep 5'),
+          lessThan(s.indexOf(r'if [ "$(systemctl is-active evcc)" = "active" ]')));
+    });
+
+    test('a missing trailing newline cannot glue the block onto the last line',
+        () {
+      expect(s, contains('tail -c 1 /etc/evcc.yaml'));
+    });
+
+    test('grafana writes and the restart are checked, not assumed', () {
+      expect(s, contains('Konnte die Grafana-Datenquelle nicht schreiben'));
+      expect(s, contains('if ! systemctl restart grafana-server'));
+      expect(s, contains('[ ! -s /var/lib/grafana/dashboards/pitool-evcc.json ]'));
+    });
   });
 
   group('grafanaEvccDashboardJson', () {

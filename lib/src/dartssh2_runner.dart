@@ -21,7 +21,12 @@ class Dartssh2Runner implements SshRunner {
   /// SHA256 fingerprint before trusting it. Returns true to trust + proceed,
   /// false to abort (no password is sent). When null, first use is trusted
   /// automatically (legacy TOFU / tests).
-  final Future<bool> Function(String fingerprint)? confirmFirstUse;
+  ///
+  /// [host] is the host actually being verified — NOT necessarily the one in
+  /// the connection form: the migration helper and the "Alle Pis" overview
+  /// connect to other profiles, and the dialog used to name the wrong Pi above
+  /// a foreign fingerprint (audit 2026-08-15).
+  final Future<bool> Function(String host, String fingerprint)? confirmFirstUse;
 
   SSHClient? _client;
   SSHSocket? _socket;
@@ -49,7 +54,7 @@ class Dartssh2Runner implements SshRunner {
     switch (verifyHostKey(stored: stored, presented: presented)) {
       case HostKeyVerdict.firstUse:
         if (confirmFirstUse != null) {
-          final trust = await confirmFirstUse!(presented);
+          final trust = await confirmFirstUse!(config.host, presented);
           if (!trust) {
             _firstUseDeclined = true;
             return false; // abort the handshake — never trust or send a password

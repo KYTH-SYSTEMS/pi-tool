@@ -95,6 +95,35 @@ __SEC_PORTS__
     });
   });
 
+  group('automatic updates: unit vs. APT::Periodic', () {
+    SecurityFinding updatesOf(String out) => parseSecurityReport(out)
+        .firstWhere((f) => f.title.contains('Sicherheitsupdates'));
+
+    test('enabled unit + Periodic "0" is a warning, not green', () {
+      // Audit 2026-08-15: the unit is the shutdown helper and is enabled by
+      // the package — it proves nothing about updates actually being installed.
+      const out = '__SEC_UNATT__\nenabled\nactive\n'
+          'APT::Periodic::Unattended-Upgrade "0";\n';
+      final f = updatesOf(out);
+      expect(f.level, SecurityLevel.warn);
+      expect(f.detail, contains('abgeschaltet'));
+      expect(securityFixFor(f), SecurityFix.autoUpdates); // and it is fixable
+    });
+
+    test('enabled unit + Periodic "1" stays green', () {
+      const out = '__SEC_UNATT__\nenabled\nactive\n'
+          'APT::Periodic::Unattended-Upgrade "1";\n';
+      expect(updatesOf(out).level, SecurityLevel.ok);
+    });
+
+    test('an unreadable Periodic value does not turn a healthy Pi red', () {
+      // apt-config missing/silent: keep the previous verdict (default is "1"
+      // right after installing the package).
+      const out = '__SEC_UNATT__\nenabled\nactive\n';
+      expect(updatesOf(out).level, SecurityLevel.ok);
+    });
+  });
+
   group('securityFixFor', () {
     test('warn findings map to their fix', () {
       expect(

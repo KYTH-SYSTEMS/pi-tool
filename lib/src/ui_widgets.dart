@@ -597,9 +597,10 @@ class _DockerSheet extends StatefulWidget {
   final Future<void> Function(String name) onRestart;
   final Future<void> Function(String name) onLogs;
 
-  /// Update this container (image pull + recreate / compose). The callback
-  /// owns confirm + error display; the sheet only reloads afterwards.
-  final Future<void> Function(String name) onUpdate;
+  /// Hand this container to the caller for updating. The sheet CLOSES on it
+  /// (the caller pops with the name): a pull+recreate runs for minutes and
+  /// belongs in the app's normal busy/cancel/keep-alive path, not in a sheet.
+  final void Function(String name) onUpdate;
 
   @override
   State<_DockerSheet> createState() => _DockerSheetState();
@@ -667,6 +668,7 @@ class _DockerSheetState extends State<_DockerSheet> {
                     itemBuilder: (_, i) {
                       final c = _list[i];
                       final running = c.state == 'running';
+                      final rollback = c.name.endsWith('-evccpitool-old');
                       return ListTile(
                         leading: Icon(Icons.circle,
                             size: 12,
@@ -684,20 +686,22 @@ class _DockerSheetState extends State<_DockerSheet> {
                             } else if (v == 'logs') {
                               _run(() => widget.onLogs(c.name));
                             } else if (v == 'update') {
-                              _run(() => widget.onUpdate(c.name))
-                                  .then((_) => _reload());
+                              widget.onUpdate(c.name); // closes the sheet
                             }
                           },
                           itemBuilder: (_) => [
                             // Our own rollback containers are the safety net of
-                            // the LAST update — never offered for updating.
-                            if (!c.name.endsWith('-evccpitool-old'))
+                            // the LAST update: updating one is refused anyway,
+                            // and STARTING one would run a stale duplicate of a
+                            // service that is already up. Only logs make sense.
+                            if (!rollback) ...[
                               PopupMenuItem(
                                   value: 'update',
                                   child: Text(context.l10n.actionUpdate)),
-                            PopupMenuItem(
-                                value: 'restart',
-                                child: Text(context.l10n.actionRestart)),
+                              PopupMenuItem(
+                                  value: 'restart',
+                                  child: Text(context.l10n.actionRestart)),
+                            ],
                             PopupMenuItem(
                                 value: 'logs',
                                 child: Text(context.l10n.wLogs)),

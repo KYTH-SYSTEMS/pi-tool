@@ -360,7 +360,52 @@ String buildDockerRunCommand(Map<String, dynamic> container, {String? image}) {
     args.addAll(['--network', shSingleQuote(networkMode)]);
   }
 
+  // --- identity/runtime settings that are NOT re-supplied by the image ------
+  // Dropping these used to silently change behaviour on recreate and still
+  // report success (audit 2026-08-15): a container running as root instead of
+  // its user, without its hostname, or on the image's default command.
+  final user = (config['User'] ?? '').toString();
+  if (user.isNotEmpty) args.addAll(['--user', shSingleQuote(user)]);
+
+  // Only a hostname the user set: Docker defaults it to the container id.
+  final hostname = (config['Hostname'] ?? '').toString();
+  final cid = (container['Id'] ?? '').toString();
+  if (hostname.isNotEmpty && !cid.startsWith(hostname)) {
+    args.addAll(['--hostname', shSingleQuote(hostname)]);
+  }
+
+  final extraHosts = host['ExtraHosts'];
+  if (extraHosts is List) {
+    for (final h in extraHosts) {
+      final s = h.toString();
+      if (s.isNotEmpty) args.addAll(['--add-host', shSingleQuote(s)]);
+    }
+  }
+
+  // A user-set entrypoint overrides the image's; only ONE token is expressible
+  // as --entrypoint, so a multi-token override goes back as entrypoint + args
+  // (the remainder is appended after the image, where docker treats it as the
+  // command — same effective invocation).
+  final entrypoint = config['Entrypoint'];
+  final entryList = (entrypoint is List)
+      ? entrypoint.map((e) => e.toString()).toList()
+      : <String>[];
+  if (entryList.isNotEmpty) {
+    args.addAll(['--entrypoint', shSingleQuote(entryList.first)]);
+  }
+
   args.add(shSingleQuote(img));
+
+  // Entrypoint remainder first, then Cmd — the order docker itself uses.
+  for (final e in entryList.skip(1)) {
+    args.add(shSingleQuote(e));
+  }
+  final cmd = config['Cmd'];
+  if (cmd is List) {
+    for (final c in cmd) {
+      args.add(shSingleQuote(c.toString()));
+    }
+  }
   return args.join(' ');
 }
 

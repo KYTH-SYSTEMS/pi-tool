@@ -52,6 +52,12 @@ String buildUploadScript({required String path, required String base64Content}) 
   final q = shSingleQuote(path);
   return 'set -e\n'
       'dir=\$(dirname $q)\n'
+      // The directory may legitimately not exist yet: the migration helper
+      // uploads backups to /var/backups/… on a TARGET Pi that has never been
+      // backed up (those dirs are created by the backup scripts, which run on
+      // the source). Without this, mktemp fails and the whole migration dies
+      // after the target was already installed. No-op for the file browser.
+      'mkdir -p "\$dir"\n'
       'tmp=\$(mktemp "\$dir/.pitool-up.XXXXXX")\n'
       'printf %s ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"\n'
       'chmod 644 "\$tmp"\n'

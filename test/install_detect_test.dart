@@ -193,6 +193,74 @@ void main() {
     test('drops pure image-default env vars like PATH', () {
       expect(buildDockerRunCommand(evccInspect), isNot(contains('PATH=')));
     });
+
+    // --- audit 2026-08-15: identity/runtime settings the image does NOT
+    // re-supply. Dropping them silently changed behaviour on recreate.
+    test('preserves user, hostname, extra hosts and the command', () {
+      final cmd = buildDockerRunCommand({
+        'Name': '/app',
+        'Id': 'deadbeefcafe',
+        'Config': {
+          'Image': 'nginx:latest',
+          'User': '1000:1000',
+          'Hostname': 'my-app',
+          'Cmd': ['nginx', '-g', 'daemon off;'],
+          'Labels': <String, dynamic>{},
+        },
+        'HostConfig': {
+          'ExtraHosts': ['db:10.0.0.5'],
+        },
+      });
+      expect(cmd, contains("--user '1000:1000'"));
+      expect(cmd, contains("--hostname 'my-app'"));
+      expect(cmd, contains("--add-host 'db:10.0.0.5'"));
+      // Command comes AFTER the image, like docker itself expects.
+      expect(cmd.indexOf("'nginx:latest'"), lessThan(cmd.indexOf("'-g'")));
+      expect(cmd, endsWith(r"'nginx' '-g' 'daemon off;'"));
+    });
+
+    test('a docker-generated hostname (= container id prefix) is not re-passed',
+        () {
+      final cmd = buildDockerRunCommand({
+        'Name': '/app',
+        'Id': 'abc123def456',
+        'Config': {'Image': 'nginx', 'Hostname': 'abc123def456'.substring(0, 12)},
+        'HostConfig': <String, dynamic>{},
+      });
+      expect(cmd, isNot(contains('--hostname')));
+    });
+
+    test('a custom entrypoint survives, remainder lands after the image', () {
+      final cmd = buildDockerRunCommand({
+        'Name': '/app',
+        'Config': {
+          'Image': 'busybox',
+          'Entrypoint': ['/bin/sh', '-c'],
+          'Cmd': ['echo hi'],
+        },
+        'HostConfig': <String, dynamic>{},
+      });
+      expect(cmd, contains("--entrypoint '/bin/sh'"));
+      expect(cmd, endsWith(r"'busybox' '-c' 'echo hi'"));
+    });
+
+    test('hostile values in the new fields cannot break out', () {
+      final cmd = buildDockerRunCommand({
+        'Name': '/app',
+        'Config': {
+          'Image': 'x',
+          'User': "root';reboot;'",
+          'Cmd': ["a';reboot;'"],
+        },
+        'HostConfig': {
+          'ExtraHosts': ["h';reboot;'"],
+        },
+      });
+      expect(cmd, contains(r"'\''")); // escaped, not left to close the quote
+      expect(cmd, isNot(contains("root';reboot")));
+      expect(cmd, isNot(contains("a';reboot")));
+      expect(cmd, isNot(contains("h';reboot")));
+    });
     test('lets the image be overridden with a new tag', () {
       expect(buildDockerRunCommand(evccInspect, image: 'evcc/evcc:0.999'),
           endsWith("'evcc/evcc:0.999'"));

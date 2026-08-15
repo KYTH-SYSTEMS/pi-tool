@@ -22,6 +22,10 @@ sshd -T 2>/dev/null | grep -iE '^(permitrootlogin|passwordauthentication) ' || g
 echo __SEC_UNATT__
 systemctl is-enabled unattended-upgrades 2>/dev/null || true
 systemctl is-active unattended-upgrades 2>/dev/null || true
+# The unit alone proves nothing: it is the shutdown helper and is enabled by
+# the package. What actually gates the daily run is APT::Periodic, so read the
+# EFFECTIVE value (apt-config folds in every apt.conf.d snippet).
+apt-config dump APT::Periodic::Unattended-Upgrade 2>/dev/null | head -1 || true
 echo __SEC_F2B__
 systemctl is-active fail2ban 2>/dev/null || true
 echo __SEC_PORTS__
@@ -207,11 +211,26 @@ List<SecurityFinding> parseSecurityReport(String output) {
       detail: 'Konnte nicht ermittelt werden.'
     );
   } else if (unatt.contains('enabled') && unatt.contains('active')) {
-    updates = (
-      title: 'Automatische Sicherheitsupdates',
-      level: SecurityLevel.ok,
-      detail: 'unattended-upgrades läuft.'
-    );
+    // APT::Periodic::Unattended-Upgrade "0" means the package is installed and
+    // the unit enabled, but nothing is ever installed automatically. Only the
+    // explicit "0" downgrades the verdict — an unreadable value must not turn
+    // a healthy Pi red (fail-safe in the other direction than usual, because
+    // the default on Debian/Raspberry Pi OS after install is "1").
+    final periodicOff = unatt.any((l) =>
+        l.contains('apt::periodic::unattended-upgrade') && l.contains('"0"'));
+    updates = periodicOff
+        ? (
+            title: 'Automatische Sicherheitsupdates',
+            level: SecurityLevel.warn,
+            detail: 'unattended-upgrades ist installiert, aber abgeschaltet '
+                '(APT::Periodic::Unattended-Upgrade "0") — es wird nichts '
+                'automatisch installiert.'
+          )
+        : (
+            title: 'Automatische Sicherheitsupdates',
+            level: SecurityLevel.ok,
+            detail: 'unattended-upgrades läuft.'
+          );
   } else {
     updates = (
       title: 'Automatische Sicherheitsupdates',

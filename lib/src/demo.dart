@@ -80,6 +80,12 @@ String demoResponseFor(String command) {
   // 4. Terminal tab (free-form console, wrapped by buildConsoleExec).
   if (c.contains('| head -c 262144')) return _terminalResponse(c);
 
+  // 5. Security check. Without this the sheet showed five "Konnte nicht
+  //    ermittelt werden." rows under a green "Keine Warnungen" headline
+  //    (audit 2026-08-15). The demo Pi is realistic, not perfect: root login
+  //    off, but no automatic updates → one honest warning with a Fix button.
+  if (c.contains('__SEC_SSHD__')) return _securityReport;
+
   // 5. Benign default: succeed quietly. NEVER emit a sudo-failure token
   //    ("incorrect password"/"sorry, try again") — that would trip
   //    isSudoPasswordFailure and surface a fake auth error.
@@ -136,6 +142,23 @@ const String _detectDoc = '$_m'
     '     [✓] Blocking is enabled\n';
 
 /// Canned `ls -1Ap` listing (dirs end with `/`), parsed by `parseDirListing`.
+/// Canned output of [buildSecurityProbe] for the demo Pi: hardened SSH, but
+/// automatic updates off and no fail2ban — so the traffic light shows what it
+/// is for, including a working "Beheben" button.
+const String _securityReport = '__SEC_SSHD__\n'
+    'permitrootlogin no\n'
+    'passwordauthentication yes\n'
+    '__SEC_UNATT__\n'
+    'disabled\n'
+    'inactive\n'
+    '__SEC_F2B__\n'
+    'inactive\n'
+    '__SEC_PORTS__\n'
+    '0.0.0.0:22\n'
+    '0.0.0.0:53\n'
+    '0.0.0.0:80\n'
+    '0.0.0.0:7070\n';
+
 const String _dirListing = 'backups/\n'
     'logs/\n'
     'evcc.yaml\n'

@@ -44,10 +44,12 @@ void main() {
         () async {
       final store = FakeHostKeyStore();
       var shown = '';
+      var shownHost = '';
       final runner = Dartssh2Runner(_config,
           hostKeyStore: store,
-          confirmFirstUse: (fp) async {
+          confirmFirstUse: (h, fp) async {
             shown = fp;
+            shownHost = h;
             return true;
           });
 
@@ -55,6 +57,9 @@ void main() {
 
       expect(accepted, isTrue);
       expect(shown, 'SHA256:new'); // fingerprint surfaced to the user
+      // The host being verified travels with it — otherwise the dialog names
+      // whatever sits in the connection form (audit 2026-08-15).
+      expect(shownHost, _config.host);
       expect(store.data[id], 'SHA256:new');
       expect(runner.firstUseDeclined, isFalse);
     });
@@ -63,7 +68,7 @@ void main() {
         () async {
       final store = FakeHostKeyStore();
       final runner = Dartssh2Runner(_config,
-          hostKeyStore: store, confirmFirstUse: (_) async => false);
+          hostKeyStore: store, confirmFirstUse: (_, _) async => false);
 
       final accepted = await runner.checkAndRecordHostKey(_fp('SHA256:new'));
 

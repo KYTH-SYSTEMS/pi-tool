@@ -17,6 +17,7 @@ import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/pi_connect.dart';
 import 'package:evcc_updater/src/services/pihole_service.dart';
+import 'package:evcc_updater/src/services/stack_wiring.dart';
 import 'package:evcc_updater/src/services/system_service.dart';
 import 'package:evcc_updater/src/services/tailscale.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
@@ -1520,6 +1521,32 @@ void main() {
         throwsA(isA<EvccUpdateException>()),
       );
     });
+
+    test('WIRE_PARTIAL is reported as partial, not as success', () async {
+      // Skipped half (Docker-evcc or no Grafana) — must not read green.
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [
+          _r('Kein /etc/evcc.yaml gefunden (Docker-evcc?)\n'
+              'Grafana: Datenquelle + Dashboard eingerichtet.\n'
+              'Teilweise verdrahtet: evcc=0 grafana=1\nWIRE_PARTIAL\n')
+        ],
+      });
+      final outcome = await _updaterWith(runner)
+          .wireMonitoringStack(config: _config, onLog: (_) {});
+      expect(outcome, StackWiringOutcome.partial);
+    });
+
+    test('WIRE_OK is the full success', () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('alles gut\nWIRE_OK\n')],
+      });
+      expect(
+          await _updaterWith(runner)
+              .wireMonitoringStack(config: _config, onLog: (_) {}),
+          StackWiringOutcome.wired);
+    });
   });
 
   group('EvccUpdater.fixSecurity', () {
@@ -2419,6 +2446,52 @@ void main() {
             config: _config, name: 'web', onLog: (_) {}),
         throwsA(isA<EvccUpdateException>().having(
             (e) => e.kind, 'kind', UpdateErrorKind.serviceInactive)),
+      );
+    });
+
+    test('compose rename (empty probe) is a hint, not a false failure',
+        () async {
+      // compose v1 -> v2 renames proj_svc_1 to proj-svc-1; the probe then
+      // finds nothing, which used to be reported as "läuft nicht".
+      final composeInspect = jsonEncode([
+        {
+          'Name': '/proj_web_1',
+          'Config': {
+            'Image': 'nginx:latest',
+            'Labels': {
+              'com.docker.compose.project.working_dir': '/srv/proj',
+              'com.docker.compose.project.config_files':
+                  '/srv/proj/docker-compose.yml',
+              'com.docker.compose.service': 'web',
+              'com.docker.compose.project': 'proj',
+            },
+          },
+          'HostConfig': <String, dynamic>{},
+        }
+      ]);
+      final runner = FakeSshRunner({
+        dockerInspectJsonSudoCommand('proj_web_1'): [_r(composeInspect)],
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('done')],
+        buildDockerRunningProbe('proj_web_1'): [_r('')], // gone under this name
+      });
+      final logs = <String>[];
+      await _updaterWith(runner).updateDockerContainer(
+          config: _config, name: 'proj_web_1', onLog: logs.add);
+      expect(logs.join('\n'), contains('nicht mehr zu finden'));
+    });
+
+    test('a container that exists but is dead is still a failure', () async {
+      final runner = FakeSshRunner({
+        dockerInspectJsonSudoCommand('web'): [_r(plainInspect('web'))],
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        installShellCommand: [_r('done')],
+        buildDockerRunningProbe('web'): [_r('false\n')],
+      });
+      await expectLater(
+        _updaterWith(runner).updateDockerContainer(
+            config: _config, name: 'web', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
       );
     });
 

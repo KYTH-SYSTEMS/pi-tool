@@ -921,11 +921,20 @@
   },
   "dialogUpdateContainerBody": "Pulls the new image and recreates the container; compose-managed containers are updated via docker compose. The old container is kept as a rollback. Experimental — data in volumes stays untouched.",
   "statusContainerUpdated": "Container updated and running.",
+  "busyUpdatingContainer": "Updating container \"{name}\" …",
+  "@busyUpdatingContainer": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "actionWireStack": "Wire up with evcc (dashboard)",
   "dialogWireStackTitle": "Wire up the monitoring stack?",
   "dialogWireStackBody": "Sets up InfluxDB (org pi-tool, bucket evcc), creates an access token on the Pi, adds InfluxDB to evcc.yaml (backed up; rolled back automatically if evcc rejects it) and provisions Grafana with the datasource plus a ready-made evcc dashboard. evcc and Grafana restart once. Experimental.",
   "busyWiringStack": "Wiring up the monitoring stack …",
   "statusStackWired": "Stack wired — the \"evcc\" dashboard is waiting in Grafana.",
+  "statusStackPartial": "Only partly wired — see the log (Terminal tab) for what was skipped.",
   "actionMigratePi": "Move to another Pi",
   "migrateTargetTitle": "Choose the target Pi",
   "snackMigrationNeedsTarget": "This needs a second Pi profile (with a host) — create it first.",

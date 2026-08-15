@@ -192,6 +192,18 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   Bucket, alle fünf Panel-Measurements (gridPower/pvPower/homePower/
   chargePower/batterySoc) existieren in evccs echtem Schema, Grafana 13
   lädt das Provisioning fehlerfrei. Das Token tauchte in keiner Ausgabe auf.
+  **Ehrlichkeits-Invariante (v0.66.2, aus dem Audit):** Das Skript läuft
+  bewusst OHNE `set -e`, deshalb endet jede Schreib-/Restart-Stelle explizit
+  (`WIRE_FAIL; exit 1`). Am Ende entscheiden `evcc_wired`/`grafana_wired`
+  zwischen **`WIRE_OK`** (beide Hälften) und **`WIRE_PARTIAL`** (eine bewusst
+  übersprungen — Docker-evcc ohne `/etc/evcc.yaml`, kein Grafana).
+  `wireMonitoringStack` gibt entsprechend `StackWiringOutcome.wired|partial`
+  zurück, die UI meldet Teilerfolg **amber statt grün** — sonst stünde ein
+  grünes „verdrahtet" über einem dauerhaft leeren Dashboard. Ebenfalls dort:
+  Docker-evcc wird an `systemctl cat evcc` erkannt (früher als „Konfiguration
+  abgelehnt" fehlgedeutet), ohne gelungenes Backup wird die `evcc.yaml` gar
+  nicht angefasst, und nach dem Restart wird 5 s gewartet, weil
+  `Restart=always` einen Absturz sonst als „active" maskiert.
 - **Umzugshelfer** (v0.66.0, `_migrateToOtherPi` in main.dart — reine
   Orchestrierung vorhandener Bausteine, kein neues Skript): frische Backups
   auf dem Quell-Pi (`backup` + `backupPihole`) → `downloadFile` aufs Handy →
@@ -359,7 +371,16 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Digest-Pin-Ablehnung + `dockerRunRecreateScript` (Rollback-Netz) — und prüft
   danach via `buildDockerRunningProbe` (`{{.State.Running}}`), dass wirklich
   etwas läuft. Eigene `-evccpitool-old`-Rollback-Container werden verweigert
-  (und im Sheet-Menü gar nicht erst angeboten).
+  (und im Sheet-Menü gar nicht erst angeboten — dort fehlt seit v0.66.2 auch
+  „Neu starten", das nur ein veraltetes Duplikat hochgefahren hätte). **Das
+  Update läuft NICHT im Sheet:** das Sheet schließt sich und gibt den Namen
+  zurück, die eigentliche Arbeit läuft in `_updateContainer` durch `_guard`
+  (Running-Bar, Abbrechen, Keep-Alive) — ein Pull+Recreate dauert Minuten, und
+  ohne Vordergrunddienst kann Android die App mitten im Recreate einfrieren
+  (Audit 2026-08-15). `buildDockerRunCommand` überträgt seit v0.66.2 auch
+  `User`, `Hostname` (nur wenn nicht die Container-ID), `ExtraHosts`,
+  `Entrypoint` und `Cmd` — fehlten sie, lief der Container danach still mit
+  anderem Kommando oder als root weiter, gemeldet als Erfolg.
 - **`storage_explorer.dart`** — „Was frisst meinen Platz?". `buildStorageProbe`
   = sudo `du -x -b -d1` (Unterordner) + `find -maxdepth 1 -type f` (Dateien) in
   Markern; `parseStorageBreakdown` → nach Größe sortierte `DiskEntry`s (Query-

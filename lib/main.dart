@@ -44,6 +44,7 @@ import 'src/secure_screen.dart';
 import 'src/services/apt_services.dart';
 import 'src/services/pi_service.dart';
 import 'src/services/service_links.dart';
+import 'src/services/stack_wiring.dart';
 import 'src/services/tailscale.dart';
 import 'src/session.dart';
 import 'src/settings_store.dart';
@@ -1774,45 +1775,21 @@ class _UpdaterPageState extends State<UpdaterPage>
           await _updater.dockerContainers(config: config, onLog: _appendLog);
     }, backgroundMessage: context.l10n.busyReadingDockerContainers);
     if (!mounted || list == null) return;
-    await showModalBottomSheet<void>(
+    // An update takes minutes (image pull + recreate), so it must NOT run
+    // inside the sheet: it closes and the work goes through _guard like every
+    // other long action — running bar, Abbrechen, and the keep-alive service
+    // that stops Android from freezing us mid-recreate (audit 2026-08-15).
+    final toUpdate = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (_) => _DockerSheet(
+      builder: (ctx) => _DockerSheet(
         initial: list!,
         refresh: () =>
             _updater.dockerContainers(config: config, onLog: (_) {}),
         onRestart: (name) => _updater.restartDockerContainer(
             config: config, name: name, onLog: _appendLog),
-        onUpdate: (name) async {
-          if (!await _confirm(context.l10n.dialogUpdateContainerTitle(name),
-              context.l10n.dialogUpdateContainerBody)) {
-            return;
-          }
-          try {
-            await _updater.updateDockerContainer(
-                config: config, name: name, onLog: _appendLog);
-            if (!mounted) return;
-            _addHistory('${context.l10n.statusContainerUpdated} ($name)');
-          } on EvccUpdateException catch (e) {
-            // A dialog, not a snack: snacks render underneath the open sheet.
-            if (!mounted) return;
-            await showDialog<void>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: Text(context.l10n.dialogUpdateContainerTitle(name)),
-                content: Text(e.message),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: Text(
-                        MaterialLocalizations.of(ctx).okButtonLabel),
-                  ),
-                ],
-              ),
-            );
-          }
-        },
+        onUpdate: (name) => Navigator.pop(ctx, name),
         onLogs: (name) async {
           final logs = await _updater.fetchDockerLogs(
               config: config, name: name, onLog: (_) {});
@@ -1831,6 +1808,33 @@ class _UpdaterPageState extends State<UpdaterPage>
         },
       ),
     );
+    if (toUpdate == null || !mounted) return;
+    if (!await _confirm(context.l10n.dialogUpdateContainerTitle(toUpdate),
+        context.l10n.dialogUpdateContainerBody)) {
+      return;
+    }
+    await _updateContainer(toUpdate);
+  }
+
+  /// Updates one container from the Docker overview — house pattern, so the
+  /// minutes-long pull/recreate keeps the app alive, stays cancellable and
+  /// surfaces connection failures like every other action.
+  Future<void> _updateContainer(String name) async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _updateContainer(name);
+    final busyMsg = context.l10n.busyUpdatingContainer(name);
+    await _guard(() async {
+      await _updater.updateDockerContainer(
+          config: config, name: name, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = context.l10n.statusContainerUpdated;
+        _statusOk = true;
+      });
+      _addHistory('${context.l10n.statusContainerUpdated} ($name)');
+    }, backgroundMessage: busyMsg);
   }
 
   Future<void> _storageExplorer() async {
@@ -1973,6 +1977,11 @@ class _UpdaterPageState extends State<UpdaterPage>
       }
       // -- Target: take stock, install what's missing, restore. --
       _appendLog('— Ziel-Pi „${target.name}" (${target.host}) —');
+      // From here on the TARGET is the Pi at risk of a host-key problem (a
+      // re-flashed Pi is exactly this feature's scenario). Without this,
+      // "vertrauen und wiederholen" would drop the SOURCE Pi's trusted key —
+      // the wrong machine — and the retry could never succeed (audit).
+      _lastConfig = targetCfg;
       final targetServices = await _updater.detectServices(
           config: targetCfg, onLog: _appendLog);
       if (srcEvcc) {
@@ -2025,13 +2034,21 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastAction = _wireStack;
     final busyMsg = context.l10n.busyWiringStack;
     await _guard(() async {
-      await _updater.wireMonitoringStack(config: config, onLog: _appendLog);
+      final outcome =
+          await _updater.wireMonitoringStack(config: config, onLog: _appendLog);
       if (!mounted) return;
+      // A partial run is NOT a success: it means a half was skipped (Docker-
+      // evcc, or no Grafana), which would otherwise show green over an empty
+      // dashboard. The amber status sends the user to the log.
+      final wired = outcome == StackWiringOutcome.wired;
+      final msg = wired
+          ? context.l10n.statusStackWired
+          : context.l10n.statusStackPartial;
       setState(() {
-        _statusMessage = context.l10n.statusStackWired;
-        _statusOk = true;
+        _statusMessage = msg;
+        _statusOk = wired;
       });
-      _addHistory(context.l10n.statusStackWired);
+      _addHistory(msg);
     }, backgroundMessage: busyMsg);
   }
 
@@ -3845,8 +3862,12 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Shown on the FIRST connection to a host: display the presented SSH
   /// fingerprint and let the user confirm before it is trusted (TOFU). Returns
   /// false (abort, no password sent) if declined or the UI is gone.
-  Future<bool> _confirmFirstHostKey(String fingerprint) async {
+  /// [host] is the Pi actually being verified — the migration helper and the
+  /// multi-Pi overview connect to OTHER profiles, so reading the connection
+  /// form here would name the wrong machine above a foreign fingerprint.
+  Future<bool> _confirmFirstHostKey(String host, String fingerprint) async {
     if (!mounted) return false;
+    final shown = host.trim().isEmpty ? _host.text.trim() : host.trim();
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -3856,7 +3877,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(ctx.l10n.dialogTrustPiBody(_host.text.trim())),
+            Text(ctx.l10n.dialogTrustPiBody(shown)),
             const SizedBox(height: 10),
             SelectableText(
               fingerprint,

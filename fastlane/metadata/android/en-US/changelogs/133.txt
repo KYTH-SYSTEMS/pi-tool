@@ -1,0 +1,6 @@
+Self-audit of the big update — fixed before anyone hits it:
+
+• Migration helper: on a fresh target Pi the upload aborted (missing directory), so the feature would have failed at its core case.
+• Stack wiring reports a partial result honestly instead of green over an empty dashboard; an evcc in Docker is recognized.
+• Container update: with progress, cancel and background protection; command, user and hostname are preserved.
+• Security check: no false green when automatic updates are off.

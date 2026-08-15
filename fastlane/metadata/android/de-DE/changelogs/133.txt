@@ -1,0 +1,6 @@
+Selbstprüfung des großen Updates — behoben, bevor es jemand findet:
+
+• Umzugshelfer: Auf einem frischen Ziel-Pi brach der Upload ab (fehlendes Verzeichnis). Damit wäre der Umzug in seinem Kernfall gescheitert.
+• Stack-Verdrahtung meldet Teilerfolg ehrlich statt Grün über leerem Dashboard; evcc im Docker wird erkannt.
+• Container-Update: mit Fortschritt und Abbrechen; Kommando, Benutzer und Hostname bleiben erhalten.
+• Sicherheits-Check: kein falsches Grün bei abgeschalteten Auto-Updates.

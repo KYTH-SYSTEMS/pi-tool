@@ -51,6 +51,17 @@ void main() {
       expect(s, contains('UPLOAD_OK')); // success marker the caller verifies
     });
 
+    test('upload: creates the target dir before mktemp (migration to a new Pi)',
+        () {
+      // Found by audit 2026-08-15: on a target Pi that was never backed up,
+      // /var/backups/evcc does not exist, mktemp fails, set -e kills the
+      // script and the whole migration dies AFTER installing on the target.
+      final s = buildUploadScript(
+          path: '/var/backups/evcc/evcc-backup-1.tar.gz', base64Content: 'aGk=');
+      expect(s, contains('mkdir -p "\$dir"'));
+      expect(s.indexOf('mkdir -p'), lessThan(s.indexOf('mktemp')));
+    });
+
     test('upload: hostile path + content are single-quoted (no injection)', () {
       final s = buildUploadScript(
           path: "/x';reboot;'", base64Content: "YQ==';reboot;'");

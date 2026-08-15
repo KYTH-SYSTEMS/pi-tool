@@ -27,6 +27,12 @@ import 'dart:convert';
 const String stackOrg = 'pi-tool';
 const String stackBucket = 'evcc';
 
+/// How much of the stack actually got wired. [partial] exists because the
+/// script legitimately skips halves (Docker-evcc without /etc/evcc.yaml,
+/// Grafana not installed) — reporting that as full success would leave the
+/// user with a green status over a permanently empty dashboard.
+enum StackWiringOutcome { wired, partial }
+
 String _fluxQuery(String measurement) => 'from(bucket: "evcc")\n'
     '  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n'
     '  |> filter(fn: (r) => r._measurement == "$measurement")\n'
@@ -137,6 +143,10 @@ if [ ! -f /root/.influxdbv2/configs ]; then
   pw=\$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
   if influx setup -f -u pitool -p "\$pw" -o pi-tool -b evcc -n pitool >/dev/null 2>&1; then
     echo "InfluxDB eingerichtet (Org pi-tool, Bucket evcc)."
+    # Das Admin-Passwort wird bewusst NICHT ausgegeben (es duerfte sonst im Log
+    # landen). Damit die InfluxDB-Weboberflaeche keine stumme Sackgasse ist,
+    # nennen wir stattdessen den Weg zu einem eigenen Passwort.
+    echo "Hinweis: Fuer die InfluxDB-Weboberflaeche (Benutzer 'pitool') auf dem Pi ein eigenes Passwort setzen: sudo influx user password -n pitool"
   else
     echo "InfluxDB wurde bereits von Hand eingerichtet - ohne zugaengliches Admin-Token kann Pi-Tool nicht verdrahten. Bitte Token/Datenquelle manuell anlegen."
     echo WIRE_FAIL; exit 1
@@ -160,14 +170,31 @@ fi
 echo "Zugriffs-Token erzeugt (bleibt auf dem Pi)."
 
 # --- evcc.yaml: influx-Block ergaenzen (mit Backup + Selbstheilung) ---------
+# evcc_wired bleibt 0, wenn evcc NICHT verdrahtet wurde - das entscheidet am
+# Ende ueber WIRE_OK vs. WIRE_PARTIAL. Ohne das meldete die App "verdrahtet"
+# ueber einem Pi, auf dem evcc nie etwas schreibt (Audit 2026-08-15).
+evcc_wired=0
 if [ -f /etc/evcc.yaml ]; then
-  if grep -q '^influx:' /etc/evcc.yaml; then
+  if ! systemctl cat evcc >/dev/null 2>&1; then
+    # Datei da, aber keine systemd-Unit: Docker-evcc mit gemountetem
+    # /etc/evcc.yaml oder ein "apt remove" ohne purge. Frueher lief das in den
+    # Restart-Fehler und log "evcc akzeptiert die Aenderung nicht" - falsch.
+    echo "evcc.yaml gefunden, aber kein systemd-Dienst evcc (Docker-evcc?) - bitte influx dort selbst eintragen (Org \$org, Bucket evcc)."
+  elif grep -q '^influx:' /etc/evcc.yaml; then
     echo "evcc.yaml hat schon einen influx-Block - bleibt unveraendert."
   else
     mkdir -p /var/backups/pi-tool
     bak="/var/backups/pi-tool/evcc.yaml.wire-\$(date +%Y%m%d-%H%M%S)"
-    cp /etc/evcc.yaml "\$bak"
-    {
+    # Ohne gelungenes Backup NICHT anfassen - sonst waere die versprochene
+    # Ruecknahme eine Luege (volle/nur-lesende SD-Karte).
+    if ! cp /etc/evcc.yaml "\$bak"; then
+      echo "Konnte kein Backup der evcc.yaml anlegen (Platte voll oder nur lesend?) - nichts geaendert."
+      echo WIRE_FAIL; exit 1
+    fi
+    # Fehlender abschliessender Zeilenumbruch wuerde den Block an die letzte
+    # Zeile kleben und die YAML zerstoeren.
+    [ -s /etc/evcc.yaml ] && [ "\$(tail -c 1 /etc/evcc.yaml | od -An -c | tr -d ' ')" != "\\n" ] && echo "" >> /etc/evcc.yaml
+    if ! {
       echo ""
       echo "# Von Pi-Tool ergaenzt (Monitoring-Stack):"
       echo "influx:"
@@ -175,9 +202,18 @@ if [ -f /etc/evcc.yaml ]; then
       echo "  database: evcc"
       echo "  org: \$org"
       echo "  token: \$tok"
-    } >> /etc/evcc.yaml
-    if systemctl restart evcc 2>/dev/null && [ "\$(systemctl is-active evcc)" = "active" ]; then
+    } >> /etc/evcc.yaml; then
+      cp "\$bak" /etc/evcc.yaml 2>/dev/null || true
+      echo "Konnte evcc.yaml nicht schreiben - nichts geaendert."
+      echo WIRE_FAIL; exit 1
+    fi
+    # Nach dem Restart kurz warten: bei Restart=always meldet is-active sofort
+    # "active", auch wenn evcc gleich wieder stirbt (falsche Konfiguration).
+    systemctl restart evcc 2>/dev/null || true
+    sleep 5
+    if [ "\$(systemctl is-active evcc)" = "active" ]; then
       echo "evcc schreibt jetzt nach InfluxDB."
+      evcc_wired=1
     else
       cp "\$bak" /etc/evcc.yaml
       systemctl restart evcc 2>/dev/null || true
@@ -190,8 +226,12 @@ else
 fi
 
 # --- Grafana: Datenquelle + Dashboard provisionieren ------------------------
+grafana_wired=0
 if [ -d /etc/grafana ]; then
-  mkdir -p /etc/grafana/provisioning/datasources /etc/grafana/provisioning/dashboards /var/lib/grafana/dashboards
+  if ! mkdir -p /etc/grafana/provisioning/datasources /etc/grafana/provisioning/dashboards /var/lib/grafana/dashboards; then
+    echo "Konnte die Grafana-Verzeichnisse nicht anlegen - Dashboard uebersprungen."
+    echo WIRE_FAIL; exit 1
+  fi
   ds=/etc/grafana/provisioning/datasources/pitool-influxdb.yaml
   {
     echo "apiVersion: 1"
@@ -207,7 +247,7 @@ if [ -d /etc/grafana ]; then
     echo "    defaultBucket: evcc"
     echo "  secureJsonData:"
     echo "    token: \$tok"
-  } > "\$ds"
+  } > "\$ds" || { echo "Konnte die Grafana-Datenquelle nicht schreiben."; echo WIRE_FAIL; exit 1; }
   chmod 640 "\$ds" 2>/dev/null || true
   chown root:grafana "\$ds" 2>/dev/null || true
   cat > /etc/grafana/provisioning/dashboards/pitool.yaml <<'WRAP'
@@ -224,12 +264,28 @@ $dashboard
 WRAP
   chown -R root:grafana /var/lib/grafana/dashboards 2>/dev/null || true
   chmod -R g+rX /var/lib/grafana/dashboards 2>/dev/null || true
-  systemctl restart grafana-server
+  # Ohne lesbares Dashboard-JSON waere die Erfolgsmeldung wertlos.
+  if [ ! -s /var/lib/grafana/dashboards/pitool-evcc.json ]; then
+    echo "Dashboard-Datei wurde nicht geschrieben (Platte voll oder nur lesend?)."
+    echo WIRE_FAIL; exit 1
+  fi
+  if ! systemctl restart grafana-server; then
+    echo "Grafana liess sich nicht neu starten - Dashboard erst nach einem Neustart sichtbar."
+    echo WIRE_FAIL; exit 1
+  fi
   echo "Grafana: Datenquelle + Dashboard 'evcc' eingerichtet."
+  grafana_wired=1
 else
   echo "Grafana nicht installiert - Dashboard uebersprungen."
 fi
 
-echo WIRE_OK
+# Nur wenn BEIDE Haelften stehen, ist der Stack wirklich verdrahtet. Sonst
+# meldet die App ehrlich Teilerfolg statt gruen ueber einem leeren Dashboard.
+if [ "\$evcc_wired" = "1" ] && [ "\$grafana_wired" = "1" ]; then
+  echo WIRE_OK
+else
+  echo "Teilweise verdrahtet: evcc=\$evcc_wired grafana=\$grafana_wired"
+  echo WIRE_PARTIAL
+fi
 ''';
 }

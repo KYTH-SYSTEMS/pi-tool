@@ -4,6 +4,7 @@ import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/demo.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
+import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -71,6 +72,18 @@ void main() {
       expect(out.contains('incorrect password'), isFalse);
       expect(out.contains('sorry, try again'), isFalse);
     });
+  });
+
+  test('demo security check yields real findings, not five unknowns', () {
+    // Audit 2026-08-15: the probe fell through to the benign default, so the
+    // sheet claimed "Keine Warnungen" above five "Konnte nicht ermittelt".
+    final findings = parseSecurityReport(demoResponseFor(buildSecurityProbe()));
+    expect(findings.any((f) => f.detail.startsWith('Konnte nicht')), isFalse);
+    expect(findings.where((f) => f.level == SecurityLevel.warn), isNotEmpty);
+    // And the offered fix is one the demo actually models.
+    final updates =
+        findings.firstWhere((f) => f.title.contains('Sicherheitsupdates'));
+    expect(securityFixFor(updates), SecurityFix.autoUpdates);
   });
 
   test('demo evcc API client returns a charging loadpoint', () async {

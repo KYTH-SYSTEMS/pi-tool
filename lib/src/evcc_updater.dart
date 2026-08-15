@@ -112,11 +112,12 @@ class EvccUpdater {
   }
 
   /// Production updater backed by the real dartssh2 adapter.
-  /// [confirmFirstUse] is called on the first connection to a host with the
-  /// presented SHA256 fingerprint; return true to trust + proceed, false to
-  /// abort. When null, first use is trusted automatically (legacy TOFU).
+  /// [confirmFirstUse] is called on the first connection to a host with THAT
+  /// host and the presented SHA256 fingerprint; return true to trust +
+  /// proceed, false to abort. When null, first use is trusted automatically
+  /// (legacy TOFU).
   factory EvccUpdater.real({
-    Future<bool> Function(String fingerprint)? confirmFirstUse,
+    Future<bool> Function(String host, String fingerprint)? confirmFirstUse,
   }) {
     final store = SecureHostKeyStore();
     return EvccUpdater(
@@ -2375,7 +2376,18 @@ class EvccUpdater {
         // probe either way so "fertig" always means "läuft".
         final probe = await runner.run(buildDockerRunningProbe(name),
             stdin: '${config.password}\n');
-        if (probe.stdout.trim() != 'true') {
+        final state = probe.stdout.trim();
+        if (state != 'true') {
+          // compose may legitimately rename the container (v1 `proj_svc_1` →
+          // v2 `proj-svc-1`), so "not found" there is not proof of failure —
+          // the script itself already failed hard on a real error (set -e).
+          final vanished = state.isEmpty;
+          if (compose != null && vanished) {
+            log('Hinweis: Container "$name" ist unter diesem Namen nicht mehr '
+                'zu finden — docker compose benennt ihn beim Neuanlegen '
+                'gelegentlich um. Bitte in der Übersicht nachsehen.');
+            return;
+          }
           throw EvccUpdateException(
             UpdateErrorKind.serviceInactive,
             'Container "$name" läuft nach dem Update nicht. Details im Log.',
@@ -2479,19 +2491,39 @@ class EvccUpdater {
   /// one root script — see stack_wiring.dart for why it is a single script
   /// (the access token never leaves the Pi). Marker-gated; fail-soft for
   /// missing parts, hard fail with evcc.yaml rollback on a rejected config.
-  Future<void> wireMonitoringStack({
+  Future<StackWiringOutcome> wireMonitoringStack({
     required SshConfig config,
     required void Function(String line) onLog,
   }) =>
-      _withConnection<void>(
+      _withConnection<StackWiringOutcome>(
         config: config,
         onLog: onLog,
         body: (runner, log) async {
           log('Verdrahte Monitoring-Stack (InfluxDB → evcc → Grafana) …');
-          await _runRootScriptExpectMarker(runner, log, config,
-              script: buildStackWiringScript(),
-              successMarker: 'WIRE_OK',
-              failMsg: 'Stack-Verdrahtung fehlgeschlagen');
+          // Three-way marker instead of the usual two: WIRE_PARTIAL means the
+          // script skipped a half on purpose (Docker-evcc / no Grafana) — that
+          // must reach the user as a partial result, not as green success.
+          final buf = StringBuffer();
+          final result = await runner.run(
+            installShellCommand,
+            stdin: await _rootStdin(runner, config, buildStackWiringScript()),
+            onOutput: (chunk) {
+              buf.write(chunk);
+              final t = chunk.trimRight();
+              if (t.isNotEmpty) log(t);
+            },
+          );
+          final combined = '$buf\n${result.stdout}\n${result.stderr}';
+          if (isSudoPasswordFailure(combined)) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+          if (combined.contains('WIRE_OK')) return StackWiringOutcome.wired;
+          if (combined.contains('WIRE_PARTIAL')) {
+            return StackWiringOutcome.partial;
+          }
+          throw const EvccUpdateException(UpdateErrorKind.unknown,
+              'Stack-Verdrahtung fehlgeschlagen. Details im Log.');
         },
       );
 
