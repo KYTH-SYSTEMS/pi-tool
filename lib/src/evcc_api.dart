@@ -115,6 +115,49 @@ String formatPower(num? watts) {
   return '$kw kW';
 }
 
+/// The compact live summary for the evcc CARD (GitHub issue #22: the card
+/// showed version and service state only, so users looked for the live values
+/// on the main tab and found nothing).
+///
+/// Returns at most two short lines and — deliberately — nothing at all when
+/// there is nothing to say: a Pi whose evcc has no meters configured must not
+/// grow an empty row. Line 1 is the site (PV/grid/house), line 2 battery and
+/// the loadpoint that matters. Pure formatting so the wording is unit-tested;
+/// the full picture stays in the live-status sheet.
+List<String> evccCardLines(EvccState s) {
+  final lines = <String>[];
+
+  final site = <String>[
+    if (s.pvPower != null) 'PV ${formatPower(s.pvPower)}',
+    if (s.gridPower != null) 'Netz ${formatPower(s.gridPower)}',
+    if (s.homePower != null) 'Haus ${formatPower(s.homePower)}',
+  ];
+  if (site.isNotEmpty) lines.add(site.join(' · '));
+
+  // The interesting loadpoint is the one that is charging; otherwise the first
+  // connected one. An idle, empty charge point says nothing worth a row.
+  EvccLoadpoint? lp;
+  for (final l in s.loadpoints) {
+    if (l.charging) {
+      lp = l;
+      break;
+    }
+    if (l.connected) lp ??= l;
+  }
+
+  final second = <String>[
+    if (s.batteryConfigured && s.batterySoc != null)
+      'Batterie ${s.batterySoc!.round()} %',
+    if (lp != null)
+      lp.charging
+          ? '${lp.title}: ${formatPower(lp.chargePower)}'
+          : '${lp.title}: verbunden',
+  ];
+  if (second.isNotEmpty) lines.add(second.join(' · '));
+
+  return lines;
+}
+
 /// Raised when the live status can't be read; carries a German [message].
 class EvccApiException implements Exception {
   final String message;

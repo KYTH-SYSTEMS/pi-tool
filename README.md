@@ -182,8 +182,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   SSH-Verbindung).
 - **Verbindung herstellen** — Host/Zugang in Sekunden prüfen, ohne etwas zu ändern.
 - **evcc installieren** auf einem frischen Pi (offizielles apt-Repo).
-- **evcc-Status (Live)** — liest die aktuellen Werte direkt aus der evcc-Web-API
-  (PV, Netz, Hausverbrauch, Batterie, Ladepunkte), rein lesend.
+- **evcc-Status (Live)** — die evcc-Karte zeigt die aktuellen Werte direkt auf
+  dem Verwaltungs-Tab (PV, Netz, Hausverbrauch sowie Batterie-Ladestand und
+  Ladepunkt), gelesen aus der evcc-Web-API. Das vollständige Bild inklusive
+  aller Ladepunkte liegt im App-⋮ unter „evcc-Status (Live)". Rein lesend.
 - **Pi im Netzwerk suchen** — findet im selben WLAN Geräte mit offenem
   SSH-Port und übernimmt die IP per Tippen. Wird beim ersten Start und nach
   „Profil hinzufügen" (solange noch kein Host eingetragen ist) prominent als
@@ -252,11 +254,20 @@ meldet Version bzw. Container — **ohne irgendetwas zu verändern**.
 
 ### evcc-Status (Live)
 
-Über das ⋮-Menü → **„evcc-Status (Live)"** liest die App die aktuellen Werte
-**direkt aus der evcc-Web-API** (`GET http://<pi>:7070/api/state`) und zeigt
-PV-Erzeugung, Netz, Hausverbrauch, Batterie-Ladestand und die Ladepunkte. Rein
-lesend über HTTP — **kein SSH, keine Zugangsdaten**. Die App ist robust gegen
-verschiedene evcc-Versionen (mit/ohne `result`-Hülle, fehlende Felder).
+Die App liest die Werte **direkt aus der evcc-Web-API**
+(`GET http://<pi>:7070/api/state`) — rein lesend über HTTP, **kein SSH, keine
+Zugangsdaten**. Sie ist robust gegen verschiedene evcc-Versionen (mit/ohne
+`result`-Hülle, fehlende Felder).
+
+Zwei Orte, dieselbe Quelle:
+
+- **Auf der evcc-Karte** (Verwaltungs-Tab) stehen nach dem Verbinden zwei
+  kompakte Zeilen: PV, Netz und Hausverbrauch sowie — sofern vorhanden —
+  Batterie-Ladestand und der Ladepunkt, der gerade lädt. Antwortet die API
+  nicht (anderer Port, Anmeldung aktiv, evcc offline), bleibt die Karte
+  unverändert; ein Fehler wird dafür **nicht** gemeldet.
+- **App-⋮ → „evcc-Status (Live)"** zeigt das vollständige Bild inklusive aller
+  Ladepunkte, Fahrzeug-Ladestände und Modi.
 
 ### Pi im Netzwerk finden
 

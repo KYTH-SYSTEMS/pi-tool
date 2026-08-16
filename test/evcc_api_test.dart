@@ -104,4 +104,94 @@ void main() {
       expect(formatPower(-999.6), '-1,0 kW');
     });
   });
+
+  group('evccCardLines (GitHub issue #22)', () {
+    EvccState state({
+      num? pv,
+      num? grid,
+      num? home,
+      bool battery = false,
+      num? soc,
+      List<EvccLoadpoint> lps = const [],
+    }) =>
+        EvccState(
+          version: '0.313.3',
+          siteTitle: null,
+          gridPower: grid,
+          homePower: home,
+          pvPower: pv,
+          batteryConfigured: battery,
+          batterySoc: soc,
+          batteryPower: null,
+          loadpoints: lps,
+        );
+
+    EvccLoadpoint lp({
+      String title = 'Ladepunkt',
+      bool charging = false,
+      bool connected = false,
+      num? power,
+    }) =>
+        EvccLoadpoint(
+          title: title,
+          charging: charging,
+          connected: connected,
+          chargePower: power,
+          vehicleSoc: null,
+          mode: null,
+        );
+
+    test('site line lists PV, grid and house', () {
+      final lines = evccCardLines(
+          state(pv: 3400, grid: -1200, home: 900, lps: [lp(power: 0)]));
+      expect(lines.first, 'PV 3,4 kW · Netz -1,2 kW · Haus 900 W');
+    });
+
+    test('second line carries battery SoC and the charging loadpoint', () {
+      final lines = evccCardLines(state(
+        pv: 3400,
+        battery: true,
+        soc: 78,
+        lps: [lp(title: 'Garage', charging: true, connected: true, power: 7200)],
+      ));
+      expect(lines, hasLength(2));
+      expect(lines[1], contains('78 %'));
+      expect(lines[1], contains('Garage'));
+      expect(lines[1], contains('7,2 kW'));
+    });
+
+    test('no battery configured → no battery part, but the loadpoint stays',
+        () {
+      final lines = evccCardLines(state(
+          pv: 100, lps: [lp(charging: true, connected: true, power: 4000)]));
+      expect(lines[1], isNot(contains('%')));
+      expect(lines[1], contains('4,0 kW'));
+    });
+
+    test('connected but not charging is reported as such, not as power', () {
+      final lines =
+          evccCardLines(state(pv: 100, lps: [lp(connected: true, power: 0)]));
+      expect(lines[1], contains('verbunden'));
+      expect(lines[1], isNot(contains('kW')));
+    });
+
+    test('an idle loadpoint without a battery yields only the site line', () {
+      final lines = evccCardLines(state(pv: 100, grid: 50, lps: [lp()]));
+      expect(lines, hasLength(1));
+    });
+
+    test('a state with nothing measurable yields no lines at all', () {
+      // The card must then look exactly as it did before — no empty row.
+      expect(evccCardLines(state()), isEmpty);
+    });
+
+    test('several loadpoints: the charging one wins, count is shown', () {
+      final lines = evccCardLines(state(pv: 1, lps: [
+        lp(title: 'A', connected: true),
+        lp(title: 'B', charging: true, connected: true, power: 5000),
+      ]));
+      expect(lines[1], contains('B'));
+      expect(lines[1], contains('5,0 kW'));
+    });
+  });
 }

@@ -410,6 +410,11 @@ void main() {
 
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
+    // On a 640px-high screen the ⋮ menu is longer than the viewport, so its
+    // last item has to be scrolled into view first — the menu itself scrolls
+    // (verified here: ensureVisible throws if it does not).
+    await tester.ensureVisible(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Einstellungen'));
     await tester.pumpAndSettle();
 

@@ -18,6 +18,16 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.67.0': [
+    'The evcc card now shows live values directly on the management tab: PV, '
+        'grid and house consumption, plus battery level and the loadpoint that '
+        'is charging. Until now these were only available from the menu.',
+    'If the evcc API does not answer — different port, login enabled, evcc '
+        'offline — the card stays unchanged. No error is raised for it, and '
+        'detection itself is unaffected.',
+    'The ⋮ menu has a "GitHub" entry leading straight to the project.',
+    'Both changes come from reports in the GitHub issue tracker.',
+  ],
   '0.66.3': [
     'Last item from the self-audit, a long-standing one: when a restart in the '
         'Docker overview failed, visibly nothing happened — the spinner turned, '
@@ -245,6 +255,16 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.67.0': [
+    'Die evcc-Karte zeigt die Live-Werte jetzt direkt auf dem Verwaltungs-Tab: '
+        'PV, Netz und Hausverbrauch, dazu Batterie-Ladestand und der Ladepunkt, '
+        'der gerade lädt. Bisher lagen diese Werte nur im Menü.',
+    'Antwortet die evcc-API nicht — anderer Port, Anmeldung aktiv, evcc '
+        'offline — bleibt die Karte unverändert. Es gibt dafür keine '
+        'Fehlermeldung, die Erkennung selbst ist davon unberührt.',
+    'Das ⋮-Menü enthält einen Eintrag „GitHub", der direkt zum Projekt führt.',
+    'Beides geht auf Meldungen aus dem GitHub-Issue-Tracker zurück.',
+  ],
   '0.66.3': [
     'Letzter Punkt aus der Selbstprüfung, eine Altlast: Scheiterte in der '
         'Docker-Übersicht ein Neustart, passierte sichtbar gar nichts — der '

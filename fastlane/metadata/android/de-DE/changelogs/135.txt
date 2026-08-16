@@ -1,0 +1,7 @@
+Aus dem GitHub-Issue-Tracker:
+
+Die evcc-Karte zeigt die Live-Werte jetzt direkt auf dem Verwaltungs-Tab: PV, Netz und Hausverbrauch, dazu Batterie-Ladestand und der gerade ladende Ladepunkt. Bisher waren diese Werte nur über das Menü erreichbar.
+
+Antwortet die evcc-API nicht (anderer Port, Anmeldung aktiv, evcc offline), bleibt die Karte unverändert — ohne Fehlermeldung.
+
+Das ⋮-Menü enthält jetzt einen Eintrag "GitHub", der direkt zum Projekt führt.

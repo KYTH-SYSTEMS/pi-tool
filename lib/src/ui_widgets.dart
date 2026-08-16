@@ -1353,6 +1353,7 @@ class _ServiceCard extends StatelessWidget {
     this.onOpenWeb,
     this.actions = const [],
     this.isPro = true,
+    this.liveLines = const [],
   });
 
   final ServiceStatus status;
@@ -1363,6 +1364,11 @@ class _ServiceCard extends StatelessWidget {
   final VoidCallback? onOpenWeb;
   final List<_CardAction> actions;
   final bool isPro; // false → Pro actions show a lock badge
+
+  /// Compact live measurements under the detail line (evcc card: PV/grid/house
+  /// and battery/loadpoint). Empty = nothing measurable or unreachable — the
+  /// card then renders exactly as it did before, never an empty row.
+  final List<String> liveLines;
 
   @override
   Widget build(BuildContext context) {
@@ -1500,6 +1506,20 @@ class _ServiceCard extends StatelessWidget {
                 style: status.healthWarning
                     ? mono?.copyWith(color: warnAmber)
                     : mono,
+              ),
+            ),
+          // Live measurements (evcc): the values users came for, on the card
+          // itself instead of two taps away in the ⋮ (GitHub issue #22).
+          if (status.installed && liveLines.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 30, bottom: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final line in liveLines)
+                    Text(line, style: mono, maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                ],
               ),
             ),
           Padding(

@@ -212,6 +212,17 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   `restoreBackup`/`restorePiholeBackup`. Quell-Pi bleibt unangetastet; nur
   apt-evcc zieht um (Docker-evcc hat hier keinen Restore-Pfad). System-Karte ⋮,
   Pro-gated. Braucht ein zweites Profil mit Host.
+- **Live-Werte auf der evcc-Karte** (v0.67.0, GitHub-Issue #22) — `evccCardLines`
+  (`evcc_api.dart`) formatiert aus `EvccState` maximal **zwei** Zeilen: Site
+  (PV/Netz/Haus) und Batterie/Ladepunkt; **leer, wenn nichts messbar ist** —
+  die Karte darf keine leere Zeile bekommen. Der interessante Ladepunkt ist der
+  ladende, sonst der erste verbundene. Gefüllt wird über `_refreshEvccLive` im
+  Anschluss an eine erfolgreiche Erkennung: lokales HTTP, **fail-soft und
+  stumm** (anderer Port/Login/offline ⇒ `_evccLive = null`, Karte wie zuvor,
+  kein Fehlerbanner über einer sonst gelungenen Erkennung). Widget-Tests dürfen
+  deshalb **nie** den echten `EvccApiClient` verwenden — `page()` in
+  `dispatch_test.dart` injiziert einen sofort scheiternden Fake, sonst macht
+  jeder Test echtes Netz-I/O.
 - **`service_links.dart`** (v0.65.2) — statische Tabelle „wo lebt das Projekt":
   Website je Karten-id und, **nur wo es sie wirklich gibt**, die offizielle App
   (Package + Play-Eintrag: evcc, Home Assistant, Tailscale). Speist die zwei

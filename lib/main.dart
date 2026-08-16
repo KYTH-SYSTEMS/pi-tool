@@ -81,6 +81,10 @@ const kPrivacyUrl = 'https://pi-tool.kyth.systems/privacy.html';
 const kImpressumUrl = 'https://pi-tool.kyth.systems/impressum.html';
 const kAgbUrl = 'https://pi-tool.kyth.systems/agb.html';
 const kReleasesUrl = 'https://github.com/KYTH-SYSTEMS/pi-tool/releases';
+/// The project itself. Reachable from the ⋮ menu next to the changelog — the
+/// releases page is not the project page, and a public repo should be one tap
+/// away (GitHub issue #23).
+const kRepoUrl = 'https://github.com/KYTH-SYSTEMS/pi-tool';
 const kImagerUrl = 'https://www.raspberrypi.com/software/';
 const kKythUrl = 'https://www.kyth.systems';
 const kSupportEmail = 'support@kyth.systems';
@@ -331,6 +335,11 @@ class _UpdaterPageState extends State<UpdaterPage>
   // Automatik/Terminal/Dateien tabs. In-memory only; never persisted.
   bool _connected = false;
   List<ServiceStatus> _services = []; // detected services → service cards
+
+  /// Last live snapshot from evcc's HTTP API, shown as two compact lines on
+  /// the evcc card. Null = not available (never fetched, unreachable, or no
+  /// evcc) → the card renders without those lines.
+  EvccState? _evccLive;
   List<Profile> _profiles = [const Profile(name: 'Standard')]; // growable
   int _activeIndex = 0;
 
@@ -1489,6 +1498,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         _statusOk = true;
       });
       _appendLog(context.l10n.logConnectedWith(_host.text.trim()));
+      await _refreshEvccLive(services);
     });
     // Drive the Test-Button colour from the outcome (success populated the
     // cards; any thrown error set _statusOk=false via _guard).
@@ -3367,6 +3377,29 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   /// Read-only live status straight from evcc's Web-API (no SSH, no creds).
+  /// Best-effort live snapshot for the evcc CARD (GitHub issue #22). Local
+  /// HTTP, no SSH and no credentials; every failure is silent — evcc may be
+  /// on another port, behind a login or simply not answering, and none of that
+  /// is worth an error over a detection that otherwise succeeded. The card
+  /// then looks exactly as before.
+  Future<void> _refreshEvccLive(List<ServiceStatus> services) async {
+    final host = _host.text.trim();
+    final hasEvcc = services.any((s) => s.id == 'evcc' && s.installed);
+    if (host.isEmpty || !hasEvcc) {
+      if (mounted && _evccLive != null) setState(() => _evccLive = null);
+      return;
+    }
+    try {
+      final port = _uiPort.text.trim().isEmpty ? '7070' : _uiPort.text.trim();
+      final state = await _apiClient.fetchState(
+          scheme: _uiScheme, host: host, port: port);
+      if (!mounted) return;
+      setState(() => _evccLive = state);
+    } catch (_) {
+      if (mounted) setState(() => _evccLive = null);
+    }
+  }
+
   void _showApiStatus() {
     final host = _host.text.trim();
     if (host.isEmpty) {
@@ -4416,6 +4449,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             primaryLabel: context.l10n.actionUpdate,
             onPrimary: () => _run(dryRun: false),
             onOpenWeb: _openEvccUi,
+            liveLines:
+                _evccLive == null ? const [] : evccCardLines(_evccLive!),
             actions: s.installed
                 ? [
                     _CardAction(
@@ -5327,6 +5362,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                   _checkUpdatesNow();
                 case 'changelog':
                   _openUrl(kReleasesUrl);
+                case 'github':
+                  _openUrl(kRepoUrl);
                 case 'settings':
                   _openSettings();
               }
@@ -5405,6 +5442,8 @@ class _UpdaterPageState extends State<UpdaterPage>
               PopupMenuItem(
                   value: 'checkUpdate', child: Text(context.l10n.menuCheckUpdate)),
               const PopupMenuItem(value: 'changelog', child: Text('Changelog')),
+              // Proper nouns, deliberately not localized (like "Changelog").
+              const PopupMenuItem(value: 'github', child: Text('GitHub')),
               PopupMenuItem(
                   value: 'settings', child: Text(context.l10n.settingsTitle)),
             ],

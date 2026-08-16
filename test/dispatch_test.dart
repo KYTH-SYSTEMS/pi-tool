@@ -21,6 +21,7 @@ import 'package:evcc_updater/src/docker_containers.dart';
 import 'package:evcc_updater/src/scheduled_backup.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/storage_explorer.dart';
+import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/stack_wiring.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
@@ -1009,7 +1010,8 @@ void main() {
   });
 
   Widget page(FakeEvccUpdater updater,
-          {Future<EvccRelease?> Function()? rel,
+          {EvccApiClient? apiClient,
+          Future<EvccRelease?> Function()? rel,
           Future<String?> Function()? haLatest,
           EntitlementService? entitlement,
           KeepAliveService? keepAlive,
@@ -1025,6 +1027,14 @@ void main() {
           store: _FakeStore(config ?? _ready),
           updater: updater,
           updateChecker: _noUpdateChecker,
+          // Default: an API that answers "unreachable" immediately. Since the
+          // evcc card fetches live values after every detection, the real
+          // client would otherwise do actual HTTP in widget tests (pending
+          // timers, flakiness). Tests that care inject their own.
+          apiClient: apiClient ??
+              EvccApiClient(
+                  getJson: (_) async =>
+                      throw const EvccApiException('kein Netz im Test')),
           evccReleaseFetcher: rel ?? () async => null,
           haVersionFetcher: haLatest ?? () async => null,
           entitlement: entitlement,
@@ -1867,6 +1877,53 @@ void main() {
     await tester.tap(find.text('Offizielle evcc-App'));
     await tester.pumpAndSettle();
     expect(launcher.opened, ['io.evcc.android']);
+  });
+
+  testWidgets('evcc-Karte zeigt die Live-Werte direkt auf dem Haupt-Tab',
+      (tester) async {
+    // GitHub issue #22: die Karte nannte nur Version und Dienststatus, die
+    // Live-Werte lagen zwei Taps entfernt im ⋮.
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    final api = EvccApiClient(getJson: (_) async => {
+          'pvPower': 3400,
+          'gridPower': -1200,
+          'homePower': 900,
+          'batteryConfigured': true,
+          'batterySoc': 78,
+          'loadpoints': [
+            {
+              'title': 'Garage',
+              'charging': true,
+              'connected': true,
+              'chargePower': 7200,
+            }
+          ],
+        });
+    await tester.pumpWidget(page(u, apiClient: api));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.textContaining('PV 3,4 kW'), findsOneWidget);
+    expect(find.textContaining('Netz -1,2 kW'), findsOneWidget);
+    expect(find.textContaining('Batterie 78 %'), findsOneWidget);
+    expect(find.textContaining('Garage: 7,2 kW'), findsOneWidget);
+  });
+
+  testWidgets('evcc-Karte bleibt unverändert, wenn die API nicht antwortet',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    final api = EvccApiClient(
+        getJson: (_) async => throw const EvccApiException('nicht erreichbar'));
+    await tester.pumpWidget(page(u, apiClient: api));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Kein Fehlerbanner, keine leere Zeile — nur die Karte wie zuvor.
+    expect(find.textContaining('PV '), findsNothing);
+    expect(find.textContaining('nicht erreichbar'), findsNothing);
+    expect(find.text('evcc'), findsWidgets);
   });
 
   testWidgets('evcc ⋮ → Release-Notes zeigt die GitHub-Notes im Sheet',
@@ -2801,6 +2858,21 @@ void main() {
     expect(find.textContaining('bleibt auf Passwort'), findsOneWidget);
     // No key committed → the inline setup button is still offered.
     expect(find.text('SSH-Key automatisch einrichten'), findsOneWidget);
+  });
+
+  testWidgets(
+      '⋮-Menü führt zum GitHub-Projekt, nicht nur zu den Releases',
+      (tester) async {
+    // GitHub issue #23: das Projekt war nur über „Changelog" (Releases-Seite)
+    // erreichbar.
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('GitHub'), findsOneWidget);
+    expect(find.text('Changelog'), findsOneWidget);
   });
 
   testWidgets(

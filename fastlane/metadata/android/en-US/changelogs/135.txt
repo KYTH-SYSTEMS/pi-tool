@@ -1,0 +1,7 @@
+From the GitHub issue tracker:
+
+The evcc card now shows live values directly on the management tab: PV, grid and house consumption, plus battery level and the loadpoint that is currently charging. Until now these values were only reachable from the menu.
+
+If the evcc API does not answer (different port, login enabled, evcc offline), the card stays unchanged — without an error.
+
+The menu now has a "GitHub" entry leading straight to the project.
