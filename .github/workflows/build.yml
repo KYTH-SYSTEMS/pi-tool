@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # Dependency PRs (Dependabot) used to arrive with NO check at all, so the only
+  # way to judge them was to merge and see. A PR now gets analyze + test + a
+  # debug APK build — the APK matters because plugin bumps break at the
+  # Gradle/native layer, not in the Dart analyzer. Nothing is signed, uploaded
+  # or published on this path: releasing stays tied to a v* tag.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       play_dry_run:
@@ -114,7 +121,15 @@ jobs:
       # Fat APK with both ARM ABIs (64- + 32-bit) so it installs on every real
       # phone — arm64-only would fail to install on armeabi-v7a devices. x86_64
       # (emulator-only) is left out to keep the size down.
+      # On a PR only a compile check is needed, and an unsigned release build
+      # would just burn minutes: arm64 debug is enough to catch a plugin that
+      # no longer builds.
+      - name: Build debug APK (PR compile check)
+        if: github.event_name == 'pull_request'
+        run: flutter build apk --debug --target-platform android-arm64
+
       - name: Build release APK (arm64 + armeabi-v7a)
+        if: github.event_name != 'pull_request'
         run: flutter build apk --release --target-platform android-arm64,android-arm
 
       # Play Store wants an App Bundle (.aab). Built only when signing is
@@ -133,6 +148,7 @@ jobs:
         run: rm -f android/app/upload-keystore.jks android/key.properties
 
       - name: Upload APK artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pi-tool-apk
