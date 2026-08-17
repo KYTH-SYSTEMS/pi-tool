@@ -43,7 +43,7 @@ dependencies:
   local_auth: ^3.0.1
   share_plus: ^13.2.0
   flutter_foreground_task: ^9.1.0
-  video_player: ^2.9.2
+  video_player: ^2.14.0
   # Pure-Dart crypto (no native plugin) for the encrypted profile export.
   cryptography: ^2.7.0
 
