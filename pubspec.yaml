@@ -40,7 +40,7 @@ dependencies:
   # Bleibt vorerst auf 10.x: 11.0.0 verlangt compileSdk 37, während AGP 9.0.1
   # offiziell nur bis 36 unterstützt (geprüft 2026-08-17, Build schlägt fehl).
   # Wieder aufgreifen, sobald Flutters Standard-compileSdk auf 37 zieht.
-  flutter_secure_storage: ^10.3.1
+  flutter_secure_storage: ^11.0.0
   url_launcher: ^6.3.2
   package_info_plus: ^10.2.0
   local_auth: ^3.0.1
