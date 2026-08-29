@@ -744,6 +744,31 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   „i.G." mehr, die Haftungsbeschränkung greift. Der Launch-Blocker „Haftung"
   ist damit weg; Impressum/Datenschutz führen HRB + Registergericht.
 
+### Play-Qualitätsanforderungen (Fristen 2027)
+
+Google Play hat am 2026-08-26 technische Schwellen angekündigt (Play-Console-
+Hilfe 17492799). Stand der Prüfung an v0.67.0 (2026-08-27):
+
+- **Ab Februar 2027** gelten Grenzen für dynamischen Speicher (Anonymous RSS +
+  Swap, 90. Perzentil über 28 Tage, je RAM-Klasse und App-Zustand), für
+  Bitmap-Speicher (>200 MB in Background/User-perceived Services, >400 MB im
+  Cached-Zustand) und für die DEX-Optimierung (min. 25 % Shrinking/
+  Optimization/Obfuscation, **erst ab 10 MB DEX**). Unser DEX misst 2,7 MB, die
+  DEX-Regel greift also nicht; R8 läuft trotzdem und ist in
+  `android/app/build.gradle.kts` per `isMinifyEnabled = true` festgenagelt,
+  damit kein Flutter-Upgrade sie stillschweigend abschaltet. Speicher- und
+  Bitmap-Werte gibt es nur als Feldmessung in **Android Vitals** — vor Anfang
+  2027 einmal nachsehen, besonders für den Foreground-Service-Zustand während
+  langer SSH-Aktionen (§6).
+- **Ab April 2027** müssen Apps **mit Nutzer-Login** den Anmeldezustand beim
+  Gerätewechsel über die Restore Credentials API wiederherstellen. Pi-Tool hat
+  kein Konto (kein OAuth/Firebase/Google Sign-In) — nur SSH-Zugangsdaten zum
+  eigenen Pi und den Biometrie-App-Lock —, ist also nicht betroffen.
+  `android:allowBackup="false"` bleibt damit unangetastet; der Gerätewechsel
+  läuft weiter über den verschlüsselten Profil-Export (`profile_transfer.dart`,
+  §6). **Sobald Pro ein echtes Konto bekommt, kippt das:** Restore Credentials
+  gehört dann in den Login-Entwurf, nicht in die Nachrüstung.
+
 ## Ein neuen Dienst hinzufügen (Kurzrezept)
 
 1. `lib/src/services/<name>.dart`: Befehlsstrings + reine Parser + (falls nötig)

@@ -72,6 +72,17 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // R8 pinned explicitly. The Flutter Gradle Plugin already turns it
+            // on for release builds (v0.67.0 shipped with ~96 % of its classes
+            // renamed), but Play's technical quality requirements demand at
+            // least 25 % shrinking/optimization/obfuscation from February 2027
+            // — too important to leave to a plugin default that a Flutter
+            // upgrade could quietly change. Our DEX is ~2.7 MB and the rule
+            // only bites above 10 MB, so this is a guard rail, not a fix.
+            // isShrinkResources stays off on purpose: it buys a little size at
+            // the price of resources that are only referenced by name at
+            // runtime, and nothing requires it.
+            isMinifyEnabled = true
         }
     }
 }
