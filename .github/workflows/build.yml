@@ -202,7 +202,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') && env.HAS_PLAY_SA != 'true'
         run: echo "::warning::PLAY_SERVICE_ACCOUNT_JSON is not set — skipping the Play Store upload (the GitHub release was still published)."
 
-      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+      - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1.324.0
         if: (startsWith(github.ref, 'refs/tags/') || inputs.play_dry_run) && env.CAN_PUBLISH_PLAY == 'true'
         with:
           ruby-version: '3.3'
