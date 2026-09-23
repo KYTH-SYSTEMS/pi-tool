@@ -80,6 +80,17 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Tailnet-IP — kein manuelles Umschalten mehr. Bewusst **kein Portforwarding**:
   offene SSH-Ports ins Internet sind genau das, was der Sicherheits-Check der
   App anprangert.
+- **Heimnetz über Tailscale freigeben** — auf Wunsch macht die App den Pi zum
+  *Subnet Router*: „Heimnetz freigeben" im ⋮ der Tailscale-Karte (oder als
+  optionaler letzter Schritt des Fernzugriff-Helfers) schaltet die
+  IPv4-Weiterleitung ein und bietet das Heimnetz des Pi (z. B. `192.168.178.0/24`)
+  im Tailnet an. Unterwegs erreichst du dann auch Geräte ohne Tailscale —
+  Wallbox, Wechselrichter, Router — unter ihrer gewohnten IP. Tailscale verteilt
+  die Route erst nach einer Bestätigung in der Tailscale-Konsole; fehlt sie,
+  erklärt ein Popup den Schritt und öffnet die Konsole, „Heimnetz-Freigabe
+  prüfen" liest den Stand danach neu. Die Karte zeigt, ob die Freigabe aktiv oder
+  noch offen ist; „Heimnetz-Freigabe beenden" nimmt sie zurück (von Hand gesetzte
+  Routen bleiben). Bewusst Opt-in: Die Freigabe gilt für alle Geräte im Tailnet.
 - **Fernzugriff mit einem Tap (Tailscale)** — im ⋮-Menü liegt „Fernzugriff:
   Tailscale öffnen" (erreichbar, wenn du unterwegs und nicht verbunden bist): es
   setzt die zuletzt gemerkte Tailnet-IP (100.x) des Pi als Host und öffnet die

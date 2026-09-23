@@ -1234,6 +1234,258 @@ void main() {
     });
   });
 
+  group('EvccUpdater Tailscale-Heimnetz', () {
+    const lanRoutes =
+        'default via 192.168.178.1 dev eth0 proto dhcp src 192.168.178.64\n'
+        '192.168.178.0/24 dev eth0 proto kernel scope link src 192.168.178.64\n';
+    const selfPending = '{"BackendState": "Running", "Self": {"DNSName": '
+        '"evcc-pi.tail1234.ts.net.", "TailscaleIPs": ["100.64.0.5"], '
+        '"AllowedIPs": ["100.64.0.5/32"]}}';
+    const selfActive = '{"BackendState": "Running", "Self": {"DNSName": '
+        '"evcc-pi.tail1234.ts.net.", "TailscaleIPs": ["100.64.0.5"], '
+        '"AllowedIPs": ["100.64.0.5/32", "192.168.178.0/24"]}}';
+
+    test('Erkennung: angeboten, aber noch nicht freigegeben', () async {
+      final runner = FakeSshRunner({
+        tailscaleStatusCommand: [_r('100.64.0.5   evcc-pi   linux\n100.64.0.5')],
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["192.168.178.0/24"]}')
+        ],
+        tailscaleSelfCommand: [_r(selfPending)],
+      });
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: (_) {});
+      final ts = list.firstWhere((s) => s.id == 'tailscale');
+      expect(ts.routes?.share, RouteShare.pending);
+      expect(ts.routes?.lan, ['192.168.178.0/24']);
+      expect(ts.routes?.machine, 'evcc-pi');
+    });
+
+    test('Erkennung: freigegeben', () async {
+      final runner = FakeSshRunner({
+        tailscaleStatusCommand: [_r('100.64.0.5   evcc-pi   linux\n100.64.0.5')],
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["192.168.178.0/24"]}')
+        ],
+        tailscaleSelfCommand: [_r(selfActive)],
+      });
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: (_) {});
+      expect(list.firstWhere((s) => s.id == 'tailscale').routes?.share,
+          RouteShare.active);
+    });
+
+    test('Erkennung: getrennt → kein Routen-Zustand (nichts zu behaupten)',
+        () async {
+      final runner = FakeSshRunner({
+        tailscaleStatusCommand: [_r('Tailscale is stopped.')],
+        lanRoutesCommand: [_r(lanRoutes)],
+      });
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: (_) {});
+      expect(list.firstWhere((s) => s.id == 'tailscale').routes, isNull);
+    });
+
+    test('Erkennung: Prefs nicht lesbar → Freigegebenes gilt als angeboten',
+        () async {
+      final runner = FakeSshRunner({
+        tailscaleStatusCommand: [_r('100.64.0.5   evcc-pi   linux\n100.64.0.5')],
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [_r('')],
+        tailscaleSelfCommand: [_r(selfActive)],
+      });
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: (_) {});
+      expect(list.firstWhere((s) => s.id == 'tailscale').routes?.share,
+          RouteShare.active);
+    });
+
+    test('freigeben: ergänzt vorhandene Routen und läuft als root', () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [_r('{"AdvertiseRoutes": ["10.8.0.0/24"]}')],
+        installShellCommand: [_r('net.ipv4.ip_forward = 1\nTS_ROUTES_SET\n')],
+      });
+      final lan = await _updaterWith(runner)
+          .tailscaleShareLan(config: _config, onLog: (_) {});
+      expect(lan, ['192.168.178.0/24']);
+      final script = runner.stdinByCommand[installShellCommand]!;
+      expect(script, startsWith('sekret\n')); // sudo braucht das Passwort
+      expect(script,
+          contains("--advertise-routes='10.8.0.0/24,192.168.178.0/24'"));
+    });
+
+    test('freigeben ohne erkennbares Heimnetz: klare Meldung, kein Root-Skript',
+        () async {
+      final runner = FakeSshRunner({lanRoutesCommand: [_r('')]});
+      await expectLater(
+        _updaterWith(runner).tailscaleShareLan(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('Heimnetz'))),
+      );
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
+    test('freigeben ohne Marker ist ein Fehler, kein Phantom-Erfolg', () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [_r('{"AdvertiseRoutes": null}')],
+        installShellCommand: [
+          _r('Access denied: checkprefs access denied\n', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).tailscaleShareLan(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('beenden: nimmt nur das Heimnetz heraus', () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["10.8.0.0/24", "192.168.178.0/24"]}')
+        ],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      });
+      await _updaterWith(runner)
+          .tailscaleUnshareLan(config: _config, onLog: (_) {});
+      final script = runner.stdinByCommand[installShellCommand]!;
+      expect(script, contains("--advertise-routes='10.8.0.0/24'"));
+      expect(script, isNot(contains('192.168.178.0/24')));
+    });
+
+    test('beenden: nimmt auch die früher von der App gesetzte Route heraus '
+        '(Pi hat inzwischen ein anderes Heimnetz)', () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["10.8.0.0/24", "192.168.1.0/24"]}')
+        ],
+        tailscaleForwardingProbe: [
+          _r('# routes=192.168.1.0/24\nnet.ipv4.ip_forward = 1\n')
+        ],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      });
+      await _updaterWith(runner)
+          .tailscaleUnshareLan(config: _config, onLog: (_) {});
+      final script = runner.stdinByCommand[installShellCommand]!;
+      expect(script, contains("--advertise-routes='10.8.0.0/24'"));
+      expect(script, isNot(contains('192.168.1.0/24')));
+    });
+
+    test('beenden: IPv6-Route von Hand bleibt, statt alles zu blockieren',
+        () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["192.168.178.0/24", "fd00::/64"]}')
+        ],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      });
+      await _updaterWith(runner)
+          .tailscaleUnshareLan(config: _config, onLog: (_) {});
+      expect(runner.stdinByCommand[installShellCommand],
+          contains("--advertise-routes='fd00::/64'"));
+    });
+
+    test('beenden: ein Exit-Node behält die Weiterleitung', () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["192.168.178.0/24", "0.0.0.0/0", "::/0"]}')
+        ],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      });
+      await _updaterWith(runner)
+          .tailscaleUnshareLan(config: _config, onLog: (_) {});
+      final script = runner.stdinByCommand[installShellCommand]!;
+      expect(script, isNot(contains('rm -f')));
+      expect(script, contains('net.ipv4.ip_forward = 1'));
+    });
+
+    test('freigeben: merkt sich die eigene Route in der sysctl-Datei', () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [_r('{"AdvertiseRoutes": ["10.8.0.0/24"]}')],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      });
+      await _updaterWith(runner)
+          .tailscaleShareLan(config: _config, onLog: (_) {});
+      final script = runner.stdinByCommand[installShellCommand]!;
+      expect(script, contains("'# routes=192.168.178.0/24'"));
+    });
+
+    test('Erkennung: Merker der App fließt in den Zustand', () async {
+      final runner = FakeSshRunner({
+        tailscaleStatusCommand: [_r('100.64.0.5   evcc-pi   linux\n100.64.0.5')],
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [_r('{"AdvertiseRoutes": ["192.168.1.0/24"]}')],
+        tailscaleSelfCommand: [_r(selfPending)],
+        tailscaleForwardingProbe: [_r('# routes=192.168.1.0/24\n')],
+      });
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: (_) {});
+      final r = list.firstWhere((s) => s.id == 'tailscale').routes!;
+      expect(r.mine, ['192.168.1.0/24']);
+      expect(r.share, RouteShare.pending);
+    });
+
+    test('beenden: war nur das Heimnetz angeboten, bleibt nichts übrig',
+        () async {
+      final runner = FakeSshRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["192.168.178.0/24"]}')
+        ],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      });
+      await _updaterWith(runner)
+          .tailscaleUnshareLan(config: _config, onLog: (_) {});
+      final script = runner.stdinByCommand[installShellCommand]!;
+      expect(script, contains("--advertise-routes=''"));
+      expect(script, contains('rm -f $tailscaleForwardingConf'));
+    });
+
+    test('tailscaleUp: verweigertes nacktes up wird mit den genannten Flags '
+        'wiederholt', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r("Error: changing settings via 'tailscale up' requires mentioning "
+              'all\nnon-default flags. To proceed, either re-run your command '
+              'with --reset or\nuse the command below to explicitly mention '
+              'the current value of\nall non-default settings:\n\n'
+              '\ttailscale up --advertise-routes=192.168.178.0/24\n'),
+          _r('To authenticate, visit:\n\n'
+              'https://login.tailscale.com/a/again\n'),
+        ],
+      });
+      final url = await _updaterWith(runner)
+          .tailscaleUp(config: _config, onLog: (_) {});
+      expect(url, 'https://login.tailscale.com/a/again');
+      expect(runner.stdinByCommand[installShellCommand],
+          contains("tailscale up '--advertise-routes=192.168.178.0/24'"));
+    });
+
+    test('tailscaleUp: Weigerung mit unlesbaren Flags → Fehler, kein Raten',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r("Error: changing settings via 'tailscale up' requires mentioning "
+              'all\n\n\ttailscale up --hostname="mein pi"\n'),
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).tailscaleUp(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+      expect(runner.commandsRun.where((c) => c == installShellCommand).length,
+          1);
+    });
+  });
+
   group('EvccUpdater Pi Connect', () {
     test('installPiConnect installs lite + linger as root', () async {
       final runner =

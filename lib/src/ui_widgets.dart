@@ -1353,6 +1353,7 @@ class _ServiceCard extends StatelessWidget {
     this.actions = const [],
     this.isPro = true,
     this.liveLines = const [],
+    this.liveMaxLines = 1,
   });
 
   final ServiceStatus status;
@@ -1368,6 +1369,9 @@ class _ServiceCard extends StatelessWidget {
   /// and battery/loadpoint). Empty = nothing measurable or unreachable — the
   /// card then renders exactly as it did before, never an empty row.
   final List<String> liveLines;
+
+  /// Lines each [liveLines] entry may wrap to (evcc's values: one).
+  final int liveMaxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -1516,7 +1520,7 @@ class _ServiceCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   for (final line in liveLines)
-                    Text(line, style: mono, maxLines: 1,
+                    Text(line, style: mono, maxLines: liveMaxLines,
                         overflow: TextOverflow.ellipsis),
                 ],
               ),

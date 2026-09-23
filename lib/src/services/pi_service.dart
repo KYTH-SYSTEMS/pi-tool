@@ -5,6 +5,7 @@
 library;
 
 import '../update_check.dart' show isNewerVersion;
+import 'tailscale.dart' show SubnetRoutes;
 
 /// Health/status of one service as detected on the Pi.
 class ServiceStatus {
@@ -52,6 +53,10 @@ class ServiceStatus {
   /// the UI shows it greyed with a reason instead of offering it. Default true.
   final bool compatible;
 
+  /// Subnet-router state (Tailscale card only): whether the Pi's home network
+  /// is shared into the tailnet. Null when unknown or not applicable.
+  final SubnetRoutes? routes;
+
   const ServiceStatus({
     required this.id,
     required this.name,
@@ -66,6 +71,7 @@ class ServiceStatus {
     this.webPort,
     this.aptPackage,
     this.compatible = true,
+    this.routes,
   });
 
   /// A "not installed" status for a service the app knows about but didn't find.
@@ -90,6 +96,7 @@ class ServiceStatus {
         'webPort': webPort,
         'aptPackage': aptPackage,
         'compatible': compatible,
+        'routes': routes?.toJson(),
       };
 
   static ServiceStatus fromJson(Map<String, dynamic> j) => ServiceStatus(
@@ -106,6 +113,9 @@ class ServiceStatus {
         webPort: j['webPort'] is int ? j['webPort'] as int : null,
         aptPackage: j['aptPackage']?.toString(),
         compatible: j['compatible'] != false,
+        routes: j['routes'] is Map
+            ? SubnetRoutes.fromJson(Map<String, dynamic>.from(j['routes'] as Map))
+            : null,
       );
 
   ServiceStatus copyWith({bool? updateAvailable, bool? updateKnown}) =>
@@ -123,6 +133,7 @@ class ServiceStatus {
         webPort: webPort,
         aptPackage: aptPackage,
         compatible: compatible,
+        routes: routes,
       );
 }
 

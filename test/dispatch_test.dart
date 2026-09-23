@@ -24,6 +24,7 @@ import 'package:evcc_updater/src/storage_explorer.dart';
 import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/stack_wiring.dart';
+import 'package:evcc_updater/src/services/tailscale.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
@@ -463,6 +464,28 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       tailscaleLoggedOut = logout;
+
+  int shareLanCalls = 0, unshareLanCalls = 0;
+
+  /// What the next detection sees after sharing (the Pi's new state).
+  List<ServiceStatus>? servicesAfterShare;
+
+  @override
+  Future<List<String>> tailscaleShareLan({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async {
+    shareLanCalls++;
+    if (servicesAfterShare != null) services = servicesAfterShare!;
+    return const ['192.168.178.0/24'];
+  }
+
+  @override
+  Future<void> tailscaleUnshareLan({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      unshareLanCalls++;
 
   List<DirEntry> dirEntries = const [];
   Uint8List fileBytes = Uint8List(0);
@@ -3599,6 +3622,310 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Fernzugriff steht'), findsOneWidget);
+  });
+
+  // ---- Heimnetz über Tailscale freigeben (Subnet Router) ----
+
+  ServiceStatus tsWith(SubnetRoutes routes) => ServiceStatus(
+      id: 'tailscale',
+      name: 'Tailscale',
+      installed: true,
+      active: true,
+      version: '100.64.0.5',
+      routes: routes);
+  const lanOff = SubnetRoutes(lan: ['192.168.178.0/24'], machine: 'evcc-pi');
+  const lanPending = SubnetRoutes(
+      lan: ['192.168.178.0/24'],
+      advertised: ['192.168.178.0/24'],
+      machine: 'evcc-pi');
+  const lanActive = SubnetRoutes(
+      lan: ['192.168.178.0/24'],
+      advertised: ['192.168.178.0/24'],
+      approved: ['192.168.178.0/24'],
+      machine: 'evcc-pi');
+
+  testWidgets(
+      'Heimnetz freigeben: erst bestätigen, danach Popup mit dem Schritt in '
+      'der Tailscale-Konsole', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [tsWith(lanOff)]
+      ..servicesAfterShare = [tsWith(lanPending)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+
+    // Opt-in mit Erklärung: das ganze Heimnetz wird fürs Tailnet geöffnet.
+    expect(find.text('Heimnetz freigeben?'), findsOneWidget);
+    expect(find.textContaining('192.168.178.0/24'), findsOneWidget);
+    expect(u.shareLanCalls, 0);
+    await tester.tap(find.widgetWithText(FilledButton, 'Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+
+    expect(u.shareLanCalls, 1);
+    // Die Bestätigung passiert außerhalb der App — genau dafür das Popup.
+    expect(find.text('Noch ein Schritt: Route bestätigen'), findsOneWidget);
+    expect(find.textContaining('„evcc-pi"'), findsOneWidget);
+    await tester.tap(find.text('Später'));
+    await tester.pumpAndSettle();
+    expect(find.text('Noch ein Schritt: Route bestätigen'), findsNothing);
+    expect(find.text('Heimnetz 192.168.178.0/24: Bestätigung in Tailscale offen'),
+        findsOneWidget);
+  });
+
+  testWidgets('Heimnetz freigeben: Abbrechen ändert nichts', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [tsWith(lanOff)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.shareLanCalls, 0);
+  });
+
+  testWidgets(
+      'Freigabe prüfen: bestätigt → Statuszeile, kein Popup mehr',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [tsWith(lanPending)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    // Offen: nicht erneut „freigeben", sondern prüfen oder beenden.
+    expect(find.text('Heimnetz freigeben'), findsNothing);
+    expect(find.text('Heimnetz-Freigabe beenden'), findsOneWidget);
+    u.services = [tsWith(lanActive)]; // inzwischen in der Konsole bestätigt
+    await tester.tap(find.text('Heimnetz-Freigabe prüfen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Noch ein Schritt: Route bestätigen'), findsNothing);
+    expect(find.textContaining('ist über Tailscale erreichbar'), findsWidgets);
+    expect(find.text('Heimnetz 192.168.178.0/24 freigegeben'), findsOneWidget);
+  });
+
+  testWidgets('Freigabe prüfen: noch offen → das Popup erklärt den Schritt erneut',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [tsWith(lanPending)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz-Freigabe prüfen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Noch ein Schritt: Route bestätigen'), findsOneWidget);
+  });
+
+  testWidgets('Heimnetz-Freigabe beenden', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [tsWith(lanActive)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz-Freigabe beenden'));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.widgetWithText(FilledButton, 'Heimnetz-Freigabe beenden'));
+    await tester.pumpAndSettle();
+    expect(u.unshareLanCalls, 1);
+    expect(find.textContaining('Heimnetz-Freigabe beendet'), findsWidgets);
+  });
+
+  testWidgets('getrennt: keine Heimnetz-Aktionen (nichts Verlässliches zu sagen)',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: false,
+            routes: lanActive),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    expect(find.text('Heimnetz freigeben'), findsNothing);
+    expect(find.text('Heimnetz-Freigabe beenden'), findsNothing);
+  });
+
+  testWidgets(
+      'Fernzugriff-Helfer: nach dem ersten Erfolg optional das Heimnetz '
+      'anbieten — ohne zweite Rückfrage', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [tsWith(lanOff)]
+      ..servicesAfterShare = [tsWith(lanPending)]
+      ..tailscaleUpUrl = null
+      ..reachableHosts = {'100.64.0.5'};
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.text('Jetzt prüfen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Auch das Heimnetz erreichen?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Heimnetz freigeben?'), findsNothing);
+    expect(u.shareLanCalls, 1);
+    expect(find.text('Noch ein Schritt: Route bestätigen'), findsOneWidget);
+  });
+
+  testWidgets('Fernzugriff-Helfer: „Nicht jetzt" lässt das Heimnetz zu',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [tsWith(lanOff)]
+      ..tailscaleUpUrl = null
+      ..reachableHosts = {'100.64.0.5'};
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.text('Jetzt prüfen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nicht jetzt'));
+    await tester.pumpAndSettle();
+    expect(u.shareLanCalls, 0);
+    expect(find.textContaining('Fernzugriff steht'), findsWidgets);
+  });
+
+  testWidgets(
+      'neues Heimnetz neben alter App-Route: freigeben UND beenden im Angebot',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [
+        tsWith(const SubnetRoutes(
+            lan: ['192.168.1.0/24'],
+            advertised: ['192.168.178.0/24'],
+            approved: ['192.168.178.0/24'],
+            mine: ['192.168.178.0/24']))
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.text('Heimnetz 192.168.178.0/24 freigegeben'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    expect(find.text('Heimnetz freigeben'), findsOneWidget);
+    expect(find.text('Heimnetz-Freigabe beenden'), findsOneWidget);
+  });
+
+  // ---- „Pi im WLAN suchen" nur, solange der Pi unbekannt ist ----
+
+  testWidgets(
+      'Demo-Aktionen merken sich die eingetippte IP nicht als „schon verbunden"',
+      (tester) async {
+    // Der Weg des Play-Prüfers: Host + Passwort eingetippt, nie verbunden,
+    // dann die Demo. Eine Demo-Aktion „gelingt" gegen den eingetippten Host —
+    // früher landete der danach als lanHost im Profil, und die WLAN-Suche war
+    // für einen nie erreichten Pi dauerhaft weg.
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'S', host: '192.168.97.1', password: 'pw')],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: store,
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paketlisten aktualisieren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Beenden'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    expect(store.saved.active.lanHost, '');
+    expect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'bekannter Pi: keine WLAN-Suche und kein Einsteiger-Link unter dem '
+      'Verbinden-Knopf', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater(),
+        config: const AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                lanHost: '192.168.178.64')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'),
+        findsNothing);
+    expect(find.text('Noch keinen Pi? So richtest du einen ein'), findsNothing);
+  });
+
+  testWidgets(
+      'bekannter Pi, Verbindung gescheitert: die WLAN-Suche kommt zurück '
+      '(die Adresse kann sich geändert haben)', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..detectError = const EvccUpdateException(
+          UpdateErrorKind.connection, 'Keine Verbindung');
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                lanHost: '192.168.178.64')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'),
+        findsOneWidget);
+    expect(find.text('Noch keinen Pi? So richtest du einen ein'), findsNothing);
   });
 
   testWidgets('Verbinden fällt auf die Tailnet-IP zurück, wenn die Heim-IP tot ist',

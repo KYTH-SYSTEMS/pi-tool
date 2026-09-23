@@ -1,0 +1,3 @@
+Tailscale kann jetzt das Heimnetz freigeben (Subnet Router, ⋮ der Tailscale-Karte oder am Ende des Fernzugriff-Helfers): Unterwegs sind so auch Wallbox, Wechselrichter oder Router unter ihrer Heim-IP erreichbar. Fehlt noch die Bestätigung in der Tailscale-Konsole, erklärt ein Popup den Schritt.
+
+„Pi im WLAN suchen" erscheint bei einem bereits verbundenen Pi nur noch, wenn die Verbindung scheitert. Umbenennen eines Profils behält Auto-Verbinden.

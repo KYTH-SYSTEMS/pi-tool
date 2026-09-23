@@ -18,6 +18,21 @@ void main() {
     });
   });
 
+  group('Profile.copyWith', () {
+    // Umbenennen eines NICHT aktiven Profils lief über copyWith(name:) — und
+    // verlor dabei still Auto-Verbinden und den gemerkten letzten Stand.
+    test('behält Auto-Verbinden und den gemerkten Stand', () {
+      const p = Profile(name: 'Pi', autoConnect: true, cachedServices: [
+        {'id': 'evcc', 'name': 'evcc', 'installed': true}
+      ]);
+      final renamed = p.copyWith(name: 'Garage');
+      expect(renamed.name, 'Garage');
+      expect(renamed.autoConnect, isTrue);
+      expect(renamed.cachedServices, hasLength(1));
+      expect(p.copyWith(autoConnect: false).autoConnect, isFalse);
+    });
+  });
+
   group('AppConfig encode/parse', () {
     test('round-trips profiles + globals', () {
       const cfg = AppConfig(

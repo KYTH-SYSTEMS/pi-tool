@@ -87,6 +87,8 @@ class Profile {
         lanHost: lanHost ?? this.lanHost,
         lastGoodHost: lastGoodHost ?? this.lastGoodHost,
         remoteAccessProven: remoteAccessProven ?? this.remoteAccessProven,
+        autoConnect: autoConnect ?? this.autoConnect,
+        cachedServices: cachedServices ?? this.cachedServices,
       );
 
   Map<String, dynamic> toJson() => {

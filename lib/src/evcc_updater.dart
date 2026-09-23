@@ -393,6 +393,11 @@ class EvccUpdater {
           ('HA_VERSION', haVersionProbe),
           ('PICONNECT', piConnectStatusCommand),
           ('TAILSCALE', tailscaleStatusCommand),
+          // Subnet-router state for the Tailscale card (all read-only).
+          ('TS_LAN', lanRoutesCommand),
+          ('TS_PREFS', tailscalePrefsCommand),
+          ('TS_SELF', tailscaleSelfCommand),
+          ('TS_FWD', tailscaleForwardingProbe),
           ('APTSVC', aptServicesQuery),
           for (final u in units) ('UNIT:$u', 'systemctl is-active $u'),
           for (final svc in knownSystemdServices)
@@ -582,6 +587,7 @@ class EvccUpdater {
             updateAvailable: tsUpdate,
             updateKnown: aptKnown,
             aptPackage: 'tailscale',
+            routes: ts.up ? _subnetRoutes(sec) : null,
           ));
         } else {
           out.add(ServiceStatus.absent('tailscale', 'Tailscale'));
@@ -1034,16 +1040,33 @@ class EvccUpdater {
               stdin: await _rootStdin(runner, config, tailscaleUpScript));
           // A rejected sudo password yields no login URL — don't report that as
           // "already connected"; surface it as a real auth error.
-          final combined = '${r.stdout}\n${r.stderr}';
+          var combined = '${r.stdout}\n${r.stderr}';
           if (isSudoPasswordFailure(combined)) {
             throw const EvccUpdateException(UpdateErrorKind.sudo,
                 'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
           }
-          final url = parseTailscaleAuthUrl(r.stdout);
+          var out = r.stdout;
+          // Has to log in again but carries non-default settings (a shared home
+          // network, say): the bare `up` refuses and names the flags it wants.
+          // Restate exactly those — nothing changes, the login goes ahead.
+          final restate = parseTailscaleUpRestateFlags(combined);
+          if (restate != null) {
+            log('Tailscale verlangt die bestehenden Einstellungen – '
+                'wiederhole mit ${restate.join(' ')} …');
+            final again = await runner.run(installShellCommand,
+                stdin: await _rootStdin(
+                    runner, config, buildTailscaleUpScript(restate)));
+            out = again.stdout;
+            combined = '${again.stdout}\n${again.stderr}';
+          }
+          final url = parseTailscaleAuthUrl(out);
           if (url != null) return url; // needs a browser login
           // No login URL: it must have connected — verify via the marker, else
           // surface the failure instead of reporting a phantom "connected".
           if (!combined.contains('TS_UP_OK')) {
+            // The message points to the log — so the output has to be there.
+            final detail = combined.trim();
+            if (detail.isNotEmpty) log(detail);
             throw const EvccUpdateException(
                 UpdateErrorKind.unknown,
                 'Tailscale konnte nicht verbinden (Details im Log) – läuft der '
@@ -1052,6 +1075,103 @@ class EvccUpdater {
           return null;
         },
       );
+
+  /// The Tailscale node's subnet-router state from the detection sections.
+  /// Unreadable prefs (an unusual build) fall back to "whatever is approved
+  /// counts as offered" — a pending approval is then simply not visible.
+  static SubnetRoutes _subnetRoutes(Map<String, String> sec) {
+    final self = sec['TS_SELF'] ?? '';
+    final approved = parseApprovedRoutes(self) ?? const <String>[];
+    return SubnetRoutes(
+      lan: parseLanSubnets(sec['TS_LAN'] ?? ''),
+      advertised: parseAdvertisedRoutes(sec['TS_PREFS'] ?? '') ?? approved,
+      approved: approved,
+      mine: parseAppRoutes(sec['TS_FWD'] ?? ''),
+      machine: parseTailnetMachineName(self) ?? '',
+    );
+  }
+
+  /// Shares the Pi's home network into the tailnet (subnet router): switches on
+  /// IPv4 forwarding and ADDS the home network to the advertised routes — a
+  /// route set by hand stays. Returns the home network(s). The route still has
+  /// to be approved in the Tailscale console unless it was approved before.
+  Future<List<String>> tailscaleShareLan({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<List<String>>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final (:lan, :advertised, :mine, exitNode: _) =
+              await _readRouteState(runner);
+          if (lan.isEmpty) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'Kein Heimnetz gefunden – der Pi hat keine private '
+                'IPv4-Adresse (10.x, 172.16–31.x, 192.168.x).');
+          }
+          log('Gebe das Heimnetz ${lan.join(', ')} über Tailscale frei …');
+          final routes = routesWithLan(advertised, lan);
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildTailscaleAdvertiseScript(routes, mine: [
+                for (final r in routes)
+                  if (lan.contains(r) || mine.contains(r)) r,
+              ]),
+              successMarker: tailscaleRoutesMarker,
+              failMsg: 'Heimnetz konnte nicht freigegeben werden');
+          return lan;
+        },
+      );
+
+  /// Stops sharing the home network: removes it from the advertised routes
+  /// (other routes stay) and, once none are left, the app's forwarding file.
+  Future<void> tailscaleUnshareLan({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) =>
+      _withConnection<void>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          final (:lan, :advertised, :mine, :exitNode) =
+              await _readRouteState(runner);
+          log('Beende die Freigabe des Heimnetzes …');
+          // The current home network AND whatever the app added before — the
+          // Pi may have moved networks since. Routes set by hand stay.
+          await _runRootScriptExpectMarker(runner, log, config,
+              script: buildTailscaleAdvertiseScript(
+                  routesWithoutLan(advertised, [...lan, ...mine]),
+                  keepForwarding: exitNode),
+              successMarker: tailscaleRoutesMarker,
+              failMsg: 'Freigabe des Heimnetzes konnte nicht beendet werden');
+        },
+      );
+
+  /// Fresh read right before a route change — never the (possibly cached)
+  /// card state. Unreadable prefs count as "nothing advertised".
+  Future<
+      ({
+        List<String> lan,
+        List<String> advertised,
+        List<String> mine,
+        bool exitNode,
+      })> _readRouteState(SshRunner runner) async {
+    final r = await runner.run(detectShellCommand,
+        stdin: '${buildDetectBatch([
+              ('TS_LAN', lanRoutesCommand),
+              ('TS_PREFS', tailscalePrefsCommand),
+              ('TS_FWD', tailscaleForwardingProbe),
+            ])}\n');
+    final sec = splitDetectSections(r.stdout);
+    final prefs = sec['TS_PREFS'] ?? '';
+    return (
+      lan: parseLanSubnets(sec['TS_LAN'] ?? ''),
+      advertised: parseAdvertisedRoutes(prefs) ?? const <String>[],
+      mine: parseAppRoutes(sec['TS_FWD'] ?? ''),
+      exitNode: parseAdvertisesExitNode(prefs),
+    );
+  }
 
   /// Disconnects (`tailscale down`) or logs out (`tailscale logout`). Root.
   Future<void> tailscaleSet({

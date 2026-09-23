@@ -71,6 +71,9 @@ const kGreen = KythWordmark.kWordmarkGreen;
 const kBlack = Color(0xFF0B0E0C);
 const kCard = Color(0xFF161A17);
 
+/// The Tailscale admin console's device list — where a subnet route is approved.
+const kTailscaleMachinesUrl = 'https://login.tailscale.com/admin/machines';
+
 /// Our own Play listing — where a Play build gets its updates.
 const kPlayStoreUrl =
     'https://play.google.com/store/apps/details?id=systems.kyth.pitool';
@@ -600,6 +603,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// access helper can pre-fill it as host later even when offline. Call inside
   /// a setState (updates the field) — it persists the change (debounced).
   void _rememberTailscaleIp(List<ServiceStatus> services) {
+    if (_demoMode) return; // sample data, not this Pi
     for (final s in services) {
       if (s.id == 'tailscale' &&
           s.active &&
@@ -618,6 +622,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// address — that's what [_tailscaleIp] is for; anything else (LAN IP or
   /// `.local` hostname) counts as home.
   void _rememberLanHost() {
+    // A demo action "succeeds" against the typed host without reaching it —
+    // remembering it would mark a never-connected Pi as known.
+    if (_demoMode) return;
     final host = _host.text.trim();
     if (host.isNotEmpty && !isTailnetHost(host) && host != _lanHost) {
       _lanHost = host;
@@ -3898,7 +3905,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   Future<bool> _confirm(String title, String body,
-      {String? confirmLabel, bool destructive = false}) async {
+      {String? confirmLabel,
+      String? cancelLabel,
+      bool destructive = false}) async {
     final cs = Theme.of(context).colorScheme;
     final confirmText = confirmLabel ?? context.l10n.actionContinue;
     final r = await showDialog<bool>(
@@ -3909,7 +3918,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text(ctx.l10n.cancel),
+            child: Text(cancelLabel ?? ctx.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -4564,6 +4573,9 @@ class _UpdaterPageState extends State<UpdaterPage>
           ));
         case 'tailscale':
           final up = s.active;
+          // Home-network sharing only means something on a connected node.
+          final routes = up ? s.routes : null;
+          final share = routes?.share ?? RouteShare.unavailable;
           cards.add(_ServiceCard(
             isPro: _unlocked,
             status: s,
@@ -4581,8 +4593,17 @@ class _UpdaterPageState extends State<UpdaterPage>
                     ? () => _tailscaleSet(logout: false)
                     : _tailscaleUp,
             onOpenWeb: up
-                ? () => _openUrl('https://login.tailscale.com/admin/machines')
+                ? () => _openUrl(kTailscaleMachinesUrl)
                 : null,
+            // Two lines: the state sits at the end of the line and must not be
+            // cut off on a phone.
+            liveMaxLines: 2,
+            liveLines: [
+              if (share == RouteShare.active)
+                context.l10n.tsLanActive(routes!.sharedLan.join(', ')),
+              if (share == RouteShare.pending)
+                context.l10n.tsLanPending(routes!.sharedLan.join(', ')),
+            ],
             actions: [
               if (s.updateAvailable)
                 _CardAction(
@@ -4600,6 +4621,23 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (up && s.version != null)
                 _CardAction(context.l10n.actionUseIpAsHost(s.version!),
                     () => _useTailscaleIp(s.version!)),
+              // Opt-in only — it opens the whole home network to the tailnet.
+              // Checking and stopping are never locked: an undo behind a
+              // paywall would be a trap.
+              // Also next to an old route from a previous network: the
+              // current home network is still not offered.
+              if (routes != null &&
+                  routes.lan.isNotEmpty &&
+                  !routes.lanAdvertised)
+                _CardAction(context.l10n.actionShareLan,
+                    () => _proGate(_tailscaleShareLan),
+                    pro: true),
+              if (share == RouteShare.pending)
+                _CardAction(
+                    context.l10n.actionCheckLanShare, _tailscaleCheckLan),
+              if (share == RouteShare.pending || share == RouteShare.active)
+                _CardAction(
+                    context.l10n.actionStopLanShare, _tailscaleUnshareLan),
               // "Trennen" (primary) = tailscale down; this is the account-level
               // logout — labelled distinctly so the two aren't confused.
               _CardAction(context.l10n.actionSignOutTailscale,
@@ -5033,6 +5071,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     final config = _prepare();
     if (config == null) return;
     _lastAction = _checkRemoteAccess;
+    // Only the FIRST proof ends the setup — that is where the optional
+    // home-network step belongs, not on every later re-check.
+    final firstProof = !_remoteAccessProven;
+    var reachable = false;
     await _guard(() async {
       final services =
           await _updater.detectServices(config: config, onLog: _appendLog);
@@ -5046,7 +5088,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         setState(() => _remoteAccessPhase = _RemoteAccessPhase.awaitingBrowser);
         return;
       }
-      final reachable = await _updater.probeConnection(
+      reachable = await _updater.probeConnection(
         config: config.copyWith(
             host: _tailscaleIp, timeout: const Duration(seconds: 8)),
         onLog: _appendLog,
@@ -5064,6 +5106,12 @@ class _UpdaterPageState extends State<UpdaterPage>
       });
       if (reachable) _scheduleSave();
     }, backgroundMessage: l10n.busySettingUpRemoteAccess);
+    if (mounted &&
+        reachable &&
+        firstProof &&
+        _tailscaleStatus?.routes?.share == RouteShare.off) {
+      await _offerLanShare();
+    }
   }
 
   Future<void> _tailscaleUp() async {
@@ -5114,6 +5162,137 @@ class _UpdaterPageState extends State<UpdaterPage>
         backgroundMessage: logout
             ? l10n.busyTailscaleSigningOut
             : l10n.busyTailscaleDisconnecting);
+  }
+
+  /// The Tailscale entry of the last detection, if any.
+  ServiceStatus? get _tailscaleStatus {
+    for (final s in _services) {
+      if (s.id == 'tailscale') return s;
+    }
+    return null;
+  }
+
+  /// Shares the Pi's home network into the tailnet (subnet router). Opt-in
+  /// with an explicit confirmation, since it opens every device at home to the
+  /// whole tailnet; [confirmed] skips it only when the remote-access offer has
+  /// just explained exactly that.
+  Future<void> _tailscaleShareLan({bool confirmed = false}) async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final known = _tailscaleStatus?.routes?.lan ?? const <String>[];
+    if (!confirmed &&
+        !await _confirm(
+            l10n.dialogShareLanTitle, l10n.dialogShareLanBody(known.join(', ')),
+            confirmLabel: l10n.actionShareLan)) {
+      return;
+    }
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _tailscaleShareLan(confirmed: true);
+    List<String>? lan;
+    await _guard(() async {
+      lan = await _updater.tailscaleShareLan(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      _addHistory(l10n.historyLanShared);
+      await _refreshServices(config);
+    }, backgroundMessage: l10n.busySharingLan);
+    if (lan != null && mounted) await _reportLanShare(lan!, afterShare: true);
+  }
+
+  /// Re-reads the route state — typically after the user approved the route
+  /// in the Tailscale console.
+  Future<void> _tailscaleCheckLan() async {
+    if (_busy) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _tailscaleCheckLan;
+    var read = false;
+    await _guard(() async {
+      final services =
+          await _updater.detectServices(config: config, onLog: _appendLog);
+      final reconciled = await _reconcileEvcc(services);
+      if (!mounted) return;
+      setState(() {
+        _services = reconciled;
+        _servicesFromCache = false;
+        _rememberTailscaleIp(reconciled);
+      });
+      read = true;
+    }, backgroundMessage: context.l10n.busyCheckingLanShare);
+    if (read && mounted) await _reportLanShare(const []);
+  }
+
+  /// Says where the sharing stands. Reachable → a status line. Still waiting
+  /// for the approval in the Tailscale console — the usual case the first time
+  /// — → a popup with the exact steps and a direct way to the console, since
+  /// that step happens outside the app and is easy to miss. [afterShare]: the
+  /// route was just set, so anything short of "active" means "approve it"
+  /// (even if the follow-up read failed); [fallbackLan] names the network then.
+  Future<void> _reportLanShare(List<String> fallbackLan,
+      {bool afterShare = false}) async {
+    final l10n = context.l10n;
+    final status = _tailscaleStatus;
+    final r = status?.routes;
+    final shared = r?.sharedLan ?? const <String>[];
+    final routes = (shared.isNotEmpty ? shared : fallbackLan).join(', ');
+    final share = r?.share;
+    if (share == RouteShare.active) {
+      setState(() {
+        _statusMessage = l10n.statusLanShared(routes);
+        _statusOk = true;
+      });
+      return;
+    }
+    if (share != RouteShare.pending && !afterShare) return;
+    setState(() {
+      _statusMessage = l10n.statusLanPending(routes);
+      _statusOk = true;
+    });
+    final machine = (r?.machine ?? '').isNotEmpty
+        ? r!.machine
+        : (status?.version ?? _tailscaleIp);
+    final open = await _confirm(l10n.dialogApproveRouteTitle,
+        l10n.dialogApproveRouteBody(machine, routes),
+        confirmLabel: l10n.actionOpenTailscaleConsole,
+        cancelLabel: l10n.actionLater);
+    if (open) await _openUrl(kTailscaleMachinesUrl);
+  }
+
+  /// Stops sharing the home network (other advertised routes stay).
+  Future<void> _tailscaleUnshareLan() async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    if (!await _confirm(
+        l10n.dialogStopLanShareTitle, l10n.dialogStopLanShareBody,
+        confirmLabel: l10n.actionStopLanShare)) {
+      return;
+    }
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _tailscaleUnshareLan;
+    await _guard(() async {
+      await _updater.tailscaleUnshareLan(config: config, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = l10n.statusLanShareStopped;
+        _statusOk = true;
+      });
+      _addHistory(l10n.historyLanShareStopped);
+      await _refreshServices(config);
+    }, backgroundMessage: l10n.busyStoppingLanShare);
+  }
+
+  /// The optional last step of the remote-access setup, offered once — right
+  /// after this phone first reached the Pi over the tailnet. Declining costs
+  /// nothing: the Tailscale card's ⋮ keeps the same action.
+  Future<void> _offerLanShare() async {
+    final l10n = context.l10n;
+    final lan = _tailscaleStatus?.routes?.lan ?? const <String>[];
+    if (await _confirm(
+        l10n.dialogOfferLanTitle, l10n.dialogOfferLanBody(lan.join(', ')),
+        confirmLabel: l10n.actionShareLan, cancelLabel: l10n.actionNotNow)) {
+      _proGate(() => _tailscaleShareLan(confirmed: true));
+    }
   }
 
   /// Puts the Pi's tailnet IP into the host field (the bonus: connect from
@@ -5572,6 +5751,15 @@ class _UpdaterPageState extends State<UpdaterPage>
                 // next to losing a release; the form above it is collapsed for
                 // those users anyway.
                 if (_connected) return const SizedBox.shrink();
+                // A Pi this profile has already reached (a successful connect
+                // remembered its home or tailnet address) needs neither the
+                // search nor the beginner's guide — unless the last attempt
+                // failed: then its address may have changed, and the search is
+                // exactly the right offer. The ⋮ menu keeps the search anyway.
+                // The demo entry is separate (above the form) and unaffected.
+                final knownPi = _lanHost.isNotEmpty || _tailscaleIp.isNotEmpty;
+                final offerSearch = !knownPi || _connectionOk == false;
+                if (!offerSearch) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.only(top: 10),
                   child: Column(
@@ -5584,11 +5772,12 @@ class _UpdaterPageState extends State<UpdaterPage>
                             minimumSize: const Size.fromHeight(44)),
                       ),
                       // Beginners without a ready Pi: link the Imager guide.
-                      TextButton.icon(
-                        onPressed: _openSetupGuide,
-                        icon: const Icon(Icons.menu_book_outlined, size: 18),
-                        label: Text(context.l10n.noPiYetSetup),
-                      ),
+                      if (!knownPi)
+                        TextButton.icon(
+                          onPressed: _openSetupGuide,
+                          icon: const Icon(Icons.menu_book_outlined, size: 18),
+                          label: Text(context.l10n.noPiYetSetup),
+                        ),
                     ],
                   ),
                 );

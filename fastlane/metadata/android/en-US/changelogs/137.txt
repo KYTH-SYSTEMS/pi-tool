@@ -1,0 +1,3 @@
+Tailscale can now share your home network (subnet router, from the ⋮ menu of the Tailscale card or at the end of the remote-access helper): while away, the wallbox, inverter or router stay reachable at their home IP. If the approval in the Tailscale console is still missing, a popup explains the step.
+
+"Find Pi on Wi-Fi" now only appears for a Pi you have connected to before when the connection fails. Renaming a profile keeps auto-connect.

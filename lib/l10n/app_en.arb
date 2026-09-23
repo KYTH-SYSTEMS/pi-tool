@@ -1185,5 +1185,81 @@
   "filesNoPiTitle": "No Pi connected",
   "filesNoPiBody": "Enter host + credentials on the \"Management\" tab — then you can browse and upload your Pi's files here.",
   "menuNeedsConnectionHint": "Connect to the Pi first",
-  "legalTerms": "Terms"
+  "legalTerms": "Terms",
+  "actionShareLan": "Share home network",
+  "actionCheckLanShare": "Check home network approval",
+  "actionStopLanShare": "Stop sharing home network",
+  "actionOpenTailscaleConsole": "Open console",
+  "actionLater": "Later",
+  "actionNotNow": "Not now",
+  "tsLanActive": "Home network {routes} shared",
+  "@tsLanActive": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "tsLanPending": "Home network {routes}: approval in Tailscale pending",
+  "@tsLanPending": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogShareLanTitle": "Share home network?",
+  "dialogShareLanBody": "The Pi will then forward Tailscale connections into your home network {routes}. On the road you can reach devices without Tailscale – such as the wallbox, inverter or router – at their usual IP.\n\nThis applies to every device in your tailnet. Tailscale only distributes the route after you approve it in the Tailscale admin console.",
+  "@dialogShareLanBody": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogApproveRouteTitle": "One more step: approve the route",
+  "dialogApproveRouteBody": "Tailscale only distributes {routes} once you approve the route:\n\n1. Open the Tailscale admin console (Machines).\n2. On the device \"{machine}\", tap ⋯ → \"Edit route settings…\".\n3. Tick {routes} and save.\n\nThen tap \"Check home network approval\" in the ⋮ menu of the Tailscale card.",
+  "@dialogApproveRouteBody": {
+    "placeholders": {
+      "machine": {
+        "type": "String"
+      },
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogOfferLanTitle": "Reach your home network too?",
+  "dialogOfferLanBody": "Remote access to the Pi works. Optionally, the Pi can also share your home network {routes} – then you can reach the wallbox, inverter or router at their usual IP while away.\n\nThis applies to every device in your tailnet and can be stopped at any time from the ⋮ menu of the Tailscale card.",
+  "@dialogOfferLanBody": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogStopLanShareTitle": "Stop sharing home network?",
+  "dialogStopLanShareBody": "Devices on your home network will no longer be reachable over Tailscale while away. The Pi itself stays reachable at its Tailscale IP.\n\nIf you are currently connected remotely via a home network address, that connection will drop.",
+  "busySharingLan": "Sharing home network …",
+  "busyCheckingLanShare": "Checking approval …",
+  "busyStoppingLanShare": "Stopping home network sharing …",
+  "statusLanShared": "Home network {routes} is reachable over Tailscale.",
+  "@statusLanShared": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "statusLanPending": "Home network {routes} offered – approval in the Tailscale console pending.",
+  "@statusLanPending": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "statusLanShareStopped": "Home network sharing stopped.",
+  "historyLanShared": "Home network shared over Tailscale.",
+  "historyLanShareStopped": "Stopped sharing the home network over Tailscale."
 }

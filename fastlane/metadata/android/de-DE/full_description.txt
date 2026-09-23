@@ -7,7 +7,7 @@ Dienste:
 * Grafana, InfluxDB & Mosquitto – installieren + aktualisieren per apt (offiz. Repo, experimentell), Web-UI öffnen; auf Wunsch komplett mit evcc verdrahtet: InfluxDB + Token + fertiges Grafana-Dashboard
 * AdGuard Home, Node-RED & Zigbee2MQTT – automatisch erkannt: Web öffnen, Logs ansehen, neustarten
 * Raspberry Pi Connect – offizieller Fernzugriff (ab Raspberry Pi OS Bookworm): installieren, anmelden, an/aus, Updates, Web öffnen
-* Tailscale – VPN/Mesh installieren, aktualisieren und per Login-Link verbinden. Fernzugriff mit einem Tap: Tailnet-IP als Host, per Tap zurück zur Heim-IP
+* Tailscale – VPN/Mesh installieren, aktualisieren, per Login-Link verbinden; auf Wunsch das Heimnetz freigeben (Subnet Router). Fernzugriff per Tap: Tailnet-IP als Host, zurück zur Heim-IP
 * Docker-Container – ansehen, neustarten und aktualisieren (mit Rollback)
 * „Dienst hinzufügen" – alle noch nicht installierten Dienste an einer Stelle; der Hauptbildschirm zeigt nur, was wirklich läuft
 * System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige mit Speicher-Warnung und SD-Check
@@ -28,7 +28,7 @@ Funktionen:
 * SSH-Key mit einem Tap: auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil umgestellt
 * Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import
-* Bewusst verbinden: die Sitzung zum aktiven Pi hält bis zum Profilwechsel; Automatik, Terminal und Dateien erst nach dem Verbinden
+* Bewusst verbinden: die Sitzung hält bis zum Profilwechsel; Automatik, Terminal und Dateien erst danach
 * Demo-Modus: die App mit Beispieldaten testen – ohne echten Pi
 * Deutsch & Englisch: folgt der Handy-Sprache, in den Einstellungen umschaltbar (System/Deutsch/English)
 

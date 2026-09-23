@@ -18,6 +18,23 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.68.0': [
+    'Tailscale can now share your home network (subnet router): while away, '
+        'devices without Tailscale – wallbox, inverter, router – stay reachable '
+        'at their usual home IP.',
+    'Found in the ⋮ menu of the Tailscale card as "Share home network", and '
+        'offered once as an optional last step of the remote-access helper. It '
+        'applies to every device in your tailnet, so it stays opt-in.',
+    'Tailscale only distributes the route after you approve it in the '
+        'Tailscale console. The app cannot do that step itself – a popup lists '
+        'the exact steps and opens the console. The card shows whether the '
+        'sharing is active or still waiting for approval.',
+    '"Find Pi on Wi-Fi" no longer sits under the connect button for a Pi you '
+        'have already connected to. It comes back when the connection fails, '
+        'since the address may have changed; the ⋮ menu keeps it anyway.',
+    'Renaming a profile that is not currently selected no longer switches off '
+        'its auto-connect.',
+  ],
   '0.67.1': [
     'Pis running Raspbian Buster (or older) could no longer install anything: '
         'the package sources of these releases now exist only in the official '
@@ -271,6 +288,24 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.68.0': [
+    'Tailscale kann jetzt das Heimnetz freigeben (Subnet Router): Unterwegs '
+        'sind so auch Geräte ohne Tailscale – Wallbox, Wechselrichter, Router – '
+        'unter ihrer gewohnten Heim-IP erreichbar.',
+    'Zu finden im ⋮ der Tailscale-Karte als „Heimnetz freigeben", außerdem '
+        'einmalig als optionaler letzter Schritt des Fernzugriff-Helfers. Die '
+        'Freigabe gilt für alle Geräte im Tailnet und bleibt deshalb Opt-in.',
+    'Tailscale verteilt die Route erst nach einer Bestätigung in der '
+        'Tailscale-Konsole. Diesen Schritt kann die App nicht selbst erledigen – '
+        'ein Popup nennt die genauen Schritte und öffnet die Konsole. Die Karte '
+        'zeigt, ob die Freigabe aktiv ist oder noch auf die Bestätigung wartet.',
+    '„Pi im WLAN suchen" steht bei einem Pi, mit dem du schon verbunden warst, '
+        'nicht mehr unter dem Verbinden-Knopf. Scheitert die Verbindung, kommt '
+        'die Suche zurück – die Adresse kann sich geändert haben. Im ⋮-Menü '
+        'bleibt sie ohnehin.',
+    'Umbenennen eines nicht ausgewählten Profils schaltet dessen '
+        'Auto-Verbinden nicht mehr ab.',
+  ],
   '0.67.1': [
     'Pis mit Raspbian Buster (oder älter) konnten nichts mehr installieren: '
         'Die Paketquellen dieser Versionen liegen nur noch im offiziellen '

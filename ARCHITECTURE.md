@@ -192,7 +192,8 @@ Flutter-freier Dienst-Katalog (siehe `design/2026-06-30-multi-service.md`). Pro
 Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
 (Verbindung, Passwort-Piping, Marker) liegt bewusst in `evcc_updater.dart`.
 
-- **`pi_service.dart`** — `ServiceStatus` (Modell). `updateAvailable` ist nur bei
+- **`pi_service.dart`** — `ServiceStatus` (Modell; `routes` = Subnet-Router-
+  Zustand, nur Tailscale, übersteht die Cache-Runde). `updateAvailable` ist nur bei
   `updateKnown == true` aussagekräftig (Tri-State: Docker-evcc / nicht-gepinnte
   HA-Tags zeigen „Aktualisieren" statt falsch „Aktuell"). Reconciler
   `applyLatestEvccVersion` (nur apt-evcc, gegen stalen lokalen apt-Index) /
@@ -314,6 +315,42 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   (Pi hat eine neue LAN-IP) und wird ignoriert. **Unter zwei bekannten Adressen
   wird gar nicht sondiert** — ein Pi ohne Fernzugriff darf keine Latenz für ein
   Feature zahlen, das er nicht nutzt.
+  **Heimnetz freigeben (Subnet Router, v0.68.0)** — Opt-in über das ⋮ der Karte
+  bzw. als optionaler Schritt nach dem **ersten** Fernzugriff-Beweis
+  (`_offerLanShare`). Zustand kommt aus drei No-sudo-Proben im Detection-Batch
+  (`TS_LAN` = `ip -4 route show`, `TS_PREFS` = `tailscale debug prefs` →
+  `AdvertiseRoutes`, `TS_SELF` = `tailscale status --json --peers=false` →
+  `Self.AllowedIPs` minus eigene Adressen/Exit-Routen = **freigegeben**, dieselbe
+  Regel wie tailscaleds approved-routes-Metrik) → `SubnetRoutes`/`RouteShare`
+  (`unavailable/off/pending/active`) auf `ServiceStatus.routes`, nur bei `up`.
+  Heimnetz = `scope link`-Routen der Default-Route-Schnittstelle(n), nur RFC 1918
+  (`parseLanSubnets`/`isPrivateIpv4Prefix`). Änderung = Root-Skript
+  `buildTailscaleAdvertiseScript` mit Marker: eigene sysctl-Datei
+  **`/etc/sysctl.d/99-pi-tool-tailscale.conf`** (nur `net.ipv4.ip_forward`; IPv6-
+  Weiterleitung bewusst nicht — unnötig für IPv4-Routen, kappt sonst RA-basierte
+  Adressen), dann **`tailscale set --advertise-routes`** (nie `up`: verlangt alle
+  Nicht-Default-Flags). Vor jeder Änderung frisch gelesen, **zusammengeführt**
+  statt überschrieben (`routesWithLan`/`routesWithoutLan` — von Hand gesetzte
+  Routen bleiben, auch IPv6/öffentliche: nur die App-eigenen müssen RFC 1918
+  sein, der Rest nur präfixförmig). Die sysctl-Datei trägt als Merker
+  `# routes=…` die **von der App gesetzten** Routen (`parseAppRoutes`, Probe
+  `TS_FWD`) — so bleibt eine alte Route nach einem Netzwechsel (neuer Router)
+  als „unsere" sichtbar und beendbar (`SubnetRoutes.mine`, `sharedLan` =
+  angeboten ∩ (Heimnetz ∪ mine); „freigeben" erscheint, solange das AKTUELLE
+  Heimnetz fehlt). „Beenden" löscht die Datei erst ohne Restroute **und** ohne
+  Exit-Node (der braucht die Weiterleitung auch) und lässt den Laufzeitwert
+  stehen (Docker braucht ihn); `tailscale logout` nimmt sie gleich mit (Logout
+  setzt die Prefs samt Routen zurück). Demo-Aktionen merken sich keine
+  Adressen (`_rememberLanHost`/`_rememberTailscaleIp` brechen im Demo ab). Die Bestätigung in der
+  Tailscale-Konsole kann die App nicht leisten (kein API-Key) — fehlt sie, erklärt
+  `_reportLanShare` den Schritt als Popup mit Direktlink (`kTailscaleMachinesUrl`).
+  **Folge für `up`:** Ein Knoten in `NeedsLogin` (Schlüssel abgelaufen) mit
+  gesetzter Route verweigert ein nacktes `tailscale up` („requires mentioning all
+  non-default flags") und nennt den erwarteten Befehl. `tailscaleUp` wiederholt
+  dann mit genau diesen Flags (`parseTailscaleUpRestateFlags`, nur schlichte
+  `--flag[=wert]`-Tokens inkl. `_`, einzeln `shSingleQuote`t) — sonst liefe „Verbinden"
+  nach Monaten ins Leere. Nach `tailscale logout` sind die Routen weg (Tailscale
+  löscht das Profil); die Karte bietet dann wieder „freigeben" an.
 - **Fernzugriff-Karte (v0.64.0, `main.dart`)** — verkettet Installation, `up`
   und Browser-Login und **misst danach den Erfolg**, statt ihn zu behaupten:
   `EvccUpdater.probeConnection` verbindet sich vom **Handy** aus auf die
@@ -678,8 +715,12 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   feuert trotzdem (Gate in der Callback via `_proGate` → `_showPaywall`).
 - **Onboarding:** `_SetupGuidePage` (in `ui_widgets.dart`) erklärt Einsteigern die
   Pi-Einrichtung per Raspberry Pi Imager (SSH/Benutzer/WLAN). Erreichbar via
-  `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen,
-  solange das Host-Feld leer ist (neben „Pi im WLAN suchen").
+  `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen
+  unter „Pi im WLAN suchen". Beide stehen dort nur, solange der Pi **unbekannt**
+  ist (kein gemerktes `lanHost`/`tailscaleIp` = nie erfolgreich verbunden); bei
+  einem bekannten Pi kommt nur die Suche zurück, wenn die letzte Verbindung
+  scheiterte (`_connectionOk == false` — die Adresse kann sich geändert haben).
+  Das ⋮-Menü behält die Suche immer. Vom Demo-Einstieg unabhängig.
 - **Dateien-Tab:** `_FilesView` (in `ui_widgets.dart`) = eingebetteter Browser
   (durchsuchen/vorschau/hochladen/löschen). Config via `_filesConfig()` (leise,
   ohne `_busy` — Tab zeigt sonst einen „erst verbinden"-Platzhalter); Pro-gated
