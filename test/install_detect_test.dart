@@ -395,7 +395,12 @@ void main() {
         runCommand: "docker run -d --name 'evcc' 'evcc/evcc:latest'",
       );
       // `docker run -d` returns 0 on accept, so verify it is actually Running…
-      expect(script, contains("docker inspect -f '{{.State.Running}}' 'evcc'"));
+      // (State.Running would also be true during a crash loop.)
+      expect(
+          script,
+          contains(
+              "docker inspect -f '{{.State.Status}}|{{.RestartCount}}' 'evcc'"));
+      expect(script, contains("!= 'running|0'"));
       // …and if not, restore the retained old container and fail.
       expect(script, contains("docker rename 'evcc-evccpitool-old' 'evcc'"));
       expect(script, contains('exit 1'));

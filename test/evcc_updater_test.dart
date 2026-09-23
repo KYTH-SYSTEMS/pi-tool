@@ -15,6 +15,7 @@ import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/ssh_keys.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
+import 'package:evcc_updater/src/services/homeassistant_service.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/pi_connect.dart';
 import 'package:evcc_updater/src/services/pihole_service.dart';
@@ -1486,6 +1487,179 @@ void main() {
     });
   });
 
+  group('Pi-hole-Web-Passwort', () {
+    EvccUpdater withPw(FakeSshRunner r) => EvccUpdater(
+        runnerFactory: (_) => r, webPasswordGenerator: () => 'Abc234xyzKLMN567');
+
+    test('Installation: gesetztes Passwort kommt zurück — und nie ins Log',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('Installing …\n$piholePasswordSetMarker\nINSTALL_OK\n')
+        ],
+      });
+      final log = <String>[];
+      final pw = await withPw(runner)
+          .installPihole(config: _config, onLog: log.add);
+      expect(pw, 'Abc234xyzKLMN567');
+      expect(runner.stdinByCommand[installShellCommand],
+          contains("pihole setpassword 'Abc234xyzKLMN567'"));
+      expect(log.join('\n'), isNot(contains('Abc234xyzKLMN567')));
+    });
+
+    test('Installation: war schon ein Passwort gesetzt, gibt es keins zurück',
+        () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('INSTALL_OK\n')]});
+      expect(
+          await withPw(runner).installPihole(config: _config, onLog: (_) {}),
+          isNull);
+    });
+
+    test('Sicherheits-Fix: setzt das Passwort und gibt es zurück', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('$piholePasswordSetMarker\n$piholePasswordDoneMarker\n')
+        ],
+      });
+      final pw = await withPw(runner).fixSecurity(
+          config: _config, fix: SecurityFix.piholePassword, onLog: (_) {});
+      expect(pw, 'Abc234xyzKLMN567');
+      // Kein Paket im Spiel: kein EOL-Quellen-Umbau vorab.
+      expect(runner.stdinByCommand[installShellCommand],
+          isNot(contains('sources.list')));
+    });
+
+    test('Sicherheits-Fix: inzwischen gesetzt → nichts geändert, null',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('Pi-hole hat bereits ein Passwort – nichts geändert.\n'
+              '$piholePasswordDoneMarker\n')
+        ],
+      });
+      expect(
+          await withPw(runner).fixSecurity(
+              config: _config, fix: SecurityFix.piholePassword, onLog: (_) {}),
+          isNull);
+    });
+  });
+
+  group('EvccUpdater.uninstallService', () {
+    test('Ablehnung des Skripts erscheint als ihr Grund, nicht als "Details im Log"',
+        () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('UNINSTALL_REFUSED: apt würde zusätzlich entfernen: foo – '
+              'abgebrochen.\n', exitCode: 3)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).uninstallService(
+            config: _config, id: 'mosquitto', purge: false, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having((e) => e.message, 'message',
+            'apt würde zusätzlich entfernen: foo – abgebrochen.')),
+      );
+    });
+
+    test('apt-Dienst: Behalten-Skript als root, Erfolg nur mit Marker', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('$aptServiceRemovedMarker\n')],
+      });
+      await _updaterWith(runner).uninstallService(
+          config: _config, id: 'grafana', purge: false, onLog: (_) {});
+      final script = runner.stdinByCommand[installShellCommand]!;
+      expect(script, startsWith('sekret\n'));
+      expect(script, contains(aptServiceRemovedMarker));
+    });
+
+    test('ohne Marker: Fehler, kein Phantom-Erfolg', () async {
+      final runner = FakeSshRunner({installShellCommand: [_r('')]});
+      await expectLater(
+        _updaterWith(runner).uninstallService(
+            config: _config, id: 'evcc', purge: true, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('jeder Dienst bekommt sein eigenes Skript', () async {
+      for (final (id, marker) in [
+        ('evcc', evccRemovedMarker),
+        ('homeassistant', homeAssistantRemovedMarker),
+        ('piconnect', piConnectRemovedMarker),
+        ('tailscale', tailscaleRemovedMarker),
+        ('influxdb', aptServiceRemovedMarker),
+      ]) {
+        final runner = FakeSshRunner({installShellCommand: [_r('$marker\n')]});
+        await _updaterWith(runner).uninstallService(
+            config: _config, id: id, purge: false, onLog: (_) {});
+        expect(runner.stdinByCommand[installShellCommand], contains(marker),
+            reason: id);
+      }
+    });
+
+    test('Tailscale: über die Tailnet-Adresse verbunden → abgelehnt, bevor '
+        'irgendetwas läuft', () async {
+      final runner = FakeSshRunner({});
+      await expectLater(
+        _updaterWith(runner).uninstallService(
+            config: const SshConfig(
+                host: '100.64.0.5',
+                port: 22,
+                username: 'pi',
+                password: 'sekret'),
+            id: 'tailscale',
+            purge: false,
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('Tailscale'))),
+      );
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
+    test('Tailscale: Sitzung kommt über das Tailnet (Subnet-Route) → abgelehnt',
+        () async {
+      final runner = FakeSshRunner({
+        tailscaleSessionProbe: [_r('100.101.1.2 51234 192.168.178.64 22\n')],
+      });
+      await expectLater(
+        _updaterWith(runner).uninstallService(
+            config: _config, id: 'tailscale', purge: true, onLog: (_) {}),
+        // Not "use the home address" — the session already uses it, through
+        // the shared home network.
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.message, 'message', tailscaleSessionRefusal)),
+      );
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
+    test('Pi Connect: ungeeigneter Benutzername → klare Meldung', () async {
+      final runner = FakeSshRunner({});
+      await expectLater(
+        _updaterWith(runner).uninstallService(
+            config: const SshConfig(
+                host: '192.168.178.64',
+                port: 22,
+                username: r'pi$(reboot)',
+                password: 'sekret'),
+            id: 'piconnect',
+            purge: false,
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
+    test('unbekannter Dienst: Programmierfehler, kein SSH', () async {
+      final runner = FakeSshRunner({});
+      await expectLater(
+        _updaterWith(runner).uninstallService(
+            config: _config, id: 'pihole', purge: false, onLog: (_) {}),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
   group('EvccUpdater Pi Connect', () {
     test('installPiConnect installs lite + linger as root', () async {
       final runner =
@@ -2565,7 +2739,7 @@ void main() {
         () async {
       final runner = FakeSshRunner({
         installShellCommand: [_r('Home Assistant gestartet.')],
-        dockerListCommand: [
+        dockerListRunningCommand: [
           _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
         ],
       });
@@ -2593,7 +2767,7 @@ void main() {
         () async {
       final runner = FakeSshRunner({
         installShellCommand: [_r('')],
-        dockerListCommand: [_r('evcc|evcc/evcc:latest\n')], // no HA came up
+        dockerListRunningCommand: [_r('evcc|evcc/evcc:latest\n')], // no HA came up
       });
       await expectLater(
         _updaterWith(runner).installHomeAssistant(config: _config, onLog: (_) {}),
@@ -2607,6 +2781,9 @@ void main() {
       final inspectCmd = dockerInspectJsonCommand('homeassistant');
       final runner = FakeSshRunner({
         dockerListCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+        dockerListRunningCommand: [
           _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
         ],
         inspectCmd: [
@@ -2629,6 +2806,9 @@ void main() {
       final inspectCmd = dockerInspectJsonCommand('homeassistant');
       final runner = FakeSshRunner({
         dockerListCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+        dockerListRunningCommand: [
           _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
         ],
         inspectCmd: [
@@ -2982,7 +3162,7 @@ void main() {
       final runner = FakeSshRunner({
         jsonCmd: [_r(composeInspect())],
         shell: [_r('Pulling evcc ... done', exitCode: 0)],
-        dockerListCommand: [_r('evcc|evcc/evcc:0.123\n')],
+        dockerListRunningCommand: [_r('evcc|evcc/evcc:0.123\n')],
       });
 
       await _updaterWith(runner).updateDocker(
@@ -2999,7 +3179,7 @@ void main() {
       final runner = FakeSshRunner({
         jsonCmd: [_r(runInspect())],
         shell: [_r('recreated', exitCode: 0)],
-        dockerListCommand: [_r('evcc|evcc/evcc:latest\n')],
+        dockerListRunningCommand: [_r('evcc|evcc/evcc:latest\n')],
       });
 
       await _updaterWith(runner).updateDocker(
@@ -3032,12 +3212,30 @@ void main() {
       );
     });
 
+    test('ein Container in der Neustart-Schleife gilt nicht als gelaufen',
+        () async {
+      // Plain `docker ps` lists a restarting container; only the running-only
+      // listing proves the update. Nothing in it → failure, not "läuft wieder".
+      final runner = FakeSshRunner({
+        jsonCmd: [_r(runInspect())],
+        shell: [_r('recreated', exitCode: 0)],
+        dockerListCommand: [_r('evcc|evcc/evcc:latest\n')],
+        dockerListRunningCommand: [_r('')],
+      });
+      await expectLater(
+        _updaterWith(runner).updateDocker(
+            config: _config, detection: detection, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.serviceInactive)),
+      );
+    });
+
     test('sudo branch feeds the password as the first stdin line only',
         () async {
       final runner = FakeSshRunner({
         jsonSudoCmd: [_r(composeInspect())],
         sudoShell: [_r('done', exitCode: 0)],
-        dockerListSudoCommand: [_r('evcc|evcc/evcc:0.123\n')],
+        dockerListRunningSudoCommand: [_r('evcc|evcc/evcc:0.123\n')],
       });
 
       await _updaterWith(runner).updateDocker(

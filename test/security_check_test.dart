@@ -21,6 +21,42 @@ void main() {
     });
   });
 
+  group('Pi-hole-Weboberfläche', () {
+    test('die Probe prüft den Passwort-Hash, ohne ihn auszugeben', () {
+      final probe = buildSecurityProbe();
+      expect(probe, contains('__SEC_PIHOLE__'));
+      expect(probe, contains('webserver.api.pwhash'));
+      expect(probe, contains('pwhash-empty'));
+      expect(probe, contains('pwhash-set'));
+    });
+
+    test('ohne Passwort: Warnung mit Ein-Tipp-Fix', () {
+      final r = parseSecurityReport('__SEC_PIHOLE__\npwhash-empty\n');
+      final f = r.firstWhere((x) => x.title == 'Pi-hole-Weboberfläche');
+      expect(f.level, SecurityLevel.warn);
+      expect(securityFixFor(f), SecurityFix.piholePassword);
+    });
+
+    test('mit Passwort: ok, kein Fix', () {
+      final r = parseSecurityReport('__SEC_PIHOLE__\npwhash-set\n');
+      final f = r.firstWhere((x) => x.title == 'Pi-hole-Weboberfläche');
+      expect(f.level, SecurityLevel.ok);
+      expect(securityFixFor(f), isNull);
+    });
+
+    test('nicht ermittelbar (z. B. Pi-hole v5): Info, kein Fix', () {
+      final r = parseSecurityReport('__SEC_PIHOLE__\npwhash-unknown\n');
+      final f = r.firstWhere((x) => x.title == 'Pi-hole-Weboberfläche');
+      expect(f.level, SecurityLevel.info);
+      expect(securityFixFor(f), isNull);
+    });
+
+    test('kein Pi-hole: kein Befund', () {
+      final r = parseSecurityReport('__SEC_PIHOLE__\n');
+      expect(r.any((x) => x.title == 'Pi-hole-Weboberfläche'), isFalse);
+    });
+  });
+
   group('parseSecurityReport', () {
     SecurityFinding by(List<SecurityFinding> f, String needle) =>
         f.firstWhere((x) => x.title.toLowerCase().contains(needle));
@@ -189,8 +225,14 @@ __SEC_PORTS__
   group('buildSecurityFixScript', () {
     test('every fix ends in the success marker', () {
       for (final fix in SecurityFix.values) {
+        if (fix == SecurityFix.piholePassword) continue; // own builder, below
         expect(buildSecurityFixScript(fix), contains('SECFIX_OK'));
       }
+    });
+
+    test('the Pi-hole fix needs a password — its own builder', () {
+      expect(() => buildSecurityFixScript(SecurityFix.piholePassword),
+          throwsArgumentError);
     });
 
     test('installs run apt without a pty (log noise)', () {

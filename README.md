@@ -2,7 +2,8 @@
 
 Schlanke **Android-App** (clean minimal, Hell/Dunkel/System), die deine
 **self-hosted Dienste auf dem Raspberry Pi per SSH** installiert, aktualisiert,
-sichert und überwacht — plus **Fernzugriff** einrichten und **Dateien** verwalten.
+sichert, überwacht und wieder entfernt — plus **Fernzugriff** einrichten und
+**Dateien** verwalten.
 Ein **Cockpit mit vier Tabs** (Verwaltung · Automatik · Terminal · Dateien):
 „Verbindung herstellen" erkennt automatisch, was läuft, und zeigt pro Dienst eine
 Karte — [evcc](https://evcc.io), Pi-hole, Home Assistant, Grafana, InfluxDB,
@@ -69,6 +70,15 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,
   InfluxDB, Mosquitto) und installiert den gewählten (experimentell). So bleibt
   die Übersicht schlank, egal wie viele Dienste unterstützt werden.
+- **Dienste deinstallieren** — im ⋮ jeder Karte, deren Dienst die App auch
+  installieren kann (evcc per apt, Home Assistant, Pi Connect, Tailscale,
+  Grafana, InfluxDB, Mosquitto). Standard: Das Programm verschwindet,
+  Konfiguration und Daten bleiben — eine spätere Neuinstallation übernimmt sie.
+  Mit dem Häkchen „Auch Konfiguration und Daten löschen" gibt es den kompletten
+  Rückbau samt eigener Paketquelle. Vorher prüft das Skript, ob das sicher geht
+  (etwa: apt würde nichts anderes mitnehmen, die Verbindung läuft nicht über das
+  zu entfernende Tailscale) und bricht sonst mit einem Grund ab, ohne etwas zu
+  ändern. Pi-hole bewusst noch nicht: Es ist oft der DNS des ganzen Netzes.
 - **Fernzugriff mit einem Knopf einrichten** — bist du mit dem Pi verbunden,
   bietet die Verwaltung „Fernzugriff einrichten" an: Die App installiert
   Tailscale auf dem Pi, startet die Anmeldung und öffnet den Login im Browser.
@@ -131,9 +141,11 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Pi herunterfahren (mit Sicherheitsabfrage — der Pi bleibt danach aus).
 - **Sicherheits-Check mit „Beheben"** — Nur-Lesen-Prüfung mit Ampel: SSH-Root-
   Login, Passwort- vs. Key-Login, automatische Sicherheitsupdates, fail2ban,
-  offene Ports. Fixbare Befunde tragen einen „Beheben"-Knopf (fail2ban
+  offene Ports, dazu — wenn vorhanden — ob die Pi-hole-Weboberfläche ein
+  Passwort hat. Fixbare Befunde tragen einen „Beheben"-Knopf (fail2ban
   installieren, Auto-Updates aktivieren, Root-Login abschalten — als Drop-in,
-  mit `sshd -t` geprüft und bei Problemen automatisch zurückgenommen); danach
+  mit `sshd -t` geprüft und bei Problemen automatisch zurückgenommen — sowie ein
+  zufälliges Pi-hole-Passwort setzen, das einmalig angezeigt wird); danach
   läuft die Prüfung neu. Das Abschalten des Passwort-Logins bleibt bewusst
   Handarbeit (Aussperr-Risiko ohne bewiesenen Key-Login).
 - **Speicherplatz-Explorer** — „Was frisst meinen Platz?": größte Ordner/Dateien
@@ -260,8 +272,9 @@ ihn passend zum Setup:
   **aus `docker inspect` rekonstruiert** neu an (Ports, Volumes, Env,
   Restart-Policy, Netzwerk sowie `--device`/`--privileged`/`--group-add` für
   USB-/RS485-Zähler). Der alte Container wird dabei nur **umbenannt**
-  (`<name>-evccpitool-old`), nie gelöscht — schlägt die Neuanlage fehl, wird er
-  automatisch zurückgerollt. **Experimentell**, nicht gegen jede Konfiguration
+  (`<name>-evccpitool-old`, geparkt ohne Autostart), nie gelöscht — schlägt die
+  Neuanlage fehl oder hängt der neue Container in einer Neustart-Schleife, wird
+  der alte mit seiner ursprünglichen Restart-Policy automatisch zurückgerollt. **Experimentell**, nicht gegen jede Konfiguration
   getestet.
 
 Docker-Befehle laufen bei Bedarf automatisch über `sudo`.

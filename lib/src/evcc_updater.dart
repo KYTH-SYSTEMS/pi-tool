@@ -93,7 +93,14 @@ class EvccUpdater {
   /// instance is wired into the real runner so reads/writes stay consistent.
   final HostKeyStore? hostKeyStore;
 
-  EvccUpdater({required this.runnerFactory, this.hostKeyStore});
+  EvccUpdater(
+      {required this.runnerFactory,
+      this.hostKeyStore,
+      String Function()? webPasswordGenerator})
+      : _webPassword = webPasswordGenerator ?? generateWebPassword;
+
+  /// Makes the Pi-hole web password (injectable so tests see a known one).
+  final String Function() _webPassword;
 
   /// The connection of the action currently in flight, so [cancel] can close
   /// it. Set in [_withConnection]; null between actions. Actions are serialized
@@ -1076,6 +1083,97 @@ class EvccUpdater {
         },
       );
 
+  /// Uninstalls a service the app manages: 'evcc' (apt), 'homeassistant'
+  /// (the app's container), 'piconnect', 'tailscale' or an apt service from
+  /// [knownAptServices]. [purge] false keeps configuration and data, so a
+  /// reinstall picks them up; true removes them too. Each script checks first
+  /// and refuses (`UNINSTALL_REFUSED: …`, nothing changed) when the removal
+  /// would be unsafe or incomplete — that reason becomes the message.
+  Future<void> uninstallService({
+    required SshConfig config,
+    required String id,
+    required bool purge,
+    required void Function(String line) onLog,
+  }) {
+    final apt = knownAptServices.where((s) => s.id == id).firstOrNull;
+    if (apt == null &&
+        !const ['evcc', 'homeassistant', 'piconnect', 'tailscale']
+            .contains(id)) {
+      return Future.error(
+          ArgumentError.value(id, 'id', 'nicht deinstallierbar'));
+    }
+    const overTailnet = EvccUpdateException(
+        UpdateErrorKind.unknown,
+        'Die Verbindung läuft über Tailscale und würde beim Entfernen '
+        'abreißen – bitte über die Heimnetz-Adresse verbinden.');
+    // Checked before connecting: the session would cut itself off.
+    if (id == 'tailscale' && isTailnetHost(config.host)) {
+      return Future.error(overTailnet);
+    }
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        final String name, script, marker;
+        switch (id) {
+          case 'evcc':
+            (name, script, marker) = (
+              'evcc',
+              buildEvccUninstallScript(purge: purge),
+              evccRemovedMarker
+            );
+          case 'homeassistant':
+            (name, script, marker) = (
+              'Home Assistant',
+              buildHomeAssistantUninstallScript(purge: purge),
+              homeAssistantRemovedMarker
+            );
+          case 'piconnect':
+            final user =
+                config.username.trim().isEmpty ? 'pi' : config.username.trim();
+            try {
+              script = buildPiConnectUninstallScript(user: user, purge: purge);
+            } on ArgumentError {
+              throw EvccUpdateException(
+                  UpdateErrorKind.unknown,
+                  'Der Benutzername „$user" lässt sich nicht sicher an das '
+                  'Skript übergeben – Pi Connect bitte von Hand entfernen.');
+            }
+            (name, marker) = ('Raspberry Pi Connect', piConnectRemovedMarker);
+          case 'tailscale':
+            // Also when the session arrives through the tailnet under a home
+            // address (a shared home network): sudo hides SSH_CONNECTION, so
+            // it is read without sudo first.
+            final probe = await runner.run(tailscaleSessionProbe);
+            if (isTailnetClient(probe.stdout.trim())) {
+              // Under a home address, through the shared home network — so
+              // "use the home address" would be no advice at all.
+              throw const EvccUpdateException(
+                  UpdateErrorKind.unknown, tailscaleSessionRefusal);
+            }
+            (name, script, marker) = (
+              'Tailscale',
+              buildTailscaleUninstallScript(purge: purge),
+              tailscaleRemovedMarker
+            );
+          default:
+            (name, script, marker) = (
+              apt!.name,
+              buildAptServiceUninstallScript(apt, purge: purge),
+              aptServiceRemovedMarker
+            );
+        }
+        log(purge
+            ? 'Entferne $name samt Konfiguration und Daten …'
+            : 'Entferne $name – Konfiguration und Daten bleiben …');
+        await _runRootScriptExpectMarker(runner, log, config,
+            script: script,
+            successMarker: marker,
+            failMsg: '$name konnte nicht deinstalliert werden');
+      },
+    );
+  }
+
   /// The Tailscale node's subnet-router state from the detection sections.
   /// Unreadable prefs (an unusual build) fall back to "whatever is approved
   /// counts as offered" — a pending approval is then simply not visible.
@@ -1656,23 +1754,28 @@ class EvccUpdater {
       );
 
   /// Installs Pi-hole unattended (experimental — see buildPiholeInstallScript).
-  Future<void> installPihole({
+  /// Returns the web password it set, or null when one already existed. The
+  /// password travels only inside the script on stdin — never through the log.
+  Future<String?> installPihole({
     required SshConfig config,
     required void Function(String line) onLog,
   }) =>
-      _withConnection<void>(
+      _withConnection<String?>(
         config: config,
         onLog: onLog,
         body: (runner, log) async {
           log('Installiere Pi-hole … (unbeaufsichtigt, dauert ein paar Minuten)');
+          final pw = _webPassword();
           // Marker: the multi-step installer runs under `set -e`, so INSTALL_OK
           // is only reached if every step succeeded (a half-run install, incl.
           // a signal-killed channel with exitCode == null, fails here).
-          await _runRootScriptExpectMarker(runner, log, config,
-              script: '${buildPiholeInstallScript()}\necho INSTALL_OK',
+          final out = await _runRootScriptExpectMarker(runner, log, config,
+              script:
+                  '${buildPiholeInstallScript(webPassword: pw)}\necho INSTALL_OK',
               successMarker: 'INSTALL_OK',
               failMsg: 'Pi-hole-Installation fehlgeschlagen');
           log('Pi-hole installiert – Einrichtung im Browser unter /admin.');
+          return out.contains(piholePasswordSetMarker) ? pw : null;
         },
       );
 
@@ -1693,10 +1796,11 @@ class EvccUpdater {
               failMsg: 'Home-Assistant-Installation fehlgeschlagen');
           // `docker run -d` returns 0 once the daemon accepts the container, so
           // verify it is actually running (port clash / missing privileges /
-          // crash would otherwise be reported as success).
-          var verify = await runner.run(dockerListCommand);
+          // crash would otherwise be reported as success). Running only: a
+          // container in its restart loop is listed by plain `docker ps` too.
+          var verify = await runner.run(dockerListRunningCommand);
           if (isDockerPermissionError('${verify.stdout}\n${verify.stderr}')) {
-            verify = await runner.run(dockerListSudoCommand,
+            verify = await runner.run(dockerListRunningSudoCommand,
                 stdin: '${config.password}\n');
           }
           if (parseHomeAssistant(verify.stdout) == null) {
@@ -1797,7 +1901,7 @@ class EvccUpdater {
             failMsg: 'Home-Assistant-Update fehlgeschlagen');
 
         final verify = await runner.run(
-          sudo ? dockerListSudoCommand : dockerListCommand,
+          sudo ? dockerListRunningSudoCommand : dockerListRunningCommand,
           stdin: sudo ? '${config.password}\n' : null,
         );
         if (parseHomeAssistant(verify.stdout) == null) {
@@ -2015,7 +2119,7 @@ class EvccUpdater {
             sudo: sudo, script: script, failMsg: 'Docker-Update fehlgeschlagen');
 
         final verify = await runner.run(
-          sudo ? dockerListSudoCommand : dockerListCommand,
+          sudo ? dockerListRunningSudoCommand : dockerListRunningCommand,
           stdin: sudo ? '${config.password}\n' : null,
         );
         if (parseEvccDocker(verify.stdout) == null) {
@@ -2071,7 +2175,7 @@ class EvccUpdater {
   /// connection torn down mid-run) — for a half-done restore we must never
   /// report success. The marker is only ever reached at the end of the happy
   /// path (the scripts run under `set -e`).
-  Future<void> _runRootScriptExpectMarker(
+  Future<String> _runRootScriptExpectMarker(
     SshRunner runner,
     void Function(String) log,
     SshConfig config, {
@@ -2095,10 +2199,17 @@ class EvccUpdater {
     final ok = combined.contains(successMarker) &&
         !(result.exitCode != null && result.exitCode != 0);
     if (!ok) {
+      // An uninstall script that refused changed nothing and says why — that
+      // reason is the message, not a pointer to the log.
+      final refusal = parseUninstallRefusal(combined);
+      if (refusal != null) {
+        throw EvccUpdateException(UpdateErrorKind.unknown, refusal);
+      }
       final cause = _aptFailureCause(combined);
       throw EvccUpdateException(UpdateErrorKind.unknown,
           cause != null ? '$failMsg — $cause' : '$failMsg (Details im Log).');
     }
+    return combined;
   }
 
   /// Runs a root [script] (always sudo) and returns the `BACKUP_OK <path>` it
@@ -2705,8 +2816,9 @@ class EvccUpdater {
 
   /// Applies one [SecurityFix] as root (marker-gated). The root-login fix is
   /// refused when the app itself is connected as root — the fix would lock
-  /// this very login out on the next connect.
-  Future<void> fixSecurity({
+  /// this very login out on the next connect. Returns the new Pi-hole web
+  /// password for [SecurityFix.piholePassword] when it set one, else null.
+  Future<String?> fixSecurity({
     required SshConfig config,
     required SecurityFix fix,
     required void Function(String line) onLog,
@@ -2719,11 +2831,19 @@ class EvccUpdater {
         'aussperren. Lege zuerst einen eigenen Benutzer an.',
       );
     }
-    return _withConnection<void>(
+    return _withConnection<String?>(
       config: config,
       onLog: onLog,
       body: (runner, log) async {
         log('Wende Sicherheits-Fix an …');
+        if (fix == SecurityFix.piholePassword) {
+          final pw = _webPassword();
+          final out = await _runRootScriptExpectMarker(runner, log, config,
+              script: buildPiholeSetPasswordScript(pw),
+              successMarker: piholePasswordDoneMarker,
+              failMsg: 'Pi-hole-Passwort konnte nicht gesetzt werden');
+          return out.contains(piholePasswordSetMarker) ? pw : null;
+        }
         if (fix != SecurityFix.rootLogin) {
           await _fixEolSources(runner, log, config); // installs a package
         }
@@ -2732,6 +2852,7 @@ class EvccUpdater {
             successMarker: 'SECFIX_OK',
             failMsg: 'Sicherheits-Fix fehlgeschlagen');
         log('Sicherheits-Fix angewendet.');
+        return null;
       },
     );
   }

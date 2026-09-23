@@ -57,6 +57,18 @@ const String dockerListCommand = "docker ps --format '{{.Names}}|{{.Image}}'";
 const String dockerListSudoCommand =
     "LC_ALL=C sudo -S docker ps --format '{{.Names}}|{{.Image}}'";
 
+/// Like [dockerListCommand], but only containers that are really running: a
+/// plain `docker ps` also lists one in its restart loop ("Restarting (1) …"),
+/// so a crash-looping container passed as "läuft". For verifying an install
+/// or update — detection keeps [dockerListCommand], so a crash-looping evcc
+/// is still found. Same `name|image` lines, same parsers.
+const String dockerListRunningCommand =
+    "docker ps --filter status=running --format '{{.Names}}|{{.Image}}'";
+
+/// sudo variant of [dockerListRunningCommand].
+const String dockerListRunningSudoCommand =
+    'LC_ALL=C sudo -S $dockerListRunningCommand';
+
 /// A running evcc Docker container (its name + image).
 class EvccDocker {
   final String name;
@@ -424,22 +436,41 @@ String dockerRunRecreateScript({
   // Pull first (a failed pull aborts before anything is touched). Then keep the
   // old container as a rollback by renaming it (never `-v`, so no data loss),
   // create the new one, and if creation fails restore + restart the old one and
-  // report failure. A short settle lets an immediately-crashing new container
-  // drop out of `docker ps`. `docker run -d` returns 0 the moment the daemon
-  // ACCEPTS the container, so we then verify it is actually still running and,
-  // if not (crash-on-boot), roll back to the retained old container.
+  // report failure. `docker run -d` returns 0 the moment the daemon ACCEPTS the
+  // container, so after a short settle we verify it started cleanly and, if not
+  // (crash-on-boot), roll back to the retained old container.
+  //
+  // "Cleanly" is `running|0`, not State.Running: with always / unless-stopped /
+  // on-failure the daemon keeps a crashing container in its restart loop, and
+  // it reports Running=true (Status "restarting") the whole time. A fresh
+  // container starts with RestartCount 0, so any restart within the settle —
+  // also one that is momentarily up again — is a crash as well.
+  //
+  // The parked rollback container gets restart=no: a renamed container keeps
+  // its policy, and with `always` the daemon started it again after every
+  // reboot, next to the new one (and detection saw a second evcc). The live
+  // policy is read first and handed back on both rollback paths.
   return '''
 set -e
 docker pull $img
+rp=\$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}:{{.HostConfig.RestartPolicy.MaximumRetryCount}}' $n)
+case "\$rp" in
+  always:*|unless-stopped:*|on-failure:0) rp=\${rp%%:*} ;;
+  on-failure:*) ;;
+  *) rp=no ;;
+esac
 docker rm -f $backup >/dev/null 2>&1 || true
 docker stop $n
 docker rename $n $backup
-$runCommand || { echo 'Neuanlage fehlgeschlagen – stelle alten Container wieder her.'; docker rm -f $n >/dev/null 2>&1 || true; docker rename $backup $n && docker start $n; exit 1; }
+docker update --restart=no $backup >/dev/null 2>&1 || echo 'Hinweis: Der Backup-Container startet nach einem Neustart eventuell mit.'
+$runCommand || { echo 'Neuanlage fehlgeschlagen – stelle alten Container wieder her.'; docker rm -f $n >/dev/null 2>&1 || true; docker rename $backup $n && { docker update --restart="\$rp" $n >/dev/null 2>&1 || true; docker start $n; }; exit 1; }
 sleep 3
-if [ "\$(docker inspect -f '{{.State.Running}}' $n 2>/dev/null)" != "true" ]; then
-  echo 'Neuer Container läuft nach dem Start nicht – stelle den alten wieder her.'
+st=\$(docker inspect -f '{{.State.Status}}|{{.RestartCount}}' $n 2>/dev/null || true)
+if [ "\$st" != 'running|0' ]; then
+  echo "Neuer Container läuft nach dem Start nicht stabil (Status: \${st:-unbekannt}) – stelle den alten wieder her."
   docker rm -f $n >/dev/null 2>&1 || true
   docker rename $backup $n >/dev/null 2>&1 || true
+  docker update --restart="\$rp" $n >/dev/null 2>&1 || true
   docker start $n >/dev/null 2>&1 || true
   exit 1
 fi
@@ -542,6 +573,242 @@ apt-get $aptNoPty install -y evcc
 systemctl enable --now evcc
 ''';
 }
+
+/// Prefix of the one line every uninstall script prints when it refuses
+/// before changing anything (exit 3), followed by the German reason.
+const String uninstallRefusedPrefix = 'UNINSTALL_REFUSED: ';
+
+/// The reason from an uninstall script's refusal line, or null.
+String? parseUninstallRefusal(String out) {
+  for (final line in out.split('\n')) {
+    final t = line.trim();
+    if (t.startsWith(uninstallRefusedPrefix)) {
+      final reason = t.substring(uninstallRefusedPrefix.length).trim();
+      return reason.isEmpty ? null : reason;
+    }
+  }
+  return null;
+}
+
+/// Printed as the very last line of [buildEvccUninstallScript] — only on the
+/// happy path, after the removal has been verified. Deliberately shares no
+/// substring with the `*INSTALL_OK` markers.
+const String evccRemovedMarker = 'EVCC_REMOVED_OK';
+
+/// Root script (via [installShellCommand]) that uninstalls the apt evcc. Run it
+/// with `_runRootScriptExpectMarker` and [evccRemovedMarker].
+///
+/// - [purge] `false`: removes the program only. /etc/evcc.yaml, /var/lib/evcc
+///   (database), the evcc user, the apt source and every backup stay, so the
+///   existing install ([buildInstallScript]) picks them up again.
+/// - [purge] `true`: complete rollback — package, config, data, the apt source
+///   + key of both channels, Pi-Tool's evcc backups and the evcc user.
+///
+/// Guards run before anything is changed: a refusal prints one line
+/// `UNINSTALL_REFUSED: <German reason>` and exits 3. That includes a held evcc
+/// (`apt-mark hold`), a failing apt dry run (lock, interrupted dpkg) and a
+/// plan that would take other packages along. A retry after a half-finished
+/// run completes it. Shared packages (curl, keyrings, adduser, ucf, …) and the
+/// Pi-wide timers are never touched; no autoremove.
+String buildEvccUninstallScript({required bool purge}) => [
+      _evccUninstallHead,
+      purge ? _evccPurgeGuards : _evccKeepGuards,
+      _evccAptGuard
+          .replaceAll('@WHEN@', purge ? _evccPurgeAptWhen : _evccKeepAptWhen)
+          .replaceAll('@VERB@', purge ? 'purge' : 'remove'),
+      '# --- guards passed; from here on the Pi changes ---\n',
+      purge ? _evccPurgeBody : _evccKeepBody,
+      'echo $evccRemovedMarker\n',
+    ].join();
+
+/// When apt still has work — the guard and the real run share the condition.
+/// keep: config-files (rc) means a previous run already removed the program.
+/// purge: as long as dpkg knows evcc at all (rc included).
+const String _evccKeepAptWhen = r'[ "$st" != config-files ]';
+const String _evccPurgeAptWhen = r'[ -n "$st" ] && [ "$st" != not-installed ]';
+
+const String _evccUninstallHead = r'''
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export LC_ALL=C
+# The script itself arrives on stdin (sudo -S bash -s): dpkg, apt and docker
+# each get their own </dev/null so none of them can swallow the rest of it.
+# Set while a purge is under way: once dpkg has forgotten evcc, it lets a retry
+# finish the job instead of refusing "not installed".
+pending=/var/lib/pi-tool/evcc-purge.pending
+st=$(dpkg-query -W -f='${db:Status-Status}' evcc 2>/dev/null </dev/null || true)
+''';
+
+/// A held package makes `apt-get -y` abort ("Held packages were changed") — for
+/// the purge only after the pending marker is set. A dry run that fails (lock,
+/// interrupted dpkg) means the real run would fail too; apt's reason goes to
+/// stderr, so stdout keeps its single refusal line (the app logs both). Anything
+/// apt would take along besides evcc refuses as well. @WHEN@ and @VERB@ are
+/// filled by the builder with constants only.
+const String _evccAptGuard = r'''
+# apt must be able to take evcc, and nothing but evcc.
+if @WHEN@; then
+  if [ "$(dpkg-query -W -f='${db:Status-Want}' evcc 2>/dev/null </dev/null || true)" = hold ]; then
+    echo 'UNINSTALL_REFUSED: Das Paket evcc ist mit apt-mark hold festgehalten – bitte zuerst freigeben (sudo apt-mark unhold evcc), nichts geändert.'
+    exit 3
+  fi
+  if ! sim=$(apt-get -o Dpkg::Use-Pty=0 -o DPkg::Lock::Timeout=120 -s @VERB@ evcc 2>&1 </dev/null); then
+    printf '%s\n' "$sim" >&2
+    echo 'UNINSTALL_REFUSED: Der apt-Probelauf für evcc ist fehlgeschlagen (Details im Log) – nichts geändert.'
+    exit 3
+  fi
+  extra=$(printf '%s\n' "$sim" | awk '$1 == "Remv" || $1 == "Purg" { p = $2; sub(/:.*/, "", p); if (p != "evcc") printf " %s", p }')
+  if [ -n "$extra" ]; then
+    echo "UNINSTALL_REFUSED: apt würde zusätzlich andere Pakete entfernen:$extra – nichts geändert."
+    exit 3
+  fi
+fi
+''';
+
+const String _evccKeepGuards = r'''
+case "$st" in
+  ""|not-installed)
+    if [ -e "$pending" ]; then
+      echo 'UNINSTALL_REFUSED: Eine vollständige Entfernung von evcc wurde unterbrochen – bitte mit „Auch Konfiguration und Daten löschen“ wiederholen.'
+    else
+      echo 'UNINSTALL_REFUSED: evcc ist auf diesem Pi nicht als apt-Paket installiert.'
+    fi
+    exit 3 ;;
+esac
+''';
+
+const String _evccKeepBody = r'''
+# config-files (rc): a previous run already removed the program.
+if ''' +
+    _evccKeepAptWhen +
+    r'''; then
+  apt-get -o Dpkg::Use-Pty=0 -o DPkg::Lock::Timeout=120 remove -y evcc </dev/null
+fi
+# The prerm stopped the service, the postrm masked it (evcc.service ->
+# /dev/null). The mask stays: the next install's postinst lifts it before
+# `systemctl enable --now evcc`.
+systemctl stop evcc >/dev/null 2>&1 || true
+st=$(dpkg-query -W -f='${db:Status-Status}' evcc 2>/dev/null </dev/null || true)
+case "$st" in
+  ""|not-installed|config-files) ;;
+  *) echo "evcc ist weiterhin installiert (dpkg-Status: $st)."; exit 1 ;;
+esac
+if systemctl is-active --quiet evcc; then
+  echo 'Der evcc-Dienst läuft noch.'
+  exit 1
+fi
+rm -f "$pending"
+echo 'evcc entfernt. Konfiguration und Daten bleiben erhalten (/etc/evcc.yaml, /var/lib/evcc, Backups).'
+''';
+
+const String _evccPurgeGuards = r'''
+case "$st" in
+  ""|not-installed)
+    if [ ! -e "$pending" ]; then
+      echo 'UNINSTALL_REFUSED: evcc ist auf diesem Pi nicht als apt-Paket installiert.'
+      exit 3
+    fi ;;
+esac
+if [ "${SUDO_USER:-}" = evcc ]; then
+  echo 'UNINSTALL_REFUSED: Die App ist als Benutzer evcc angemeldet – genau dieser Benutzer würde gelöscht.'
+  exit 3
+fi
+# A Docker evcc — also a stopped one, like the -evccpitool-old rollback — may
+# bind-mount the very files the purge deletes.
+if command -v docker >/dev/null 2>&1; then
+  if ! ids=$(docker ps -aq 2>/dev/null </dev/null); then
+    echo 'UNINSTALL_REFUSED: Docker ist installiert, aber nicht erreichbar – ob ein evcc-Container dieselben Daten nutzt, lässt sich nicht prüfen.'
+    exit 3
+  fi
+  hit=""
+  if [ -n "$ids" ]; then
+    hit=$(docker inspect -f '{{.Name}}|{{.Config.Image}}|{{range .Mounts}}{{.Source}}|{{end}}' $ids 2>/dev/null </dev/null |
+      awk -F'|' '{ n = $1; sub(/^\//, "", n); f = (tolower(n) == "evcc" || tolower($2) ~ /evcc/)
+        for (i = 3; i <= NF; i++) if ($i ~ /^\/(etc\/evcc\.yaml|var\/lib\/evcc|root\/\.evcc)(\/|$)/) f = 1
+        if (f) { print n; exit } }')
+  fi
+  if [ -n "$hit" ]; then
+    echo "UNINSTALL_REFUSED: Der Docker-Container „${hit}“ könnte die evcc-Konfiguration oder -Daten nutzen – erst den Container entfernen oder die Daten behalten."
+    exit 3
+  fi
+fi
+''';
+
+const String _evccPurgeBody = r'''
+mkdir -p /var/lib/pi-tool
+: > "$pending"
+if ''' +
+    _evccPurgeAptWhen +
+    r'''; then
+  apt-get -o Dpkg::Use-Pty=0 -o DPkg::Lock::Timeout=120 purge -y evcc </dev/null
+fi
+systemctl stop evcc >/dev/null 2>&1 || true
+# The postrm (purge) dropped /etc/evcc-userchoices.sh, the unit's enable/mask
+# links and the deb-systemd-helper state. Config and data belong to no package,
+# so dpkg leaves them behind.
+rm -f /etc/evcc.yaml /etc/evcc-userchoices.sh /etc/systemd/system/multi-user.target.wants/evcc.service
+rm -rf /var/lib/evcc /etc/systemd/system/evcc.service.d
+if [ "$(readlink /etc/systemd/system/evcc.service 2>/dev/null || true)" = /dev/null ]; then
+  rm -f /etc/systemd/system/evcc.service
+fi
+# Legacy database of evcc versions that ran as root: only a copy the package's
+# preinst already migrated into /var/lib/evcc (flag file) is certainly this
+# install's. Anything else under /root/.evcc stays.
+if [ -f /root/.evcc/.copiedToEvccUser ]; then
+  rm -f /root/.evcc/evcc.db /root/.evcc/evcc.db-wal /root/.evcc/evcc.db-shm /root/.evcc/.copiedToEvccUser
+  rmdir /root/.evcc 2>/dev/null || true
+fi
+# Package source + signing key of both channels (switchable in the app), incl.
+# setup.deb.sh's fallback for old apt. apt drops the stale index on its next
+# update by itself.
+for ch in stable unstable; do
+  rm -f "/etc/apt/sources.list.d/evcc-$ch.list" \
+    "/usr/share/keyrings/evcc-$ch-archive-keyring.gpg" \
+    "/etc/apt/trusted.gpg.d/evcc-$ch.gpg"
+done
+# Pi-Tool's evcc backups (pre-update, config editor, stack wiring, timers).
+# Deliberately no final backup: the user chose to delete the data, and a
+# leftover archive would keep evcc.yaml's credentials on the Pi.
+rm -rf /var/backups/evcc
+rm -f /var/backups/pi-tool/config-evcc.yaml-*.bak \
+  /var/backups/pi-tool/evcc.yaml.wire-* \
+  /var/backups/pi-tool/evcc.yaml.unwire-* \
+  /var/backups/pi-tool/sched-evcc-*.tar.gz /var/backups/pi-tool/sched-evcc-*.tar.gz.part \
+  /var/backups/pi-tool/autoupdate-evcc-*.tar.gz /var/backups/pi-tool/autoupdate-evcc-*.tar.gz.part
+# The service user goes too: the preinst creates /var/lib/evcc only together
+# with a NEW user, so a kept user would leave a reinstall without its database
+# directory. The Pi-wide timers (updates, backups, alerts) stay — they serve
+# other services and skip evcc once it is gone.
+if getent passwd evcc >/dev/null 2>&1; then
+  pkill -u evcc >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do pgrep -u evcc >/dev/null 2>&1 || break; sleep 1; done
+  userdel evcc
+fi
+if getent group evcc >/dev/null 2>&1; then
+  groupdel evcc 2>/dev/null || echo 'Gruppe evcc bleibt (Hauptgruppe eines anderen Benutzers).'
+fi
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl reset-failed evcc >/dev/null 2>&1 || true
+st=$(dpkg-query -W -f='${db:Status-Status}' evcc 2>/dev/null </dev/null || true)
+case "$st" in
+  ""|not-installed) ;;
+  *) echo "evcc ist weiterhin bei dpkg registriert (Status: $st)."; exit 1 ;;
+esac
+for p in /etc/evcc.yaml /var/lib/evcc /var/backups/evcc \
+    /etc/apt/sources.list.d/evcc-stable.list /etc/apt/sources.list.d/evcc-unstable.list; do
+  if [ -e "$p" ] || [ -L "$p" ]; then echo "Nicht entfernt: $p"; exit 1; fi
+done
+if systemctl is-active --quiet evcc; then
+  echo 'Der evcc-Dienst läuft noch.'
+  exit 1
+fi
+if getent passwd evcc >/dev/null 2>&1; then
+  echo 'Der Systembenutzer evcc besteht noch.'
+  exit 1
+fi
+rm -f "$pending"
+echo 'evcc vollständig entfernt: Programm, Konfiguration, Daten, Backups, Paketquelle und Systembenutzer.'
+''';
 
 /// Root/bash script that snapshots the evcc config + database into a
 /// timestamped archive under `/var/backups/evcc/` before an update. The DB path

@@ -3,6 +3,8 @@
 /// design/2026-06-30-multi-service.md.
 library;
 
+import 'dart:math';
+
 import '../commands.dart' show shSingleQuote;
 
 /// Prints Pi-hole/Core/FTL versions if installed; empty/error if not (no sudo).
@@ -144,17 +146,52 @@ echo "RESTORE_OK"
 bool isPiholeBlocking(String statusOutput) =>
     statusOutput.toLowerCase().contains('blocking is enabled');
 
+/// Printed by the password step when it actually set a new password.
+const String piholePasswordSetMarker = 'PIHOLE_PW_SET';
+
+/// Last line of [buildPiholeSetPasswordScript]'s happy path.
+const String piholePasswordDoneMarker = 'PIHOLE_PW_DONE';
+
+/// Readable alphabet: no 0/O, 1/l/I — the password is read off a phone screen.
+const String _pwAlphabet =
+    'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/// A random 16-character web password (~92 bits).
+String generateWebPassword([Random? rng]) {
+  final r = rng ?? Random.secure();
+  return List.generate(16, (_) => _pwAlphabet[r.nextInt(_pwAlphabet.length)])
+      .join();
+}
+
+/// [pw] quoted for the script — alphanumeric only, so it can never break out.
+String _quotedPassword(String pw) {
+  if (!RegExp(r'^[A-Za-z0-9]{8,64}$').hasMatch(pw)) {
+    throw ArgumentError.value('***', 'webPassword', 'kein gültiges Passwort');
+  }
+  return shSingleQuote(pw);
+}
+
 /// Root/bash script for an UNATTENDED Pi-hole install (run via the sudo shell).
 /// Pre-seeds a minimal setupVars.conf (auto-detected interface, Quad9 upstream)
-/// so the official installer runs without a TTY. Experimental — not validated
-/// against a fresh Pi; the user finishes setup in the web UI.
-String buildPiholeInstallScript() {
+/// so the official installer runs without a TTY — but only when no Pi-hole
+/// config exists yet: next to an existing v6 `pihole.toml` a fresh setupVars.conf
+/// would make FTL migrate from it and overwrite that config with defaults, and
+/// an existing config already takes the installer's unattended path.
+///
+/// [webPassword] is set afterwards unless a password exists. Pi-hole v6 asks for
+/// no login at all while none is set, and the installer only sets one on a
+/// FRESH install — which the pre-seeded setupVars.conf rules out (it counts as
+/// an update, basic-install.sh `check_fresh_install`). Prints
+/// [piholePasswordSetMarker] when it set one; never prints the password.
+/// Experimental — not validated against a fresh Pi.
+String buildPiholeInstallScript({required String webPassword}) {
+  final pw = _quotedPassword(webPassword);
   return r'''
 set -e
 export DEBIAN_FRONTEND=noninteractive
 export PIHOLE_SKIP_OS_CHECK=true
 mkdir -p /etc/pihole
-if [ ! -f /etc/pihole/setupVars.conf ]; then
+if [ ! -f /etc/pihole/setupVars.conf ] && [ ! -f /etc/pihole/pihole.toml ]; then
   IFACE=$(ip -o -4 route show to default 2>/dev/null | awk '{print $5}' | head -n1)
   {
     echo "PIHOLE_INTERFACE=${IFACE:-eth0}"
@@ -183,6 +220,39 @@ if id -u pihole >/dev/null 2>&1; then
     || chown -R pihole /etc/pihole 2>/dev/null || true
 fi
 chmod 0755 /etc/pihole 2>/dev/null || true
+# Web password — only when none is set; an unreadable config (v5, odd build)
+# is left alone rather than risking an existing password.
+if h=$(pihole-FTL --config -q webserver.api.pwhash 2>/dev/null); then
+  case "$h" in
+    ""|'""')
+''' '      if pihole setpassword $pw >/dev/null 2>&1; then\n'
+      '        echo $piholePasswordSetMarker\n'
+      r'''      else
+        echo "Hinweis: Das Pi-hole-Passwort ließ sich nicht setzen – bitte mit „pihole setpassword“ nachholen."
+      fi ;;
+  esac
+fi
 ''';
+}
+
+/// Root script: sets [webPassword] for a Pi-hole v6 that has none — the fix for
+/// installs made before the install script set one. Refuses to guess: an
+/// unreadable config fails, an already set password is kept. Prints
+/// [piholePasswordSetMarker] only when it set the password.
+String buildPiholeSetPasswordScript(String webPassword) {
+  final pw = _quotedPassword(webPassword);
+  return r'''
+set -e
+if ! h=$(pihole-FTL --config -q webserver.api.pwhash 2>/dev/null); then
+  echo "Die Pi-hole-Konfiguration ist nicht lesbar – läuft Pi-hole v6?"
+  exit 1
+fi
+case "$h" in
+  ""|'""')
+''' '    pihole setpassword $pw >/dev/null\n'
+      '    echo $piholePasswordSetMarker ;;\n'
+      r'''  *) echo "Pi-hole hat bereits ein Passwort – nichts geändert." ;;
+esac
+''' 'echo $piholePasswordDoneMarker\n';
 }
 

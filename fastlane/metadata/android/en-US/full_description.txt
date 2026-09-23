@@ -9,7 +9,7 @@ Services:
 * Raspberry Pi Connect – official remote access (Raspberry Pi OS Bookworm+): install, sign in via link, toggle on/off, updates, open web
 * Tailscale – VPN/mesh: install, update, connect via login link; optionally share your home network (subnet router). One-tap remote access: adopts the remembered tailnet IP as the host; one tap returns to the home IP
 * Docker containers – view, restart and update them (with rollback)
-* "Add service" – every not-yet-installed service in one picker; the main screen shows only what's actually running
+* "Add service" – every not-yet-installed service in one picker; uninstall from the card menu, optionally keeping the data
 * System (whole Pi) – update all packages (apt full-upgrade), reboot or shut down, health readout with a low-disk warning and an SD-card check
 
 Features:

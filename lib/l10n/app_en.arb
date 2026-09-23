@@ -1261,5 +1261,76 @@
   },
   "statusLanShareStopped": "Home network sharing stopped.",
   "historyLanShared": "Home network shared over Tailscale.",
-  "historyLanShareStopped": "Stopped sharing the home network over Tailscale."
+  "historyLanShareStopped": "Stopped sharing the home network over Tailscale.",
+  "actionUninstall": "Uninstall",
+  "dialogUninstallTitle": "Uninstall {name}?",
+  "@dialogUninstallTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogUninstallKeep": "The program is removed. Configuration and data stay on the Pi – a later reinstall from the app picks them up.",
+  "uninstallPurgeCheckbox": "Also delete configuration and data",
+  "uninstallPurgeWarning": "Removes the program together with its configuration, data and the Pi-Tool backups of this service. This cannot be undone.",
+  "uninstallNoteEvccPurge": "This covers evcc.yaml, the database with the charging history and all evcc backups on the Pi. To keep the charging history, leave the box unticked.",
+  "uninstallNoteInfluxKeep": "evcc writes no data to InfluxDB until it is reinstalled.",
+  "uninstallNoteInfluxPurge": "Deletes all InfluxDB data, i.e. the entire recorded evcc history, and removes the Pi-Tool wiring from evcc.yaml (with a backup).",
+  "uninstallNoteGrafanaPurge": "Deletes Grafana's dashboards, users and settings.",
+  "uninstallNoteMosquitto": "Everything that uses MQTT – such as Home Assistant, Zigbee2MQTT, Node-RED or evcc – loses its broker.",
+  "uninstallNoteMosquittoPurge": "Also deletes the broker's users, passwords and certificates.",
+  "uninstallNoteHaKeep": "The container is removed; configuration and image stay. Automations do not run until it is reinstalled.",
+  "uninstallNoteHaPurge": "Deletes /opt/homeassistant/config including Home Assistant's own backups and the Pi-Tool backups. To keep them, download them first.",
+  "uninstallNotePiConnect": "Pi Connect usually comes preinstalled. Reinstalling from the app brings only the Lite variant, without screen sharing.",
+  "uninstallNotePiConnectPurge": "Signs the Pi out. Its entry on connect.raspberrypi.com stays until you delete it there.",
+  "uninstallNoteTailscale": "Remote access over Tailscale ends. If the Pi shares the home network, other devices lose that access too.",
+  "uninstallNoteTailscalePurge": "Signs the Pi out of Tailscale. A reinstall is a new device with a new 100.x IP; please delete the old entry in the Tailscale console.",
+  "busyUninstalling": "Uninstalling {name} …",
+  "@busyUninstalling": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "statusUninstalled": "{name} uninstalled – configuration and data are still on the Pi.",
+  "@statusUninstalled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "statusUninstalledPurged": "{name} removed along with its configuration and data.",
+  "@statusUninstalledPurged": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "historyUninstalled": "{name} uninstalled (data kept).",
+  "@historyUninstalled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "historyUninstalledPurged": "{name} removed completely.",
+  "@historyUninstalledPurged": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "piholePasswordTitle": "Pi-hole password",
+  "piholePasswordBody": "The Pi-hole web interface is now protected with this password. The app does not store it – please write it down or add it to a password manager. You can change it in the web interface or with \"pihole setpassword\".",
+  "actionCopy": "Copy",
+  "actionDone": "Done",
+  "snackPasswordCopied": "Password copied.",
+  "fixDescPiholePassword": "Sets a random password for the Pi-hole web interface and shows it to you once. Without a password Pi-hole v6 asks for no login – anyone on your home network could change DNS settings and blocklists.",
+  "statusPiholePasswordKept": "Pi-hole already had a password by now – nothing changed."
 }

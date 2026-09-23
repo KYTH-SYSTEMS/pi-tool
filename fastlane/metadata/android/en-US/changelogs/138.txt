@@ -1,0 +1,3 @@
+Uninstall services from the ⋮ menu of the evcc (apt), Home Assistant, Pi Connect, Tailscale, Grafana, InfluxDB and Mosquitto cards. By default configuration and data stay; a checkbox removes everything. If removal is not safe, the app stops with a reason.
+
+Security: a Pi-hole installed by the app had no web password, so its interface was open without login. New installs get one; for existing ones the security check offers "Fix".

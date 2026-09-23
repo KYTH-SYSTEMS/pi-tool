@@ -46,7 +46,11 @@ String buildDockerLogsCommand(String name) =>
     'LC_ALL=C sudo -S docker logs --tail 200 ${shSingleQuote(name)} 2>&1';
 
 /// Is the container actually running? (sudo, name shell-quoted.) Used to
-/// verify a container update really left a living container behind.
+/// verify a container update really left a living container behind. Prints
+/// `true` only for the state word `running`: State.Running alone stays true
+/// while a crashing container sits in its restart loop (status
+/// `restarting`), and a paused one isn't serving either. `false` otherwise;
+/// nothing on stdout when the container does not exist.
 String buildDockerRunningProbe(String name) =>
-    "LC_ALL=C sudo -S docker inspect -f '{{.State.Running}}' "
+    "LC_ALL=C sudo -S docker inspect -f '{{eq .State.Status \"running\"}}' "
     '${shSingleQuote(name)}';

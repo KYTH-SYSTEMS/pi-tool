@@ -1,0 +1,3 @@
+Dienste deinstallieren: im ⋮ der Karte von evcc (apt), Home Assistant, Pi Connect, Tailscale, Grafana, InfluxDB und Mosquitto. Standard: Konfiguration und Daten bleiben; per Häkchen kompletter Rückbau. Ist es nicht sicher, bricht die App mit Begründung ab.
+
+Sicherheit: Ein über die App installiertes Pi-hole hatte kein Web-Passwort, die Oberfläche war ohne Anmeldung offen. Neue Installationen bekommen eins; für bestehende bietet der Sicherheits-Check „Beheben".

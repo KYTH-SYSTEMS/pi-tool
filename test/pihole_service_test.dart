@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:evcc_updater/src/services/pihole_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -60,8 +62,63 @@ void main() {
     });
   });
 
+  group('Web-Passwort', () {
+    // Pi-hole v6 verlangt ohne Passwort KEINE Anmeldung (Doku, api/auth). Der
+    // offizielle Installer setzt eins nur bei einer Frischinstallation — die
+    // vorbelegte setupVars.conf der App macht daraus aber immer eine
+    // „Aktualisierung" (basic-install.sh: check_fresh_install). Ergebnis bis
+    // v0.69.0: eine offene Weboberfläche für das ganze Heimnetz.
+    test('generateWebPassword: 16 Zeichen, eindeutig lesbares Alphabet', () {
+      final pw = generateWebPassword(Random(1));
+      expect(pw, hasLength(16));
+      expect(pw, matches(RegExp(r'^[a-km-zA-HJ-NP-Z2-9]+$')));
+      expect(generateWebPassword(Random(2)), isNot(pw));
+    });
+
+    test('Installation setzt das Passwort nur, wenn keins gesetzt ist', () {
+      final s = buildPiholeInstallScript(webPassword: 'Abc234xyz');
+      expect(s, contains("pihole setpassword 'Abc234xyz'"));
+      expect(s, contains('pihole-FTL --config -q webserver.api.pwhash'));
+      // Nur wenn die Abfrage gelingt: eine unlesbare Konfiguration darf nie
+      // ein vorhandenes Passwort überschreiben.
+      expect(s, contains('if h=\$(pihole-FTL --config -q webserver.api.pwhash'));
+      expect(s, contains(piholePasswordSetMarker));
+      expect(s.indexOf('bash "\$setup" --unattended'),
+          lessThan(s.indexOf('pihole setpassword')));
+    });
+
+    test('scheitert das Setzen, bricht die Installation nicht ab', () {
+      final s = buildPiholeInstallScript(webPassword: 'Abc234xyz');
+      expect(s, contains("if pihole setpassword 'Abc234xyz' >/dev/null 2>&1; then"));
+    });
+
+    test('Passwort gelangt nie ungequotet ins Skript', () {
+      expect(() => buildPiholeInstallScript(webPassword: "x'; reboot; '"),
+          throwsArgumentError);
+      expect(() => buildPiholeSetPasswordScript(''), throwsArgumentError);
+    });
+
+    test('Nachträglich setzen: nur bei leerem Passwort, Marker zuletzt', () {
+      final s = buildPiholeSetPasswordScript('Abc234xyz');
+      expect(s, contains('set -e'));
+      expect(s, contains("pihole setpassword 'Abc234xyz'"));
+      expect(s, contains(piholePasswordSetMarker));
+      expect(s.trimRight().split('\n').last, 'echo $piholePasswordDoneMarker');
+      // Unlesbar (v5, kaputt): Fehler statt Raten.
+      expect(s, contains('exit 1'));
+    });
+  });
+
   group('buildPiholeInstallScript', () {
-    final s = buildPiholeInstallScript();
+    final s = buildPiholeInstallScript(webPassword: 'Abc234xyz');
+    test('keine Vorbelegung, wenn schon eine v6-Konfiguration existiert', () {
+      // Sonst migriert FTL aus der frischen setupVars.conf und überschreibt die
+      // vorhandene pihole.toml mit Standardwerten (FTL migrate_config_v6).
+      expect(
+          s,
+          contains('if [ ! -f /etc/pihole/setupVars.conf ] && '
+              '[ ! -f /etc/pihole/pihole.toml ]; then'));
+    });
     test('unattended install: fetched installer (-f) + pre-seeded setupVars', () {
       expect(s, contains('--unattended'));
       expect(s, contains('curl -fsSL https://install.pi-hole.net'));

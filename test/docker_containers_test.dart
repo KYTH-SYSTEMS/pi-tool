@@ -40,8 +40,14 @@ void main() {
     });
 
     test('running probe single-quotes the name and asks the State', () {
+      // Docker keeps State.Running=true while a container sits in its restart
+      // loop, so the probe asks for the exact state word: `true` only when it
+      // is really running — not restarting, paused or exited.
       expect(buildDockerRunningProbe('grafana'),
-          contains('{{.State.Running}}'));
+          "LC_ALL=C sudo -S docker inspect -f "
+          "'{{eq .State.Status \"running\"}}' 'grafana'");
+      expect(buildDockerRunningProbe('grafana'),
+          isNot(contains('{{.State.Running}}')));
       expect(buildDockerRunningProbe("x';reboot;'"), contains(r"'\''"));
       expect(buildDockerRunningProbe('grafana'), startsWith('LC_ALL=C sudo -S'));
     });

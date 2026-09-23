@@ -155,8 +155,17 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
   rekonstruiert `docker run` aus `docker inspect` mit Whitelist bei Restart-Policy
   und erhält devices/caps/privileged (USB/RS485-Zähler!). `dockerRunRecreateScript`:
   `pull` zuerst → altes Container zu `<name>-evccpitool-old` **umbenennen**
-  (Rollback, nie `-v` löschen) → neu starten → `.State.Running` prüfen → bei
-  Crash zurückrollen.
+  (Rollback, nie `-v` löschen) → neu starten → nach dem Warten muss
+  `{{.State.Status}}|{{.RestartCount}}` exakt **`running|0`** sein, sonst
+  zurückrollen. (`.State.Running` bleibt `true`, solange ein Container mit
+  `always`/`unless-stopped`/`on-failure` in seiner Neustart-Schleife hängt — bis
+  v0.68.x griff der Rollback dort nie.) Die Dart-seitige Nachprüfung nach
+  Install/Update nutzt `dockerListRunningCommand` (`--filter status=running`),
+  die Erkennung weiter das ungefilterte `docker ps`, damit ein Crash-Loop-evcc
+  sichtbar bleibt. Der geparkte Container bekommt **`--restart=no`** (v0.69.0;
+  vorher kam er mit `always` nach jedem Neustart wieder hoch — und eine gerade
+  deinstallierte Karte mit ihm); die ursprüngliche Policy wird vorab per
+  `docker inspect` gelesen und beim Rollback zurückgesetzt.
 - **apt ohne Pty** (v0.65.1): `Dpkg::Use-Pty` steht per Default auf true, auch
   wenn kein Terminal hängt (Debian #860931) — dpkg malt dann pro Paket ~20×
   „(Reading database … N%". Deshalb trägt **jeder** apt-Aufruf, der dpkg
@@ -282,6 +291,21 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   `piholeRestartCommand` per **Fähigkeits-Probe** (`pihole --help | grep -q
   reloaddns`) statt per Exit-Code; der Restore nutzt fest `reloaddns` (v6-only).
   Für neue `pihole`-Subcommands gilt dieselbe Regel: Exit-Code ≠ Beweis.
+  **Install + Web-Passwort (v0.69.0):** Die App belegt `setupVars.conf` vor,
+  damit der offizielle Installer ohne TTY läuft — das zählt dort als
+  *Aktualisierung* (`check_fresh_install`), und `pihole setpassword` läuft nur
+  bei Frischinstallationen. Pi-hole v6 verlangt ohne Passwort **keine
+  Anmeldung** (Doku api/auth) → bis v0.68.x installierte die App eine für das
+  ganze Heimnetz offene Weboberfläche/API. Seitdem setzt das Install-Skript ein
+  von der App erzeugtes Passwort (`generateWebPassword`, 16 Zeichen, lesbares
+  Alphabet), **nur wenn** `pihole-FTL --config -q webserver.api.pwhash` gelingt
+  und leer ist (unlesbar = Finger weg, nie ein vorhandenes überschreiben), und
+  meldet `PIHOLE_PW_SET`. Das Passwort reist nur im Skript über stdin, nie durch
+  Log, Verlauf oder Profil; `_showPiholePassword` zeigt es einmalig (nicht per
+  Danebentippen schließbar). Die Vorbelegung unterbleibt, wenn schon eine
+  `pihole.toml` existiert (sonst migriert FTL aus der frischen `setupVars.conf`
+  und überschreibt sie). Im Umzugshelfer wird das Passwort nicht angezeigt — der
+  folgende Teleporter-Restore bringt die Einstellungen der Quelle mit.
 - **`homeassistant_service.dart`** — HA als Docker-Container (bewusst, nicht HA
   OS). tar-Exit 1 auf laufendem HA = Warnung (nur rc>1 = Fehler). Restore per
   `trap` (Container kommt auch bei tar-Fehler zurück) + `.State.Running`-Check.
@@ -365,6 +389,67 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   gewechselter Host-Key darf nie zu „nicht erreichbar" verflacht werden.
   **Nicht-Ziel:** kein Portforwarding/DynDNS — offene SSH-Ports ins Internet
   sind genau das, was der Sicherheits-Check der App anprangert.
+- **Deinstallieren (v0.69.0)** — ⋮ jeder Karte, deren Dienst die App selbst
+  installieren kann: evcc (nur apt), Home Assistant (nur der App-Container
+  `homeassistant`), Pi Connect, Tailscale, Grafana/InfluxDB/Mosquitto. Ein
+  Einstieg `EvccUpdater.uninstallService(id, purge)` wählt den Builder
+  (`buildEvccUninstallScript`, `buildHomeAssistantUninstallScript`,
+  `buildPiConnectUninstallScript`, `buildTailscaleUninstallScript`,
+  `buildAptServiceUninstallScript` mit `AptUninstallFootprint` je Dienst).
+  Dialog `_askUninstall`: Häkchen **„Auch Konfiguration und Daten löschen"**,
+  Standard AUS = Programm weg, Konfiguration/Daten bleiben, die bestehende
+  Installation übernimmt sie wieder; AN = kompletter Rückbau inkl. eigener
+  apt-Quelle/Keyring und der dienstspezifischen Pi-Tool-Sicherungen (nie
+  „vollständig" versprechen: Config-Editor-Backups fremder Basenames bleiben).
+  **Skript-Vertrag:** läuft über `installShellCommand` (Skript auf **stdin**:
+  nie `exec </dev/null`, jedes apt/dpkg/interaktive Kommando bekommt sein
+  eigenes `</dev/null`), `set -e`, `DPkg::Lock::Timeout=120`, **Guards zuerst**
+  — unsicher oder unvollständig → genau eine Zeile `UNINSTALL_REFUSED: <Grund>`
+  + Exit 3, vorher ist nichts verändert (`parseUninstallRefusal`; der Grund wird
+  in `_runRootScriptExpectMarker` zur Meldung statt „Details im Log").
+  Idempotent (Wiederholung nach Teillauf: `rc`/fehlend = erledigt), statusbasierte
+  dpkg-Prüfungen, `apt-mark hold` und ein **gescheiterter** apt-Probelauf sind
+  Ablehnungen (vorher verschluckt; bei Tailscale-Purge hätte das abgemeldet,
+  bevor apt scheitert), nie `autoremove`, nie geteilte Pakete, nie Docker; Abschluss-
+  prüfung vor dem Marker (`*_REMOVED_OK`, ohne `INSTALL_OK`-Teilstring). Wichtige
+  Guards: apt-Simulation darf nichts Zusätzliches entfernen; evcc-Purge
+  verweigert bei einem Docker-evcc, der die Daten einbindet; HA nur exakt der
+  App-Container (kein Compose, `/config` = `/opt/homeassistant/config`, kein
+  weiterer HA-Container); Tailscale verweigert, wenn die Sitzung über das Tailnet
+  läuft — in Dart per `isTailnetHost(host)` und `isTailnetClient` auf dem
+  **nicht-sudo** gelesenen `$SSH_CONNECTION` (sudo verschluckt es), im Skript
+  als Rückfallnetz. InfluxDB-Purge entfernt nur den Pi-Tool-markierten
+  influx-Block aus evcc.yaml (Sicherung `evcc.yaml.unwire-*`, Rollback wenn evcc
+  danach nicht läuft). apt-Dienste: „Behalten" entfernt nur die Kartenpakete,
+  Client-Tools (`mosquitto-clients`, `influxdb2-cli`) nimmt erst der Purge mit;
+  Config-Editor-Sicherungen löscht der Purge nur für eindeutige Basenames
+  (grafana.ini, grafana-server, influxdb2) mit exaktem Zeitstempel-Muster.
+  Tailscale-Behalten lässt die Weiterleitungsdatei stehen (Prefs behalten das
+  freigegebene Heimnetz); die Sitzungs-Ablehnung unterscheidet Tailnet-Host
+  („Heimnetz-Adresse nutzen") und Route über die Heimnetz-Adresse
+  (`tailscaleSessionRefusal`). Pi Connect startet vorher laufende User-Units neu,
+  wenn apt scheitert. HA zählt nur das Core-Image als HA (`_haCoreImageRe`) —
+  Begleiter wie der Matter-Server blockieren weder, noch halten sie die Karte.
+  Am echten Pi belegt (2026-09-23, .125/Trixie): Tailscale Behalten → App-
+  Neuinstallation (derselbe Knoten-Zustand) und Purge, ohne Beifang für
+  Pi-hole/Docker/HA. Neue On-Pi-Dateien:
+  `/var/lib/pi-tool/piconnect-linger` (Install merkt, wem die App Linger
+  einschaltete — nur dort schaltet Purge es aus, und auch dann nicht, wenn andere
+  User-Dienste des Users es brauchen), `/var/lib/pi-tool/evcc-purge.pending`
+  (unterbrochener evcc-Purge). Nach Erfolg: feste Dienste werden
+  `ServiceStatus.absent` (→ „Dienst hinzufügen"), apt-Dienste fliegen aus
+  `_services`; Tailscale setzt `_tailscaleIp`/`_remoteAccessProven`/Tailnet-
+  `_lastGoodHost` zurück; `_scheduleSave` nach der Neuerkennung, sonst brächte der
+  Offline-Stand die Karte zurück. `_lastAction` öffnet den Dialog neu (Häkchen
+  AUS) — ein Purge wird nie ungefragt wiederholt. **Nie im Demo-Modus** (das
+  Demo-Backend liefert keinen Marker). Installationsskripte der apt-Dienste
+  tragen seitdem `--force-confdef/--force-confold` + `</dev/null`, damit eine
+  Neuinstallation nach „Behalten" nie an geänderten conffiles nachfragt.
+  **Bewusst nicht:** Pi-hole — oft der DNS (und DHCP) des ganzen Netzes; ein
+  Rückbau braucht erst eine Vorprüfung auf DHCP/Self-DNS/Tailnet-DNS. (Die
+  frühere zweite Hürde — die Vorbelegung überschrieb bei einer Neuinstallation
+  eine behaltene `pihole.toml` — ist seit v0.69.0 behoben.) Docker-evcc (kein Install-Pfad); die Docker-Engine;
+  nur erkannte Dienste (AdGuard, Node-RED, Zigbee2MQTT); System-Karte.
 
 ## 5. On-Pi-Automatik (`auto_update.dart`, `alerts.dart`, `files.dart`, `notifications.dart`)
 
@@ -483,9 +568,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Timer wird in `dispose` abgebrochen.
 - **`security_check.dart`** — Audit + One-Tap-Fixes. `buildSecurityProbe` = **ein**
   `sudo sh -c`-Probe (Skript via `shSingleQuote` sicher gequotet) mit Section-
-  Markern (`__SEC_SSHD__/UNATT/F2B/PORTS__`); `parseSecurityReport` macht daraus
-  fünf Ampel-`SecurityFinding`s (SSH-Root-Login, Passwort-Login, Auto-Updates,
-  fail2ban, offene Ports). **Die Prüfung verändert nichts**; Unbekanntes
+  Markern (`__SEC_SSHD__/UNATT/F2B/PORTS/PIHOLE__`); `parseSecurityReport` macht
+  daraus fünf Ampel-`SecurityFinding`s (SSH-Root-Login, Passwort-Login,
+  Auto-Updates, fail2ban, offene Ports) plus **„Pi-hole-Weboberfläche"**, wenn
+  Pi-hole da ist (v0.69.0: leerer `webserver.api.pwhash` = warn; ausgegeben wird
+  nur das Urteil, nie der Hash). Deren Fix `SecurityFix.piholePassword` läuft
+  über `buildPiholeSetPasswordScript` statt `buildSecurityFixScript` (braucht das
+  erzeugte Passwort; ist inzwischen eins gesetzt, ändert er nichts). **Die Prüfung verändert nichts**; Unbekanntes
   degradiert zu `info` (nie falsches ok/warn). `EvccUpdater.runSecurityCheck`
   orchestriert; `_SecurityReportSheet` rendert (System-Karten-Aktion).
   **„Beheben" (v0.66.0):** `securityFixFor` mappt fixbare Befunde auf
@@ -861,7 +950,9 @@ Hilfe 17492799). Stand der Prüfung an v0.67.0 (2026-08-27):
    bauen; Orchestrierungs-Methoden über `_runRootScriptExpectMarker`.
 3. `FakeEvccUpdater` um die neuen Methoden erweitern; UI-Dispatch-Test.
 4. UI: Karte im `_serviceCards`-Switch bzw. `_AddableService`-Picker; Pro-Features
-   über `_proGate`. **Eintrag in `service_links.dart`** (Website, ggf. offizielle
+   über `_proGate`. Kann die App ihn installieren, braucht er auch einen
+   Deinstallations-Builder nach dem Skript-Vertrag in §4 und
+   `..._uninstallActions(s)` im ⋮. **Eintrag in `service_links.dart`** (Website, ggf. offizielle
    App) und `..._projectLinkActions(<id>)` ans Ende der `actions` — der Guard-Test
    erzwingt es ohnehin.
 5. Version bumpen, `whats_new.dart` ergänzen, **diese Doku aktualisieren**,

@@ -23,9 +23,21 @@ library;
 
 import 'dart:convert';
 
+import '../commands.dart' show shSingleQuote;
+
 /// Fixed identifiers — also what the user sees in InfluxDB/Grafana.
 const String stackOrg = 'pi-tool';
 const String stackBucket = 'evcc';
+
+/// First line of the block the wiring appends to /etc/evcc.yaml. It is the
+/// ONLY thing [buildEvccInfluxUnwireScriptPart] removes — a user's own
+/// `influx:` block never carries it. ASCII on purpose (grep -F under LC_ALL=C).
+const String evccInfluxBlockMarker =
+    '# Von Pi-Tool ergaenzt (Monitoring-Stack):';
+
+/// influx CLI profile the wiring creates (`influx setup -n`) in
+/// /root/.influxdbv2/configs, holding the operator token.
+const String stackCliProfile = 'pitool';
 
 /// How much of the stack actually got wired. [partial] exists because the
 /// script legitimately skips halves (Docker-evcc without /etc/evcc.yaml,
@@ -141,7 +153,7 @@ if ! systemctl is-active influxdb >/dev/null 2>&1; then
 fi
 if [ ! -f /root/.influxdbv2/configs ]; then
   pw=\$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
-  if influx setup -f -u pitool -p "\$pw" -o pi-tool -b evcc -n pitool >/dev/null 2>&1; then
+  if influx setup -f -u pitool -p "\$pw" -o pi-tool -b evcc -n $stackCliProfile >/dev/null 2>&1; then
     echo "InfluxDB eingerichtet (Org pi-tool, Bucket evcc)."
     # Das Admin-Passwort wird bewusst NICHT ausgegeben (es duerfte sonst im Log
     # landen). Damit die InfluxDB-Weboberflaeche keine stumme Sackgasse ist,
@@ -196,7 +208,7 @@ if [ -f /etc/evcc.yaml ]; then
     [ -s /etc/evcc.yaml ] && [ "\$(tail -c 1 /etc/evcc.yaml | od -An -c | tr -d ' ')" != "\\n" ] && echo "" >> /etc/evcc.yaml
     if ! {
       echo ""
-      echo "# Von Pi-Tool ergaenzt (Monitoring-Stack):"
+      echo "$evccInfluxBlockMarker"
       echo "influx:"
       echo "  url: http://localhost:8086"
       echo "  database: evcc"
@@ -289,3 +301,114 @@ else
 fi
 ''';
 }
+
+// --- undo (InfluxDB uninstall with purge) ------------------------------------
+// Fragments for buildAptServiceUninstallScript: bash, run as root under the
+// uninstall's `set -e`. A refusal prints one `UNINSTALL_REFUSED: <Grund>` line
+// and exits 3. Grafana's datasource/dashboard stay: a re-wiring overwrites the
+// datasource anyway, and the user may have built on the dashboard.
+
+/// Takes back the `influx:` block the wiring appended to /etc/evcc.yaml. Left
+/// in place, evcc keeps writing with a dead token and a later re-wiring stops
+/// at "hat schon einen influx-Block" (WIRE_PARTIAL forever).
+///
+/// - Removes only the [evccInfluxBlockMarker] line, the `influx:` key right
+///   below it and that key's indented body (blank/comment lines inside it
+///   included), plus the one blank line the wiring put in front.
+/// - Timestamped backup under /var/backups/pi-tool first, then an atomic
+///   replace that keeps owner and mode.
+/// - evcc is restarted only when it is installed AND running. If it does not
+///   come back active, the backup is restored and the fragment refuses — so
+///   the caller runs it BEFORE removing anything.
+String buildEvccInfluxUnwireScriptPart() =>
+    'wire_marker=${shSingleQuote(evccInfluxBlockMarker)}\n'
+    '$_evccInfluxUnwireBody';
+
+const String _evccInfluxUnwireBody = r'''
+# awk: drop the marker line, the influx: key below it and the key's body.
+# Blank/comment lines belong to the body only while indented lines follow.
+unwire_awk='
+  { l[NR] = $0 }
+  END {
+    for (i = 1; i <= NR; i++) {
+      if (l[i] != m || l[i + 1] != "influx:") continue
+      d[i] = 1; d[i + 1] = 1
+      j = i + 2
+      while (j <= NR) {
+        if (l[j] ~ /^[ \t]/) { d[j] = 1; j++; continue }
+        k = j
+        while (k <= NR && l[k] ~ /^[ \t]*(#.*)?$/) k++
+        if (k > j && k <= NR && l[k] ~ /^[ \t]/) { while (j < k) d[j++] = 1; continue }
+        break
+      }
+      if (i > 1 && l[i - 1] == "") d[i - 1] = 1
+      i = j - 1
+    }
+    for (i = 1; i <= NR; i++) if (!(i in d)) print l[i]
+  }'
+if [ -f /etc/evcc.yaml ] && grep -qxF "$wire_marker" /etc/evcc.yaml; then
+  mkdir -p /var/backups/pi-tool
+  unwire_bak="/var/backups/pi-tool/evcc.yaml.unwire-$(date +%Y%m%d-%H%M%S)"
+  unwire_tmp=""
+  if ! cp -p /etc/evcc.yaml "$unwire_bak" ||
+    ! unwire_tmp=$(mktemp /etc/.pitool-evcc.XXXXXX) ||
+    ! awk -v m="$wire_marker" "$unwire_awk" /etc/evcc.yaml >"$unwire_tmp"; then
+    if [ -n "$unwire_tmp" ]; then rm -f -- "$unwire_tmp"; fi
+    echo "UNINSTALL_REFUSED: Die evcc-Konfiguration ließ sich nicht sichern oder anpassen (Speicher voll oder schreibgeschützt?) – nichts geändert."
+    exit 3
+  fi
+  if cmp -s /etc/evcc.yaml "$unwire_tmp"; then
+    # Marker without its influx: key (edited by hand): nothing of ours left.
+    rm -f -- "$unwire_tmp" "$unwire_bak"
+  else
+    chmod --reference=/etc/evcc.yaml "$unwire_tmp" 2>/dev/null || true
+    chown --reference=/etc/evcc.yaml "$unwire_tmp" 2>/dev/null || true
+    mv -f "$unwire_tmp" /etc/evcc.yaml
+    echo "InfluxDB-Eintrag von Pi-Tool aus /etc/evcc.yaml entfernt (Sicherung: $unwire_bak)."
+    if systemctl cat evcc >/dev/null 2>&1 && systemctl is-active --quiet evcc; then
+      systemctl restart evcc >/dev/null 2>&1 || true
+      # Restart=always reports "active" at once, even for a crash loop.
+      sleep 5
+      if [ "$(systemctl is-active evcc 2>/dev/null)" != active ]; then
+        cp -p "$unwire_bak" /etc/evcc.yaml
+        systemctl restart evcc >/dev/null 2>&1 || true
+        echo "UNINSTALL_REFUSED: evcc lief ohne den InfluxDB-Eintrag nicht wieder an – /etc/evcc.yaml ist wiederhergestellt, nichts deinstalliert."
+        exit 3
+      fi
+      echo "evcc läuft ohne den InfluxDB-Eintrag weiter."
+    fi
+  fi
+fi
+''';
+
+/// Removes the wiring's CLI profile [stackCliProfile] (operator token of the
+/// deleted database) from /root/.influxdbv2/configs — run AFTER the data is
+/// gone. Left behind, the next wiring would skip `influx setup` (the file
+/// exists) and fail on the fresh database. Other profiles stay; the file and
+/// its directory only go when nothing else is left in them.
+String buildInfluxCliProfileCleanupScriptPart() =>
+    'cli_profile=${shSingleQuote(stackCliProfile)}\n'
+    '$_influxCliProfileCleanupBody';
+
+const String _influxCliProfileCleanupBody = r'''
+cli_cfg=/root/.influxdbv2/configs
+# awk: a profile is its [name] header plus the lines up to the next header.
+cli_has='{ t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t) } t == "[" p "]" { f = 1 } END { exit !f }'
+cli_drop='{ t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t) } t ~ /^\[/ { skip = (t == "[" p "]") } !skip { print }'
+if [ -f "$cli_cfg" ] && awk -v p="$cli_profile" "$cli_has" "$cli_cfg"; then
+  cli_tmp=$(mktemp /root/.influxdbv2/.pitool-cfg.XXXXXX)
+  awk -v p="$cli_profile" "$cli_drop" "$cli_cfg" >"$cli_tmp"
+  if grep -Eq '^[[:blank:]]*\[' "$cli_tmp"; then
+    chmod --reference="$cli_cfg" "$cli_tmp" 2>/dev/null || true
+    mv -f "$cli_tmp" "$cli_cfg"
+    echo "influx-CLI-Profil „$cli_profile“ entfernt, weitere Profile bleiben."
+  else
+    rm -f -- "$cli_tmp" "$cli_cfg"
+    rmdir /root/.influxdbv2 2>/dev/null || true
+    echo "influx-CLI-Profil „$cli_profile“ entfernt."
+  fi
+fi
+if [ -f /etc/grafana/provisioning/datasources/pitool-influxdb.yaml ]; then
+  echo "Hinweis: Die Grafana-Datenquelle „InfluxDB (evcc)“ bleibt bis zur nächsten Verdrahtung ohne Daten."
+fi
+''';

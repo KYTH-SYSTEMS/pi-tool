@@ -263,12 +263,35 @@ class FakeEvccUpdater extends EvccUpdater {
   List<SecurityFinding> securityFindings = const [];
   final securityFixes = <SecurityFix>[];
 
+  /// What the Pi-hole password fix / install "sets" (null = one existed).
+  String? piholeWebPassword;
+  int piholeInstallCalls = 0;
+
   @override
-  Future<void> fixSecurity(
+  Future<String?> installPihole({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async {
+    piholeInstallCalls++;
+    return piholeWebPassword;
+  }
+
+  @override
+  Future<String?> fixSecurity(
       {required SshConfig config,
       required SecurityFix fix,
       required void Function(String line) onLog}) async {
     securityFixes.add(fix);
+    if (fix == SecurityFix.piholePassword) {
+      securityFindings = const [
+        (
+          title: 'Pi-hole-Weboberfläche',
+          level: SecurityLevel.ok,
+          detail: 'Die Weboberfläche ist passwortgeschützt.'
+        ),
+      ];
+      return piholeWebPassword;
+    }
     // The fix worked: the re-check that follows sees the finding green.
     securityFindings = const [
       (
@@ -277,6 +300,7 @@ class FakeEvccUpdater extends EvccUpdater {
         detail: 'Root-Login per SSH ist deaktiviert.'
       ),
     ];
+    return null;
   }
   @override
   Future<List<SecurityFinding>> runSecurityCheck({
@@ -464,6 +488,21 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       tailscaleLoggedOut = logout;
+
+  final uninstalled = <(String, bool)>[];
+  Object? uninstallError;
+
+  @override
+  Future<void> uninstallService({
+    required SshConfig config,
+    required String id,
+    required bool purge,
+    required void Function(String line) onLog,
+  }) async {
+    if (uninstallError != null) throw uninstallError!;
+    uninstalled.add((id, purge));
+    services = [for (final s in services) if (s.id != id) s];
+  }
 
   int shareLanCalls = 0, unshareLanCalls = 0;
 
@@ -3624,6 +3663,240 @@ void main() {
     expect(find.textContaining('Fernzugriff steht'), findsOneWidget);
   });
 
+  // ---- Dienste deinstallieren ----
+
+  const grafana = ServiceStatus(
+      id: 'grafana',
+      name: 'Grafana',
+      installed: true,
+      active: true,
+      version: '11.0.0',
+      updateKnown: true,
+      webPort: 3000,
+      aptPackage: 'grafana');
+
+  Future<void> openUninstall(WidgetTester tester, String id) async {
+    await tester.tap(find.byKey(ValueKey('menu-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Deinstallieren'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Deinstallieren: Standard behält Konfiguration und Daten',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = const [grafana];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await openUninstall(tester, 'grafana');
+    expect(find.text('Grafana deinstallieren?'), findsOneWidget);
+    // Die Löschwarnung erscheint erst mit dem Häkchen.
+    expect(find.textContaining('nicht rückgängig'), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Deinstallieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.uninstalled, [('grafana', false)]);
+    expect(find.byKey(const ValueKey('menu-grafana')), findsNothing);
+    expect(find.textContaining('Grafana deinstalliert'), findsWidgets);
+  });
+
+  testWidgets('Deinstallieren mit Häkchen: löscht auch Daten, mit Warnung',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = const [grafana];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await openUninstall(tester, 'grafana');
+    await tester.tap(find.byKey(const ValueKey('uninstallPurge')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('nicht rückgängig'), findsOneWidget);
+    expect(find.textContaining('Dashboards'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Deinstallieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.uninstalled, [('grafana', true)]);
+  });
+
+  testWidgets(
+      'Deinstallieren mit Häkchen: kein „bleibt"-Text mehr im Dialog '
+      '(Home Assistant)', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            active: true,
+            version: '2026.9.1'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await openUninstall(tester, 'homeassistant');
+    expect(find.textContaining('Konfiguration und Image bleiben'),
+        findsOneWidget);
+    expect(find.textContaining('Konfiguration und Daten bleiben'),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('uninstallPurge')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('bleiben'), findsNothing);
+    expect(find.textContaining('Löscht /opt/homeassistant/config'),
+        findsOneWidget);
+  });
+
+  testWidgets('Deinstallieren: Abbrechen ändert nichts', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = const [grafana];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await openUninstall(tester, 'grafana');
+    await tester.tap(find.text('Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.uninstalled, isEmpty);
+    expect(find.byKey(const ValueKey('menu-grafana')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Deinstallieren abgelehnt: der Grund steht in der Meldung, die Karte '
+      'bleibt', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [grafana]
+      ..uninstallError = const EvccUpdateException(UpdateErrorKind.unknown,
+          'apt würde zusätzlich entfernen: foo – abgebrochen.');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await openUninstall(tester, 'grafana');
+    await tester.tap(find.widgetWithText(FilledButton, 'Deinstallieren'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('apt würde zusätzlich entfernen'), findsWidgets);
+    expect(find.byKey(const ValueKey('menu-grafana')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Tailscale deinstallieren: Karte wandert in „Dienst hinzufügen", '
+      'die gemerkte Tailnet-IP ist weg', (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(const AppConfig(
+      profiles: [
+        Profile(
+            name: 'S',
+            host: '192.168.178.64',
+            password: 'pw',
+            tailscaleIp: '100.64.0.5',
+            remoteAccessProven: true)
+      ],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5'),
+      ];
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: store,
+        updater: u,
+        updateChecker: _noUpdateChecker,
+        apiClient: EvccApiClient(
+            getJson: (_) async =>
+                throw const EvccApiException('kein Netz im Test')),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await openUninstall(tester, 'tailscale');
+    expect(find.textContaining('Fernzugriff über Tailscale endet'),
+        findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Deinstallieren'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    expect(u.uninstalled, [('tailscale', false)]);
+    expect(find.byKey(const ValueKey('menu-tailscale')), findsNothing);
+    expect(store.saved.active.tailscaleIp, '');
+    expect(store.saved.active.remoteAccessProven, isFalse);
+  });
+
+  testWidgets('evcc als Docker-Container: kein Deinstallieren im Menü',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'evcc',
+            name: 'evcc',
+            installed: true,
+            active: true,
+            version: '0.310.0',
+            detail: 'Docker · evcc'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    expect(find.text('Deinstallieren'), findsNothing);
+  });
+
+  testWidgets('evcc per apt: Deinstallieren im Menü', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater(); // Standard: evcc über apt
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    expect(find.text('Deinstallieren'), findsOneWidget);
+  });
+
+  testWidgets('Demo-Modus: kein Deinstallieren (die Demo hätte nur Fehler)',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'S')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    expect(find.text('Deinstallieren'), findsNothing);
+  });
+
   // ---- Heimnetz über Tailscale freigeben (Subnet Router) ----
 
   ServiceStatus tsWith(SubnetRoutes routes) => ServiceStatus(
@@ -4137,6 +4410,100 @@ void main() {
     // The automatic re-check shows the finding green now.
     expect(find.text('Root-Login per SSH ist deaktiviert.'), findsOneWidget);
     expect(find.text('Beheben'), findsNothing);
+  });
+
+  testWidgets(
+      'Sicherheits-Check: Pi-hole ohne Passwort → „Beheben" setzt eins und '
+      'zeigt es einmalig', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..securityFindings = const [
+        (
+          title: 'Pi-hole-Weboberfläche',
+          level: SecurityLevel.warn,
+          detail: 'Kein Passwort gesetzt.'
+        ),
+      ]
+      ..piholeWebPassword = 'Abc234xyzKLMN567';
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sicherheits-Check'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Beheben'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('keine Anmeldung'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.securityFixes, [SecurityFix.piholePassword]);
+    expect(find.text('Pi-hole-Passwort'), findsOneWidget);
+    expect(find.text('Abc234xyzKLMN567'), findsOneWidget);
+    // Ein versehentlicher Tipp daneben schließt ihn nicht.
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(find.text('Pi-hole-Passwort'), findsOneWidget);
+    await tester.tap(find.text('Fertig'));
+    await tester.pumpAndSettle();
+    // Danach prüft die App neu: der Befund ist grün.
+    expect(find.text('Die Weboberfläche ist passwortgeschützt.'), findsOneWidget);
+    // (Dass das Passwort nie ins Log gelangt, prüft evcc_updater_test.)
+  });
+
+  testWidgets('Pi-hole installieren: das gesetzte Passwort erscheint danach',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [
+        ServiceStatus.absent('pihole', 'Pi-hole'),
+        const ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ]
+      ..piholeWebPassword = 'Abc234xyzKLMN567';
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.textContaining('Dienst hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pi-hole'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.piholeInstallCalls, 1);
+    expect(find.text('Abc234xyzKLMN567'), findsOneWidget);
+  });
+
+  testWidgets('Pi-hole installieren: vorhandenes Passwort → kein Dialog',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [
+        ServiceStatus.absent('pihole', 'Pi-hole'),
+        const ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.textContaining('Dienst hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pi-hole'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.piholeInstallCalls, 1);
+    expect(find.text('Pi-hole-Passwort'), findsNothing);
   });
 
   testWidgets('System-Karte → Sicherheits-Check zeigt die Ampel-Befunde',

@@ -30,6 +30,16 @@ echo __SEC_F2B__
 systemctl is-active fail2ban 2>/dev/null || true
 echo __SEC_PORTS__
 ss -H -tln 2>/dev/null | awk '{print $4}'
+echo __SEC_PIHOLE__
+# Pi-hole v6 asks for no login while no password is set. Only the verdict is
+# printed, never the hash.
+if command -v pihole-FTL >/dev/null 2>&1; then
+  if h=$(pihole-FTL --config -q webserver.api.pwhash 2>/dev/null); then
+    case "$h" in ""|'""') echo pwhash-empty ;; *) echo pwhash-set ;; esac
+  else
+    echo pwhash-unknown
+  fi
+fi
 ''';
   return 'LC_ALL=C sudo -S sh -c ${shSingleQuote(script)}';
 }
@@ -37,7 +47,7 @@ ss -H -tln 2>/dev/null | awk '{print $4}'
 /// The findings the app can remedy with one tap. Deliberately NOT on the list:
 /// turning SSH password auth off — without a proven key login that locks the
 /// user out, so it stays a recommendation.
-enum SecurityFix { fail2ban, autoUpdates, rootLogin }
+enum SecurityFix { fail2ban, autoUpdates, rootLogin, piholePassword }
 
 /// Maps a finding to its one-tap fix, or null when there is nothing safe to
 /// offer (finding is ok, undetermined, or intentionally manual).
@@ -51,6 +61,9 @@ SecurityFix? securityFixFor(SecurityFinding f) {
       f.level == SecurityLevel.warn) {
     return SecurityFix.autoUpdates;
   }
+  if (f.title == piholeWebFindingTitle && f.level == SecurityLevel.warn) {
+    return SecurityFix.piholePassword;
+  }
   if (f.title.startsWith('fail2ban') &&
       f.level != SecurityLevel.ok &&
       f.detail.contains('nicht aktiv')) {
@@ -59,10 +72,18 @@ SecurityFix? securityFixFor(SecurityFinding f) {
   return null;
 }
 
+/// Title of the Pi-hole web-login finding (only present when Pi-hole is).
+const String piholeWebFindingTitle = 'Pi-hole-Weboberfläche';
+
 /// Root script for one [SecurityFix]. Success marker `SECFIX_OK` (run via
 /// `_runRootScriptExpectMarker` — success only with the marker).
+/// [SecurityFix.piholePassword] needs a generated password and runs
+/// `buildPiholeSetPasswordScript` instead.
 String buildSecurityFixScript(SecurityFix fix) {
   switch (fix) {
+    case SecurityFix.piholePassword:
+      throw ArgumentError.value(
+          fix, 'fix', 'braucht ein Passwort – buildPiholeSetPasswordScript');
     case SecurityFix.fail2ban:
       return '''
 set -e
@@ -114,7 +135,8 @@ echo SECFIX_OK
   }
 }
 
-/// Parses the probe output. Always returns the same five findings; anything it
+/// Parses the probe output. Always returns the same five findings (plus the
+/// Pi-hole web login when Pi-hole is installed); anything it
 /// cannot determine degrades to [SecurityLevel.info] (never a false ok/warn).
 List<SecurityFinding> parseSecurityReport(String output) {
   final sections = <String, List<String>>{
@@ -122,12 +144,14 @@ List<SecurityFinding> parseSecurityReport(String output) {
     'UNATT': [],
     'F2B': [],
     'PORTS': [],
+    'PIHOLE': [],
   };
   const markers = {
     '__SEC_SSHD__': 'SSHD',
     '__SEC_UNATT__': 'UNATT',
     '__SEC_F2B__': 'F2B',
     '__SEC_PORTS__': 'PORTS',
+    '__SEC_PIHOLE__': 'PIHOLE',
   };
   String? cur;
   for (final raw in output.split('\n')) {
@@ -278,5 +302,29 @@ List<SecurityFinding> parseSecurityReport(String output) {
         : 'Lauschende TCP-Ports: ${ports.join(', ')}'
   );
 
-  return [root, pw, updates, f2b, openPorts];
+  // 6) Pi-hole web login — only when Pi-hole is there.
+  final ph = sections['PIHOLE']!;
+  final SecurityFinding? pihole = ph.isEmpty
+      ? null
+      : ph.contains('pwhash-empty')
+          ? (
+              title: piholeWebFindingTitle,
+              level: SecurityLevel.warn,
+              detail: 'Kein Passwort gesetzt – jeder im Heimnetz kann Pi-hole '
+                  'ohne Anmeldung umkonfigurieren (Upstream-DNS, Blocklisten, '
+                  'lokale DNS-Einträge).'
+            )
+          : ph.contains('pwhash-set')
+              ? (
+                  title: piholeWebFindingTitle,
+                  level: SecurityLevel.ok,
+                  detail: 'Die Weboberfläche ist passwortgeschützt.'
+                )
+              : (
+                  title: piholeWebFindingTitle,
+                  level: SecurityLevel.info,
+                  detail: 'Konnte nicht ermittelt werden (Pi-hole v6 nötig).'
+                );
+
+  return [root, pw, updates, f2b, openPorts, ?pihole];
 }

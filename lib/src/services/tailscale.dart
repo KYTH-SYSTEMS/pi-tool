@@ -433,3 +433,314 @@ class SubnetRoutes {
         machine: (j['machine'] ?? '').toString(),
       );
 }
+
+// ---- Deinstallieren ----
+
+/// Printed as the last line of [buildTailscaleUninstallScript]'s happy path.
+/// Shares no substring with `TAILSCALE_INSTALLED`.
+const String tailscaleRemovedMarker = 'TAILSCALE_REMOVED_OK';
+
+/// Why Tailscale cannot be removed while the SSH session itself runs over the
+/// tailnet ([isTailnetClient], and the script's own backstop). Covers the
+/// case a user cannot see from the host field: the phone reaches the Pi's
+/// home address through the Pi's own subnet route, so the session goes
+/// through Tailscale although the home address is in use. Plain text without
+/// `"`, `$`, `` ` `` or `\`: the script prints it inside double quotes.
+const String tailscaleSessionRefusal =
+    'Die Verbindung zum Pi läuft über Tailscale (auch unter der '
+    'Heimnetz-Adresse, wenn der Pi das Heimnetz freigibt) und würde beim '
+    'Entfernen abreißen – bitte im Heimnetz mit ausgeschaltetem Tailscale '
+    'auf dem Handy erneut versuchen.';
+
+/// No-sudo probe for [isTailnetClient]: sudo's env_reset hides the variable
+/// from a root script, the login shell still has it.
+const String tailscaleSessionProbe = r'printf "%s\n" "$SSH_CONNECTION"';
+
+/// True when the SSH session described by [sshConnection] (the login shell's
+/// `$SSH_CONNECTION`: `<client-ip> <client-port> <server-ip> <server-port>`)
+/// runs over the tailnet: client or server address in 100.64.0.0/10 or
+/// fd7a:115c:a1e0::/48. Removing Tailscale would cut that session halfway
+/// through apt. Catches what [isTailnetHost] cannot: a phone in the tailnet
+/// that reaches the Pi's LAN address through this Pi's own subnet route
+/// arrives with a 100.x source.
+bool isTailnetClient(String sshConnection) {
+  final f = sshConnection.trim().split(RegExp(r'\s+'));
+  return [f.first, if (f.length > 2) f[2]].any(_isTailnetAddress);
+}
+
+bool _isTailnetAddress(String ip) {
+  final a = ip.split('%').first; // link-local zone (fe80::1%eth0)
+  bool cgnat(int o1, int o2) => o1 == 100 && (o2 & 0xC0) == 0x40;
+  try {
+    if (!a.contains(':')) {
+      final b = Uri.parseIPv4Address(a);
+      return cgnat(b[0], b[1]);
+    }
+    final b = Uri.parseIPv6Address(a);
+    // IPv4-mapped (::ffff:a.b.c.d): the IPv4 rule on the last four bytes.
+    if (b.take(10).every((x) => x == 0) && b[10] == 0xff && b[11] == 0xff) {
+      return cgnat(b[12], b[13]);
+    }
+    const ula = [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0];
+    return [for (var i = 0; i < ula.length; i++) b[i] == ula[i]].every((x) => x);
+  } on FormatException {
+    return false;
+  }
+}
+
+/// Root script: removes Tailscale — only the apt package the official
+/// installer set up ([tailscaleInstallScript]).
+///
+/// [purge] false (keep): `apt-get remove`. The node state in
+/// /var/lib/tailscale stays, so a reinstall comes back as the same node (same
+/// 100.x IP, same approved routes) without a browser login; the apt source
+/// and the keyring package stay too. No `tailscale logout`: it would expire
+/// the node key and delete the profile.
+///
+/// [purge] true: logs out first while tailscaled still runs (expires the node
+/// key; an ephemeral node leaves the tailnet, a regular one stays listed until
+/// removed in the console), then purges both packages and deletes the node
+/// state, the cache, /etc/default/tailscaled, the apt source + keyring (on
+/// Buster installs only Tailscale's key from the shared trusted.gpg) and the
+/// app's config-editor backups of Tailscale files.
+///
+/// Only purge removes the app's forwarding file [tailscaleForwardingConf]
+/// (runtime value untouched — Docker and others may rely on it, as in
+/// [buildTailscaleAdvertiseScript]). Keep leaves it with the rest of the
+/// configuration: the kept prefs still advertise the shared home network, so
+/// a reinstall resumes the sharing — without the file, forwarding would be off
+/// after the next reboot while the card claims the route is active.
+///
+/// Refuses with one `UNINSTALL_REFUSED: …` line and exit 3, before anything
+/// changes (so before a purge's logout), when the session itself runs over
+/// the tailnet ([tailscaleSessionRefusal]; backstop for the app's
+/// [isTailnetClient] check: the caller's SSH_CONNECTION is read from an
+/// ancestor process), when a tailscale binary is not the package's (static
+/// build, snap: the card would stay), when a package to remove is held
+/// (`apt-mark hold`: the dry run passes, `-y` does not), when the apt dry
+/// run fails (its last lines come first), or when apt would take another
+/// package along.
+///
+/// `systemctl disable` only, no `--now`: the package's prerm stops tailscaled
+/// while the binary is still there, so `ExecStopPost=tailscaled --cleanup`
+/// restores DNS and drops routes and firewall rules. Should apt fail (lock),
+/// the enablement is restored and remote access keeps running. A retry after
+/// a partial run succeeds: an rc or missing package counts as removed.
+String buildTailscaleUninstallScript({required bool purge}) {
+  final b = StringBuffer(_tsUninstallPrelude)
+    ..write(purge ? _tsPurgeSelect : _tsRemoveSelect)
+    ..write(_tsUninstallGuards)
+    ..write(_tsAptFailed);
+  if (purge) b.write(_tsLogout);
+  b.write(_tsDisableAndApt);
+  if (purge) {
+    b
+      ..writeln('rm -f ${shSingleQuote(tailscaleForwardingConf)}')
+      ..write(_tsPurgeLeftovers);
+  }
+  b
+    ..write(_tsVerifyStopped)
+    ..write(purge ? _tsVerifyPurged : _tsVerifyRemoved)
+    ..write(_tsVerifyGone)
+    ..writeln('echo $tailscaleRemovedMarker');
+  return b.toString();
+}
+
+const String _tsUninstallPrelude = r'''
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export LC_ALL=C
+ts_status() {
+  dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null </dev/null || true
+}
+# "hold" after `apt-mark hold`.
+ts_want() {
+  dpkg-query -W -f='${db:Status-Want}' "$1" 2>/dev/null </dev/null || true
+}
+# Every tailscale CLI on the usual paths, symlinks resolved: usrmerge's
+# /bin/tailscale is /usr/bin/tailscale, a snap's leads to snapd.
+ts_bins() {
+  for f in /usr/local/sbin/tailscale /usr/local/bin/tailscale \
+    /usr/sbin/tailscale /usr/bin/tailscale /sbin/tailscale /bin/tailscale \
+    /snap/bin/tailscale "$(command -v tailscale 2>/dev/null || true)"; do
+    if [ -n "$f" ] && [ -e "$f" ]; then readlink -f "$f"; fi
+  done | sort -u
+}
+''';
+
+// Keep: an rc package (config files only) is already removed.
+const String _tsRemoveSelect = r'''
+act=remove
+pkgs=tailscale
+case "$(ts_status tailscale)" in ""|not-installed|config-files) pkgs="" ;; esac
+''';
+
+// Purge: rc counts, so a purge after a keep still clears it.
+const String _tsPurgeSelect = r'''
+act=purge
+pkgs=""
+for p in tailscale tailscale-archive-keyring; do
+  case "$(ts_status "$p")" in ""|not-installed) ;; *) pkgs="$pkgs $p" ;; esac
+done
+''';
+
+// The session refusal is spliced in from [tailscaleSessionRefusal], so the app
+// can show the very same text when it catches the case itself.
+const String _tsUninstallGuards = r'''
+# ---- Guards: nothing has been changed yet ----
+# Over the tailnet, removing Tailscale cuts this very session halfway through
+# apt. sudo hides SSH_CONNECTION from this shell; the caller's copy is still
+# in an ancestor's environment.
+conn=""
+p=$PPID
+for i in 1 2 3 4 5 6 7 8; do
+  case "$p" in ""|0|1) break ;; esac
+  conn=$(tr '\0' '\n' 2>/dev/null </proc/"$p"/environ | sed -n 's/^SSH_CONNECTION=//p')
+  if [ -n "$conn" ]; then break; fi
+  p=$(sed -n 's/^PPid:[[:space:]]*//p' /proc/"$p"/status 2>/dev/null || true)
+done
+sip=${conn#* * }
+for ip in "${conn%% *}" "${sip%% *}"; do
+  case "${ip#::ffff:}" in
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*|[Ff][Dd]7[Aa]:115[Cc]:[Aa]1[Ee]0:*)
+'''
+    '      echo "UNINSTALL_REFUSED: $tailscaleSessionRefusal"\n'
+    r'''
+      exit 3
+      ;;
+  esac
+done
+# A tailscale the package does not own (static build, snap) would keep the
+# card, and its state is not the package's to delete.
+for f in $(ts_bins); do
+  if ! dpkg-query -S "$f" 2>/dev/null </dev/null | grep -q '^tailscale[,:]'; then
+    echo "UNINSTALL_REFUSED: Tailscale ist hier nicht über apt installiert ($f) – bitte von Hand entfernen."
+    exit 3
+  fi
+done
+# A held package passes the dry run (no -y) but fails the real run — after a
+# purge has already logged the node out.
+for pk in $pkgs; do
+  if [ "$(ts_want "$pk")" = hold ]; then
+    echo "UNINSTALL_REFUSED: Das Paket $pk ist mit apt-mark hold festgehalten – bitte zuerst freigeben (sudo apt-mark unhold $pk), nichts geändert."
+    exit 3
+  fi
+done
+# apt must not take anything else along (a package that depends on tailscale).
+# A failed dry run (interrupted dpkg, lock) refuses too: the real run would
+# fail the same way, and a purge logs out before it. stderr is kept for the
+# reason.
+if [ -n "$pkgs" ]; then
+  if ! sim=$(apt-get -s -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 "$act" $pkgs </dev/null 2>&1); then
+    printf '%s\n' "$sim" | tail -n 5
+    echo "UNINSTALL_REFUSED: Der apt-Probelauf ist fehlgeschlagen (Details oben) – nichts geändert."
+    exit 3
+  fi
+  for x in $(printf '%s\n' "$sim" | sed -n 's/^\(Remv\|Purg\) \([^ :]*\).*/\2/p'); do
+    case " $pkgs " in
+      *" $x "*) ;;
+      *)
+        echo "UNINSTALL_REFUSED: apt würde auch $x entfernen – bitte von Hand prüfen."
+        exit 3
+        ;;
+    esac
+  done
+fi
+''';
+
+const String _tsAptFailed = r'''
+# ---- Removal ----
+was=$(systemctl is-enabled tailscaled 2>/dev/null </dev/null || true)
+# apt failed (lock, network): the package stays, so its service does too.
+ts_apt_failed() {
+  if [ "$was" = enabled ]; then systemctl enable tailscaled </dev/null 2>&1 || true; fi
+  echo "Tailscale ließ sich nicht entfernen (apt ist gescheitert)."
+  exit 1
+}
+''';
+
+const String _tsLogout = r'''
+# Log out while tailscaled still runs: expires the node key at the control
+# server. Needs the internet, hence the timeout.
+if command -v tailscale >/dev/null 2>&1; then
+  timeout 30 tailscale logout </dev/null 2>&1 || echo "Hinweis: Abmelden bei Tailscale nicht möglich – das Gerät bitte in der Tailscale-Konsole entfernen."
+fi
+''';
+
+const String _tsDisableAndApt = r'''
+# disable only: the package's prerm stops tailscaled while the binary is still
+# there, so its ExecStopPost cleanup restores DNS, routes and firewall rules.
+if [ "$was" = enabled ]; then systemctl disable tailscaled </dev/null 2>&1 || true; fi
+if [ -n "$pkgs" ]; then
+  apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 "$act" -y $pkgs </dev/null || ts_apt_failed
+fi
+''';
+
+const String _tsPurgeLeftovers = r'''
+# What dpkg leaves behind (the state goes with postrm purge only when
+# deb-systemd-helper is present) and what the installer wrote.
+rm -rf /var/lib/tailscale /var/cache/tailscale
+rm -f /etc/default/tailscaled
+rm -f /etc/apt/sources.list.d/tailscale.list
+rm -f /usr/share/keyrings/tailscale-archive-keyring.gpg
+rm -f /var/lib/apt/lists/pkgs.tailscale.com_*
+# Buster installs put the key into the shared trusted.gpg: only that key goes.
+if [ -s /etc/apt/trusted.gpg ] && command -v apt-key >/dev/null 2>&1; then
+  apt-key --keyring /etc/apt/trusted.gpg del 2596A99EAAB33821893C0A79458CA832957F5868 </dev/null >/dev/null 2>&1 || true
+fi
+# The app's config-editor backups of Tailscale files.
+rm -f /var/backups/pi-tool/config-tailscaled-[0-9]*.bak
+rm -f /var/backups/pi-tool/config-tailscale.list-[0-9]*.bak
+rm -f /var/backups/pi-tool/config-99-pi-tool-tailscale.conf-[0-9]*.bak
+''';
+
+const String _tsVerifyStopped = r'''
+# ---- Verification ----
+# prerm stopped it; should it still run, stop it now: the tunnel must not
+# outlive the card.
+if systemctl is-active --quiet tailscaled </dev/null; then
+  systemctl stop tailscaled </dev/null 2>&1 || true
+fi
+if systemctl is-active --quiet tailscaled </dev/null; then
+  echo "tailscaled läuft noch."
+  exit 1
+fi
+''';
+
+const String _tsVerifyRemoved = r'''
+case "$(ts_status tailscale)" in
+  ""|not-installed|config-files) ;;
+  *)
+    echo "Das Paket tailscale ist noch installiert."
+    exit 1
+    ;;
+esac
+''';
+
+const String _tsVerifyPurged = r'''
+for p in tailscale tailscale-archive-keyring; do
+  case "$(ts_status "$p")" in
+    ""|not-installed) ;;
+    *)
+      echo "Das Paket $p ist noch registriert."
+      exit 1
+      ;;
+  esac
+done
+if [ -e /var/lib/tailscale ]; then
+  echo "/var/lib/tailscale ist noch vorhanden."
+  exit 1
+fi
+''';
+
+const String _tsVerifyGone = r'''
+hash -r
+left=$(ts_bins)
+if [ -n "$left" ]; then
+  echo "tailscale ist weiterhin vorhanden: $left"
+  exit 1
+fi
+if [ -e /etc/resolv.pre-tailscale-backup.conf ]; then
+  echo "Hinweis: /etc/resolv.pre-tailscale-backup.conf ist noch da – bitte die DNS-Einstellung in /etc/resolv.conf prüfen."
+fi
+''';

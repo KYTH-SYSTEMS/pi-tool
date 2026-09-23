@@ -18,6 +18,30 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.69.0': [
+    'Security: a Pi-hole installed by the app had no web password. Pi-hole v6 '
+        'then asks for no login, so anyone on the home network could change its '
+        'DNS settings and blocklists.',
+    'New installs now get a random password, shown once to copy – the app '
+        'keeps no copy. For existing installs the security check (System card) '
+        'flags the missing Pi-hole password and offers "Fix".',
+    'Services can now be uninstalled: "Uninstall" in the ⋮ menu of the evcc '
+        '(apt), Home Assistant, Pi Connect, Tailscale, Grafana, InfluxDB and '
+        'Mosquitto cards.',
+    'By default only the program goes; configuration and data stay on the Pi, '
+        'and a later reinstall from the app picks them up. The checkbox "Also '
+        'delete configuration and data" removes everything, including the '
+        "service's own package source.",
+    'Before changing anything, the Pi checks whether removal is safe – for '
+        'example that apt would not take other packages along, or that the '
+        'connection does not run over the Tailscale being removed. Otherwise the '
+        'app stops with the reason and nothing is changed.',
+    'Pi-hole is deliberately not included yet: it is often the DNS server for '
+        'the whole network.',
+    'Docker: if the new container falls into a restart loop right after an '
+        'update, the app now restores the old one – until now it counted as '
+        'running. The rollback copy no longer starts again after a reboot.',
+  ],
   '0.68.0': [
     'Tailscale can now share your home network (subnet router): while away, '
         'devices without Tailscale – wallbox, inverter, router – stay reachable '
@@ -288,6 +312,32 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.69.0': [
+    'Sicherheit: Ein über die App installiertes Pi-hole hatte kein '
+        'Web-Passwort. Pi-hole v6 verlangt dann keine Anmeldung – jeder im '
+        'Heimnetz konnte DNS-Einstellungen und Blocklisten ändern.',
+    'Neue Installationen bekommen jetzt ein zufälliges Passwort, das einmalig '
+        'zum Kopieren erscheint; die App behält keine Kopie. Für bestehende '
+        'Installationen meldet der Sicherheits-Check (System-Karte) '
+        '„Pi-hole-Weboberfläche" und bietet „Beheben" an.',
+    'Dienste lassen sich jetzt deinstallieren: „Deinstallieren" im ⋮ der '
+        'Karten von evcc (apt), Home Assistant, Pi Connect, Tailscale, Grafana, '
+        'InfluxDB und Mosquitto.',
+    'Standardmäßig verschwindet nur das Programm; Konfiguration und Daten '
+        'bleiben auf dem Pi, eine spätere Neuinstallation über die App übernimmt '
+        'sie. Das Häkchen „Auch Konfiguration und Daten löschen" baut alles '
+        'zurück, bis zur eigenen Paketquelle des Dienstes.',
+    'Vor jeder Änderung prüft der Pi, ob das Entfernen sicher ist – etwa dass '
+        'apt keine weiteren Pakete mitnimmt oder die Verbindung nicht über das '
+        'zu entfernende Tailscale läuft. Sonst bricht die App mit Begründung ab, '
+        'ohne etwas zu ändern.',
+    'Pi-hole ist bewusst noch nicht dabei: Es ist oft der DNS des ganzen '
+        'Netzes.',
+    'Docker: Gerät der neue Container direkt nach einem Update in eine '
+        'Neustart-Schleife, stellt die App jetzt den alten wieder her – bisher '
+        'galt er als laufend. Die Rollback-Kopie startet nach einem Neustart '
+        'nicht mehr mit.',
+  ],
   '0.68.0': [
     'Tailscale kann jetzt das Heimnetz freigeben (Subnet Router): Unterwegs '
         'sind so auch Geräte ohne Tailscale – Wallbox, Wechselrichter, Router – '

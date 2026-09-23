@@ -6,7 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart'
     show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemNavigator, rootBundle;
+import 'package:flutter/services.dart'
+    show Clipboard, ClipboardData, SystemNavigator, rootBundle;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -1944,6 +1945,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       SecurityFix.fail2ban => context.l10n.fixDescFail2ban,
       SecurityFix.autoUpdates => context.l10n.fixDescAutoUpdates,
       SecurityFix.rootLogin => context.l10n.fixDescRootLogin,
+      SecurityFix.piholePassword => context.l10n.fixDescPiholePassword,
     };
     if (!await _confirm(
         context.l10n.dialogFixSecurityTitle(finding.title), desc)) {
@@ -2110,16 +2112,23 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = () => _fixSecurity(fix);
     var ok = false;
+    String? webPassword;
     await _guard(() async {
-      await _updater.fixSecurity(config: config, fix: fix, onLog: _appendLog);
+      webPassword =
+          await _updater.fixSecurity(config: config, fix: fix, onLog: _appendLog);
       ok = true;
       if (!mounted) return;
+      // The Pi-hole fix changes nothing when a password appeared meanwhile.
+      final kept = fix == SecurityFix.piholePassword && webPassword == null;
       setState(() {
-        _statusMessage = context.l10n.statusSecurityFixApplied;
+        _statusMessage = kept
+            ? context.l10n.statusPiholePasswordKept
+            : context.l10n.statusSecurityFixApplied;
         _statusOk = true;
       });
-      _addHistory(context.l10n.statusSecurityFixApplied);
+      if (!kept) _addHistory(context.l10n.statusSecurityFixApplied);
     }, backgroundMessage: context.l10n.busySecurityFix);
+    if (webPassword != null && mounted) await _showPiholePassword(webPassword!);
     // Re-run the check: the user sees the effect, not just a toast.
     if (ok && mounted) await _securityCheck();
   }
@@ -3157,8 +3166,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     final config = _prepare();
     if (config == null) return;
     _lastAction = _installPihole;
+    String? webPassword;
     await _guard(() async {
-      await _updater.installPihole(config: config, onLog: _appendLog);
+      webPassword =
+          await _updater.installPihole(config: config, onLog: _appendLog);
       if (!mounted) return;
       setState(() {
         _statusMessage = context.l10n.statusPiholeInstalled;
@@ -3168,7 +3179,45 @@ class _UpdaterPageState extends State<UpdaterPage>
       _addHistory(context.l10n.historyPiholeInstalled);
       await _refreshServices(config);
     }, backgroundMessage: l10n.busyInstallingPihole);
+    if (webPassword != null && mounted) await _showPiholePassword(webPassword!);
   }
+
+  /// Shows a freshly set Pi-hole web password once, to copy. Not dismissible
+  /// by a stray tap: the app keeps no copy — not in the log, the history or
+  /// the profile — so this is the only time it is visible.
+  Future<void> _showPiholePassword(String pw) => showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: Text(ctx.l10n.piholePasswordTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(ctx.l10n.piholePasswordBody),
+              const SizedBox(height: 12),
+              SelectableText(
+                pw,
+                key: const ValueKey('piholePassword'),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 20),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: pw));
+                if (mounted) _snack(context.l10n.snackPasswordCopied);
+              },
+              child: Text(ctx.l10n.actionCopy),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(ctx.l10n.actionDone),
+            ),
+          ],
+        ),
+      );
 
   /// Refreshes the Pi's package index, then re-reads the cards. Without this
   /// the app can only report what a possibly weeks-old index knows — see
@@ -4486,6 +4535,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                           () => _proGate(_restoreBackup), pro: true),
                     ],
                     ..._projectLinkActions('evcc'),
+                    // apt only: the app has no Docker install path for evcc,
+                    // so a reinstall would not bring a Docker setup back.
+                    if (s.detail.startsWith('apt')) ..._uninstallActions(s),
                   ]
                 : const [],
           ));
@@ -4529,6 +4581,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               _CardAction(context.l10n.actionManageBackups,
                   () => _proGate(_manageHomeAssistantBackups), pro: true),
               ..._projectLinkActions('homeassistant'),
+              ..._uninstallActions(s),
             ],
           ));
         case 'piconnect':
@@ -4569,6 +4622,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 _CardAction(context.l10n.actionSignOut, _piConnectSignout),
               ],
               ..._projectLinkActions('piconnect'),
+              ..._uninstallActions(s),
             ],
           ));
         case 'tailscale':
@@ -4643,6 +4697,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               _CardAction(context.l10n.actionSignOutTailscale,
                   () => _tailscaleSet(logout: true)),
               ..._projectLinkActions('tailscale'),
+              ..._uninstallActions(s),
             ],
           ));
         case 'system':
@@ -4721,6 +4776,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (s.id == 'grafana')
                 _CardAction(context.l10n.actionWireStack, _wireStack),
               ..._projectLinkActions(s.id),
+              ..._uninstallActions(s),
             ],
           ));
       }
@@ -5162,6 +5218,158 @@ class _UpdaterPageState extends State<UpdaterPage>
         backgroundMessage: logout
             ? l10n.busyTailscaleSigningOut
             : l10n.busyTailscaleDisconnecting);
+  }
+
+  /// The services the "Dienst hinzufügen" picker lists as absent entries (the
+  /// rest — apt services — only exist in [_services] while installed).
+  static const _fixedServiceIds = {'evcc', 'homeassistant', 'piconnect', 'tailscale'};
+
+  /// "Deinstallieren" for a card's ⋮ — last, in red. Never in the demo: its
+  /// sample backend prints no success marker, so it would only fail.
+  List<_CardAction> _uninstallActions(ServiceStatus s) => [
+        if (!_demoMode)
+          _CardAction(context.l10n.actionUninstall, () => _uninstallService(s),
+              destructive: true),
+      ];
+
+  /// Removes a service from the Pi. The dialog decides between keeping
+  /// configuration and data (default) and deleting them; a retry reopens it,
+  /// so a deletion is never repeated without being asked for again.
+  Future<void> _uninstallService(ServiceStatus s) async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final purge = await _askUninstall(s);
+    if (purge == null || !mounted) return;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = () => _uninstallService(s);
+    await _guard(() async {
+      await _updater.uninstallService(
+          config: config, id: s.id, purge: purge, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        // Show the result right away, even if the re-detection below fails.
+        _services = [
+          for (final x in _services)
+            if (x.id != s.id)
+              x
+            else if (_fixedServiceIds.contains(x.id))
+              ServiceStatus.absent(x.id, x.name),
+        ];
+        if (s.id == 'evcc') _evccLive = null;
+        if (s.id == 'tailscale') {
+          // Nothing of the remote access is left to remember.
+          _tailscaleIp = '';
+          _remoteAccessProven = false;
+          _remoteAccessPhase = _RemoteAccessPhase.idle;
+          if (isTailnetHost(_lastGoodHost)) _lastGoodHost = '';
+        }
+        _statusMessage = purge
+            ? l10n.statusUninstalledPurged(s.name)
+            : l10n.statusUninstalled(s.name);
+        _statusOk = true;
+      });
+      _addHistory(purge
+          ? l10n.historyUninstalledPurged(s.name)
+          : l10n.historyUninstalled(s.name));
+      await _refreshServices(config);
+      _scheduleSave(); // the remembered cards must not bring it back offline
+    }, backgroundMessage: l10n.busyUninstalling(s.name));
+  }
+
+  /// The uninstall dialog: keep (default) or delete configuration and data,
+  /// with the warnings that matter for this service. Null = cancelled.
+  Future<bool?> _askUninstall(ServiceStatus s) {
+    final l10n = context.l10n;
+    // Notes for both modes, only while keeping, only when deleting — the
+    // dialog must never promise "stays" once the box says "delete".
+    const none = <String>[];
+    final (List<String> both, List<String> keepOnly, List<String> purgeOnly) =
+        switch (s.id) {
+      'evcc' => (none, none, [l10n.uninstallNoteEvccPurge]),
+      'influxdb' => (
+          none,
+          [l10n.uninstallNoteInfluxKeep],
+          [l10n.uninstallNoteInfluxPurge]
+        ),
+      'grafana' => (none, none, [l10n.uninstallNoteGrafanaPurge]),
+      'mosquitto' => (
+          [l10n.uninstallNoteMosquitto],
+          none,
+          [l10n.uninstallNoteMosquittoPurge]
+        ),
+      'homeassistant' => (
+          none,
+          [l10n.uninstallNoteHaKeep],
+          [l10n.uninstallNoteHaPurge]
+        ),
+      'piconnect' => (
+          [l10n.uninstallNotePiConnect],
+          none,
+          [l10n.uninstallNotePiConnectPurge]
+        ),
+      'tailscale' => (
+          [l10n.uninstallNoteTailscale],
+          none,
+          [l10n.uninstallNoteTailscalePurge]
+        ),
+      _ => (none, none, none),
+    };
+    var purge = false;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final cs = Theme.of(ctx).colorScheme;
+          return AlertDialog(
+            title: Text(ctx.l10n.dialogUninstallTitle(s.name)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (purge)
+                    Text(ctx.l10n.uninstallPurgeWarning,
+                        style: TextStyle(color: cs.error))
+                  else
+                    Text(ctx.l10n.dialogUninstallKeep),
+                  for (final note in [...both, if (!purge) ...keepOnly]) ...[
+                    const SizedBox(height: 8),
+                    Text(note),
+                  ],
+                  const SizedBox(height: 4),
+                  CheckboxListTile(
+                    key: const ValueKey('uninstallPurge'),
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: purge,
+                    onChanged: (v) => setDialogState(() => purge = v ?? false),
+                    title: Text(ctx.l10n.uninstallPurgeCheckbox),
+                  ),
+                  if (purge)
+                    for (final note in purgeOnly) ...[
+                      const SizedBox(height: 8),
+                      Text(note),
+                    ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(ctx.l10n.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, purge),
+                style: FilledButton.styleFrom(
+                    backgroundColor: cs.error, foregroundColor: cs.onError),
+                child: Text(ctx.l10n.actionUninstall),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   /// The Tailscale entry of the last detection, if any.
