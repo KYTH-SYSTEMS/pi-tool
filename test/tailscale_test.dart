@@ -7,6 +7,17 @@ void main() {
       expect(tailscaleInstallScript, contains('tailscale.com/install.sh'));
       expect(tailscaleInstallScript, contains('TAILSCALE_INSTALLED'));
     });
+    test('a failed download cannot pass as success', () {
+      // `curl … | sh` returns sh's exit code: with curl missing or the download
+      // failing, sh ran an empty script, exited 0 and the marker followed.
+      expect(tailscaleInstallScript, contains('set -o pipefail'));
+    });
+    test('the marker only follows an actually installed binary', () {
+      final s = tailscaleInstallScript;
+      expect(s, contains('command -v tailscale'));
+      expect(s.indexOf('command -v tailscale'),
+          lessThan(s.indexOf('echo TAILSCALE_INSTALLED')));
+    });
     test('up runs detached (setsid) into a mktemp file, not a fixed /tmp path',
         () {
       expect(tailscaleUpScript, contains('tailscale up'));

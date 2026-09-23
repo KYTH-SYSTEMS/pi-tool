@@ -26,6 +26,15 @@ void main() {
     test('the .timer heredoc is QUOTED (no install-time shell expansion)', () {
       expect(s, contains("<<'TMR'"));
     });
+    test('the wrapper repoints dead EOL sources before refreshing apt', () {
+      // Unattended Pis on Raspbian Buster would otherwise fail every night.
+      expect(s, contains('pitool_fix_eol_sources'));
+      expect(s.indexOf('pitool_fix_eol_sources || true'),
+          lessThan(s.indexOf('apt-get update')));
+      // The repair script is bash (arrays, [[ =~ ]]) — so is the wrapper.
+      expect(s, contains('#!/bin/bash'));
+      expect(s, isNot(contains('#!/bin/sh')));
+    });
     test('the wrapper updates apt, self-heals evcc, and logs a result', () {
       expect(s, contains('apt-get update'));
       expect(s, contains('full-upgrade'));

@@ -1,0 +1,3 @@
+Pis running Raspbian/Debian Buster, Stretch or Jessie: their package sources now exist only in the official archive, and the old addresses answer 404 – every installation (e.g. Tailscale) failed. Before installations and updates the app now moves such sources automatically, with a backup and a log entry. apt errors name the cause.
+
+Tailscale no longer reports success after a failed download. "Connect" spans the full width.

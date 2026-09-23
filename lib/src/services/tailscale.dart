@@ -4,11 +4,18 @@
 library;
 
 /// Root script: installs Tailscale via the official installer (adds the apt
-/// repo + installs) and ensures the daemon is enabled.
+/// repo + installs) and ensures the daemon is enabled. `pipefail`: without it
+/// `curl … | sh` reports sh's exit code — a missing curl or a failed download
+/// fed sh an empty script, it exited 0 and the marker claimed success. The
+/// marker also waits for the binary itself. Dead sources of EOL releases are
+/// repaired beforehand by the caller (eol_sources.dart), since the installer's
+/// `apt-get update` fails on them.
 const String tailscaleInstallScript = '''
 set -e
+set -o pipefail
 export DEBIAN_FRONTEND=noninteractive
 curl -fsSL https://tailscale.com/install.sh | sh
+command -v tailscale >/dev/null || { echo "tailscale fehlt nach der Installation."; exit 1; }
 systemctl enable --now tailscaled 2>/dev/null || true
 echo TAILSCALE_INSTALLED
 ''';

@@ -1,0 +1,3 @@
+Pis mit Raspbian/Debian Buster, Stretch oder Jessie: Deren Paketquellen liegen nur noch im offiziellen Archiv, die alten Adressen liefern 404 – jede Installation (z. B. Tailscale) scheiterte. Die App stellt solche Quellen vor Installationen und Updates jetzt automatisch um, mit Sicherung und Log-Eintrag. apt-Fehler nennen die Ursache.
+
+Tailscale meldet bei gescheitertem Download keinen Erfolg mehr. „Verbindung herstellen" nimmt die volle Breite ein.

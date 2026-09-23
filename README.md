@@ -171,6 +171,13 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   (Stromausfall, abgebrochenes Update), verweigert apt danach **jede**
   Installation. Die App erkennt das, sagt es im Klartext statt „Exit 100" und
   räumt es über die System-Karte mit `dpkg --configure -a` auf.
+- **Ältere Raspbian-/Debian-Versionen** — die Paketquellen von Buster, Stretch
+  und Jessie wurden von den regulären Servern ins offizielle Archiv verschoben
+  (`legacy.raspbian.org`, `archive.debian.org`); die alten Adressen liefern 404
+  und lassen jede Installation scheitern. Vor jeder Installation und jedem
+  Update stellt die App solche Quellen automatisch um (mit Sicherung und
+  Log-Eintrag). Scheitert apt trotzdem, nennt die Fehlermeldung die betroffene
+  Quelle bzw. eine gerade laufende andere Paketinstallation.
 - **„Aktuell"-Anzeige** — bei evcc/Pi-hole/System zeigt die Karte „Aktuell", wenn
   keine neue Version ansteht (statt „Aktualisieren"); erzwingen geht über das ⋮-Menü.
   **Aber nur, wenn der Paket-Index des Pi frisch ist:** die apt-gestützten Karten

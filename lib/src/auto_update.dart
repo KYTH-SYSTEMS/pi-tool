@@ -4,6 +4,8 @@
 /// Pure builders + parser so everything is unit-testable.
 library;
 
+import 'eol_sources.dart';
+
 const String autoUpdateUnit = 'pi-tool-autoupdate';
 
 /// systemd `OnCalendar` for the schedule. [weekday]: 1=Mon … 7=Sun (weekly).
@@ -17,15 +19,17 @@ String autoUpdateOnCalendar(
 }
 
 /// Root script (sudo shell) that installs the wrapper + service + timer and
-/// enables it. The wrapper backs up evcc, runs a full apt upgrade, and — if
-/// evcc was running but died during the upgrade — brings it back (self-heal),
-/// writing a one-line result to /var/lib/pi-tool/autoupdate.status.
+/// enables it. The wrapper backs up evcc, repoints dead sources of EOL
+/// releases (eol_sources.dart — bash, hence the bash shebang), runs a full apt
+/// upgrade, and — if evcc was running but died during the upgrade — brings it
+/// back (self-heal), writing a one-line result to
+/// /var/lib/pi-tool/autoupdate.status.
 String buildAutoUpdateInstallScript({required String onCalendar}) {
   return '''
 set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 cat > /usr/local/lib/$autoUpdateUnit.sh <<'WRAP'
-#!/bin/sh
+#!/bin/bash
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 ts=\$(date '+%Y-%m-%d %H:%M:%S')
@@ -41,6 +45,7 @@ if dpkg-query -W evcc >/dev/null 2>&1; then
     rm -f "\$bout.part"
   fi
 fi
+$eolSourcesFixScript
 apt-get update >/dev/null 2>&1
 # Unattended: never block on a dpkg conffile prompt (would hang forever holding
 # the apt lock); keep the existing config on conflicts.

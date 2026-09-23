@@ -9,6 +9,7 @@ import 'alerts.dart';
 import 'auto_update.dart';
 import 'commands.dart';
 import 'docker_containers.dart';
+import 'eol_sources.dart';
 import 'files.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
@@ -149,6 +150,8 @@ class EvccUpdater {
       body: (runner, log) async {
         log('Verbunden. Starte ${dryRun ? 'Probelauf' : 'Update'} …');
 
+        // A dry run changes nothing — rewriting sources.list included.
+        if (!dryRun) await _fixEolSources(runner, log, config);
         final steps = buildUpdateSteps(fullUpgrade: fullUpgrade, dryRun: dryRun);
         String? before;
         String? after;
@@ -244,6 +247,7 @@ class EvccUpdater {
       body: (runner, log) async {
         log('Installiere evcc … (Repo einrichten + Paket installieren, '
             'das dauert ein paar Minuten)');
+        await _fixEolSources(runner, log, config);
 
         final result = await runner.run(
           installShellCommand,
@@ -263,10 +267,13 @@ class EvccUpdater {
           );
         }
         if (result.exitCode != null && result.exitCode != 0) {
+          final cause = _aptFailureCause(combined);
           throw EvccUpdateException(
             UpdateErrorKind.unknown,
-            'Installation fehlgeschlagen (Exit ${result.exitCode}). '
-            'Details im Log.',
+            cause != null
+                ? 'Installation fehlgeschlagen — $cause'
+                : 'Installation fehlgeschlagen (Exit ${result.exitCode}). '
+                    'Details im Log.',
           );
         }
 
@@ -641,19 +648,62 @@ class EvccUpdater {
       // Not our failure and not fixable by retrying: apt refuses every install
       // until the half-finished dpkg run is completed. Say so, and name the
       // one-tap remedy the System card offers.
-      throw const EvccUpdateException(
-        UpdateErrorKind.unknown,
-        'Auf dem Pi steckt ein abgebrochener dpkg-Lauf fest — solange der nicht '
-        'aufgeräumt ist, schlägt JEDE Installation fehl, nicht nur diese. '
-        'System-Karte → ⋮ → „Paketzustand reparieren" führt '
-        '`dpkg --configure -a` aus; danach klappt das Update.',
-      );
+      throw const EvccUpdateException(UpdateErrorKind.unknown, _dpkgInterrupted);
     }
     if (checkExit && r.exitCode != null && r.exitCode != 0) {
+      final cause = _aptFailureCause(combined);
       throw EvccUpdateException(
         UpdateErrorKind.unknown,
-        '$failMsg (Exit ${r.exitCode}). Details im Log.',
+        cause != null
+            ? '$failMsg — $cause'
+            : '$failMsg (Exit ${r.exitCode}). Details im Log.',
       );
+    }
+  }
+
+  static const String _dpkgInterrupted =
+      'Auf dem Pi steckt ein abgebrochener dpkg-Lauf fest — solange der nicht '
+      'aufgeräumt ist, schlägt JEDE Installation fehl, nicht nur diese. '
+      'System-Karte → ⋮ → „Paketzustand reparieren" führt '
+      '`dpkg --configure -a` aus; danach klappt das Update.';
+
+  /// The cause of a failed apt/dpkg run in words the user can act on, or null
+  /// when the output shows none of the known ones (then: "Details im Log").
+  static String? _aptFailureCause(String output) {
+    if (isDpkgInterrupted(output)) return _dpkgInterrupted;
+    final dead = parseDeadAptSource(output);
+    if (dead != null) {
+      return 'die Paketquelle „$dead" gibt es auf dem Server nicht mehr. '
+          'Solange sie eingetragen ist, scheitert jede Installation auf diesem '
+          'Pi — bitte in /etc/apt/sources.list bzw. /etc/apt/sources.list.d/ '
+          'entfernen oder korrigieren.';
+    }
+    if (isAptLocked(output)) {
+      return 'auf dem Pi läuft gerade eine andere Paketinstallation (z. B. die '
+          'automatischen Updates). In ein paar Minuten erneut versuchen.';
+    }
+    return null;
+  }
+
+  /// Points dead package sources of end-of-life releases (Raspbian/Debian
+  /// jessie, stretch, buster) at the official archive before an action that
+  /// installs or upgrades packages — see eol_sources.dart. Prints nothing on a
+  /// healthy Pi. Never fails the action itself: if it could not help, apt names
+  /// the dead source and [_aptFailureCause] turns that into the message. Only a
+  /// rejected sudo password stops here, as it would stop the action anyway.
+  Future<void> _fixEolSources(
+      SshRunner runner, void Function(String) log, SshConfig config) async {
+    final r = await runner.run(
+      eolSourcesShellCommand,
+      stdin: await _rootStdin(runner, config, eolSourcesFixScript),
+      onOutput: (chunk) {
+        final t = chunk.trimRight();
+        if (t.isNotEmpty) log(t);
+      },
+    );
+    if (isSudoPasswordFailure('${r.stdout}\n${r.stderr}')) {
+      throw const EvccUpdateException(UpdateErrorKind.sudo,
+          'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
     }
   }
 
@@ -961,6 +1011,7 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('Installiere Tailscale …');
+          await _fixEolSources(runner, log, config);
           await _runRootScriptExpectMarker(runner, log, config,
               script: tailscaleInstallScript,
               successMarker: 'TAILSCALE_INSTALLED',
@@ -1672,6 +1723,7 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('Paketlisten aktualisieren …');
+          await _fixEolSources(runner, log, config);
           // Same tolerance as the upgrade path: one flaky third-party repo must
           // not sink a refresh that updated everything else.
           await _sudoCommand(runner, log, config,
@@ -1691,6 +1743,7 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('System-Upgrade (alle Pakete) …');
+          await _fixEolSources(runner, log, config);
           // apt-get update may exit non-zero on a flaky third-party repo —
           // tolerate it (checkExit:false) so a fine upgrade isn't blocked.
           await _sudoCommand(runner, log, config,
@@ -1716,6 +1769,7 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('Aktualisiere $package …');
+          await _fixEolSources(runner, log, config);
           await _sudoCommand(runner, log, config,
               'LC_ALL=C sudo -S apt-get update -qq', 'apt-get update',
               checkExit: false);
@@ -1749,6 +1803,7 @@ class EvccUpdater {
       onLog: onLog,
       body: (runner, log) async {
         log('Installiere ${service.name} … (kann ein paar Minuten dauern)');
+        await _fixEolSources(runner, log, config);
         // Marker: the install scripts run under `set -e`, so INSTALL_OK prints
         // only on full success (guards against a partially-run root install).
         await _runRootScriptExpectMarker(runner, log, config,
@@ -1920,8 +1975,9 @@ class EvccUpdater {
     final ok = combined.contains(successMarker) &&
         !(result.exitCode != null && result.exitCode != 0);
     if (!ok) {
-      throw EvccUpdateException(
-          UpdateErrorKind.unknown, '$failMsg (Details im Log).');
+      final cause = _aptFailureCause(combined);
+      throw EvccUpdateException(UpdateErrorKind.unknown,
+          cause != null ? '$failMsg — $cause' : '$failMsg (Details im Log).');
     }
   }
 
@@ -2548,6 +2604,9 @@ class EvccUpdater {
       onLog: onLog,
       body: (runner, log) async {
         log('Wende Sicherheits-Fix an …');
+        if (fix != SecurityFix.rootLogin) {
+          await _fixEolSources(runner, log, config); // installs a package
+        }
         await _runRootScriptExpectMarker(runner, log, config,
             script: buildSecurityFixScript(fix),
             successMarker: 'SECFIX_OK',

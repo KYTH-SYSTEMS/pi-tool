@@ -962,6 +962,44 @@ void main() {
     expect(find.byKey(const Key('demoEntry')), findsNothing);
   });
 
+  // Nutzerwunsch: der Verbinden-Knopf ist die Hauptaktion des Formulars und
+  // steht deshalb so breit wie die Knöpfe darunter — nicht als kleiner Knopf
+  // links. Pinnt Breite und Höhe gegen „Pi im WLAN suchen" fest.
+  testWidgets('„Verbindung herstellen" nimmt die volle Breite ein',
+      (tester) async {
+    // Breit genug, dass die Beschriftung (Test-Schrift: 14 px je Zeichen) den
+    // Knopf nicht schon von selbst auf volle Breite drückt.
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [
+            Profile(name: 'S', host: '192.168.178.64', password: 'pw')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final connect = tester.getRect(
+        find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    final findPi =
+        tester.getRect(find.widgetWithText(OutlinedButton, 'Pi im WLAN suchen'));
+    expect(connect.width, findPi.width);
+    expect(connect.left, findPi.left);
+    expect(connect.height, greaterThanOrEqualTo(44));
+  });
+
   // The Play reviewer's exact situation: fresh install, small screen, no Pi.
   // The demo entry is their only way past the connect form — if it sits below
   // the fold they never find it and the password field reads as a login wall.

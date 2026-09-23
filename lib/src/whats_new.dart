@@ -18,6 +18,22 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.67.1': [
+    'Pis running Raspbian Buster (or older) could no longer install anything: '
+        'the package sources of these releases now exist only in the official '
+        'archive, and the old addresses answer 404. This surfaced during a '
+        'Tailscale installation.',
+    'Before every installation and update the app now moves such sources to '
+        'the archive automatically (legacy.raspbian.org or archive.debian.org). '
+        'The old file is backed up, and every change is logged.',
+    'If apt still fails, the message names the cause: the affected package '
+        'source, or another package installation that is currently running.',
+    'Tailscale no longer reports a successful installation when the installer '
+        'download failed.',
+    '"Connect" now spans the full width.',
+    'Note: Buster no longer receives security updates. In the medium term a '
+        'fresh installation with a current Raspberry Pi OS is advisable.',
+  ],
   '0.67.0': [
     'The evcc card now shows live values directly on the management tab: PV, '
         'grid and house consumption, plus battery level and the loadpoint that '
@@ -255,6 +271,22 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.67.1': [
+    'Pis mit Raspbian Buster (oder älter) konnten nichts mehr installieren: '
+        'Die Paketquellen dieser Versionen liegen nur noch im offiziellen '
+        'Archiv, die alten Adressen liefern 404. Aufgefallen ist das bei einer '
+        'Tailscale-Installation.',
+    'Vor jeder Installation und jedem Update stellt die App solche Quellen '
+        'jetzt automatisch um (legacy.raspbian.org bzw. archive.debian.org). '
+        'Die alte Datei wird gesichert, jede Änderung steht im Log.',
+    'Schlägt apt trotzdem fehl, nennt die Meldung die Ursache: die betroffene '
+        'Paketquelle oder eine gerade laufende andere Paketinstallation.',
+    'Tailscale meldet keine erfolgreiche Installation mehr, wenn der Download '
+        'des Installers gescheitert ist.',
+    '„Verbindung herstellen" nimmt jetzt die volle Breite ein.',
+    'Hinweis: Buster erhält keine Sicherheitsupdates mehr. Mittelfristig '
+        'empfiehlt sich eine Neuinstallation mit aktuellem Raspberry Pi OS.',
+  ],
   '0.67.0': [
     'Die evcc-Karte zeigt die Live-Werte jetzt direkt auf dem Verwaltungs-Tab: '
         'PV, Netz und Hausverbrauch, dazu Batterie-Ladestand und der Ladepunkt, '

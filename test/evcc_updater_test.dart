@@ -8,6 +8,7 @@ import 'package:evcc_updater/src/alerts.dart';
 import 'package:evcc_updater/src/auto_update.dart';
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/docker_containers.dart';
+import 'package:evcc_updater/src/eol_sources.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
@@ -1731,6 +1732,158 @@ void main() {
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.message, 'message', contains('dpkg'))
             .having((e) => e.message, 'message', contains('reparieren'))),
+      );
+    });
+  });
+
+  // A Raspbian-Buster Pi whose package source moved to the archive failed the
+  // Tailscale install (2026-09-23) — and would fail every other apt action. So
+  // every action that installs or upgrades packages repoints such sources first.
+  group('EOL package sources', () {
+    const upd = 'LC_ALL=C sudo -S apt-get update -qq';
+
+    void expectRepairFirst(FakeSshRunner runner, String next) {
+      final cmds = runner.commandsRun;
+      expect(cmds, contains(eolSourcesShellCommand));
+      expect(cmds.indexOf(eolSourcesShellCommand), lessThan(cmds.indexOf(next)));
+      expect(runner.stdinByCommand[eolSourcesShellCommand],
+          contains('pitool_fix_eol_sources'));
+    }
+
+    test('installTailscale repairs the sources before the installer runs',
+        () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('TAILSCALE_INSTALLED\n')]});
+      await _updaterWith(runner)
+          .installTailscale(config: _config, onLog: (_) {});
+      expectRepairFirst(runner, installShellCommand);
+      // Root script: the sudo password goes first, like every root script.
+      expect(runner.stdinByCommand[eolSourcesShellCommand],
+          startsWith('sekret\n'));
+    });
+
+    test('the repair is logged, and silent when there is nothing to do',
+        () async {
+      final runner = FakeSshRunner({
+        eolSourcesShellCommand: [
+          _r('Pi-Tool: Paketquelle umgestellt: http://raspbian.raspberrypi.org/'
+              'raspbian/ buster → http://legacy.raspbian.org/raspbian\n')
+        ],
+        installShellCommand: [_r('TAILSCALE_INSTALLED\n')],
+      });
+      final log = <String>[];
+      await _updaterWith(runner).installTailscale(config: _config, onLog: log.add);
+      expect(log.join('\n'), contains('legacy.raspbian.org'));
+    });
+
+    test('every package-installing action repairs first', () async {
+      final grafana = knownAptServices.firstWhere((s) => s.id == 'grafana');
+      final actions = <String, Future<void> Function(EvccUpdater u)>{
+        upd: (u) => u.refreshAptIndex(config: _config, onLog: (_) {}),
+        'upgradeSystem': (u) => u.upgradeSystem(config: _config, onLog: (_) {}),
+        'updateAptPackage': (u) =>
+            u.updateAptPackage(config: _config, package: 'grafana', onLog: (_) {}),
+        'installAptService': (u) =>
+            u.installAptService(config: _config, service: grafana, onLog: (_) {}),
+        'fixSecurity': (u) => u.fixSecurity(
+            config: _config, fix: SecurityFix.fail2ban, onLog: (_) {}),
+      };
+      for (final entry in actions.entries) {
+        final runner = FakeSshRunner({
+          installShellCommand: [_r('INSTALL_OK\nSECFIX_OK\n')],
+        });
+        await entry.value(_updaterWith(runner));
+        expect(runner.commandsRun, contains(eolSourcesShellCommand),
+            reason: entry.key);
+        expect(runner.commandsRun.first, isNot(eolSourcesShellCommand),
+            reason: 'the sudo probe comes first — ${entry.key}');
+        final i = runner.commandsRun.indexOf(eolSourcesShellCommand);
+        final rest = runner.commandsRun.sublist(i + 1);
+        expect(
+            rest.any((c) => c == upd || c == installShellCommand || c.contains('apt-get')),
+            isTrue,
+            reason: 'the apt work follows the repair — ${entry.key}');
+      }
+    });
+
+    test('the evcc update repairs first; the dry run changes nothing', () async {
+      final real = _happyRunner();
+      await _updaterWith(real).run(
+          config: _config, fullUpgrade: false, dryRun: false, onLog: (_) {});
+      expectRepairFirst(real, _aptUpdate);
+
+      final dry = FakeSshRunner({
+        _vQuery: [_r('installed 0.310.0\n')],
+        _aptDryRun: [_r('0 upgraded, 0 newly installed')],
+        _svc: [_r('active\n')],
+      });
+      await _updaterWith(dry).run(
+          config: _config, fullUpgrade: false, dryRun: true, onLog: (_) {});
+      expect(dry.commandsRun, isNot(contains(eolSourcesShellCommand)));
+    });
+
+    test('the evcc install repairs first', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('')],
+        _vQuery: [_r('installed 0.311.0\n')],
+        _svc: [_r('active\n')],
+      });
+      await _updaterWith(runner).install(config: _config, onLog: (_) {});
+      expectRepairFirst(runner, installShellCommand);
+    });
+
+    test('a rejected sudo password during the repair is a sudo error',
+        () async {
+      final runner = FakeSshRunner({
+        eolSourcesShellCommand: [
+          _r('sudo: 1 incorrect password attempt', exitCode: 1)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).installTailscale(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
+      );
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
+    test('a source that could not be repaired is named in the error',
+        () async {
+      // E.g. a dead third-party repo — the repair only knows the official ones.
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('+ apt-get update\nReading package lists...\n',
+              stderr: "E: The repository 'http://repo.example.org/debian buster "
+                  "Release' no longer has a Release file.",
+              exitCode: 100)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner).installTailscale(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message',
+                contains('Installation von Tailscale fehlgeschlagen'))
+            .having((e) => e.message, 'message',
+                contains('http://repo.example.org/debian buster'))),
+      );
+    });
+
+    test('a held apt lock says "try again shortly" instead of a bare failure',
+        () async {
+      final mosquitto = knownAptServices.firstWhere((s) => s.id == 'mosquitto');
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('',
+              stderr: 'E: Could not get lock /var/lib/dpkg/lock-frontend. It is '
+                  'held by process 812 (unattended-upgr)',
+              exitCode: 100)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .installAptService(config: _config, service: mosquitto, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.message, 'message', contains('andere Paketinstallation'))),
       );
     });
   });

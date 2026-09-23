@@ -8,7 +8,7 @@ part of '../main.dart';
 /// surfaces, darkened for light mode where bright kGreen washes out.
 Color _themeGreen(bool dark) => dark ? kGreen : const Color(0xFF15803D);
 
-/// Compact connection-test button (under the connection settings). Neutral when untested,
+/// Full-width connect button (under the connection settings). Neutral when untested,
 /// a spinner while testing, green when the last test succeeded, red on failure.
 class _TestButton extends StatelessWidget {
   const _TestButton({
@@ -63,19 +63,18 @@ class _TestButton extends StatelessWidget {
       border = cs.outlineVariant;
     }
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: OutlinedButton.icon(
-        onPressed: (enabled && !testing) ? onTap : null,
-        icon: icon,
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: fg,
-          backgroundColor: bg,
-          side: BorderSide(color: border),
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        ),
+    // Full width, same height as "Pi im WLAN suchen" below it: connecting is
+    // the form's main action, not a side button.
+    return OutlinedButton.icon(
+      onPressed: (enabled && !testing) ? onTap : null,
+      icon: icon,
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: fg,
+        backgroundColor: bg,
+        side: BorderSide(color: border),
+        minimumSize: const Size.fromHeight(44),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       ),
     );
   }

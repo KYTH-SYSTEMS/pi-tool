@@ -92,6 +92,27 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   **jede** Installation auf diesem Pi. Der Fehler nennt Ursache und Ausweg statt
   nur „Exit 100"; `repairPackageState` (System-Karte ⋮ → „Paketzustand
   reparieren") führt `dpkg --configure -a` aus.
+- **apt-Fehlerursachen** (`_aptFailureCause`, v0.67.1): `_sudoCommand`,
+  `_runRootScriptExpectMarker` und `install()` hängen bei einem Fehlschlag die
+  Ursache in Klartext an statt nur „Details im Log" — abgebrochener dpkg-Lauf,
+  **tote Paketquelle** (`parseDeadAptSource`: „… Release' no longer has / does
+  not have a Release file", nennt URL + Suite) und **gehaltene apt-Sperre**
+  (`isAptLocked`, z. B. unattended-upgrades nach dem Boot → „in ein paar
+  Minuten erneut"). Parser in `eol_sources.dart`.
+- **EOL-Paketquellen zuerst umstellen** (`_fixEolSources`, v0.67.1): **jede**
+  Aktion, die Pakete installiert oder aktualisiert (evcc-Update außer Probelauf,
+  evcc-Install, Tailscale, Grafana/InfluxDB/Mosquitto, Paketlisten,
+  System-Upgrade, Einzelpaket-Update, Sicherheits-Fixes fail2ban/Auto-Updates),
+  führt vorher `eolSourcesFixScript` als root aus (`eolSourcesShellCommand` =
+  `installShellCommand` + ignoriertes Argument, damit Logs/Tests den Schritt
+  unterscheiden). Anlass: Raspbian Buster liegt seit 2025 nur noch auf
+  `legacy.raspbian.org`, Debian Buster/Stretch auf `archive.debian.org`; die
+  alten URLs liefern 404 und **eine** tote Quelle lässt jedes `apt-get update`
+  mit Exit 100 scheitern (Tailscale-Install auf einem Buster-Pi, 2026-09-23).
+  Tolerant: scheitert die Umstellung, läuft die Aktion trotzdem und apt nennt
+  die Quelle (s. o.); nur ein abgelehntes sudo-Passwort bricht ab. Probelauf
+  und Sicherheits-Check (nur lesend) ändern nichts. Pi Connect bewusst ohne
+  (erst ab Bookworm).
 - **Marker-Disziplin** — drei Root-Skript-Helfer, aufsteigend streng:
   - `_runRootScript`: prüft nur Sudo-Ablehnung + Exit-Code.
   - `_runRootScriptExpectMarker`: für **destruktive** Skripte (Restore,
@@ -145,6 +166,21 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
   `\r` → Zeilenumbruch, reine Fortschrittszeilen raus (locale-unabhängig, also
   auch „(Lese Datenbank …"), Zusammenfassungen bleiben. Guard-Tests in
   `commands_test.dart`/`apt_services_test.dart` verhindern Rückfall.
+- **`eol_sources.dart`** (v0.67.1) — `eolSourcesFixScript` (bash): stellt
+  Zeilen in `/etc/apt/sources.list` + `sources.list.d/*.list` um, deren Quelle
+  ein offizieller Raspbian-/Debian-Server ist, deren Suite zu jessie/stretch/
+  buster gehört, deren alte URL **nachweislich** keine Release-Datei mehr
+  liefert **und** deren Archiv-Ziel sie liefert (`curl`, sonst `wget`; ohne
+  Netz wird nichts angefasst). Gibt es die Suite auch im Archiv nicht mehr
+  (`stretch-updates`), wird die Zeile auskommentiert. Optionen (`[signed-by=…]`)
+  bleiben, Kommentarzeilen und Drittquellen unberührt, idempotent. Sicherung
+  nach `/var/backups/pi-tool/apt-sources/` (nicht nach `sources.list.d/`, apt
+  würde über die Zusatzdatei meckern), Schreiben atomar per `mv`. Liest die
+  Dateien, nie stdin (läuft über `bash -s`), kein Heredoc, endet mit `|| true`.
+  Archive geprüft 2026-09-23: gleiche Signaturschlüssel, kein `Valid-Until`.
+  Verhaltenstest in `eol_sources_test.dart` führt das echte Skript in bash mit
+  `curl`-Stub aus (CI/Linux; unter Windows übersprungen — `bash` kann dort der
+  WSL-Starter sein).
 - **`parseInstalledVersion`** liefert Version nur bei dpkg-Status exakt
   `installed` (ein `rc`-Zustand trägt noch eine Version → sonst falscher Update-
   Vorschlag). `isAlreadyNewest` nutzt Negative-Lookbehind (`10 upgraded` matcht
@@ -267,6 +303,10 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   dort nur als `_CardAction`, sichtbar allein an der ambernen LED — zu leise
   (real übersehen: Pi Connect 2.12.1 → 2.12.2 hinter „Web öffnen").
 - **`tailscale.dart`** — VPN/Mesh, **System-Service** (einfacher als Pi Connect).
+  Install = offizieller Installer (`curl … | sh`) unter **`set -o pipefail`**
+  (sonst zählt nur der Exit von `sh`: fehlendes curl/abgebrochener Download =
+  leeres Skript, Exit 0, Marker = Phantom-Erfolg); der Marker folgt erst nach
+  `command -v tailscale`. Tote EOL-Quellen stellt vorher `_fixEolSources` um.
   `up` detached (Login-URL). „up" = hat 100.x-Tailnet-IP. down/logout via sudo.
   `remoteAccessCandidates` ordnet die Verbindungsversuche: Heim-Adresse zuerst
   (schnell, ohne VPN), es sei denn das Tailnet hat zuletzt geantwortet; ein
@@ -296,7 +336,9 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
 
 - **`auto_update.dart`** — geplante apt-Updates (`pi-tool-autoupdate.timer`).
   Wrapper: `DEBIAN_FRONTEND=noninteractive` + `--force-confold` (kein
-  conffile-Hänger), sichert evcc vorher, **self-heal** (startet evcc neu falls es
+  conffile-Hänger), sichert evcc vorher, stellt tote EOL-Quellen um
+  (`eolSourcesFixScript` — bash, daher `#!/bin/bash` statt `#!/bin/sh`; greift
+  erst bei neu eingerichtetem Timer), **self-heal** (startet evcc neu falls es
   starb), schreibt Status-Datei. Marker `AUTOUPDATE_INSTALLED/REMOVED`.
 - **`scheduled_backup.dart`** — geplante Backups (`pi-tool-backup.timer`, spiegelt
   `auto_update.dart`). Wrapper sichert **evcc** (Konfig + `/var/lib/evcc`) und
