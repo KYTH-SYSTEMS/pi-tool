@@ -248,12 +248,24 @@ class Dartssh2Runner implements SshRunner {
     outLines?.flush();
     errLines?.flush();
 
+    // dartssh2 ends the output streams on CHANNEL_EOF, but the exit status
+    // may only arrive after it (just before CHANNEL_CLOSE). Reading
+    // session.exitCode right away returned null for commands that did
+    // finish — and callers must treat null as "result unknown". Wait briefly.
+    final exitCode = await resolveExitCode(
+      () => session.waitForExit(timeout: exitStatusWait),
+      () => session.exitCode,
+    );
+
     return CommandResult(
-      exitCode: session.exitCode,
+      exitCode: exitCode,
       stdout: stdoutBuf.toString(),
       stderr: stderrBuf.toString(),
     );
   }
+
+  /// How long [run] waits for a late exit status after the output ended.
+  static const Duration exitStatusWait = Duration(seconds: 3);
 
   @override
   Future<void> close() async {
@@ -267,6 +279,23 @@ class Dartssh2Runner implements SshRunner {
     await _socket?.close();
     _socket = null;
   }
+}
+
+/// The exit code of a command whose output is fully drained: [waitForExit]
+/// (bounded by its own timeout) for a status that may still be on its way,
+/// else whatever [current] already knows. A failing wait counts as no answer.
+/// Null stays null — callers treat it as "unknown", never as success.
+Future<int?> resolveExitCode(
+  Future<int?> Function() waitForExit,
+  int? Function() current,
+) async {
+  int? code;
+  try {
+    code = await waitForExit();
+  } catch (_) {
+    code = null;
+  }
+  return code ?? current();
 }
 
 /// Thrown internally when close() (a user cancel) aborts an in-flight connect().

@@ -4,6 +4,7 @@
 /// System). UI-specific bits (icons, actions) live in the widget layer.
 library;
 
+import '../pi_job.dart' show PiJobStatus;
 import '../update_check.dart' show isNewerVersion;
 import 'tailscale.dart' show SubnetRoutes;
 
@@ -57,6 +58,11 @@ class ServiceStatus {
   /// is shared into the tailnet. Null when unknown or not applicable.
   final SubnetRoutes? routes;
 
+  /// The latest Pi-Job as detection saw it (System card only). TRANSIENT:
+  /// deliberately not in [toJson]/[fromJson] — a cached "running" would show
+  /// a long-finished job as running on the next start.
+  final PiJobStatus? job;
+
   const ServiceStatus({
     required this.id,
     required this.name,
@@ -72,6 +78,7 @@ class ServiceStatus {
     this.aptPackage,
     this.compatible = true,
     this.routes,
+    this.job,
   });
 
   /// A "not installed" status for a service the app knows about but didn't find.
@@ -134,6 +141,7 @@ class ServiceStatus {
         aptPackage: aptPackage,
         compatible: compatible,
         routes: routes,
+        job: job,
       );
 }
 

@@ -4,6 +4,7 @@ import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/demo.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
+import 'package:evcc_updater/src/pi_job.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -84,6 +85,64 @@ void main() {
     final updates =
         findings.firstWhere((f) => f.title.contains('Sicherheitsupdates'));
     expect(securityFixFor(updates), SecurityFix.autoUpdates);
+  });
+
+  // The demo is the Play reviewers' entry point: every job-backed update must
+  // end cleanly (RC 0 + the kind's markers), never as "Verbindung weg".
+  group('Pi-Jobs in the demo', () {
+    test('upgradeSystem, run, updateAptPackage, repair, Pi-hole complete',
+        () async {
+      final u = buildDemoUpdater();
+      final log = <String>[];
+      final started = <JobRef>[];
+      final sys = await u.upgradeSystem(
+          config: _cfg, onLog: log.add, onJobStarted: started.add);
+      expect(sys.listsIncomplete, isFalse);
+      final summary = await u.run(
+          config: _cfg,
+          fullUpgrade: false,
+          dryRun: false,
+          onLog: log.add,
+          onJobStarted: started.add);
+      expect(summary.status, UpdateStatus.alreadyCurrent);
+      expect(summary.before, '0.207.0');
+      await u.run(
+          config: _cfg, fullUpgrade: true, dryRun: false, onLog: log.add);
+      await u.updateAptPackage(
+          config: _cfg, package: 'grafana', onLog: log.add);
+      await u.repairPackageState(config: _cfg, onLog: log.add);
+      await u.updatePihole(config: _cfg, onLog: log.add);
+      expect(started.map((r) => r.kind),
+          [jobKindSystemUpgrade, jobKindEvccUpdate]);
+      expect(log.join('\n'), contains('grafana ist aktuell.'));
+      expect(log.join('\n'), isNot(contains('PITOOL_JOB_')));
+    });
+
+    test('re-follow works in the demo', () async {
+      final o = await buildDemoUpdater().followJob(
+          config: _cfg, jobId: '0123456789abcdef', onLog: (_) {});
+      expect(o.success, isTrue);
+    });
+
+    test('the job answer carries the id from argv', () {
+      const id = 'aaaaaaaaaaaaaaaa';
+      final out = demoResponseFor(jobStartCommand(id));
+      expect(out, startsWith('PITOOL_JOB_STARTED $id '));
+      expect(out, endsWith('\nPITOOL_JOB_RC $id 0\n'));
+      expect(classifyJobRun(stdout: out, stderr: '', exitCode: 0, id: id),
+          isA<JobRunRc>());
+    });
+
+    test('detection has an empty JOB section → no job', () {
+      final sections = splitDetectSections(demoResponseFor(detectShellCommand));
+      expect(sections.containsKey('JOB'), isTrue);
+      expect(parseJobStatus(sections['JOB']!), isNull);
+    });
+
+    test('the reboot guard answers like a successful reboot', () async {
+      await buildDemoUpdater().reboot(config: _cfg, onLog: (_) {});
+      await buildDemoUpdater().shutdown(config: _cfg, onLog: (_) {});
+    });
   });
 
   test('demo evcc API client returns a charging loadpoint', () async {

@@ -12,6 +12,7 @@ import 'package:evcc_updater/src/eol_sources.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
+import 'package:evcc_updater/src/pi_job.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/ssh_keys.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
@@ -28,10 +29,44 @@ import 'package:flutter_test/flutter_test.dart';
 // Exact command strings the updater is expected to run (see commands.dart).
 const _vQuery = r"dpkg-query -W -f='${db:Status-Status} ${Version}' evcc";
 const _aptUpdate = 'LC_ALL=C sudo -S apt-get update -qq';
-const _aptUpgrade = 'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 install --only-upgrade -y evcc';
 const _aptDryRun =
     'LC_ALL=C sudo -S apt-get install --only-upgrade --dry-run evcc';
 const _svc = 'systemctl is-active evcc';
+
+/// Fixed job id (the updater's id generator is injected) — so the job
+/// commands are known strings the fake runner can key on.
+const _jobId = '0123456789abcdef';
+final _jobStart = jobStartCommand(_jobId);
+final _jobFollow = jobFollowCommand(_jobId);
+
+/// What the launcher (or follower) prints for a job that ran to the end:
+/// STARTED, the log, the artificial newline, the RC line.
+CommandResult _job(String log,
+        {int rc = 0, String kind = 'x', String id = _jobId, int? exit = 0}) =>
+    CommandResult(
+        exitCode: exit,
+        stdout: 'PITOOL_JOB_STARTED $id $kind\n$log\nPITOOL_JOB_RC $id $rc\n',
+        stderr: '');
+
+/// The log of an evcc-update job, markers included.
+String _evccLog({
+  String upgrade = 'Setting up evcc (0.311.0) ...\n'
+      '1 upgraded, 0 newly installed, 0 to remove and 27 not upgraded.',
+  String active = 'active',
+  String version = '0.311.0',
+  int aptUpdateRc = 0,
+}) =>
+    'Pi-Tool: Schließe unterbrochene Paketinstallationen ab …\n'
+    '0 upgraded, 0 newly installed, 0 to remove and 27 not upgraded.\n'
+    'PITOOL_APT_UPDATE_RC=$aptUpdateRc\n'
+    '$jobUpgradeMarker\n'
+    '$upgrade\n'
+    'PITOOL_EVCC_ACTIVE=$active\n'
+    'PITOOL_EVCC_VERSION=installed $version\n';
+
+/// The payload the launcher stdin of [runner]'s job carried.
+String _payloadOf(FakeSshRunner runner) =>
+    decodeJobPayload(runner.stdinByCommand[_jobStart]!)!;
 
 const _config = SshConfig(
   host: '192.168.178.64',
@@ -41,7 +76,7 @@ const _config = SshConfig(
   timeout: Duration(seconds: 10),
 );
 
-CommandResult _r(String stdout, {String stderr = '', int exitCode = 0}) =>
+CommandResult _r(String stdout, {String stderr = '', int? exitCode = 0}) =>
     CommandResult(exitCode: exitCode, stdout: stdout, stderr: stderr);
 
 /// In-memory [SshRunner] that returns scripted output per command. A command
@@ -85,6 +120,11 @@ class FakeSshRunner implements SshRunner {
     final queue = responses[command];
     final CommandResult result;
     if (queue == null || queue.isEmpty) {
+      // A job command without a scripted answer must not look like anything
+      // (an empty exit-0 result would be a silent "detached") — fail loudly.
+      if (isJobStartCommand(command) || isJobFollowCommand(command)) {
+        throw StateError('FakeSshRunner: no response for job command');
+      }
       // Default for the sudo probe: a password IS required — that is the normal
       // Pi, and it's what every test that asserts on the password assumes. A
       // test for the passwordless case says so explicitly.
@@ -135,8 +175,12 @@ class FakeSshRunner implements SshRunner {
   }
 }
 
-EvccUpdater _updaterWith(FakeSshRunner runner) =>
-    EvccUpdater(runnerFactory: (_) => runner);
+EvccUpdater _updaterWith(SshRunner runner,
+        {Duration jobWatchdog = const Duration(seconds: 60)}) =>
+    EvccUpdater(
+        runnerFactory: (_) => runner,
+        jobIdGenerator: () => _jobId,
+        jobWatchdog: jobWatchdog);
 
 /// A runner whose [run] hangs until [close] is called — mirroring dartssh2:
 /// closing the connection ends the channel stream NORMALLY, so the in-flight
@@ -195,15 +239,104 @@ class _ConnectHangRunner implements SshRunner {
   }
 }
 
+/// A job that confirms its start, streams one line, then goes quiet. On
+/// close() it returns the partial output with exitCode null (as dartssh2
+/// does) — unless [completeOnClose] is false (a channel that never ends). With
+/// [error] it fails right after the start instead (timeout, dead transport).
+class _StartedJobRunner implements SshRunner {
+  _StartedJobRunner({this.error, this.completeOnClose = true});
+  final Object? error;
+  static const kind = 'system-upgrade';
+  final bool completeOnClose;
+  final started = Completer<void>();
+  final commandsRun = <String>[];
+  Completer<CommandResult>? _gate;
+  bool closed = false;
+
+  String get _out =>
+      'PITOOL_JOB_STARTED $_jobId $kind\nReading package lists...\n';
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<CommandResult> run(String command,
+      {String? stdin, void Function(String chunk)? onOutput}) async {
+    commandsRun.add(command);
+    if (!isJobStartCommand(command) && !isJobFollowCommand(command)) {
+      return command == _vQuery ? _r('installed 0.310.0\n') : _r('');
+    }
+    onOutput?.call(_out);
+    if (!started.isCompleted) started.complete();
+    if (error != null) throw error!;
+    _gate = Completer<CommandResult>();
+    return _gate!.future;
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    if (completeOnClose && _gate != null && !_gate!.isCompleted) {
+      _gate!.complete(CommandResult(exitCode: null, stdout: _out, stderr: ''));
+    }
+  }
+}
+
+/// Answers the job command with [result], but calls [onJob] first — e.g. a
+/// cancel that races with a job finishing.
+class _CallbackRunner implements SshRunner {
+  _CallbackRunner({required this.onJob, required this.result});
+  final Future<void> Function() onJob;
+  final CommandResult result;
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<CommandResult> run(String command,
+      {String? stdin, void Function(String chunk)? onOutput}) async {
+    if (!isJobStartCommand(command)) return _r('');
+    await onJob();
+    onOutput?.call(result.stdout);
+    return result;
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
+/// A run() that never completes and never prints — not even on close(): the
+/// "Hängelücke" (execute() stuck before the channel is open).
+class _SilentRunner implements SshRunner {
+  bool closed = false;
+  final runStarted = Completer<void>();
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<CommandResult> run(String command,
+      {String? stdin, void Function(String chunk)? onOutput}) {
+    if (!runStarted.isCompleted) runStarted.complete();
+    return Completer<CommandResult>().future;
+  }
+
+  @override
+  Future<void> close() async => closed = true;
+}
+
 FakeSshRunner _happyRunner() => FakeSshRunner({
-      _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.311.0\n')],
-      _aptUpdate: [_r('')],
-      _aptUpgrade: [
-        _r('Setting up evcc (0.311.0) ...\n'
-            '1 upgraded, 0 newly installed, 0 to remove and 27 not upgraded.')
-      ],
-      _svc: [_r('active\n')],
+      _vQuery: [_r('installed 0.310.0\n')],
+      _jobStart: [_job(_evccLog(), kind: jobKindEvccUpdate)],
     });
+
+/// A kind/message matcher for [EvccUpdateException]s — sharper than a bare
+/// isA, so a test cannot pass for the wrong reason.
+Matcher _err(UpdateErrorKind kind, [Object? message]) {
+  var m = isA<EvccUpdateException>().having((e) => e.kind, 'kind', kind);
+  if (message != null) m = m.having((e) => e.message, 'message', message);
+  return throwsA(m);
+}
 
 void main() {
   group('EvccUpdater happy paths', () {
@@ -223,6 +356,12 @@ void main() {
       expect(result.after, '0.311.0');
       expect(result.message, 'evcc 0.310.0 → 0.311.0 aktualisiert.');
       expect(runner.closed, isTrue);
+      // The version before is read in the foreground; the change runs as a job.
+      expect(runner.commandsRun, [_vQuery, _jobStart]);
+      // Control lines never reach the log; the job's own lines do.
+      expect(log.join('\n'), isNot(contains('PITOOL_JOB_')));
+      expect(log.join('\n'), contains('Setting up evcc (0.311.0)'));
+      expect(log.join('\n'), contains('Hintergrund-Job'));
     });
 
     test('dpkg progress painting never reaches the log', () async {
@@ -231,20 +370,22 @@ void main() {
       // most of it off the wire, but a third-party installer can still send it,
       // so the log seam filters what arrives. Everything else must survive.
       final runner = FakeSshRunner({
-        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.311.0\n')],
-        _aptUpdate: [_r('')],
-        _aptUpgrade: [
-          _r('(Reading database ... \r'
-              '(Reading database ... 5%\r'
-              '(Reading database ... 50%\r'
-              '(Reading database ... 100%\r'
-              '(Reading database ... 214428 files and directories '
-              'currently installed.)\n'
-              'Preparing to unpack .../evcc_0.311.0_arm64.deb ...\n'
-              'Setting up evcc (0.311.0) ...\n'
-              '1 upgraded, 0 newly installed, 0 to remove and 27 not upgraded.')
+        _vQuery: [_r('installed 0.310.0\n')],
+        _jobStart: [
+          _job(
+              _evccLog(
+                  upgrade: '(Reading database ... \r'
+                      '(Reading database ... 5%\r'
+                      '(Reading database ... 50%\r'
+                      '(Reading database ... 100%\r'
+                      '(Reading database ... 214428 files and directories '
+                      'currently installed.)\n'
+                      'Preparing to unpack .../evcc_0.311.0_arm64.deb ...\n'
+                      'Setting up evcc (0.311.0) ...\n'
+                      '1 upgraded, 0 newly installed, 0 to remove and 27 not '
+                      'upgraded.'),
+              kind: jobKindEvccUpdate)
         ],
-        _svc: [_r('active\n')],
       });
       final log = <String>[];
 
@@ -266,13 +407,16 @@ void main() {
 
     test('real run without a newer version reports already current', () async {
       final runner = FakeSshRunner({
-        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.310.0\n')],
-        _aptUpdate: [_r('')],
-        _aptUpgrade: [
-          _r('evcc is already the newest version (0.310.0).\n'
-              '0 upgraded, 0 newly installed, 0 to remove and 28 not upgraded.')
+        _vQuery: [_r('installed 0.310.0\n')],
+        _jobStart: [
+          _job(
+              _evccLog(
+                  upgrade: 'evcc is already the newest version (0.310.0).\n'
+                      '0 upgraded, 0 newly installed, 0 to remove and 28 not '
+                      'upgraded.',
+                  version: '0.310.0'),
+              kind: jobKindEvccUpdate)
         ],
-        _svc: [_r('active\n')],
       });
 
       final result = await _updaterWith(runner).run(
@@ -283,19 +427,23 @@ void main() {
       );
 
       expect(result.status, UpdateStatus.alreadyCurrent);
+      expect(result.message, 'evcc war schon aktuell (0.310.0).');
     });
 
     test('full system upgrade: evcc unchanged, system packages upgraded',
         () async {
-      const fullCmd = 'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 full-upgrade -y';
       final runner = FakeSshRunner({
-        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.310.0\n')],
-        _aptUpdate: [_r('')],
-        fullCmd: [
-          _r('The following packages will be upgraded:\n  libfoo libbar\n'
-              '12 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.')
+        _vQuery: [_r('installed 0.310.0\n')],
+        _jobStart: [
+          _job(
+              _evccLog(
+                  upgrade: 'The following packages will be upgraded:\n'
+                      '  libfoo libbar\n'
+                      '12 upgraded, 0 newly installed, 0 to remove and 0 not '
+                      'upgraded.',
+                  version: '0.310.0'),
+              kind: jobKindEvccUpdate)
         ],
-        _svc: [_r('active\n')],
       });
 
       final result = await _updaterWith(runner).run(
@@ -305,9 +453,23 @@ void main() {
         onLog: (_) {},
       );
 
-      expect(runner.commandsRun, contains(fullCmd));
+      final payload = _payloadOf(runner);
+      expect(payload, contains(r'apt-get "${O[@]}" full-upgrade -y'));
+      expect(payload, isNot(contains('install --only-upgrade')));
+      expect(jobKindFromStdin(runner.stdinByCommand[_jobStart]!),
+          jobKindEvccUpdate);
       expect(result.status, UpdateStatus.alreadyCurrent);
       expect(result.message, contains('System-Pakete'));
+    });
+
+    test('evcc-only run upgrades just evcc (never installs it)', () async {
+      final runner = _happyRunner();
+      await _updaterWith(runner).run(
+          config: _config, fullUpgrade: false, dryRun: false, onLog: (_) {});
+      final payload = _payloadOf(runner);
+      expect(payload,
+          contains(r'apt-get "${O[@]}" install --only-upgrade -y evcc'));
+      expect(payload, isNot(contains('full-upgrade')));
     });
 
     test('dry-run uses the --dry-run command and reports a probe', () async {
@@ -330,11 +492,13 @@ void main() {
 
       expect(runner.commandsRun, contains(_aptDryRun));
       expect(result.status, UpdateStatus.dryRunWouldUpdate);
+      // A probe is no job: no launcher, no lock, no job.status entry.
+      expect(runner.commandsRun.any(isJobStartCommand), isFalse);
     });
   });
 
   group('EvccUpdater password handling', () {
-    test('feeds the sudo password via stdin only for the apt-get steps',
+    test('the password goes only into the job stdin, before the sentinel',
         () async {
       final runner = _happyRunner();
 
@@ -345,23 +509,22 @@ void main() {
         onLog: (_) {},
       );
 
-      expect(runner.stdinByCommand[_aptUpdate], 'sekret\n');
-      expect(runner.stdinByCommand[_aptUpgrade], 'sekret\n');
+      final stdin = runner.stdinByCommand[_jobStart]!;
+      expect(stdin, startsWith('sekret\n$jobSentinel\n'));
+      expect('sekret'.allMatches(stdin).length, 1);
+      expect(_payloadOf(runner), isNot(contains('sekret')));
       expect(runner.stdinByCommand[_vQuery], isNull);
-      expect(runner.stdinByCommand[_svc], isNull);
       expect(runner.commandsRun.any((c) => c.contains('sekret')), isFalse);
     });
 
-    test('redacts the password if it ever surfaces in command output',
+    test('redacts the password if it ever surfaces in the job output',
         () async {
       final runner = FakeSshRunner({
-        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.310.0\n')],
-        _aptUpdate: [_r('', stderr: 'oops leaked sekret here')],
-        _aptUpgrade: [
-          _r('evcc is already the newest version (0.310.0).\n'
-              '0 upgraded, 0 newly installed, 0 to remove and 28 not upgraded.')
+        _vQuery: [_r('installed 0.310.0\n')],
+        _jobStart: [
+          _job('oops leaked sekret here\n${_evccLog(version: '0.310.0')}',
+              kind: jobKindEvccUpdate)
         ],
-        _svc: [_r('active\n')],
       });
       final log = <String>[];
 
@@ -420,8 +583,25 @@ void main() {
 
       await expectLater(
         _updaterWith(runner).install(config: _config, onLog: (_) {}),
-        throwsA(isA<EvccUpdateException>()),
+        _err(UpdateErrorKind.unknown,
+            'Installation fehlgeschlagen (Exit 100). Details im Log.'),
       );
+    });
+
+    test('a dropped connection (no exit code) is never a success', () async {
+      // dartssh2 hands back exitCode null when the channel ends without an
+      // exit status: the install may have stopped anywhere.
+      final runner = FakeSshRunner({
+        installCmd: [_r('Setting up evcc ...', exitCode: null)],
+        _vQuery: [_r('installed 0.310.0\n')],
+        _svc: [_r('active\n')],
+      });
+
+      await expectLater(
+        _updaterWith(runner).install(config: _config, onLog: (_) {}),
+        _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')),
+      );
+      expect(runner.commandsRun, isNot(contains(_vQuery)));
     });
   });
 
@@ -452,8 +632,11 @@ void main() {
     test('detects a rejected sudo password and still cleans up', () async {
       final runner = FakeSshRunner({
         _vQuery: [_r('installed 0.310.0\n')],
-        _aptUpdate: [
-          _r('', stderr: 'sudo: 1 incorrect password attempt', exitCode: 1)
+        _jobStart: [
+          _r('',
+              stderr: '[sudo] password for pi: Sorry, try again.\n'
+                  'sudo: 3 incorrect password attempts',
+              exitCode: 1)
         ],
       });
 
@@ -468,48 +651,56 @@ void main() {
 
     test('a failed apt-get update (unreachable repo) does NOT block the upgrade',
         () async {
-      // i==1 (apt-get update) may exit non-zero on a flaky third-party repo;
-      // that must not abort an otherwise-fine evcc upgrade (only i==2 is gated).
+      // apt-get update may exit non-zero on a flaky third-party repo; that
+      // must not abort an otherwise-fine evcc upgrade — the job reports it.
       final runner = FakeSshRunner({
-        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.311.0\n')],
-        _aptUpdate: [
-          _r('', stderr: 'Failed to fetch http://other.repo', exitCode: 100)
+        _vQuery: [_r('installed 0.310.0\n')],
+        _jobStart: [
+          _job(
+              'W: Failed to fetch http://other.repo\n'
+              '${_evccLog(aptUpdateRc: 100)}',
+              kind: jobKindEvccUpdate)
         ],
-        _aptUpgrade: [_r('1 upgraded, 0 newly installed')],
-        _svc: [_r('active\n')],
       });
+      final log = <String>[];
 
       final result = await _updaterWith(runner).run(
-          config: _config, fullUpgrade: false, dryRun: false, onLog: (_) {});
+          config: _config, fullUpgrade: false, dryRun: false, onLog: log.add);
 
       expect(result.status, UpdateStatus.updated);
+      expect(log.join('\n'), contains('Paketlisten'));
     });
 
     test('a non-zero apt step is a hard error, not a false "already current"',
         () async {
       final runner = FakeSshRunner({
-        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.310.0\n')],
-        _aptUpdate: [_r('')],
-        _aptUpgrade: [
-          _r('E: Could not get lock /var/lib/dpkg/lock-frontend', exitCode: 100)
+        _vQuery: [_r('installed 0.310.0\n')],
+        _jobStart: [
+          _job(
+              _evccLog(
+                  upgrade: 'E: Could not get lock /var/lib/dpkg/lock-frontend',
+                  version: '0.310.0'),
+              rc: 100,
+              kind: jobKindEvccUpdate)
         ],
-        _svc: [_r('active\n')],
       });
 
       await expectLater(
         _updaterWith(runner).run(
             config: _config, fullUpgrade: false, dryRun: false, onLog: (_) {}),
-        throwsA(isA<EvccUpdateException>()
-            .having((e) => e.message, 'message', contains('fehlgeschlagen'))),
+        _err(
+            UpdateErrorKind.unknown,
+            allOf(startsWith('evcc-Update fehlgeschlagen — '),
+                contains('andere Paketinstallation'))),
       );
     });
 
     test('fails when the service is not active after a real upgrade', () async {
       final runner = FakeSshRunner({
-        _vQuery: [_r('installed 0.310.0\n'), _r('installed 0.311.0\n')],
-        _aptUpdate: [_r('')],
-        _aptUpgrade: [_r('1 upgraded, 0 newly installed')],
-        _svc: [_r('inactive\n', exitCode: 3)],
+        _vQuery: [_r('installed 0.310.0\n')],
+        _jobStart: [
+          _job(_evccLog(active: 'inactive'), kind: jobKindEvccUpdate)
+        ],
       });
 
       await expectLater(
@@ -531,6 +722,8 @@ void main() {
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.kind, 'kind', UpdateErrorKind.packageMissing)),
       );
+      // Checked before anything changes: no job was started.
+      expect(runner.commandsRun.any(isJobStartCommand), isFalse);
     });
 
     test('maps a private-key decode failure to an auth error', () async {
@@ -1814,7 +2007,43 @@ void main() {
       });
       await expectLater(
         _updaterWith(runner).reboot(config: _config, onLog: (_) {}),
-        throwsA(isA<EvccUpdateException>()),
+        _err(UpdateErrorKind.unknown,
+            'Neustart fehlgeschlagen (Exit 1). Details im Log.'),
+      );
+    });
+
+    test('runs through the job guard, password only on stdin', () async {
+      final runner = FakeSshRunner({rebootCommand: [_r('')]});
+      await _updaterWith(runner).reboot(config: _config, onLog: (_) {});
+      expect(rebootCommand, startsWith("LC_ALL=C sudo -S sh -c '"));
+      expect(rebootCommand, contains(jobPowerGuard));
+      expect(rebootCommand, endsWith("; exec reboot'"));
+      expect(runner.stdinByCommand[rebootCommand], 'sekret\n');
+    });
+
+    test('a running job refuses the reboot with a clear message', () async {
+      final runner = FakeSshRunner({
+        rebootCommand: [_r('$jobRefusedRunningMarker\n', exitCode: 75)],
+      });
+      await expectLater(
+        _updaterWith(runner).reboot(config: _config, onLog: (_) {}),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobBusy)
+            .having((e) => e.message, 'message',
+                allOf(contains('Neustart'), contains('Pi-Job'),
+                    isNot(contains('Exit 75'))))),
+      );
+    });
+
+    test('a half-installed kernel refuses the reboot → repair first', () async {
+      final runner = FakeSshRunner({
+        rebootCommand: [_r('$jobRefusedBootMarker\n', exitCode: 75)],
+      });
+      await expectLater(
+        _updaterWith(runner).reboot(config: _config, onLog: (_) {}),
+        _err(UpdateErrorKind.unknown,
+            allOf(contains('Paketzustand reparieren'),
+                isNot(contains('Exit 75')))),
       );
     });
 
@@ -2032,7 +2261,32 @@ void main() {
       });
       await expectLater(
         _updaterWith(runner).shutdown(config: _config, onLog: (_) {}),
-        throwsA(isA<EvccUpdateException>()),
+        _err(UpdateErrorKind.unknown,
+            'Herunterfahren fehlgeschlagen (Exit 1). Details im Log.'),
+      );
+    });
+
+    test('runs through the job guard', () {
+      expect(shutdownCommand, contains(jobPowerGuard));
+      expect(shutdownCommand, endsWith("; exec poweroff'"));
+    });
+
+    test('guard refusals: running job / half-installed kernel', () async {
+      final busy = FakeSshRunner({
+        shutdownCommand: [_r('$jobRefusedRunningMarker\n', exitCode: 75)],
+      });
+      await expectLater(
+        _updaterWith(busy).shutdown(config: _config, onLog: (_) {}),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobBusy)
+            .having((e) => e.message, 'message', contains('Herunterfahren'))),
+      );
+      final boot = FakeSshRunner({
+        shutdownCommand: [_r('$jobRefusedBootMarker\n', exitCode: 75)],
+      });
+      await expectLater(
+        _updaterWith(boot).shutdown(config: _config, onLog: (_) {}),
+        _err(UpdateErrorKind.unknown, contains('Paketzustand reparieren')),
       );
     });
 
@@ -2086,7 +2340,7 @@ void main() {
       // this must rely on the post-body cancel check, not on run() throwing.
       final runner = _HangingRunner();
       final updater = EvccUpdater(runnerFactory: (_) => runner);
-      final f = updater.updatePihole(config: _config, onLog: (_) {});
+      final f = updater.updatePiholeGravity(config: _config, onLog: (_) {});
       await runner.runStarted.future;
       await updater.cancel();
       await expectLater(
@@ -2094,6 +2348,497 @@ void main() {
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.kind, 'kind', UpdateErrorKind.cancelled)),
       );
+    });
+
+    test('cancel while a job is being started: start unclear, never "stopped"',
+        () async {
+      // The launcher may already run on the Pi — "Abgebrochen." would claim
+      // the update stopped, which nobody knows.
+      final runner = _HangingRunner();
+      final updater = _updaterWith(runner);
+      final f = updater.updatePihole(config: _config, onLog: (_) {});
+      await runner.runStarted.future;
+      await updater.cancel();
+      await expectLater(
+        f,
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+            .having((e) => e.startConfirmed, 'startConfirmed', isFalse)
+            .having((e) => e.reason, 'reason', JobDetachReason.userStopped)
+            .having((e) => e.ref, 'ref',
+                const JobRef(id: _jobId, kind: jobKindPiholeUpdate))),
+      );
+    });
+
+    test('cancel after STARTED = stop following; the job runs on', () async {
+      final runner = _StartedJobRunner();
+      final updater = _updaterWith(runner);
+      JobRef? started;
+      final log = <String>[];
+      final f = updater.upgradeSystem(
+          config: _config, onLog: log.add, onJobStarted: (r) => started = r);
+      await runner.started.future;
+      await Future<void>.delayed(Duration.zero);
+      expect(started, const JobRef(id: _jobId, kind: jobKindSystemUpgrade));
+      await updater.cancel();
+      await expectLater(
+        f,
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+            .having((e) => e.startConfirmed, 'startConfirmed', isTrue)
+            .having((e) => e.reason, 'reason', JobDetachReason.userStopped)
+            .having((e) => e.message, 'message', contains('weiter'))),
+      );
+      expect(log.join('\n'), contains('Reading package lists'));
+      expect(runner.closed, isTrue);
+    });
+
+    test('no job is started once cancel was requested', () async {
+      final runner = _ConnectHangRunner();
+      final updater = _updaterWith(runner);
+      final f = updater.updateAptPackage(
+          config: _config, package: 'grafana', onLog: (_) {});
+      await runner.connectStarted.future;
+      await updater.cancel();
+      await expectLater(f, _err(UpdateErrorKind.cancelled));
+      expect(runner.bodyRan, isFalse);
+    });
+  });
+
+  group('Pi-Jobs: transport failures after the start', () {
+    for (final (name, error) in <(String, Object)>[
+      ('TimeoutException', TimeoutException('keine Ausgabe')),
+      ('SSHStateError', SSHStateError('Transport is closed')),
+      ('SocketException', const SocketException('reset')),
+      ('StateError', StateError('connection closed')),
+    ]) {
+      test('$name after STARTED → jobDetached (connection lost)', () async {
+        final runner = _StartedJobRunner(error: error);
+        await expectLater(
+          _updaterWith(runner).upgradeSystem(config: _config, onLog: (_) {}),
+          throwsA(isA<JobException>()
+              .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+              .having((e) => e.startConfirmed, 'startConfirmed', isTrue)
+              .having(
+                  (e) => e.reason, 'reason', JobDetachReason.connectionLost)),
+        );
+      });
+    }
+
+    test('TimeoutException before STARTED → start unclear, not "Zeitüberschreitung"',
+        () async {
+      final runner = FakeSshRunner({},
+          runErrors: {_jobStart: TimeoutException('keine Ausgabe')});
+      await expectLater(
+        _updaterWith(runner)
+            .repairPackageState(config: _config, onLog: (_) {}),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+            .having((e) => e.startConfirmed, 'startConfirmed', isFalse)
+            .having((e) => e.message, 'message',
+                contains('ob der Job gestartet ist'))),
+      );
+    });
+
+    test('watchdog: STARTED, then silence → detached after the watchdog',
+        () async {
+      final runner = _StartedJobRunner(completeOnClose: false);
+      final sw = Stopwatch()..start();
+      await expectLater(
+        _updaterWith(runner, jobWatchdog: const Duration(milliseconds: 300))
+            .upgradeSystem(config: _config, onLog: (_) {}),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+            .having((e) => e.startConfirmed, 'startConfirmed', isTrue)
+            .having(
+                (e) => e.reason, 'reason', JobDetachReason.connectionLost)),
+      );
+      expect(sw.elapsed, lessThan(const Duration(seconds: 10)));
+      expect(runner.closed, isTrue);
+    });
+
+    test('watchdog covers a run() that never even starts (Hängelücke)',
+        () async {
+      final runner = _SilentRunner();
+      await expectLater(
+        _updaterWith(runner, jobWatchdog: const Duration(milliseconds: 300))
+            .updatePihole(config: _config, onLog: (_) {}),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+            .having((e) => e.startConfirmed, 'startConfirmed', isFalse)),
+      );
+      expect(runner.closed, isTrue);
+    });
+  });
+
+  group('Pi-Jobs: launcher outcomes', () {
+    Future<void> upgradeWith(CommandResult r, Matcher m) => expectLater(
+        _updaterWith(FakeSshRunner({
+          _jobStart: [r]
+        })).upgradeSystem(config: _config, onLog: (_) {}),
+        m);
+
+    test('rc ≠ 0 → error with the apt cause', () => upgradeWith(
+        _job('$jobUpgradeMarker\nE: Could not get lock /var/lib/dpkg/lock',
+            rc: 100),
+        _err(UpdateErrorKind.unknown,
+            allOf(startsWith('System-Upgrade fehlgeschlagen — '),
+                contains('andere Paketinstallation')))));
+
+    test('lost → interrupted, with the repair hint', () => upgradeWith(
+        _r('PITOOL_JOB_STARTED $_jobId system-upgrade\nUnpacking …\n'
+            '\nPITOOL_JOB_LOST $_jobId\n'),
+        _err(UpdateErrorKind.unknown,
+            allOf(contains('unterbrochen'), contains('Paketzustand reparieren')))));
+
+    test('busy → jobBusy with the running job', () async {
+      await upgradeWith(
+          _r('PITOOL_JOB_BUSY $_jobId fedcba9876543210 package-update '
+              '1790000000\n'),
+          throwsA(isA<JobException>()
+              .having((e) => e.kind, 'kind', UpdateErrorKind.jobBusy)
+              .having((e) => e.ref, 'ref',
+                  const JobRef(id: 'fedcba9876543210', kind: 'package-update'))
+              .having((e) => e.since, 'since',
+                  DateTime.fromMillisecondsSinceEpoch(1790000000 * 1000))));
+    });
+
+    test('busy by the on-Pi auto-update → jobBusy without a ref', () =>
+        upgradeWith(
+            _r('PITOOL_JOB_BUSY $_jobId - autoupdate -\n'),
+            throwsA(isA<JobException>()
+                .having((e) => e.kind, 'kind', UpdateErrorKind.jobBusy)
+                .having((e) => e.ref, 'ref', isNull)
+                .having((e) => e.jobKind, 'jobKind', 'autoupdate')
+                .having((e) => e.message, 'message',
+                    contains('automatischen Updates')))));
+
+    test('noStart → nothing changed', () => upgradeWith(
+        _r('PITOOL_JOB_NOSTART $_jobId timeout\n'),
+        _err(UpdateErrorKind.unknown,
+            'Hintergrund-Job konnte nicht gestartet werden – es wurde nichts '
+                'verändert.')));
+
+    test('missing header (exit 97) → error, never detached', () => upgradeWith(
+        _r('', exitCode: 97),
+        _err(UpdateErrorKind.unknown, contains('Pi-Tool-Startkopf fehlt'))));
+
+    test('exit 0 without any line → start unclear, never success', () =>
+        upgradeWith(
+            _r(''),
+            throwsA(isA<JobException>()
+                .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+                .having((e) => e.startConfirmed, 'startConfirmed', isFalse))));
+
+    test('RC with a foreign id is ignored → detached', () => upgradeWith(
+        _r('PITOOL_JOB_STARTED $_jobId system-upgrade\nx\n'
+            '\nPITOOL_JOB_RC fedcba9876543210 0\n'),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+            .having((e) => e.startConfirmed, 'startConfirmed', isTrue))));
+
+    test('an empty RC is a failure, never success', () => upgradeWith(
+        _r('PITOOL_JOB_STARTED $_jobId system-upgrade\nx\n'
+            '\nPITOOL_JOB_RC $_jobId \n'),
+        _err(UpdateErrorKind.unknown, contains('Exit 255'))));
+
+    test('the job id comes from the injected generator and is validated',
+        () async {
+      final runner = FakeSshRunner({});
+      final u = EvccUpdater(
+          runnerFactory: (_) => runner, jobIdGenerator: () => '../x');
+      await expectLater(u.upgradeSystem(config: _config, onLog: (_) {}),
+          throwsA(isA<EvccUpdateException>()));
+      expect(runner.commandsRun.where((c) => c.contains('pitool-job')), isEmpty);
+    });
+
+    test('a completed job is not turned into "Abgebrochen." by a late cancel',
+        () async {
+      late EvccUpdater u;
+      final runner = _CallbackRunner(onJob: () => u.cancel(), result: _job(
+          '$jobUpgradeMarker\n3 upgraded', kind: jobKindSystemUpgrade));
+      u = _updaterWith(runner);
+      final r = await u.upgradeSystem(config: _config, onLog: (_) {});
+      expect(r.listsIncomplete, isFalse);
+    });
+  });
+
+  group('Pi-Jobs: the migrated actions', () {
+    const upgradeLog =
+        'PITOOL_APT_UPDATE_RC=0\n$jobUpgradeMarker\n3 upgraded, 0 newly installed';
+
+    void expectHardenedAptPayload(FakeSshRunner runner, String reason) {
+      final stdin = runner.stdinByCommand[_jobStart]!;
+      final payload = decodeJobPayload(stdin)!;
+      expect(payload, contains('--force-confold'), reason: reason);
+      expect(payload, contains('--force-confdef'), reason: reason);
+      expect(payload, contains('pitool_fix_eol_sources'), reason: reason);
+      expect(payload.indexOf('pitool_fix_eol_sources'),
+          lessThan(payload.indexOf('apt-get')), reason: reason);
+      expect(payload, contains('pitool_repair\n'), reason: reason);
+      expect(payload, isNot(contains('sekret')), reason: reason);
+      // DEBIAN_FRONTEND etc. come from the constant wrapper the launcher writes.
+      expect(stdin, contains('DEBIAN_FRONTEND=noninteractive'), reason: reason);
+      expect(stdin, contains('UCF_FORCE_CONFFOLD=1'), reason: reason);
+      // No foreground apt, no foreground EOL fix: all of it is in the job.
+      expect(runner.commandsRun, isNot(contains(eolSourcesShellCommand)),
+          reason: reason);
+      expect(runner.commandsRun.any((c) => c.contains('apt-get')), isFalse,
+          reason: reason);
+    }
+
+    test('upgradeSystem', () async {
+      final runner = FakeSshRunner({
+        _jobStart: [_job(upgradeLog, kind: jobKindSystemUpgrade)],
+      });
+      final log = <String>[];
+      final r =
+          await _updaterWith(runner).upgradeSystem(config: _config, onLog: log.add);
+      expect(r.listsIncomplete, isFalse);
+      expect(jobKindFromStdin(runner.stdinByCommand[_jobStart]!),
+          jobKindSystemUpgrade);
+      expect(_payloadOf(runner), contains(r'full-upgrade -y'));
+      expectHardenedAptPayload(runner, 'upgradeSystem');
+      expect(log.last, 'System aktualisiert.');
+    });
+
+    test('upgradeSystem reports partial package lists', () async {
+      final runner = FakeSshRunner({
+        _jobStart: [
+          _job('PITOOL_APT_UPDATE_RC=100\n$jobUpgradeMarker\n3 upgraded',
+              kind: jobKindSystemUpgrade)
+        ],
+      });
+      final r =
+          await _updaterWith(runner).upgradeSystem(config: _config, onLog: (_) {});
+      expect(r.listsIncomplete, isTrue);
+    });
+
+    test('updateAptPackage', () async {
+      final runner = FakeSshRunner({
+        _jobStart: [
+          _job('PITOOL_PACKAGE=grafana\n$upgradeLog', kind: jobKindPackageUpdate)
+        ],
+      });
+      await _updaterWith(runner).updateAptPackage(
+          config: _config, package: 'grafana', onLog: (_) {});
+      expect(jobKindFromStdin(runner.stdinByCommand[_jobStart]!),
+          jobKindPackageUpdate);
+      expect(_payloadOf(runner),
+          contains("install --only-upgrade -y 'grafana'"));
+      expectHardenedAptPayload(runner, 'updateAptPackage');
+    });
+
+    test('updateAptPackage refuses a package name that is no package name',
+        () async {
+      final runner = FakeSshRunner({});
+      await expectLater(
+          _updaterWith(runner).updateAptPackage(
+              config: _config, package: "x'; reboot", onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('Paketname')));
+      expect(runner.commandsRun.any(isJobStartCommand), isFalse);
+    });
+
+    test('evcc run(dryRun:false)', () async {
+      final runner = _happyRunner();
+      await _updaterWith(runner).run(
+          config: _config, fullUpgrade: false, dryRun: false, onLog: (_) {});
+      expect(jobKindFromStdin(runner.stdinByCommand[_jobStart]!),
+          jobKindEvccUpdate);
+      expectHardenedAptPayload(runner, 'run');
+    });
+
+    test('repairPackageState: repair chain in the job, exit code counts',
+        () async {
+      final runner = FakeSshRunner({
+        _jobStart: [_job('Pi-Tool: Repariere …', kind: jobKindPackageRepair)],
+      });
+      await _updaterWith(runner)
+          .repairPackageState(config: _config, onLog: (_) {});
+      final payload = _payloadOf(runner);
+      expect(payload,
+          contains('dpkg --force-confdef --force-confold --configure -a'));
+      expect(payload, contains(r'apt-get "${O[@]}" -f install -y'));
+      expect(payload, isNot(contains('sekret')));
+      expect(runner.commandsRun.any((c) => c.contains('dpkg')), isFalse);
+
+      final bad = FakeSshRunner({
+        _jobStart: [_job('dpkg: error processing package x', rc: 1)],
+      });
+      await expectLater(
+          _updaterWith(bad).repairPackageState(config: _config, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown,
+              'Reparatur fehlgeschlagen (Exit 1). Details im Log.'));
+    });
+
+    test('updatePihole: pihole -up as a job', () async {
+      final runner = FakeSshRunner({
+        _jobStart: [_job('[✓] Update complete', kind: jobKindPiholeUpdate)],
+      });
+      await _updaterWith(runner).updatePihole(config: _config, onLog: (_) {});
+      expect(_payloadOf(runner), contains('pihole -up'));
+      expect(runner.commandsRun, isNot(contains(piholeUpdateCommand)));
+      expect(runner.stdinByCommand[_jobStart], startsWith('sekret\n'));
+    });
+
+    test('onJobStarted receives the job ref on STARTED', () async {
+      final runner = FakeSshRunner({
+        _jobStart: [_job('ok', kind: jobKindPackageRepair)],
+      });
+      final refs = <JobRef>[];
+      await _updaterWith(runner).repairPackageState(
+          config: _config, onLog: (_) {}, onJobStarted: refs.add);
+      expect(refs, [const JobRef(id: _jobId, kind: jobKindPackageRepair)]);
+    });
+  });
+
+  group('followJob', () {
+    test('re-follow: full log, same evaluation as the live path', () async {
+      final runner = FakeSshRunner({
+        _jobFollow: [_job(_evccLog(), kind: jobKindEvccUpdate)],
+      });
+      final log = <String>[];
+      final started = <JobRef>[];
+      final o = await _updaterWith(runner).followJob(
+          config: _config,
+          jobId: _jobId,
+          onLog: log.add,
+          onJobStarted: started.add);
+      expect(o.kind, jobKindEvccUpdate);
+      expect(o.success, isTrue);
+      expect(o.evccVersion, '0.311.0');
+      expect(started, [const JobRef(id: _jobId, kind: jobKindEvccUpdate)]);
+      expect(log.join('\n'), contains('Setting up evcc'));
+      expect(runner.stdinByCommand[_jobFollow], startsWith('sekret\n'));
+      final live = evaluateJob(jobKindEvccUpdate, 0,
+          (classifyJobRun(
+                  stdout: _job(_evccLog(), kind: jobKindEvccUpdate).stdout,
+                  stderr: '',
+                  exitCode: 0,
+                  id: _jobId) as JobRunRc)
+              .log);
+      expect(o.message, live.message);
+    });
+
+    test('a failed job is an outcome, not an exception', () async {
+      final runner = FakeSshRunner({
+        _jobFollow: [
+          _job('$jobUpgradeMarker\nE: broken', rc: 100, kind: 'system-upgrade')
+        ],
+      });
+      final o = await _updaterWith(runner)
+          .followJob(config: _config, jobId: _jobId, onLog: (_) {});
+      expect(o.success, isFalse);
+      expect(o.message, contains('Exit 100'));
+    });
+
+    test('unknown job → "nicht mehr vorhanden"', () async {
+      final runner = FakeSshRunner({
+        _jobFollow: [_r('PITOOL_JOB_UNKNOWN $_jobId\n')],
+      });
+      await expectLater(
+          _updaterWith(runner)
+              .followJob(config: _config, jobId: _jobId, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown,
+              contains('Job nicht mehr auf dem Pi vorhanden')));
+    });
+
+    test('lost → interrupted', () async {
+      final runner = FakeSshRunner({
+        _jobFollow: [
+          _r('PITOOL_JOB_STARTED $_jobId package-update\nx\n'
+              '\nPITOOL_JOB_LOST $_jobId\n')
+        ],
+      });
+      await expectLater(
+          _updaterWith(runner)
+              .followJob(config: _config, jobId: _jobId, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('unterbrochen')));
+    });
+
+    test('connection drop while following → detached again', () async {
+      final runner = FakeSshRunner({},
+          runErrors: {_jobFollow: SSHStateError('Transport is closed')});
+      await expectLater(
+          _updaterWith(runner)
+              .followJob(config: _config, jobId: _jobId, onLog: (_) {}),
+          throwsA(isA<JobException>()
+              .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)));
+    });
+
+    test('an invalid id never reaches the Pi', () async {
+      final runner = FakeSshRunner({});
+      await expectLater(
+          _updaterWith(runner)
+              .followJob(config: _config, jobId: '../x', onLog: (_) {}),
+          throwsA(isA<ArgumentError>()));
+      expect(runner.commandsRun, isEmpty);
+    });
+  });
+
+  group('null exit code is never success (foreground seams)', () {
+    test('_sudoCommand (gravity)', () async {
+      final runner = FakeSshRunner({
+        piholeGravityCommand: [_r('partial', exitCode: null)],
+      });
+      await expectLater(
+          _updaterWith(runner)
+              .updatePiholeGravity(config: _config, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+    });
+
+    test('_sudoCommand without checkExit stays tolerant', () async {
+      final runner = FakeSshRunner({
+        _aptUpdate: [_r('', exitCode: null)],
+      });
+      await _updaterWith(runner).refreshAptIndex(config: _config, onLog: (_) {});
+    });
+
+    test('_runRootScript (Home Assistant install)', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('', exitCode: null)],
+      });
+      await expectLater(
+          _updaterWith(runner)
+              .installHomeAssistant(config: _config, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+    });
+
+    test('sudo probe without exit code: never guess the password line',
+        () async {
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: null)],
+      });
+      await expectLater(
+          _updaterWith(runner).installTailscale(config: _config, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
+    test('restartService / tailscaleSet / deleteRemotePath', () async {
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            serviceRestartCommand: [_r('', exitCode: null)],
+          })).restartService(config: _config, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            tailscaleDownCommand: [_r('', exitCode: null)],
+          })).tailscaleSet(config: _config, logout: false, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            buildDeleteCommand(path: '/home/pi/x', isDir: false): [
+              _r('', exitCode: null)
+            ],
+          })).deleteRemotePath(
+              config: _config, path: '/home/pi/x', isDir: false, onLog: (_) {}),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+    });
+
+    test('reboot: a dropped connection stays the expected success', () async {
+      final runner = FakeSshRunner({rebootCommand: [_r('', exitCode: null)]});
+      await _updaterWith(runner).reboot(config: _config, onLog: (_) {});
     });
   });
 
@@ -2142,13 +2887,13 @@ void main() {
       // A killed apt/dpkg run blocks EVERY install on that Pi until
       // `dpkg --configure -a` has run — "Exit 100" alone leaves the user stuck.
       final runner = FakeSshRunner({
-        sudoNoPasswordProbe: [_r('')],
-        'LC_ALL=C sudo -S apt-get update -qq': [_r('')],
-        "LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 install --only-upgrade -y 'evcc'": [
-          _r('',
-              stderr: "E: dpkg was interrupted, you must manually run 'sudo "
-                  "dpkg --configure -a' to correct the problem.",
-              exitCode: 100)
+        _jobStart: [
+          _job(
+              'PITOOL_PACKAGE=evcc\n$jobUpgradeMarker\n'
+              "E: dpkg was interrupted, you must manually run 'sudo "
+              "dpkg --configure -a' to correct the problem.",
+              rc: 100,
+              kind: jobKindPackageUpdate)
         ],
       });
 
@@ -2202,13 +2947,33 @@ void main() {
       expect(log.join('\n'), contains('legacy.raspbian.org'));
     });
 
-    test('every package-installing action repairs first', () async {
-      final grafana = knownAptServices.firstWhere((s) => s.id == 'grafana');
+    test('every package-installing job repairs first (inside the job)',
+        () async {
       final actions = <String, Future<void> Function(EvccUpdater u)>{
-        upd: (u) => u.refreshAptIndex(config: _config, onLog: (_) {}),
         'upgradeSystem': (u) => u.upgradeSystem(config: _config, onLog: (_) {}),
         'updateAptPackage': (u) =>
             u.updateAptPackage(config: _config, package: 'grafana', onLog: (_) {}),
+      };
+      for (final entry in actions.entries) {
+        final runner = FakeSshRunner({
+          _jobStart: [_job('PITOOL_PACKAGE=grafana\n$jobUpgradeMarker\nok')],
+        });
+        await entry.value(_updaterWith(runner));
+        final payload = _payloadOf(runner);
+        expect(payload, contains('pitool_fix_eol_sources || true'),
+            reason: entry.key);
+        expect(payload.indexOf('pitool_fix_eol_sources || true'),
+            lessThan(payload.indexOf('pitool_repair\n')),
+            reason: entry.key);
+        expect(runner.commandsRun, isNot(contains(eolSourcesShellCommand)),
+            reason: entry.key);
+      }
+    });
+
+    test('every foreground package-installing action repairs first', () async {
+      final grafana = knownAptServices.firstWhere((s) => s.id == 'grafana');
+      final actions = <String, Future<void> Function(EvccUpdater u)>{
+        upd: (u) => u.refreshAptIndex(config: _config, onLog: (_) {}),
         'installAptService': (u) =>
             u.installAptService(config: _config, service: grafana, onLog: (_) {}),
         'fixSecurity': (u) => u.fixSecurity(
@@ -2236,7 +3001,9 @@ void main() {
       final real = _happyRunner();
       await _updaterWith(real).run(
           config: _config, fullUpgrade: false, dryRun: false, onLog: (_) {});
-      expectRepairFirst(real, _aptUpdate);
+      final payload = _payloadOf(real);
+      expect(payload.indexOf('pitool_fix_eol_sources || true'),
+          lessThan(payload.indexOf('pitool_update_lists\n')));
 
       final dry = FakeSshRunner({
         _vQuery: [_r('installed 0.310.0\n')],
@@ -2632,17 +3399,23 @@ void main() {
 
     test('updateAptPackage refreshes tolerantly then only-upgrades the package',
         () async {
-      const upd = 'LC_ALL=C sudo -S apt-get update -qq';
-      const upg =
-          "LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 install --only-upgrade -y 'grafana'";
       final runner = FakeSshRunner({
-        upd: [_r('', stderr: 'Failed to fetch', exitCode: 100)], // tolerated
-        upg: [_r('1 upgraded, 0 newly installed', exitCode: 0)],
+        _jobStart: [
+          _job(
+              'PITOOL_PACKAGE=grafana\nW: Failed to fetch\n'
+              'PITOOL_APT_UPDATE_RC=100\n$jobUpgradeMarker\n'
+              '1 upgraded, 0 newly installed',
+              kind: jobKindPackageUpdate)
+        ],
       });
       await _updaterWith(runner).updateAptPackage(
           config: _config, package: 'grafana', onLog: (_) {});
-      expect(runner.commandsRun, contains(upg));
-      expect(runner.stdinByCommand[upg], 'sekret\n');
+      final payload = _payloadOf(runner);
+      expect(payload, contains(r'echo "PITOOL_APT_UPDATE_RC=$?"'));
+      expect(payload,
+          contains(r'''apt-get "${O[@]}" install --only-upgrade -y 'grafana' '''
+              .trimRight()));
+      expect(runner.stdinByCommand[_jobStart], startsWith('sekret\n'));
     });
 
     test('a failed apt simulation leaves evcc + System updateKnown=false',
@@ -2853,17 +3626,17 @@ void main() {
 
   group('EvccUpdater Pi-hole + System actions', () {
     test('updatePihole runs pihole -up with the password via stdin', () async {
-      final runner =
-          FakeSshRunner({piholeUpdateCommand: [_r('[✓] Update complete')]});
+      final runner = FakeSshRunner(
+          {_jobStart: [_job('[✓] Update complete', kind: jobKindPiholeUpdate)]});
       await _updaterWith(runner).updatePihole(config: _config, onLog: (_) {});
-      expect(runner.commandsRun, contains(piholeUpdateCommand));
-      expect(runner.stdinByCommand[piholeUpdateCommand], 'sekret\n');
+      expect(_payloadOf(runner), contains('pihole -up'));
+      expect(runner.stdinByCommand[_jobStart], startsWith('sekret\n'));
       expect(runner.commandsRun.any((c) => c.contains('sekret')), isFalse);
     });
 
     test('updatePihole maps a rejected sudo password', () async {
       final runner = FakeSshRunner({
-        piholeUpdateCommand: [
+        _jobStart: [
           _r('', stderr: 'sudo: 1 incorrect password attempt', exitCode: 1)
         ],
       });
@@ -2876,14 +3649,18 @@ void main() {
 
     test('upgradeSystem runs full-upgrade and tolerates a failed apt update',
         () async {
-      const upd = 'LC_ALL=C sudo -S apt-get update -qq';
-      const full = 'LC_ALL=C sudo -S apt-get -o Dpkg::Use-Pty=0 full-upgrade -y';
       final runner = FakeSshRunner({
-        upd: [_r('', stderr: 'Failed to fetch', exitCode: 100)],
-        full: [_r('12 upgraded, 0 newly installed', exitCode: 0)],
+        _jobStart: [
+          _job(
+              'W: Failed to fetch\nPITOOL_APT_UPDATE_RC=100\n'
+              '$jobUpgradeMarker\n12 upgraded, 0 newly installed',
+              kind: jobKindSystemUpgrade)
+        ],
       });
-      await _updaterWith(runner).upgradeSystem(config: _config, onLog: (_) {});
-      expect(runner.commandsRun, contains(full));
+      final r = await _updaterWith(runner)
+          .upgradeSystem(config: _config, onLog: (_) {});
+      expect(_payloadOf(runner), contains(r'apt-get "${O[@]}" full-upgrade -y'));
+      expect(r.listsIncomplete, isTrue);
     });
   });
 
@@ -3315,6 +4092,58 @@ void main() {
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
       );
+    });
+  });
+
+  group('detection: the latest Pi-Job', () {
+    const boot = '6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b';
+
+    test('the JOB probe runs in the batch; the System entry carries it',
+        () async {
+      final runner = FakeSshRunner({
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+        jobStatusProbe: [
+          _r('$_jobId system-upgrade running - 1790000000 - $boot\n'
+              'BOOT $boot\n')
+        ],
+      });
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: (_) {});
+      final sys = list.firstWhere((s) => s.id == 'system');
+      expect(sys.job, isNotNull);
+      expect(sys.job!.state, PiJobState.running);
+      expect(sys.job!.ref, const JobRef(id: _jobId, kind: 'system-upgrade'));
+      // Read-only: the probe runs inside the non-root detection batch.
+      expect(runner.stdinByCommand[detectShellCommand], contains(jobStatusProbe));
+      expect(runner.commandsRun.any((c) => c.contains('sudo')), isFalse);
+    });
+
+    test('no job.status → no job', () async {
+      final runner = FakeSshRunner({
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+      });
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: (_) {});
+      expect(list.firstWhere((s) => s.id == 'system').job, isNull);
+    });
+
+    test('the job is transient: never in the cached services', () async {
+      final runner = FakeSshRunner({
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12"')],
+        jobStatusProbe: [
+          _r('$_jobId system-upgrade running - 1790000000 - $boot\n'
+              'BOOT $boot\n')
+        ],
+      });
+      final sys = (await _updaterWith(runner)
+              .detectServices(config: _config, onLog: (_) {}))
+          .firstWhere((s) => s.id == 'system');
+      final json = sys.toJson();
+      expect(json.containsKey('job'), isFalse);
+      expect(jsonEncode(json), isNot(contains(_jobId)));
+      expect(ServiceStatus.fromJson(json).job, isNull);
+      // copyWith keeps it for the live list.
+      expect(sys.copyWith(updateKnown: true).job, same(sys.job));
     });
   });
 }

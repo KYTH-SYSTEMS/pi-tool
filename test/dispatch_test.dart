@@ -14,6 +14,7 @@ import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/file_pick.dart';
 import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
+import 'package:evcc_updater/src/pi_job.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/app_launcher.dart';
@@ -335,8 +336,11 @@ class FakeEvccUpdater extends EvccUpdater {
     required SshConfig config,
     required String package,
     required void Function(String line) onLog,
-  }) async =>
-      aptUpdates.add(package);
+    void Function(JobRef ref)? onJobStarted,
+  }) async {
+    aptUpdates.add(package);
+    await _jobHooks(onJobStarted);
+  }
 
   @override
   Future<void> installAptService({
@@ -727,8 +731,10 @@ class FakeEvccUpdater extends EvccUpdater {
     required bool fullUpgrade,
     required bool dryRun,
     required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
   }) async {
     runCalls++;
+    if (!dryRun) await _jobHooks(onJobStarted);
     return summary;
   }
 
@@ -761,15 +767,65 @@ class FakeEvccUpdater extends EvccUpdater {
   Future<void> updatePihole({
     required SshConfig config,
     required void Function(String line) onLog,
-  }) async =>
-      piholeUpdateCalls++;
+    void Function(JobRef ref)? onJobStarted,
+  }) async {
+    piholeUpdateCalls++;
+    await _jobHooks(onJobStarted);
+  }
+
+  SystemUpgradeResult systemUpgradeResult = const SystemUpgradeResult();
 
   @override
-  Future<void> upgradeSystem({
+  Future<SystemUpgradeResult> upgradeSystem({
     required SshConfig config,
     required void Function(String line) onLog,
-  }) async =>
-      systemUpgradeCalls++;
+    void Function(JobRef ref)? onJobStarted,
+  }) async {
+    systemUpgradeCalls++;
+    await _jobHooks(onJobStarted);
+    return systemUpgradeResult;
+  }
+
+  // ---- Pi-Jobs --------------------------------------------------------------
+  /// When set, every job-backed action reports this job as started…
+  JobRef? startedJob;
+
+  /// …then waits here (the UI sits in the "job runs" phase)…
+  Completer<void>? jobGate;
+
+  /// …and finally throws this (e.g. a JobException for detached/busy).
+  Object? jobError;
+
+  Future<void> _jobHooks(void Function(JobRef ref)? onJobStarted) async {
+    final r = startedJob;
+    if (r != null) onJobStarted?.call(r);
+    if (jobGate != null) await jobGate!.future;
+    if (jobError != null) throw jobError!;
+  }
+
+  int followCalls = 0;
+  String? followedJobId;
+  Object? followError;
+  Completer<void>? followGate;
+  JobOutcome followOutcome = const JobOutcome(
+      kind: jobKindSystemUpgrade,
+      success: true,
+      message: 'System aktualisiert.');
+
+  @override
+  Future<JobOutcome> followJob({
+    required SshConfig config,
+    required String jobId,
+    required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
+  }) async {
+    followCalls++;
+    followedJobId = jobId;
+    onJobStarted?.call(JobRef(id: jobId, kind: followOutcome.kind));
+    if (followGate != null) await followGate!.future;
+    if (followError != null) throw followError!;
+    return followOutcome;
+  }
 
   @override
   Future<void> refreshAptIndex({
@@ -784,8 +840,11 @@ class FakeEvccUpdater extends EvccUpdater {
   Future<void> repairPackageState({
     required SshConfig config,
     required void Function(String line) onLog,
-  }) async =>
-      repairPackageCalls++;
+    void Function(JobRef ref)? onJobStarted,
+  }) async {
+    repairPackageCalls++;
+    await _jobHooks(onJobStarted);
+  }
 
   @override
   Future<bool> probeConnection({
@@ -4615,5 +4674,151 @@ void main() {
     await tester.tap(find.text('notes.txt'));
     await tester.pumpAndSettle();
     expect(find.text('Bearbeiten'), findsNothing);
+  });
+
+  group('Pi-Jobs in der Oberfläche', () {
+    const jobId = 'aaaaaaaaaaaaaaaa';
+    const ref = JobRef(id: jobId, kind: jobKindSystemUpgrade);
+    List<ServiceStatus> systemWith([PiJobStatus? job]) => [
+          ServiceStatus(
+              id: 'system',
+              name: 'System (Pi)',
+              installed: true,
+              active: true,
+              updateAvailable: true,
+              updateKnown: true,
+              detail: '3 Updates verfügbar',
+              job: job),
+        ];
+
+    Future<void> startSystemUpgrade(WidgetTester tester) async {
+      await tester.tap(find.text('Updates installieren'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Weiter'));
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets('läuft der Job, heißt der Knopf „Nicht mehr mitlesen"',
+        (tester) async {
+      useTallScreen(tester);
+      final gate = Completer<void>();
+      final u = FakeEvccUpdater()
+        ..services = systemWith()
+        ..startedJob = ref
+        ..jobGate = gate;
+      await tester.pumpWidget(page(u));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      await startSystemUpgrade(tester);
+      expect(find.text('Nicht mehr mitlesen'), findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Nicht mehr mitlesen'), findsNothing);
+      expect(find.text('System aktualisiert.'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Verbindung weg: gelber Hinweis statt „Abgebrochen", Job-Leiste, '
+        'Mitlesen liefert das echte Ergebnis', (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..services = systemWith()
+        ..startedJob = ref
+        ..jobError = const JobException(UpdateErrorKind.jobDetached, 'x',
+            ref: ref,
+            jobKind: jobKindSystemUpgrade,
+            reason: JobDetachReason.connectionLost);
+      await tester.pumpWidget(page(u));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      await startSystemUpgrade(tester);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('läuft auf dem Pi weiter'), findsOneWidget);
+      expect(find.text('Abgebrochen.'), findsNothing);
+      expect(find.text('Mitlesen'), findsOneWidget);
+
+      u.services = systemWith();
+      await tester.tap(find.text('Mitlesen'));
+      await tester.pumpAndSettle();
+      expect(u.followCalls, 1);
+      expect(u.followedJobId, jobId);
+      expect(find.text('System aktualisiert.'), findsOneWidget);
+      expect(find.text('Mitlesen'), findsNothing);
+    });
+
+    testWidgets('Pi mit laufender Automatik: Hinweis, nichts gestartet',
+        (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..services = systemWith()
+        ..jobError = const JobException(UpdateErrorKind.jobBusy, 'x',
+            jobKind: 'autoupdate');
+      await tester.pumpWidget(page(u));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      await startSystemUpgrade(tester);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('automatischen Updates'), findsOneWidget);
+      expect(find.text('Mitlesen'), findsNothing);
+    });
+
+    testWidgets('Erkennung meldet einen laufenden Job → Job-Leiste',
+        (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..services = systemWith(PiJobStatus(
+            id: jobId,
+            kind: jobKindSystemUpgrade,
+            state: PiJobState.running,
+            start: DateTime(2026, 9, 24, 14, 2)));
+      await tester.pumpWidget(page(u));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      expect(find.textContaining('Pi-Job „System-Update“ läuft'), findsOneWidget);
+      expect(find.text('Mitlesen'), findsOneWidget);
+    });
+
+    testWidgets('System-Karte zeigt den letzten Job – ohne Erfolgsbehauptung',
+        (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..services = systemWith(PiJobStatus(
+            id: jobId,
+            kind: jobKindSystemUpgrade,
+            state: PiJobState.done,
+            rc: 100,
+            start: DateTime(2026, 9, 24, 14, 2),
+            end: DateTime(2026, 9, 24, 14, 40)));
+      await tester.pumpWidget(page(u));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      expect(find.textContaining('mit Fehler beendet (Exit 100)'),
+          findsOneWidget);
+      expect(find.text('Mitlesen'), findsNothing);
+    });
+
+    testWidgets('unterbrochener Job (Neustart) → Hinweis auf die Reparatur',
+        (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..services = systemWith(PiJobStatus(
+            id: jobId,
+            kind: jobKindSystemUpgrade,
+            state: PiJobState.interrupted,
+            start: DateTime(2026, 9, 24, 14, 2)));
+      await tester.pumpWidget(page(u));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      expect(find.textContaining('unterbrochen (Neustart oder Absturz)'),
+          findsOneWidget);
+    });
   });
 }

@@ -40,6 +40,7 @@ import 'src/l10n.dart';
 import 'src/language.dart';
 import 'src/network_scan.dart';
 import 'src/parsing.dart';
+import 'src/pi_job.dart';
 import 'src/profiles.dart';
 import 'src/secure_screen.dart';
 import 'src/services/apt_services.dart';
@@ -332,6 +333,16 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _demoMode = false;
   int _tab = kTabVerwaltung; // Verwaltung · Automatik · Terminal · Dateien
   String? _busyMessage; // shown in the shared running bar while _busy
+  // The Pi-Job the running action follows, set once the Pi confirmed its
+  // start: the running bar then offers "Nicht mehr mitlesen" — stopping to
+  // follow never stops the job. Cleared in _guard's finally.
+  JobRef? _busyJob;
+  // Jobs known to run on a Pi without the app following them (an action that
+  // detached or hit a busy Pi), keyed by host:port:user. In memory only.
+  final Map<String, _JobView> _detachedJobs = {};
+  // Amber variant of the status banner: neither success nor failure — a
+  // Pi-Job keeps running on the Pi.
+  bool _statusWarn = false;
   bool _testing = false; // a "Verbindung herstellen" run is in flight
   bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
   // Active, validated session to the active Pi (set by an explicit "Verbindung
@@ -1265,6 +1276,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _busy = true;
       _log.clear();
       _statusMessage = null;
+      _statusWarn = false;
       _setupUrl = null;
       _hostKeyIssue = false;
       _connectionOk = null; // clear the Test-Button indicator while an action runs
@@ -1285,6 +1297,28 @@ class _UpdaterPageState extends State<UpdaterPage>
     }
     try {
       await body();
+    } on JobException catch (e) {
+      // A Pi-Job that runs on, or a Pi busy with one: neither success nor
+      // failure. Amber, never the red "Abgebrochen." — that would suggest dpkg
+      // stopped, and pulling the plug then is exactly what breaks a Pi.
+      _appendLog(l10n.logJobNotice(e.message));
+      if (!mounted) return;
+      final lost = e.kind == UpdateErrorKind.jobDetached &&
+          e.reason == JobDetachReason.connectionLost;
+      setState(() {
+        _statusMessage = _jobExceptionText(e);
+        _statusOk = false;
+        _statusWarn = true;
+        final ref = e.ref;
+        if (ref != null) {
+          _detachedJobs[_piKey] =
+              _JobView(ref, since: e.since ?? DateTime.now());
+        }
+        if (lost) {
+          _connected = false;
+          if (isGatedTab(_tab)) _tab = kTabVerwaltung;
+        }
+      });
     } on EvccUpdateException catch (e) {
       final cancelled = e.kind == UpdateErrorKind.cancelled;
       _appendLog(cancelled ? l10n.logCancelled : l10n.logError(e.message));
@@ -1297,6 +1331,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       setState(() {
         _statusMessage = e.message;
         _statusOk = false;
+        _statusWarn = false;
         _hostKeyIssue = e.kind == UpdateErrorKind.hostKeyChanged;
         if (connectionLost) {
           _connected = false;
@@ -1317,9 +1352,137 @@ class _UpdaterPageState extends State<UpdaterPage>
         setState(() {
           _busy = false;
           _busyMessage = null;
+          _busyJob = null;
         });
       }
     }
+  }
+
+  /// This Pi's key for [_detachedJobs]: the address and login the actions use.
+  String get _piKey {
+    final port = _port.text.trim().isEmpty ? '22' : _port.text.trim();
+    final user = _user.text.trim().isEmpty ? 'pi' : _user.text.trim();
+    return '${_host.text.trim()}:$port:$user';
+  }
+
+  /// Called by a job-backed action once the Pi confirmed the job's start.
+  void _onJobStarted(JobRef ref) {
+    if (mounted) setState(() => _busyJob = ref);
+  }
+
+  /// Localized name of a job kind.
+  String _jobLabel(String? kind) {
+    final l10n = context.l10n;
+    return switch (kind) {
+      jobKindSystemUpgrade => l10n.jobKindSystemUpgrade,
+      jobKindEvccUpdate => l10n.jobKindEvccUpdate,
+      jobKindPackageUpdate => l10n.jobKindPackageUpdate,
+      jobKindPackageRepair => l10n.jobKindPackageRepair,
+      jobKindPiholeUpdate => l10n.jobKindPiholeUpdate,
+      _ => l10n.jobKindOther,
+    };
+  }
+
+  String _clock(DateTime t) =>
+      MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(t),
+          alwaysUse24HourFormat: MediaQuery.of(context).alwaysUse24HourFormat);
+
+  String _dayAndClock(DateTime t) =>
+      '${MaterialLocalizations.of(context).formatShortMonthDay(t)} ${_clock(t)}';
+
+  /// The banner text for a [JobException] — localized; the updater's German
+  /// text only where no job is named (the reboot/shutdown guard).
+  String _jobExceptionText(JobException e) {
+    final l10n = context.l10n;
+    final label = _jobLabel(e.jobKind ?? e.ref?.kind);
+    if (e.kind == UpdateErrorKind.jobBusy) {
+      if (e.jobKind == 'autoupdate') return l10n.statusAutoUpdateBusy;
+      if (e.jobKind == null && e.ref == null) return e.message;
+      final since = e.since;
+      return since == null
+          ? l10n.statusJobBusyNoTime(label)
+          : l10n.statusJobBusy(label, _clock(since));
+    }
+    if (!e.startConfirmed) return l10n.statusJobStartUnclear(label);
+    return e.reason == JobDetachReason.userStopped
+        ? l10n.statusJobContinuesStopped(label)
+        : l10n.statusJobContinuesLost(label);
+  }
+
+  /// The System card's line about the last finished Pi-Job — straight from
+  /// job.status, stateless. "beendet" is deliberately no success claim: only
+  /// following the job evaluates its log. Null while it runs (the job bar
+  /// shows that) or when there is none.
+  String? _lastJobLine(PiJobStatus? job) {
+    if (job == null || job.state == PiJobState.running) return null;
+    final l10n = context.l10n;
+    final label = _jobLabel(job.kind);
+    final when = _dayAndClock(job.end ?? job.start);
+    return switch (job.state) {
+      PiJobState.done when job.rc == 0 => l10n.jobLastFinished(label, when),
+      PiJobState.done => l10n.jobLastFailed(label, '${job.rc}', when),
+      _ => l10n.jobLastInterrupted(label, when),
+    };
+  }
+
+  /// The latest Pi-Job as the last fresh detection saw it (never from cache).
+  PiJobStatus? get _detectedJob {
+    for (final s in _services) {
+      if (s.id == 'system') return s.job;
+    }
+    return null;
+  }
+
+  /// The job the job bar offers to follow on the active Pi: one detection
+  /// reports running, or one an action left behind — unless detection already
+  /// saw that one end.
+  _JobView? get _jobToFollow {
+    final det = _detectedJob;
+    if (det != null && det.state == PiJobState.running) {
+      return _JobView(det.ref, since: det.start);
+    }
+    final left = _detachedJobs[_piKey];
+    if (left == null) return null;
+    if (det != null && det.id == left.ref.id) return null;
+    return left;
+  }
+
+  /// Follows a Pi-Job that runs (or ran) without the app: streams its whole
+  /// log and reports the real outcome — same evaluation as a live run.
+  Future<void> _followJob() async {
+    if (_busy) return;
+    final view = _jobToFollow;
+    if (view == null) return;
+    final l10n = context.l10n;
+    final key = _piKey;
+    final config = _prepare();
+    if (config == null) return;
+    _lastAction = _followJob;
+    await _guard(() async {
+      final JobOutcome outcome;
+      try {
+        outcome = await _updater.followJob(
+          config: config,
+          jobId: view.ref.id,
+          onLog: _appendLog,
+          onJobStarted: _onJobStarted,
+        );
+      } on JobException {
+        rethrow; // still running on the Pi: _guard keeps the job bar
+      } on EvccUpdateException {
+        // Lost or no longer on the Pi: nothing left to follow.
+        if (mounted) setState(() => _detachedJobs.remove(key));
+        rethrow;
+      }
+      if (!mounted) return;
+      setState(() {
+        _detachedJobs.remove(key);
+        _statusMessage = outcome.message;
+        _statusOk = outcome.success;
+      });
+      _addHistory(outcome.message);
+      await _refreshServices(config);
+    }, backgroundMessage: l10n.busyFollowingJob);
   }
 
   Future<void> _run({required bool dryRun}) async {
@@ -1411,6 +1574,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             fullUpgrade: _fullUpgrade,
             dryRun: dryRun,
             onLog: _appendLog,
+            onJobStarted: _onJobStarted,
           );
           if (!mounted) return;
           setState(() {
@@ -2451,22 +2615,69 @@ class _UpdaterPageState extends State<UpdaterPage>
                   child: const Text('Log'),
                 ),
                 const SizedBox(width: 2),
-                OutlinedButton.icon(
-                  onPressed: _cancel,
-                  icon: const Icon(Icons.close, size: 18),
-                  label: Text(context.l10n.cancel),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: cs.error,
-                    side: BorderSide(color: cs.error.withValues(alpha: 0.55)),
-                    visualDensity: VisualDensity.compact,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                // Once a Pi-Job runs, this only stops following: neutral, not
+                // error-red, and named for what it does.
+                if (_busyJob != null)
+                  OutlinedButton.icon(
+                    onPressed: _cancel,
+                    icon: const Icon(Icons.visibility_off_outlined, size: 18),
+                    label: Text(context.l10n.stopFollowing),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                    ),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: _cancel,
+                    icon: const Icon(Icons.close, size: 18),
+                    label: Text(context.l10n.cancel),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: cs.error,
+                      side:
+                          BorderSide(color: cs.error.withValues(alpha: 0.55)),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                    ),
                   ),
-                ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// A Pi-Job runs on the active Pi without the app following it: what, since
+  /// when, and one tap to follow it (its whole log and the real outcome).
+  Widget _jobBar(ThemeData theme, _JobView job) {
+    final cs = theme.colorScheme;
+    return Material(
+      color: cs.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+        child: Row(
+          children: [
+            Icon(Icons.sync, size: 18, color: cs.onTertiaryContainer),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                context.l10n
+                    .jobBarRunning(_jobLabel(job.ref.kind), _clock(job.since)),
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: cs.onTertiaryContainer),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+            TextButton(
+              onPressed: _busy ? null : _followJob,
+              child: Text(context.l10n.jobBarFollow),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3113,7 +3324,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = _updatePihole;
     await _guard(() async {
-      await _updater.updatePihole(config: config, onLog: _appendLog);
+      await _updater.updatePihole(
+          config: config, onLog: _appendLog, onJobStarted: _onJobStarted);
       if (!mounted) return;
       setState(() {
         _statusMessage = context.l10n.statusPiholeUpdated;
@@ -3249,7 +3461,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = _repairPackageState;
     await _guard(() async {
-      await _updater.repairPackageState(config: config, onLog: _appendLog);
+      await _updater.repairPackageState(
+          config: config, onLog: _appendLog, onJobStarted: _onJobStarted);
       if (!mounted) return;
       setState(() {
         _statusMessage = context.l10n.statusPackagesRepaired;
@@ -3272,10 +3485,13 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = _upgradeSystem;
     await _guard(() async {
-      await _updater.upgradeSystem(config: config, onLog: _appendLog);
+      final result = await _updater.upgradeSystem(
+          config: config, onLog: _appendLog, onJobStarted: _onJobStarted);
       if (!mounted) return;
       setState(() {
-        _statusMessage = context.l10n.statusSystemUpdated;
+        _statusMessage = result.listsIncomplete
+            ? context.l10n.statusSystemUpdatedListsIncomplete
+            : context.l10n.statusSystemUpdated;
         _statusOk = true;
       });
       _addHistory(context.l10n.historySystemUpgraded);
@@ -3382,7 +3598,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Cancels the in-flight action by closing its SSH connection; the running
   /// action then finishes as "Abgebrochen".
   Future<void> _cancel() async {
-    _appendLog(context.l10n.logCancelRequested);
+    _appendLog(_busyJob != null
+        ? context.l10n.logStopFollowRequested
+        : context.l10n.logCancelRequested);
     await _updater.cancel();
   }
 
@@ -4701,11 +4919,14 @@ class _UpdaterPageState extends State<UpdaterPage>
             ],
           ));
         case 'system':
+          final lastJob = _lastJobLine(s.job);
           cards.add(_ServiceCard(
             isPro: _unlocked,
             status: s,
             icon: Icons.memory,
             enabled: !_busy,
+            liveLines: [?lastJob],
+            liveMaxLines: 3,
             primaryLabel: context.l10n.actionInstallUpdates,
             onPrimary: _upgradeSystem,
             actions: [
@@ -5625,7 +5846,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastAction = () => _updateAptService(s);
     await _guard(() async {
       await _updater.updateAptPackage(
-          config: config, package: s.aptPackage ?? s.id, onLog: _appendLog);
+          config: config,
+          package: s.aptPackage ?? s.id,
+          onLog: _appendLog,
+          onJobStarted: _onJobStarted);
       if (!mounted) return;
       setState(() {
         _statusMessage = context.l10n.statusServiceUpdated(s.name);
@@ -5847,11 +6071,16 @@ class _UpdaterPageState extends State<UpdaterPage>
             // it shows for real SSH work, not while a confirm dialog is open.
             if (_demoMode) _demoBar(theme),
             if (_busyMessage != null) _runningBar(theme),
+            if (!_busy && _jobToFollow != null)
+              _jobBar(theme, _jobToFollow!),
             if (!_busy && _hostKeyIssue) _hostKeyBar(theme),
             if (_statusMessage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: _StatusBanner(message: _statusMessage!, ok: _statusOk),
+                child: _StatusBanner(
+                    message: _statusMessage!,
+                    ok: _statusOk,
+                    warn: _statusWarn && !_statusOk),
               ),
             Expanded(
               child: IndexedStack(
@@ -6103,6 +6332,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             // another tab — file ops don't run through _guard, so it would
             // otherwise stick on the Dateien/Terminal tabs.
             _statusMessage = null;
+            _statusWarn = false;
           });
         },
         destinations: [

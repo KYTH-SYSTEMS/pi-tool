@@ -982,7 +982,11 @@
   "remoteAccessPhoneMissing": "The Pi is ready, but this phone cannot reach it over the tailnet yet. Open Tailscale, sign in with the same account and switch the connection on — then check again here.",
   "statusRemoteAccessReady": "Remote access is live: {ip}",
   "@statusRemoteAccessReady": {
-    "placeholders": { "ip": { "type": "String" } }
+    "placeholders": {
+      "ip": {
+        "type": "String"
+      }
+    }
   },
   "busySettingUpRemoteAccess": "Setting up remote access …",
   "actionRefreshPackageLists": "Refresh package lists",
@@ -1332,5 +1336,115 @@
   "actionDone": "Done",
   "snackPasswordCopied": "Password copied.",
   "fixDescPiholePassword": "Sets a random password for the Pi-hole web interface and shows it to you once. Without a password Pi-hole v6 asks for no login – anyone on your home network could change DNS settings and blocklists.",
-  "statusPiholePasswordKept": "Pi-hole already had a password by now – nothing changed."
+  "statusPiholePasswordKept": "Pi-hole already had a password by now – nothing changed.",
+  "stopFollowing": "Stop following",
+  "logStopFollowRequested": "Stopping to follow – the job keeps running on the Pi.",
+  "logJobNotice": "NOTE: {detail}",
+  "@logJobNotice": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "statusJobContinuesStopped": "Stopped following – the Pi job “{label}” keeps running on the Pi. Tap “Follow” in the job bar to see the result.",
+  "@statusJobContinuesStopped": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "statusJobContinuesLost": "Connection lost – the Pi job “{label}” keeps running on the Pi. Reconnect and tap “Follow” to see the result.",
+  "@statusJobContinuesLost": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "statusJobStartUnclear": "Connection lost – it is unclear whether the Pi job “{label}” started. After reconnecting, the job bar shows whether it runs.",
+  "@statusJobStartUnclear": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "statusJobBusy": "The Pi job “{label}” is still running on the Pi (since {time}) – please wait until it has finished. Nothing was started.",
+  "@statusJobBusy": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "statusJobBusyNoTime": "The Pi job “{label}” is still running on the Pi – please wait until it has finished. Nothing was started.",
+  "@statusJobBusyNoTime": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "statusAutoUpdateBusy": "The automatic updates are running on the Pi right now – please try again in a few minutes. Nothing was started.",
+  "statusSystemUpdatedListsIncomplete": "System updated – but not all package lists could be loaded (details in the log).",
+  "jobBarRunning": "Pi job “{label}” running (since {time})",
+  "@jobBarRunning": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "jobBarFollow": "Follow",
+  "busyFollowingJob": "Following the Pi job …",
+  "jobLastFinished": "Last Pi job: {label} – finished · {when}",
+  "@jobLastFinished": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "jobLastFailed": "Last Pi job: {label} – ended with an error (exit {rc}) · {when}",
+  "@jobLastFailed": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "rc": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "jobLastInterrupted": "Last Pi job: {label} – interrupted (restart or crash) · {when}. Run “Repair package state”.",
+  "@jobLastInterrupted": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "jobKindSystemUpgrade": "System update",
+  "jobKindEvccUpdate": "evcc update",
+  "jobKindPackageUpdate": "Package update",
+  "jobKindPackageRepair": "Package repair",
+  "jobKindPiholeUpdate": "Pi-hole update",
+  "jobKindOther": "Pi job"
 }

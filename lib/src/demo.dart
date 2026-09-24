@@ -13,6 +13,7 @@ import 'commands.dart'
     show detectShellCommand, dockerListCommand, serviceStatus, versionQuery;
 import 'evcc_api.dart';
 import 'evcc_updater.dart';
+import 'pi_job.dart';
 import 'ssh_runner.dart';
 
 /// A fake [SshRunner] backing demo mode: [connect]/[close] are no-ops, and
@@ -35,7 +36,7 @@ class DemoSshRunner implements SshRunner {
     String? stdin,
     void Function(String chunk)? onOutput,
   }) async {
-    final out = demoResponseFor(command);
+    final out = demoResponseFor(command, stdin: stdin);
     // Stream whole lines, mirroring the real runner's line-buffered callback so
     // the terminal/log shows output as it "arrives".
     if (onOutput != null && out.isNotEmpty) {
@@ -58,9 +59,20 @@ EvccApiClient buildDemoApiClient() =>
     EvccApiClient(getJson: (_) async => demoEvccState);
 
 /// Pure `command` → canned-stdout mapping. Unit-tested against the real parsers,
-/// so the canned output must satisfy their format expectations.
-String demoResponseFor(String command) {
+/// so the canned output must satisfy their format expectations. [stdin] is
+/// only read for Pi-Jobs (which kind of job the launcher carries).
+String demoResponseFor(String command, {String? stdin}) {
   final c = command;
+
+  // 0. Pi-Jobs (updates, repair): a short log that ends like a real job —
+  //    RC 0 with the kind's markers. Without this the demo would report every
+  //    update as "Verbindung abgerissen – läuft auf dem Pi weiter".
+  final jobId = jobIdFromCommand(c);
+  if (jobId != null) {
+    final kind = (stdin == null ? null : jobKindFromStdin(stdin)) ??
+        jobKindSystemUpgrade;
+    return _demoJob(jobId, kind, stdin == null ? null : decodeJobPayload(stdin));
+  }
 
   // 1. The batched detection probe — one response powers the whole Verwaltung
   //    tab + the System card. (Probes arrive on stdin, which we ignore.)
@@ -99,6 +111,61 @@ String demoResponseFor(String command) {
 // ---------------------------------------------------------------------------
 
 const String _m = '@@PT@@'; // must match _detectMarker in commands.dart
+
+/// The package an update job's payload names (for the demo log), or null.
+String? _demoPackage(String? payload) => payload == null
+    ? null
+    : RegExp(r"PITOOL_PACKAGE=%s\\n' '([a-z0-9][a-z0-9+.-]*)'")
+        .firstMatch(payload)
+        ?.group(1);
+
+/// A believable, short job run on a current demo Pi.
+String _demoJob(String id, String kind, String? payload) {
+  final b = StringBuffer('PITOOL_JOB_STARTED $id $kind\n');
+  void apt(String what) => b
+    ..writeln('Pi-Tool: Schließe unterbrochene Paketinstallationen ab …')
+    ..writeln('Pi-Tool: Lade die Paketlisten …')
+    ..writeln('PITOOL_APT_UPDATE_RC=0')
+    ..writeln(what)
+    ..writeln(jobUpgradeMarker)
+    ..writeln('Reading package lists...')
+    ..writeln('Building dependency tree...');
+  switch (kind) {
+    case jobKindEvccUpdate:
+      apt('Pi-Tool: Aktualisiere evcc …');
+      b
+        ..writeln('evcc is already the newest version (0.207.0).')
+        ..writeln('0 upgraded, 0 newly installed, 0 to remove and 0 not '
+            'upgraded.')
+        ..writeln('PITOOL_EVCC_ACTIVE=active')
+        ..writeln('PITOOL_EVCC_VERSION=installed 0.207.0');
+    case jobKindPackageUpdate:
+      final pkg = _demoPackage(payload) ?? 'grafana';
+      b.writeln('PITOOL_PACKAGE=$pkg');
+      apt('Pi-Tool: Aktualisiere $pkg …');
+      b
+        ..writeln('$pkg is already the newest version.')
+        ..writeln('0 upgraded, 0 newly installed, 0 to remove and 0 not '
+            'upgraded.');
+    case jobKindPackageRepair:
+      b
+        ..writeln('Pi-Tool: Repariere den Paketzustand …')
+        ..writeln('Reading package lists...')
+        ..writeln('0 upgraded, 0 newly installed, 0 to remove and 0 not '
+            'upgraded.');
+    case jobKindPiholeUpdate:
+      b
+        ..writeln('Pi-Tool: Aktualisiere Pi-hole (pihole -up) …')
+        ..writeln('  [i] Checking for updates...')
+        ..writeln('  [i] Everything is up to date!');
+    default:
+      apt('Pi-Tool: Installiere alle Updates (apt-get full-upgrade) …');
+      b.writeln('0 upgraded, 0 newly installed, 0 to remove and 0 not '
+          'upgraded.');
+  }
+  b.write('\nPITOOL_JOB_RC $id 0\n');
+  return b.toString();
+}
 
 /// Marker-delimited detection document consumed by `splitDetectSections`.
 const String _detectDoc = '$_m'
@@ -139,7 +206,10 @@ const String _detectDoc = '$_m'
     'FTL version is v6.0 (Latest: v6.0)\n'
     '${_m}PIHOLE_S$_m\n'
     '  [✓] FTL is listening on port 53\n'
-    '     [✓] Blocking is enabled\n';
+    '     [✓] Blocking is enabled\n'
+    // No job.status on the demo Pi: just the boot id.
+    '${_m}JOB$_m\n'
+    'BOOT 6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b\n';
 
 /// Canned `ls -1Ap` listing (dirs end with `/`), parsed by `parseDirListing`.
 /// Canned output of [buildSecurityProbe] for the demo Pi: hardened SSH, but

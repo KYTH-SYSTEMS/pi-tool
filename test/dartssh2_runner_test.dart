@@ -129,6 +129,46 @@ void main() {
     });
   });
 
+  // dartssh2 closes stdout on CHANNEL_EOF; the exit status can arrive after
+  // it. run() therefore waits for it (resolveExitCode) instead of reading a
+  // premature null — null means "unknown" to every caller, never success.
+  group('resolveExitCode (exit status after EOF)', () {
+    test('an exit status that arrives after the output is returned', () async {
+      final code = await resolveExitCode(
+        () => Future<int?>.delayed(const Duration(milliseconds: 50), () => 0),
+        () => null, // what session.exitCode says right at EOF
+      );
+      expect(code, 0);
+    });
+
+    test('a non-zero late status is returned as is', () async {
+      final code = await resolveExitCode(
+          () => Future<int?>.delayed(const Duration(milliseconds: 10), () => 100),
+          () => null);
+      expect(code, 100);
+    });
+
+    test('no status within the wait (timeout → null): falls back', () async {
+      expect(await resolveExitCode(() async => null, () => 7), 7);
+      expect(await resolveExitCode(() async => null, () => null), isNull);
+    });
+
+    test('a failing wait counts as no answer', () async {
+      expect(
+          await resolveExitCode(
+              () => Future<int?>.error(StateError('closed')), () => null),
+          isNull);
+      expect(
+          await resolveExitCode(
+              () => Future<int?>.error(StateError('closed')), () => 3),
+          3);
+    });
+
+    test('the wait is bounded', () {
+      expect(Dartssh2Runner.exitStatusWait, const Duration(seconds: 3));
+    });
+  });
+
   group('Dartssh2Runner.run / connect guards', () {
     test('run() before connect() throws StateError', () {
       final runner = Dartssh2Runner(_config, hostKeyStore: FakeHostKeyStore());

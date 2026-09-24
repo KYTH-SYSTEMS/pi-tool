@@ -14,6 +14,7 @@ import 'files.dart';
 import 'dartssh2_runner.dart';
 import 'host_key.dart';
 import 'parsing.dart';
+import 'pi_job.dart';
 import 'scheduled_backup.dart';
 import 'security_check.dart';
 import 'ssh_keys.dart';
@@ -40,6 +41,15 @@ enum UpdateErrorKind {
   hostKeyChanged,
   cancelled,
   unknown,
+
+  /// A Pi-Job keeps running on the Pi while the app no longer follows it
+  /// (the user stopped following, or the connection went away). Not a
+  /// failure — see [JobException].
+  jobDetached,
+
+  /// Another Pi-Job (or the on-Pi auto-update) holds the Pi; nothing was
+  /// started. See [JobException].
+  jobBusy,
 }
 
 /// A failure during the update, carrying a user-facing German [message].
@@ -51,6 +61,59 @@ class EvccUpdateException implements Exception {
 
   @override
   String toString() => 'EvccUpdateException($kind): $message';
+}
+
+/// Why the app stopped following a job that runs on.
+enum JobDetachReason { userStopped, connectionLost }
+
+/// A Pi-Job outcome that is not a plain failure: the job runs on without the
+/// app ([UpdateErrorKind.jobDetached]) or another job holds the Pi
+/// ([UpdateErrorKind.jobBusy]). Callers must never read either as success —
+/// nor as "stopped".
+class JobException extends EvccUpdateException {
+  const JobException(
+    super.kind,
+    super.message, {
+    this.ref,
+    this.jobKind,
+    this.reason,
+    this.startConfirmed = true,
+    this.since,
+  });
+
+  /// The job concerned: the detached one, or the one that holds the Pi. Null
+  /// when unknown (the on-Pi auto-update, a guard refusal).
+  final JobRef? ref;
+
+  /// Kind of that job — also when there is no [ref] (e.g. `autoupdate`).
+  final String? jobKind;
+
+  /// jobDetached only.
+  final JobDetachReason? reason;
+
+  /// jobDetached: false when the connection ended before the job confirmed
+  /// its start — then it is unclear whether it runs.
+  final bool startConfirmed;
+
+  /// jobBusy: since when the other job runs, if known.
+  final DateTime? since;
+}
+
+/// Result of [EvccUpdater.upgradeSystem].
+class SystemUpgradeResult {
+  const SystemUpgradeResult({this.listsIncomplete = false});
+
+  /// `apt-get update` failed for at least one source: the upgrade ran with
+  /// partly outdated package lists.
+  final bool listsIncomplete;
+}
+
+/// A job that ended with an exit code, with its complete log.
+class JobRunResult {
+  const JobRunResult({required this.ref, required this.rc, required this.log});
+  final JobRef ref;
+  final int rc;
+  final String log;
 }
 
 /// Result of a successful evcc installation.
@@ -93,14 +156,29 @@ class EvccUpdater {
   /// instance is wired into the real runner so reads/writes stay consistent.
   final HostKeyStore? hostKeyStore;
 
-  EvccUpdater(
-      {required this.runnerFactory,
-      this.hostKeyStore,
-      String Function()? webPasswordGenerator})
-      : _webPassword = webPasswordGenerator ?? generateWebPassword;
+  EvccUpdater({
+    required this.runnerFactory,
+    this.hostKeyStore,
+    String Function()? webPasswordGenerator,
+    String Function()? jobIdGenerator,
+    this.jobWatchdog = const Duration(seconds: 60),
+  })  : _webPassword = webPasswordGenerator ?? generateWebPassword,
+        _jobId = jobIdGenerator ?? generateJobId;
 
   /// Makes the Pi-hole web password (injectable so tests see a known one).
   final String Function() _webPassword;
+
+  /// Makes Pi-Job ids (injectable so tests know the job commands).
+  final String Function() _jobId;
+
+  /// A job run that produces no output at all — not even the follower's
+  /// heartbeat (every ~15 s) — for this long is treated as a lost connection:
+  /// covers a silently dropped WLAN and an `execute` that never returns.
+  final Duration jobWatchdog;
+
+  /// Connections on which a Pi-Job command was issued. Keyed per runner (not
+  /// a flag on the instance) so a concurrent action cannot reset it.
+  final Expando<bool> _jobTouched = Expando<bool>('pi-job');
 
   /// The connection of the action currently in flight, so [cancel] can close
   /// it. Set in [_withConnection]; null between actions. Actions are serialized
@@ -145,20 +223,30 @@ class EvccUpdater {
   ///
   /// Streams every command and its output to [onLog] (with the password
   /// redacted). Throws [EvccUpdateException] on any failure.
+  /// The real run (not [dryRun]) is a Pi-Job: it keeps running on the Pi when
+  /// the connection drops; [onJobStarted] fires once the Pi confirmed the
+  /// start. A dry run stays a plain read-only probe.
   Future<UpdateSummary> run({
     required SshConfig config,
     required bool fullUpgrade,
     required bool dryRun,
     required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
   }) {
+    if (!dryRun) {
+      return _runEvccJob(
+          config: config,
+          fullUpgrade: fullUpgrade,
+          onLog: onLog,
+          onJobStarted: onJobStarted);
+    }
     return _withConnection<UpdateSummary>(
       config: config,
       onLog: onLog,
       body: (runner, log) async {
         log('Verbunden. Starte ${dryRun ? 'Probelauf' : 'Update'} …');
 
-        // A dry run changes nothing — rewriting sources.list included.
-        if (!dryRun) await _fixEolSources(runner, log, config);
+        // A dry run changes nothing — no job, no lock, no sources rewrite.
         final steps = buildUpdateSteps(fullUpgrade: fullUpgrade, dryRun: dryRun);
         String? before;
         String? after;
@@ -236,6 +324,62 @@ class EvccUpdater {
     );
   }
 
+  /// The real evcc apt update: version before (read-only, foreground), then
+  /// the package change as a Pi-Job (`evcc-update`). The summary comes from
+  /// the job's own markers — service state and version after — so a success
+  /// needs the RC line AND an active evcc.
+  Future<UpdateSummary> _runEvccJob({
+    required SshConfig config,
+    required bool fullUpgrade,
+    required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
+  }) =>
+      _withConnection<UpdateSummary>(
+        config: config,
+        onLog: onLog,
+        body: (runner, log) async {
+          log('Verbunden. Starte Update …');
+          log('\$ $versionQuery');
+          final v = await runner.run(versionQuery);
+          final before = parseInstalledVersion(v.stdout);
+          if (before == null) {
+            throw const EvccUpdateException(
+              UpdateErrorKind.packageMissing,
+              'evcc ist auf dem Pi nicht installiert (apt-Paket fehlt).',
+            );
+          }
+          final r = await _runJob(runner, log, config,
+              kind: jobKindEvccUpdate,
+              payload: buildEvccUpdatePayload(fullUpgrade: fullUpgrade),
+              onJobStarted: onJobStarted);
+          final o = evaluateJob(jobKindEvccUpdate, r.rc, r.log);
+          if (r.rc != 0) {
+            throw EvccUpdateException(UpdateErrorKind.unknown, o.message);
+          }
+          if (o.evccActive != true) {
+            throw const EvccUpdateException(
+              UpdateErrorKind.serviceInactive,
+              'evcc-Dienst ist nach dem Update nicht aktiv '
+              '(systemctl is-active ≠ active).',
+            );
+          }
+          if (o.listsIncomplete) log(_listsIncompleteNote);
+          final summary = summarize(
+            before: before,
+            after: o.evccVersion,
+            dryRun: false,
+            fullUpgrade: fullUpgrade,
+            alreadyNewest: o.alreadyNewest,
+          );
+          log(summary.message);
+          return summary;
+        },
+      );
+
+  static const String _listsIncompleteNote =
+      'Hinweis: Nicht alle Paketlisten ließen sich laden – das Update lief '
+      'mit teils veralteten Listen. Details oben im Log.';
+
   /// Installs evcc on a freshly-configured Pi: adds the official apt repo,
   /// installs the package and enables the service — all as root via one
   /// `sudo -S bash -s` call (password fed as the first stdin line, never on the
@@ -273,7 +417,11 @@ class EvccUpdater {
             'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
           );
         }
-        if (result.exitCode != null && result.exitCode != 0) {
+        if (result.exitCode == null) {
+          throw const EvccUpdateException(
+              UpdateErrorKind.unknown, _resultUnknown);
+        }
+        if (result.exitCode != 0) {
           final cause = _aptFailureCause(combined);
           throw EvccUpdateException(
             UpdateErrorKind.unknown,
@@ -415,6 +563,8 @@ class EvccUpdater {
           ('MEM', systemMemCommand),
           ('UPTIME', systemUptimeCommand),
           ('STORAGE', systemStorageCommand),
+          // The latest Pi-Job (world-readable job.status + boot id), no sudo.
+          ('JOB', jobStatusProbe),
         ];
         final batch = await runner.run(detectShellCommand,
             stdin: '${buildDetectBatch(probes)}\n');
@@ -623,6 +773,8 @@ class EvccUpdater {
                   : aptIndexStaleDetail(aptAge),
           health: health.summary,
           healthWarning: health.warning,
+          // Transient: ServiceStatus.toJson leaves it out of the cache.
+          job: parseJobStatus(sec['JOB'] ?? ''),
         ));
 
         log('Erkannt: ${out.where((s) => s.installed).map((s) => s.name).join(', ')}.');
@@ -663,7 +815,11 @@ class EvccUpdater {
       // one-tap remedy the System card offers.
       throw const EvccUpdateException(UpdateErrorKind.unknown, _dpkgInterrupted);
     }
-    if (checkExit && r.exitCode != null && r.exitCode != 0) {
+    // No exit status: the channel ended mid-command. Never a success.
+    if (checkExit && r.exitCode == null) {
+      throw const EvccUpdateException(UpdateErrorKind.unknown, _resultUnknown);
+    }
+    if (checkExit && r.exitCode != 0) {
       final cause = _aptFailureCause(combined);
       throw EvccUpdateException(
         UpdateErrorKind.unknown,
@@ -674,29 +830,18 @@ class EvccUpdater {
     }
   }
 
-  static const String _dpkgInterrupted =
-      'Auf dem Pi steckt ein abgebrochener dpkg-Lauf fest — solange der nicht '
-      'aufgeräumt ist, schlägt JEDE Installation fehl, nicht nur diese. '
-      'System-Karte → ⋮ → „Paketzustand reparieren" führt '
-      '`dpkg --configure -a` aus; danach klappt das Update.';
+  static const String _dpkgInterrupted = dpkgInterruptedMessage;
+
+  /// A foreground command whose channel ended without an exit status: it may
+  /// have stopped anywhere. Never reported as success.
+  static const String _resultUnknown =
+      'Verbindung während der Aktion abgerissen – Ergebnis unbekannt. '
+      'Details im Log.';
 
   /// The cause of a failed apt/dpkg run in words the user can act on, or null
   /// when the output shows none of the known ones (then: "Details im Log").
-  static String? _aptFailureCause(String output) {
-    if (isDpkgInterrupted(output)) return _dpkgInterrupted;
-    final dead = parseDeadAptSource(output);
-    if (dead != null) {
-      return 'die Paketquelle „$dead" gibt es auf dem Server nicht mehr. '
-          'Solange sie eingetragen ist, scheitert jede Installation auf diesem '
-          'Pi — bitte in /etc/apt/sources.list bzw. /etc/apt/sources.list.d/ '
-          'entfernen oder korrigieren.';
-    }
-    if (isAptLocked(output)) {
-      return 'auf dem Pi läuft gerade eine andere Paketinstallation (z. B. die '
-          'automatischen Updates). In ein paar Minuten erneut versuchen.';
-    }
-    return null;
-  }
+  /// Shared with the Pi-Job evaluation (pi_job.dart).
+  static String? _aptFailureCause(String output) => aptFailureCause(output);
 
   /// Points dead package sources of end-of-life releases (Raspbian/Debian
   /// jessie, stretch, buster) at the official archive before an action that
@@ -720,19 +865,23 @@ class EvccUpdater {
     }
   }
 
-  /// Updates Pi-hole (core/web/FTL) via `pihole -up`.
+  /// Updates Pi-hole (core/web/FTL) via `pihole -up` — as a Pi-Job
+  /// (`pihole-update`), so a dropped connection does not stop it.
   Future<void> updatePihole({
     required SshConfig config,
     required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
   }) =>
       _withConnection<void>(
         config: config,
         onLog: onLog,
         body: (runner, log) async {
           log('Aktualisiere Pi-hole …');
-          await _sudoCommand(runner, log, config, piholeUpdateCommand,
-              'Pi-hole-Update fehlgeschlagen');
-          log('Pi-hole ist aktuell.');
+          final r = await _runJob(runner, log, config,
+              kind: jobKindPiholeUpdate,
+              payload: buildPiholeUpdatePayload(),
+              onJobStarted: onJobStarted);
+          _requireJobSuccess(log, r);
         },
       );
 
@@ -1293,7 +1442,11 @@ class EvccUpdater {
             throw const EvccUpdateException(UpdateErrorKind.sudo,
                 'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
           }
-          if (r.exitCode != null && r.exitCode != 0) {
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          if (r.exitCode != 0) {
             throw EvccUpdateException(
                 UpdateErrorKind.unknown,
                 'tailscale ${logout ? 'logout' : 'down'} fehlgeschlagen '
@@ -1500,7 +1653,11 @@ class EvccUpdater {
             throw const EvccUpdateException(
                 UpdateErrorKind.sudo, 'sudo-Passwort abgelehnt.');
           }
-          if (r.exitCode != null && r.exitCode != 0) {
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          if (r.exitCode != 0) {
             // Redact: raw remote output can echo the password on a NOPASSWD Pi,
             // and this message becomes the (otherwise un-redacted) status banner.
             throw EvccUpdateException(
@@ -1916,21 +2073,26 @@ class EvccUpdater {
     );
   }
 
-  /// Completes a dpkg run that was killed mid-way (`dpkg --configure -a`).
+  /// Completes a dpkg run that was killed mid-way: `dpkg --configure -a`,
+  /// `apt-get -f install` (unpacked packages whose new dependencies never
+  /// arrived), `dpkg --configure -a` again — as a Pi-Job (`package-repair`).
   /// Until this has run, apt refuses EVERY install on that Pi — see
-  /// [isDpkgInterrupted]. Installs and upgrades nothing by itself.
+  /// [isDpkgInterrupted]. Upgrades nothing by itself.
   Future<void> repairPackageState({
     required SshConfig config,
     required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
   }) =>
       _withConnection<void>(
         config: config,
         onLog: onLog,
         body: (runner, log) async {
-          log('Repariere Paketzustand (dpkg --configure -a) …');
-          await _sudoCommand(runner, log, config,
-              'LC_ALL=C sudo -S dpkg --configure -a', 'Reparatur fehlgeschlagen');
-          log('Paketzustand repariert.');
+          log('Repariere den Paketzustand …');
+          final r = await _runJob(runner, log, config,
+              kind: jobKindPackageRepair,
+              payload: buildPackageRepairPayload(),
+              onJobStarted: onJobStarted);
+          _requireJobSuccess(log, r);
         },
       );
 
@@ -1957,55 +2119,59 @@ class EvccUpdater {
         },
       );
 
-  /// Whole-system upgrade: refresh lists (tolerant) then `apt-get full-upgrade`.
-  Future<void> upgradeSystem({
+  /// Whole-system upgrade as a Pi-Job (`system-upgrade`): EOL-source fix,
+  /// repair chain, list refresh (tolerant, but reported as
+  /// [SystemUpgradeResult.listsIncomplete]), `apt-get full-upgrade` — all
+  /// non-interactive, on the Pi, independent of this connection.
+  Future<SystemUpgradeResult> upgradeSystem({
     required SshConfig config,
     required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
   }) =>
-      _withConnection<void>(
+      _withConnection<SystemUpgradeResult>(
         config: config,
         onLog: onLog,
         body: (runner, log) async {
           log('System-Upgrade (alle Pakete) …');
-          await _fixEolSources(runner, log, config);
-          // apt-get update may exit non-zero on a flaky third-party repo —
-          // tolerate it (checkExit:false) so a fine upgrade isn't blocked.
-          await _sudoCommand(runner, log, config,
-              'LC_ALL=C sudo -S apt-get update -qq', 'apt-get update',
-              checkExit: false);
-          await _sudoCommand(runner, log, config,
-              'LC_ALL=C sudo -S apt-get $aptNoPty full-upgrade -y',
-              'System-Upgrade fehlgeschlagen');
-          log('System aktualisiert.');
+          final r = await _runJob(runner, log, config,
+              kind: jobKindSystemUpgrade,
+              payload: buildSystemUpgradePayload(),
+              onJobStarted: onJobStarted);
+          final o = _requireJobSuccess(log, r);
+          return SystemUpgradeResult(listsIncomplete: o.listsIncomplete);
         },
       );
 
-  /// Updates a single apt [package] (Grafana, InfluxDB, …): tolerant list
-  /// refresh, then `--only-upgrade` so a not-installed package is never pulled
-  /// in. [package] comes from our own [knownAptServices] descriptors.
+  /// Updates a single apt [package] (Grafana, InfluxDB, Tailscale, …) as a
+  /// Pi-Job (`package-update`): tolerant list refresh, then `--only-upgrade`
+  /// so a not-installed package is never pulled in. [package] comes from our
+  /// own descriptors and is validated as a package name anyway.
   Future<void> updateAptPackage({
     required SshConfig config,
     required String package,
     required void Function(String line) onLog,
-  }) =>
-      _withConnection<void>(
-        config: config,
-        onLog: onLog,
-        body: (runner, log) async {
-          log('Aktualisiere $package …');
-          await _fixEolSources(runner, log, config);
-          await _sudoCommand(runner, log, config,
-              'LC_ALL=C sudo -S apt-get update -qq', 'apt-get update',
-              checkExit: false);
-          await _sudoCommand(
-              runner,
-              log,
-              config,
-              'LC_ALL=C sudo -S apt-get $aptNoPty install --only-upgrade -y ${shSingleQuote(package)}',
-              '$package-Update fehlgeschlagen');
-          log('$package ist aktuell.');
-        },
-      );
+    void Function(JobRef ref)? onJobStarted,
+  }) {
+    final String payload;
+    try {
+      payload = buildPackageUpdatePayload(package);
+    } on ArgumentError {
+      return Future.error(EvccUpdateException(UpdateErrorKind.unknown,
+          'Ungültiger Paketname „$package" – nichts gestartet.'));
+    }
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        log('Aktualisiere $package …');
+        final r = await _runJob(runner, log, config,
+            kind: jobKindPackageUpdate,
+            payload: payload,
+            onJobStarted: onJobStarted);
+        _requireJobSuccess(log, r);
+      },
+    );
+  }
 
   /// Installs an on-demand apt service (Grafana, InfluxDB, Mosquitto, …) by
   /// running its [AptService.installScript] as root: it sets up the official
@@ -2161,7 +2327,10 @@ class EvccUpdater {
         'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
       );
     }
-    if (result.exitCode != null && result.exitCode != 0) {
+    if (result.exitCode == null) {
+      throw const EvccUpdateException(UpdateErrorKind.unknown, _resultUnknown);
+    }
+    if (result.exitCode != 0) {
       throw EvccUpdateException(
         UpdateErrorKind.unknown,
         '$failMsg (Exit ${result.exitCode}). Details im Log.',
@@ -2373,10 +2542,14 @@ class EvccUpdater {
             'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
           );
         }
+        if (result.exitCode == null) {
+          throw const EvccUpdateException(
+              UpdateErrorKind.unknown, _resultUnknown);
+        }
         // A non-zero restart command (e.g. an undetected sudo rejection) must
         // not be swallowed — otherwise the old instance keeps running and
         // is-active still reports 'active', a false "Dienst läuft wieder".
-        if (result.exitCode != null && result.exitCode != 0) {
+        if (result.exitCode != 0) {
           throw EvccUpdateException(
             UpdateErrorKind.unknown,
             'Neustart fehlgeschlagen (Exit ${result.exitCode}). Details im Log.',
@@ -2467,6 +2640,7 @@ class EvccUpdater {
             'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
           );
         }
+        _checkPowerGuard(combined, 'Neustart');
         // A real reboot either drops the connection (caught above) or returns
         // exit 0. A non-zero exit WITHOUT a disconnect (e.g. sudoers forbids
         // `reboot`) means the Pi did not reboot — surface it, don't fake success.
@@ -2891,6 +3065,7 @@ class EvccUpdater {
             'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?',
           );
         }
+        _checkPowerGuard(combined, 'Herunterfahren');
         // A real poweroff either drops the connection (caught above) or returns
         // exit 0. A non-zero exit WITHOUT a disconnect (e.g. sudoers forbids
         // `poweroff`) means the Pi did not shut down — surface it.
@@ -2903,6 +3078,286 @@ class EvccUpdater {
         log('Der Pi fährt herunter – er bleibt aus, bis du ihn wieder einschaltest.');
       },
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // Pi-Jobs (see pi_job.dart)
+  // -------------------------------------------------------------------------
+
+  /// Re-follows a job started earlier (by this app or another phone): streams
+  /// its full log from the start and evaluates it exactly like the live run.
+  /// A job that ended with an error is an outcome ([JobOutcome.success]
+  /// false), not an exception. Throws when the Pi no longer knows the job,
+  /// when it was lost (reboot), or [JobException] when following stops again.
+  Future<JobOutcome> followJob({
+    required SshConfig config,
+    required String jobId,
+    required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
+  }) {
+    if (!isValidJobId(jobId)) {
+      return Future.error(ArgumentError.value(jobId, 'jobId'));
+    }
+    return _withConnection<JobOutcome>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        if (_cancelRequested) {
+          throw const EvccUpdateException(
+              UpdateErrorKind.cancelled, 'Abgebrochen.');
+        }
+        log('Lese den Pi-Job mit (ID $jobId) …');
+        _jobTouched[runner] = true;
+        final run = await _driveJob(runner, log,
+            command: jobFollowCommand(jobId),
+            stdin: buildJobFollowStdin(password: config.password, id: jobId),
+            id: jobId,
+            onJobStarted: onJobStarted);
+        if (run is JobRunRc) {
+          final o = evaluateJob(run.kind ?? 'unknown', run.rc, run.log);
+          log(o.message);
+          return o;
+        }
+        final kind = switch (run) {
+          JobRunLost(:final kind) => kind,
+          JobRunDetached(:final kind) => kind,
+          _ => null,
+        };
+        throw _jobRunError(run, JobRef(id: jobId, kind: kind ?? 'unknown'));
+      },
+    );
+  }
+
+  /// Starts a Pi-Job and follows it to its end. Returns the exit code and the
+  /// complete log (evaluate it with [evaluateJob]); every other ending is
+  /// thrown — see [_jobRunError]. The password goes only into stdin, in front
+  /// of the sentinel; the payload never contains it.
+  Future<JobRunResult> _runJob(
+    SshRunner runner,
+    void Function(String) log,
+    SshConfig config, {
+    required String kind,
+    required String payload,
+    void Function(JobRef ref)? onJobStarted,
+  }) async {
+    // Never start a job after the user asked to stop.
+    if (_cancelRequested) {
+      throw const EvccUpdateException(
+          UpdateErrorKind.cancelled, 'Abgebrochen.');
+    }
+    final id = _jobId();
+    if (!isValidJobId(id)) {
+      throw const EvccUpdateException(UpdateErrorKind.unknown,
+          'Interner Fehler: ungültige Job-ID – nichts gestartet.');
+    }
+    final ref = JobRef(id: id, kind: kind);
+    final stdin = buildJobStartStdin(
+        password: config.password, id: id, kind: kind, payload: payload);
+    log('Starte ${jobKindLabel(kind)} als Hintergrund-Job auf dem Pi '
+        '(ID $id) …');
+    _jobTouched[runner] = true;
+    final run = await _driveJob(runner, log,
+        command: jobStartCommand(id),
+        stdin: stdin,
+        id: id,
+        onJobStarted: onJobStarted);
+    if (run is JobRunRc) return JobRunResult(ref: ref, rc: run.rc, log: run.log);
+    throw _jobRunError(run, ref);
+  }
+
+  /// Runs a launcher/follower command, streams the job's log live (control
+  /// lines filtered out), reports STARTED via [onJobStarted], and classifies
+  /// the run. Never throws for transport trouble: a timeout, a dead channel,
+  /// a closed client or a watchdog stall all end as "no terminal line" —
+  /// the job itself is on the Pi and unaffected.
+  Future<JobRun> _driveJob(
+    SshRunner runner,
+    void Function(String) log, {
+    required String command,
+    required String stdin,
+    required String id,
+    void Function(JobRef ref)? onJobStarted,
+  }) async {
+    final merged = StringBuffer();
+    var started = false;
+    final clock = Stopwatch()..start();
+    var lastOutput = Duration.zero;
+
+    void onChunk(String chunk) {
+      lastOutput = clock.elapsed; // heartbeats count: the channel is alive
+      merged.write(chunk);
+      for (final raw in chunk.split('\n')) {
+        final line = raw.trimRight();
+        if (line.trim().isEmpty) continue;
+        if (isJobControlLine(line, id)) {
+          if (!started && line.startsWith('PITOOL_JOB_STARTED $id')) {
+            started = true;
+            final k = line.split(' ').length > 2 ? line.split(' ')[2] : '';
+            log('Läuft jetzt als Hintergrund-Job auf dem Pi – ein '
+                'Verbindungsabbruch stoppt ihn nicht.');
+            onJobStarted
+                ?.call(JobRef(id: id, kind: isValidJobKind(k) ? k : 'unknown'));
+          }
+          continue;
+        }
+        log(line);
+      }
+    }
+
+    // Future.sync: a runner that throws synchronously ends up here too.
+    final runF = Future<CommandResult>.sync(
+        () => runner.run(command, stdin: stdin, onOutput: onChunk));
+    // Whatever happens to runF after we stopped waiting must not surface as
+    // an unhandled error.
+    unawaited(runF.then<void>((_) {}, onError: (Object _) {}));
+    final stalled = Completer<CommandResult?>();
+    final tick = Duration(
+        milliseconds: (jobWatchdog.inMilliseconds ~/ 4).clamp(50, 5000));
+    final timer = Timer.periodic(tick, (_) {
+      if (clock.elapsed - lastOutput >= jobWatchdog && !stalled.isCompleted) {
+        stalled.complete(null);
+      }
+    });
+
+    CommandResult? result;
+    try {
+      result = await Future.any<CommandResult?>([runF, stalled.future]);
+      if (result == null) {
+        log('Keine Antwort vom Pi seit ${jobWatchdog.inSeconds} s – '
+            'Verbindung gilt als abgerissen.');
+        try {
+          await runner.close().timeout(const Duration(seconds: 5));
+        } catch (_) {
+          // Best effort; _withConnection closes again.
+        }
+      }
+    } catch (e) {
+      // TimeoutException, SSHError, StateError, SocketException, …: the
+      // channel is gone. What arrived so far decides.
+      log('Verbindung zum Pi-Job unterbrochen ($e).');
+      result = null;
+    } finally {
+      timer.cancel();
+    }
+
+    if (result != null) {
+      return classifyJobRun(
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          id: id);
+    }
+    return classifyJobRun(
+        stdout: stripJobHeartbeats(merged.toString(), id),
+        stderr: '',
+        exitCode: null,
+        id: id);
+  }
+
+  /// The user-facing error for every job ending except an exit code.
+  EvccUpdateException _jobRunError(JobRun run, JobRef ref) {
+    final label = jobKindLabel(ref.kind);
+    switch (run) {
+      case JobRunRc():
+        return const EvccUpdateException(
+            UpdateErrorKind.unknown, 'Interner Fehler (Job-Ergebnis).');
+      case JobRunLost():
+        return EvccUpdateException(
+            UpdateErrorKind.unknown,
+            'Der Pi-Job ($label) wurde auf dem Pi unterbrochen (Neustart oder '
+            'Absturz) – der Paketzustand kann unvollständig sein. '
+            'System-Karte → ⋮ → „Paketzustand reparieren".');
+      case JobRunBusy(:final otherId, :final kind, :final since):
+        if (kind == 'autoupdate') {
+          return const JobException(
+              UpdateErrorKind.jobBusy,
+              'Auf dem Pi laufen gerade die automatischen Updates – bitte in '
+              'ein paar Minuten erneut versuchen. Es wurde nichts gestartet.',
+              jobKind: 'autoupdate');
+        }
+        final at = since == null ? '' : ', seit ${_hhmm(since)}';
+        return JobException(
+          UpdateErrorKind.jobBusy,
+          'Auf dem Pi läuft noch ein Pi-Job (${jobKindLabel(kind ?? '')}$at) '
+          '– bitte warten, bis er fertig ist. Es wurde nichts gestartet.',
+          ref: otherId == null
+              ? null
+              : JobRef(id: otherId, kind: kind ?? 'unknown'),
+          jobKind: kind,
+          since: since,
+        );
+      case JobRunNoStart():
+        return const EvccUpdateException(
+            UpdateErrorKind.unknown,
+            'Hintergrund-Job konnte nicht gestartet werden – es wurde nichts '
+            'verändert.');
+      case JobRunUnknown():
+        return const EvccUpdateException(
+            UpdateErrorKind.unknown,
+            'Job nicht mehr auf dem Pi vorhanden – sein Ergebnis lässt sich '
+            'nicht mehr abrufen.');
+      case JobRunSudoFailure():
+        return const EvccUpdateException(UpdateErrorKind.sudo,
+            'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+      case JobRunBadHeader():
+        return const EvccUpdateException(UpdateErrorKind.unknown,
+            'Pi-Tool-Startkopf fehlt – der Job wurde nicht gestartet.');
+      case JobRunDetached(:final started):
+        final reason = _cancelRequested
+            ? JobDetachReason.userStopped
+            : JobDetachReason.connectionLost;
+        final head = reason == JobDetachReason.userStopped
+            ? 'Mitlesen beendet'
+            : 'Verbindung abgerissen';
+        return JobException(
+          UpdateErrorKind.jobDetached,
+          started
+              ? '$head – der Pi-Job ($label) läuft auf dem Pi weiter. Das '
+                  'Ergebnis zeigt die Job-Anzeige'
+                  '${reason == JobDetachReason.userStopped ? '.' : ' beim nächsten Verbinden.'}'
+              : '$head – ob der Job gestartet ist, zeigt die Job-Anzeige beim '
+                  'nächsten Verbinden.',
+          ref: ref,
+          jobKind: ref.kind,
+          reason: reason,
+          startConfirmed: started,
+        );
+    }
+  }
+
+  static String _hhmm(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  /// Evaluates a finished job; throws its message unless it succeeded.
+  JobOutcome _requireJobSuccess(void Function(String) log, JobRunResult r) {
+    final o = evaluateJob(r.ref.kind, r.rc, r.log);
+    if (!o.success) {
+      throw EvccUpdateException(
+          r.rc == 0 && o.evccActive == false
+              ? UpdateErrorKind.serviceInactive
+              : UpdateErrorKind.unknown,
+          o.message);
+    }
+    log(o.message);
+    return o;
+  }
+
+  /// Maps the on-Pi reboot/poweroff guard's refusals ([jobPowerGuard]).
+  static void _checkPowerGuard(String output, String action) {
+    if (output.contains(jobRefusedRunningMarker)) {
+      throw JobException(
+          UpdateErrorKind.jobBusy,
+          '$action abgelehnt: Auf dem Pi läuft noch ein Pi-Job (z. B. ein '
+          'Update) – das würde ihn mitten in der Paketinstallation abbrechen. '
+          'Bitte warten, bis er fertig ist.');
+    }
+    if (output.contains(jobRefusedBootMarker)) {
+      throw EvccUpdateException(
+          UpdateErrorKind.unknown,
+          '$action abgelehnt: Ein Kernel-/Firmware-Update ist nur halb '
+          'installiert – so startet der Pi womöglich nicht mehr. Erst '
+          'System-Karte → ⋮ → „Paketzustand reparieren" ausführen.');
+    }
   }
 
   /// Opens the connection, runs [body], and maps any SSH/IO failure to an
@@ -2918,6 +3373,11 @@ class EvccUpdater {
     final cached = _sudoNeedsPw;
     if (cached != null) return cached;
     final r = await runner.run(sudoNoPasswordProbe);
+    // No exit status = no answer. Guessing "needs a password" would hand a
+    // NOPASSWD Pi the password as the first line of a root `bash -s`.
+    if (r.exitCode == null) {
+      throw const EvccUpdateException(UpdateErrorKind.unknown, _resultUnknown);
+    }
     return _sudoNeedsPw = r.exitCode != 0;
   }
 
@@ -2964,13 +3424,20 @@ class EvccUpdater {
       // Closing the connection mid-command doesn't always make run() throw —
       // dartssh2 ends the channel stream normally, so a single-command action
       // would otherwise return a partial result and look "successful". Treat a
-      // requested cancel as cancelled regardless of how the body finished.
-      if (_cancelRequested) {
+      // requested cancel as cancelled regardless of how the body finished —
+      // except after a Pi-Job: its result came with positive proof (RC line),
+      // and a cancel there only ever stopped the following.
+      if (_cancelRequested && _jobTouched[runner] != true) {
         throw const EvccUpdateException(
             UpdateErrorKind.cancelled, 'Abgebrochen.');
       }
       return result;
     } catch (e) {
+      // A job that runs on (or a busy Pi) is never "Abgebrochen." — that
+      // would claim the update stopped while dpkg keeps working. Same for any
+      // verdict reached after a job command went out.
+      if (e is JobException) rethrow;
+      if (_jobTouched[runner] == true && e is EvccUpdateException) rethrow;
       // A user-requested cancel closed the connection mid-action; whatever low
       // -level error that surfaced (socket/SSH) is reported as a clean cancel.
       if (_cancelRequested) {

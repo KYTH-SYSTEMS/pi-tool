@@ -484,13 +484,36 @@ const String serviceStatus = 'systemctl is-active evcc';
 const String serviceRestartCommand =
     'LC_ALL=C sudo -S systemctl restart evcc';
 
-/// Reboots the Pi (needs sudo). The SSH connection drops as a result.
-const String rebootCommand = 'LC_ALL=C sudo -S reboot';
+/// Printed (exit 75) by [jobPowerGuard] while a Pi-Tool job holds its lock.
+const String jobRefusedRunningMarker = 'PITOOL_REFUSED_JOB_RUNNING';
 
-/// Powers the Pi off (needs sudo). The SSH connection drops as a result, and —
-/// unlike [rebootCommand] — the Pi stays off until it is physically powered on
-/// again.
-const String shutdownCommand = 'LC_ALL=C sudo -S poweroff';
+/// Printed (exit 75) by [jobPowerGuard] while a Raspberry Pi kernel/firmware
+/// upgrade is half-configured: on Buster its preinst moves kernel*.img,
+/// start*.elf and the DTBs out of /boot (dpkg diversion `rpikernelhack`) and
+/// only the postinst brings them back — a reboot in between does not boot.
+const String jobRefusedBootMarker = 'PITOOL_REFUSED_BOOT_INCOMPLETE';
+
+/// Refuses a reboot/poweroff from the app while a job runs (flock probe on
+/// /var/lib/pi-tool/jobs/lock — `-E 75` separates "held" from any open
+/// error) or while the kernel diversion is in place. A missing lock file
+/// means no job ever ran here: allowed. Runs under `sh -c '…'`, so it holds
+/// no single quote.
+const String jobPowerGuard = 'l=/var/lib/pi-tool/jobs/lock; '
+    r'if [ -e "$l" ]; then flock -n -E 75 "$l" true; '
+    r'if [ $? -eq 75 ]; then echo ' '$jobRefusedRunningMarker; exit 75; fi; fi; '
+    'if dpkg-divert --list 2>/dev/null | grep -q rpikernelhack; then '
+    'echo $jobRefusedBootMarker; exit 75; fi';
+
+/// Reboots the Pi (needs sudo) — unless [jobPowerGuard] refuses. The SSH
+/// connection drops as a result.
+const String rebootCommand =
+    "LC_ALL=C sudo -S sh -c '$jobPowerGuard; exec reboot'";
+
+/// Powers the Pi off (needs sudo) — unless [jobPowerGuard] refuses. The SSH
+/// connection drops as a result, and — unlike [rebootCommand] — the Pi stays
+/// off until it is physically powered on again.
+const String shutdownCommand =
+    "LC_ALL=C sudo -S sh -c '$jobPowerGuard; exec poweroff'";
 
 /// Builds the ordered update sequence.
 ///

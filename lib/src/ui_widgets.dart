@@ -2245,17 +2245,36 @@ class _DisclaimerScreen extends StatelessWidget {
   }
 }
 
+/// A Pi-Job the job bar offers to follow.
+class _JobView {
+  const _JobView(this.ref, {required this.since});
+  final JobRef ref;
+  final DateTime since;
+}
+
 class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({required this.message, required this.ok});
+  const _StatusBanner(
+      {required this.message, required this.ok, this.warn = false});
 
   final String message;
   final bool ok;
 
+  /// Amber: neither success nor failure (a Pi-Job keeps running on the Pi).
+  final bool warn;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final bg = ok ? scheme.primaryContainer : scheme.errorContainer;
-    final fg = ok ? scheme.onPrimaryContainer : scheme.onErrorContainer;
+    final bg = ok
+        ? scheme.primaryContainer
+        : warn
+            ? scheme.tertiaryContainer
+            : scheme.errorContainer;
+    final fg = ok
+        ? scheme.onPrimaryContainer
+        : warn
+            ? scheme.onTertiaryContainer
+            : scheme.onErrorContainer;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -2266,7 +2285,11 @@ class _StatusBanner extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            ok ? Icons.check_circle_outline : Icons.error_outline,
+            ok
+                ? Icons.check_circle_outline
+                : warn
+                    ? Icons.sync
+                    : Icons.error_outline,
             color: fg,
           ),
           const SizedBox(width: 8),
