@@ -18,6 +18,26 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.70.0': [
+    'Updates keep running on the Pi when the connection drops: the system '
+        'update, the evcc update, package updates, "Repair package state" and '
+        'the Pi-hole update now run as a job on the Pi itself. Wi-Fi loss, a '
+        'closed app or a crash no longer stop them halfway.',
+    'Reason: an interrupted update can leave a Raspberry Pi unable to boot – '
+        'on Raspbian Buster the kernel package moves the kernel out of /boot '
+        'until it is fully installed. The app could also end a long update '
+        'itself after ten minutes without output.',
+    'While a job runs, the button reads "Stop following" instead of "Cancel" '
+        '– the job carries on. If the connection is lost, the app shows this in '
+        'amber instead of red, and a job bar with "Follow" shows the full log '
+        'and the real result later. The System card shows the last job.',
+    'The app only reports success with proof from the Pi. A connection that '
+        'drops mid-action no longer counts as success, for any action.',
+    'Updates now answer configuration-file questions themselves (keep the '
+        'local version) and first finish an interrupted package installation.',
+    'Restart and shutdown are refused while a job runs or a kernel update is '
+        'only half installed.',
+  ],
   '0.69.0': [
     'Security: a Pi-hole installed by the app had no web password. Pi-hole v6 '
         'then asks for no login, so anyone on the home network could change its '
@@ -312,6 +332,30 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.70.0': [
+    'Updates laufen auf dem Pi weiter, wenn die Verbindung abreißt: '
+        'System-Update, evcc-Update, Paket-Updates, „Paketzustand reparieren" '
+        'und das Pi-hole-Update laufen jetzt als Job auf dem Pi selbst. '
+        'WLAN-Verlust, eine geschlossene App oder ein Absturz halten sie nicht '
+        'mehr mittendrin an.',
+    'Hintergrund: Ein abgebrochenes Update kann einen Raspberry Pi unbootbar '
+        'machen – unter Raspbian Buster verschiebt das Kernel-Paket den Kernel '
+        'aus /boot, bis es fertig installiert ist. Zudem konnte die App ein '
+        'langes Update nach zehn Minuten ohne Ausgabe selbst beenden.',
+    'Solange ein Job läuft, heißt der Knopf „Nicht mehr mitlesen" statt '
+        '„Abbrechen" – der Job läuft weiter. Reißt die Verbindung ab, meldet '
+        'die App das gelb statt rot, und eine Job-Leiste mit „Mitlesen" zeigt '
+        'später das vollständige Log und das echte Ergebnis. Die System-Karte '
+        'zeigt den letzten Job.',
+    'Erfolg meldet die App nur noch mit Beleg vom Pi. Eine Verbindung, die '
+        'mitten in einer Aktion abreißt, gilt bei keiner Aktion mehr als '
+        'Erfolg.',
+    'Updates beantworten Rückfragen zu Konfigurationsdateien jetzt selbst '
+        '(die eigene Version bleibt) und schließen vorher eine unterbrochene '
+        'Paketinstallation ab.',
+    'Neustart und Herunterfahren werden abgelehnt, solange ein Job läuft oder '
+        'ein Kernel-Update nur halb installiert ist.',
+  ],
   '0.69.0': [
     'Sicherheit: Ein über die App installiertes Pi-hole hatte kein '
         'Web-Passwort. Pi-hole v6 verlangt dann keine Anmeldung – jeder im '

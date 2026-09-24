@@ -1,7 +1,7 @@
 # Pi-Tool — Architektur
 
 > Referenz-Doku der App. **Bei architektur-relevanten Änderungen mitpflegen**
-> (siehe `CLAUDE.md`). Stand: v0.32.x.
+> (siehe `CLAUDE.md`). Stand: v0.70.x.
 
 Pi-Tool ist eine Flutter-**Android**-App, die einen Raspberry Pi (oder jedes
 Debian/Linux-Gerät) **per SSH** verwaltet: Dienste erkennen, installieren,
@@ -56,6 +56,11 @@ sind durchgängig **fail-soft** (dürfen die App nie stürzen lassen).
   - `run()` drainiert die Streams via `asFuture()` (feuert nach *allen*
     Kanaldaten) — so geht kein letzter Chunk (z.B. eine kurze Versionsausgabe)
     verloren.
+  - **Exit-Code** (v0.70.0): dartssh2 schließt stdout schon bei CHANNEL_EOF;
+    `exit-status` kann danach kommen. `run()` wartet deshalb nach dem Drain
+    bis zu 3 s per `session.waitForExit`. `exitCode == null` heißt danach
+    verlässlich: Verbindung weg oder Prozess per Signal beendet — und das ist
+    in den Vordergrund-Seams **nie** Erfolg (§2).
 - **`host_key.dart`**: reine TOFU-Verdict-Logik (`verifyHostKey`,
   `hostKeyId('hostkey:$host:$port')`) + `HostKeyStore`-Seam. Nichts wird hier
   gehasht — dartssh2 liefert den fertigen `SHA256:…`-Fingerprint. Storage-Key
@@ -87,7 +92,58 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   `sudoNoPasswordProbe` (`sudo -n true`), Ergebnis für die Verbindung gecacht,
   und die stdin baut `buildRootStdin`. **Fail-safe:** Probe nicht erfolgreich ⇒
   Passwort wird mitgeschickt. Betrifft die Skript-Pfade (`bash -s`); bei
-  einfachen Befehlen verwirft der Befehl die Zeile ohnehin.
+  einfachen Befehlen verwirft der Befehl die Zeile ohnehin. **Pi-Jobs** brauchen
+  die Probe nicht: ihr Bootstrap verwirft alles vor einer Sentinel-Zeile (s. u.).
+- **Pi-Jobs** (v0.70.0, `pi_job.dart`, Protokoll in §5): paketverändernde
+  **Updates** laufen nicht mehr im Vordergrund des SSH-Kanals, sondern als
+  Hintergrund-Job auf dem Pi — System-Update, evcc-apt-Update (echter Lauf,
+  nicht der Probelauf), Einzelpaket-Update, Paketreparatur, `pihole -up`.
+  Anlass: ein Buster-Pi-3 bootete nach einem In-App-Systemupdate nicht mehr —
+  der eigene 10-min-Inaktivitäts-Timeout hatte den Kanal während des stillen
+  Kernel-Entpackens geschlossen, dpkg starb zwischen preinst (verschiebt
+  Kernel/DTBs aus `/boot`) und postinst. Seam: `_runJob` → `_driveJob` →
+  `classifyJobRun` → `evaluateJob`. Invarianten:
+  - **Erfolg nur mit Beweis:** Zeile `PITOOL_JOB_RC <eigene id> <n>` plus die
+    Marker der Job-Art (`evaluateJob`, dieselbe Auswertung beim späteren
+    Mitlesen). Exit 0 ohne RC, fremde id, leere/kaputte rc → nie Erfolg.
+  - **Abriss ≠ Abbruch:** nach `PITOOL_JOB_STARTED` wird jede Transportstörung
+    (Timeout, SSH-Fehler, Watchdog: 60 s ohne Ausgabe inkl. Heartbeat, auch
+    ein hängendes `execute`) zu `JobException(jobDetached)`; `_withConnection`
+    reicht `JobException` und alles nach einem Job-Befehl (`_jobTouched`, pro
+    Runner) **vor** dem Cancel-/Timeout-/SSH-Mapping durch. Nie „Abgebrochen."
+    für einen Job, der weiterläuft.
+  - **Bootstrap mit Sentinel** (`jobBootstrap`): `sudo -S bash -c '<liest bis
+    #PITOOL-BEGIN>' pitool pitool-job-start '<id>'`. Eine Passwortzeile, die
+    sudo nicht wollte, landet in einer Variablen und wird verworfen — nie
+    ausgeführt. Die id steht in argv (kein Geheimnis; der Demo-Runner braucht
+    sie), das Passwort nur auf stdin, nie in Payload/Log/Dateien.
+  - **Abgeschnitten = nichts:** Launcher, Follower und Payload sind Funktionen,
+    die erst die letzte Zeile aufruft — ein abgerissener Transfer ist ein
+    Syntaxfehler. Payload base64 + Bytelänge im Launcher.
+  - **Nicht-interaktiv:** Wrapper exportiert `DEBIAN_FRONTEND=noninteractive`,
+    `UCF_FORCE_CONFFOLD=1`, `APT_LISTCHANGES_FRONTEND=none`,
+    `NEEDRESTART_MODE=l`; apt mit `--force-confdef --force-confold`,
+    `Use-Pty=0`, `Lock::Timeout`; vorher die Reparaturkette
+    (`dpkg --configure -a`, `apt-get -f install`, `--configure -a`) und ein
+    eigenes Warten auf die apt-Locks (Buster-apt ignoriert Lock::Timeout).
+    `apt-get update` bleibt tolerant, wird aber gemeldet
+    (`PITOOL_APT_UPDATE_RC` → `listsIncomplete`).
+  - **Payloads enthalten keine Geheimnisse** (Tier 1 erfüllt das; Tests prüfen
+    es). Installs, Uninstall, Docker/HA, Restores bleiben bewusst im
+    Vordergrund — für sie gilt die Null-Exit-Regel unten.
+- **Null-Exit = kein Erfolg** (v0.70.0): `_sudoCommand` (mit `checkExit`),
+  `_runRootScript`, `install()` und die übrigen verändernden Einzelbefehle
+  werten `exitCode == null` als „Verbindung während der Aktion abgerissen –
+  Ergebnis unbekannt". Ausnahmen: Reboot/Shutdown (Abriss = erwartet) und
+  lesende Probes. Die sudo-Probe wirft bei `null`, statt „Passwort nötig" zu
+  raten.
+- **Reboot/Shutdown-Sperre** (`jobPowerGuard`, v0.70.0): `rebootCommand`/
+  `shutdownCommand` sind `sudo -S sh -c '<guard>; exec reboot|poweroff'`. Der
+  Guard lehnt ab (Exit 75, Marker `PITOOL_REFUSED_JOB_RUNNING` bzw.
+  `PITOOL_REFUSED_BOOT_INCOMPLETE`), solange der Job-Lock gehalten wird oder
+  `rpikernelhack`-Diversionen existieren (Buster/Bullseye-Kernel halb
+  konfiguriert → `/boot` leer). Fehlt die Lock-Datei (nie ein Job), ist der
+  Neustart erlaubt.
 - **Abgebrochener dpkg-Lauf** (`isDpkgInterrupted`): danach verweigert apt
   **jede** Installation auf diesem Pi. Der Fehler nennt Ursache und Ausweg statt
   nur „Exit 100"; `repairPackageState` (System-Karte ⋮ → „Paketzustand
@@ -127,6 +183,8 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   muss vor dem (evtl. destruktiven) body stoppen — und (2) nach dem body, weil
   ein Schließen mitten im Befehl `run()` **nicht** immer werfen lässt (dartssh2
   beendet den Stream normal → ein Teil­ergebnis sähe erfolgreich aus).
+  **Nach einem Job-Start heißt Cancel nur „nicht mehr mitlesen"**: der Job
+  läuft weiter, Ergebnis `jobDetached` (Grund `userStopped`), nie `cancelled`.
 - **Fehler-Mapping** nur im `catch` von `_withConnection`: HostKeyDeclined →
   connection, HostKeyChanged → hostKeyChanged (mit Fingerprint), Auth/KeyDecode →
   auth, Socket/Timeout → connection, sonst unknown. Runner wird immer im
@@ -621,6 +679,45 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   für Automatik"-Invariante (v0.20.0-Lektion). Der Kern bleibt getestete Reserve
   für künftige *Vordergrund*-Nutzung.
 
+### Pi-Jobs — On-Pi-Protokoll (`pi_job.dart`, v0.70.0)
+
+Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
+(`pi-tool-job-<id>`; ohne systemd `setsid -f`). Dateien:
+
+| Pfad | Inhalt |
+|---|---|
+| `/var/lib/pi-tool/jobs/` (0700 root) | Basis; `lock` = globaler Ausschluss-Lock |
+| `…/jobs/<id>/` (0700) | `kind`, `payload.sh` → per Umbenennen beansprucht als `payload.run`, `run.sh` (konstanter Wrapper), `log` (0600), `started`, `alive` (Lebenszeichen-Lock), `rc` |
+| `/var/lib/pi-tool/job.status` (0644) | eine Zeile `<id> <kind> <running\|done\|lost> <rc\|-> <start> <end\|-> <boot_id>`, ohne Log-Inhalt — die Erkennung liest sie ohne sudo |
+
+- **Launcher** (`pitool-job-start <id>`): BUSY-Prüfung **vor** jedem Schreiben
+  (laufender Auto-Update-Timer oder gehaltener Lock → `PITOOL_JOB_BUSY`), räumt
+  auf die neuesten 10 Job-Verzeichnisse auf (nie ein lebendes), schreibt den
+  Job, startet `systemd-run --unit=pi-tool-job-<id> -p KillMode=mixed
+  -p TimeoutStopSec=30min -p IgnoreSIGPIPE=no -p RuntimeMaxSec=<6h|2h>`. Meldet
+  systemd-run einen Fehler, obwohl PID 1 die Unit angelegt hat
+  (`LoadState=loaded`), wird **nicht** zusätzlich per setsid gestartet. Wartet
+  zählerbasiert (keine Uhr-Differenzen — Pi ohne RTC) auf `started`; kommt
+  nichts, nimmt er die Payload per `mv` zurück: gelingt das, lief nichts
+  (`PITOOL_JOB_NOSTART`), sonst hat der Wrapper sie schon und er wartet weiter.
+  Dann `PITOOL_JOB_STARTED <id> <kind>` und direkt der Follower.
+- **Wrapper** (`run.sh`, konstant): beansprucht die Payload, loggt nach `log`,
+  nimmt den globalen Lock (`flock -w 5` — kurze Proben von Launcher/Guard sehen
+  nicht wie ein laufender Job aus) und den Job-eigenen `alive`-Lock, setzt die
+  feste Umgebung, schreibt `started` + job.status, fängt SIGTERM ab (lässt die
+  Payload zu Ende laufen) und startet die Payload mit `umask 022` und **ohne**
+  die Lock-fds (`8>&- 9>&-`): ein zurückgelassener Prozess hält keinen Lock.
+  rc per tmp+rename (Fallback tmpfs), job.status atomar, Exit immer 0.
+- **Follower** (`pitool-job-follow <id>`, auch direkt nach dem Start): streamt
+  `log` ab Offset 0, Heartbeat `PITOOL_JOB_HB` alle ~15 s auf **stderr**,
+  RC/LOST als letzte Zeile auf **stdout** (nie vor den letzten Log-Bytes).
+  `alive`-Lock frei und kein rc → `PITOOL_JOB_LOST` und job.status `lost` (nur
+  wenn die Zeile noch diesen Job meint). Stirbt der Kanal, stirbt nur der
+  Follower (SIGPIPE) — nie der Job.
+- **Erkennung:** Sektion `JOB` (`jobStatusProbe`, ohne sudo) → `PiJobStatus`
+  am System-Eintrag (`ServiceStatus.job`, **transient**, nicht im Cache);
+  `running` mit anderer boot_id = `interrupted` (Neustart mitten im Job).
+
 > **Heredoc-Regel für On-Pi-Skripte:** Dart-`$var` interpoliert *vor* der Shell;
 > Dart-`\$` wird literales `$` für die Shell. Alles, was zur Shell-Laufzeit
 > expandieren soll, muss in einem **quoted** Heredoc stehen, sonst expandiert die
@@ -736,6 +833,22 @@ In-Memory, nie persistiert (Kaltstart = getrennt; Resume löst kein SSH aus).
 Bewusster Gate-Bypass: der „Log"-Sprung der Running-Bar öffnet den Terminal-Tab
 auch ohne Sitzung (laufende Aktion → Log muss sichtbar sein).
 
+**Pi-Jobs in der Oberfläche** (v0.70.0): Job-Aktionen reichen `onJobStarted`
+durch → `_busyJob`; ab dann zeigt die Running-Bar **„Nicht mehr mitlesen"**
+(neutral) statt des roten „Abbrechen" — Stoppen des Mitlesens stoppt nie den
+Job. `_guard` fängt `JobException` **vor** `EvccUpdateException`: gelbes
+Banner (`_statusWarn`, `_statusOk` bleibt `false`), lokalisierter Text je Grund
+(`_jobExceptionText`), Eintrag in `_detachedJobs` (Schlüssel
+`host:port:user`, nur im Speicher); `_connected=false` nur bei
+`connectionLost`. Die **Job-Leiste** (`_jobBar`) zeigt `_jobToFollow`: ein laut
+Erkennung laufender Job oder ein zurückgelassener — außer die Erkennung sah
+genau diesen schon enden. „Mitlesen" = `_followJob` (Handler-Muster,
+`followJob` → dieselbe Auswertung wie live → Status, History,
+`_refreshServices`). Die System-Karte zeigt zustandslos den letzten Job aus
+`job.status` (`_lastJobLine`: „beendet" ist bewusst keine Erfolgsbehauptung;
+unterbrochen → Hinweis auf „Paketzustand reparieren"). Kein automatisches
+Mitlesen beim Verbinden.
+
 **Gate-Reihenfolge in `build()`** (load-bearing): `_booting` (neutraler
 Splash-Ersatz) → `_locked` (Lock-Screen) → `!_disclaimerAccepted`
 (Ablehnen = App beenden) → einmaliges „Was ist neu?" (post-frame) → Shell
@@ -849,6 +962,18 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Tab→Aktion→Fake asserted; `useTallScreen` weil das ListView off-screen nicht
   baut). Pins u.a.: Passwort nur als erste stdin-Zeile, nie im Befehl; evcc-Update
   sichert erst; Free-Nutzer erreichen den Pi nie.
+- **Pi-Jobs:** `pi_job_test.dart` (Builder, `classifyJobRun`-Tabelle inkl.
+  „Exit 0 ohne RC", fremde id, kaputte rc; `parseJobStatus`; `evaluateJob`),
+  `pi_job_bash_test.dart` (**echtes bash, nur Linux/CI** — Git Bash hat weder
+  flock noch setsid): Start→Mitlesen→RC, Launcher getötet → Job läuft zu Ende,
+  BUSY, zurückgelassener Hintergrundprozess hält keinen Lock, LOST, abgeschnittener
+  Launcher führt nichts aus, Passwortzeile wird nie ausgeführt, Rechte, umask der
+  Payload, Neustart-Sperre. `FakeSshRunner`-Tests für jede Job-Aktion (Abriss/
+  Cancel/Watchdog nach STARTED → `jobDetached`, nie „Abgebrochen."). E2E auf
+  einem echten Pi: `dart run tool/pi_job_dump.dart <dir>` schreibt Launcher,
+  Follower, Guard und eine harmlose Payload (echo/sleep) samt Befehlen.
+- **l10n:** `l10n_keys_test.dart` erzwingt denselben Schlüsselsatz in
+  `app_de.arb` und `app_en.arb`.
 - **CI** (`.github/workflows/build.yml`): ein Job — analyze → test → (auf Tag:
   Store-Texte gegen die Play-Limits prüfen) → signieren → **fat APK**
   (arm64+armeabi-v7a) + AAB → **Signing-Material löschen, bevor** Dritt-Actions

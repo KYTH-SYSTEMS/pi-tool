@@ -10,12 +10,13 @@ Dienste:
 * Tailscale – VPN/Mesh installieren, aktualisieren, per Login-Link verbinden; auf Wunsch das Heimnetz freigeben (Subnet Router). Fernzugriff per Tap: Tailnet-IP als Host, zurück zur Heim-IP
 * Docker-Container – ansehen, neustarten und aktualisieren (mit Rollback)
 * „Dienst hinzufügen" – alle noch nicht installierten Dienste an einer Stelle; Deinstallieren im Kartenmenü, Daten wahlweise behalten
-* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige mit Speicher-Warnung und SD-Check
+* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige mit Speicher- und SD-Check
 
 Funktionen:
-* Cockpit mit vier Tabs; der aktive Pi steht oben und ist antippbar (umschalten/hinzufügen/umbenennen)
+* Cockpit mit vier Tabs; der aktive Pi oben ist antippbar (umschalten/hinzufügen/umbenennen)
 * Auto-Erkennung aller Dienste in einer SSH-Sitzung
-* Menü jeder Dienst-Karte: Sprung zur Projekt-Website und zur offiziellen App
+* Updates laufen als Job auf dem Pi weiter, auch wenn die Verbindung abreißt
+* Kartenmenü: Sprung zur Projekt-Website und zur offiziellen App
 * Dateien: Datei-Browser deines Pi – durchsuchen, ansehen, vom Handy hochladen, löschen
 * Config-Editor: Konfigdateien (z. B. evcc.yaml) direkt bearbeiten, atomar mit Backup
 * Backups inkl. Wiederherstellen & Verwalten: evcc (Config + DB), Pi-hole (Teleporter), Home Assistant (/config); autom. Rotation; aufs Handy laden
@@ -26,11 +27,11 @@ Funktionen:
 * Automatik auf dem Pi (systemd-Timer, kein Handy-Hintergrunddienst): geplante Updates, nächtliche Backups (Rotation), Health-Alerts via ntfy
 * Terminal: eigene Befehle per SSH absetzen (sudo unterstützt) mit Verlauf + Schnellbefehlen
 * SSH-Key mit einem Tap: auf dem Handy erzeugt, auf dem Pi hinterlegt, Profil umgestellt
-* Anleitung „Pi einrichten" (Raspberry Pi Imager) für Einsteiger
+* Anleitung „Pi einrichten" (Raspberry Pi Imager)
 * Mehrere Pi-Profile, schnell umschaltbar; „Alle Pis"-Überblick als Ampel; verschlüsselter Export/Import
 * Bewusst verbinden: die Sitzung hält bis zum Profilwechsel; Automatik, Terminal und Dateien erst danach
 * Demo-Modus: die App mit Beispieldaten testen – ohne echten Pi
-* Deutsch & Englisch: folgt der Handy-Sprache, in den Einstellungen umschaltbar (System/Deutsch/English)
+* Deutsch & Englisch: folgt der Handy-Sprache, umschaltbar in den Einstellungen
 
 Sicherheit & Datenschutz:
 * Zugangsdaten bleiben verschlüsselt auf dem Gerät (Android Keystore)

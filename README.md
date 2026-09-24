@@ -190,10 +190,22 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   überleben Backups auch einen SD-Karten-Ausfall.
 - **Aufräumen** — die System-Karte gibt Speicher frei (apt autoremove/clean,
   ungenutzte Docker-Images, Journal >7 Tage) und zeigt, wie viel frei wurde.
+- **Updates laufen auf dem Pi weiter** — System-Update, evcc-Update,
+  Paket-Updates, Pi-hole-Update und „Paketzustand reparieren" laufen als
+  **Pi-Job** (eigene systemd-Unit auf dem Pi). Reißt die Verbindung ab, wird
+  die App geschlossen oder stürzt ab, läuft das Update trotzdem zu Ende — ein
+  mittendrin abgebrochenes Update kann einen Raspberry Pi unbootbar machen. Die
+  App meldet das gelb („läuft auf dem Pi weiter"), eine **Job-Leiste mit
+  „Mitlesen"** zeigt später das vollständige Log und das echte Ergebnis, die
+  System-Karte den letzten Job. Erfolg meldet die App nur mit Beleg vom Pi;
+  eine abgerissene Verbindung gilt bei keiner Aktion als Erfolg. Neustart und
+  Herunterfahren werden abgelehnt, solange ein Job läuft oder ein Kernel-Update
+  nur halb installiert ist.
 - **Paketzustand reparieren** — wurde ein apt-/dpkg-Lauf einmal abgewürgt
   (Stromausfall, abgebrochenes Update), verweigert apt danach **jede**
   Installation. Die App erkennt das, sagt es im Klartext statt „Exit 100" und
-  räumt es über die System-Karte mit `dpkg --configure -a` auf.
+  räumt es über die System-Karte auf (`dpkg --configure -a`,
+  `apt-get -f install`) — als Pi-Job.
 - **Ältere Raspbian-/Debian-Versionen** — die Paketquellen von Buster, Stretch
   und Jessie wurden von den regulären Servern ins offizielle Archiv verschoben
   (`legacy.raspbian.org`, `archive.debian.org`); die alten Adressen liefern 404
@@ -209,7 +221,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   unbekannt" statt „Aktuell" — lieber keine Auskunft als eine falsche. Die
   System-Karte bietet dann im ⋮-Menü **„Paketlisten aktualisieren"**.
 - **Abbrechen** — eine laufende Aktion lässt sich abbrechen (schließt die
-  SSH-Verbindung).
+  SSH-Verbindung). Läuft bereits ein Pi-Job, heißt der Knopf **„Nicht mehr
+  mitlesen"**: die App hört auf mitzulesen, der Job läuft auf dem Pi weiter.
 - **Verbindung herstellen** — Host/Zugang in Sekunden prüfen, ohne etwas zu ändern.
 - **evcc installieren** auf einem frischen Pi (offizielles apt-Repo).
 - **evcc-Status (Live)** — die evcc-Karte zeigt die aktuellen Werte direkt auf
@@ -248,19 +261,23 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 Beim Tippen auf **„evcc aktualisieren"** erkennt die App zuerst die
 Installationsart und nimmt dann den passenden Weg:
 
-**apt-Installation** (Standard auf dem Pi) — die validierte SSH-Sequenz:
+**apt-Installation** (Standard auf dem Pi):
 
 1. Version vorher: `dpkg-query -W -f='${Version}' evcc`
-2. `sudo -S apt-get update -qq`
-3. `sudo -S apt-get install --only-upgrade -y evcc`
-   (bei aktiviertem Schalter **„Komplettes System-Upgrade"** stattdessen
-   `sudo -S apt-get full-upgrade -y`)
-4. `systemctl is-active evcc` → erwartet `active`
-5. Version nachher → Diff wird gemeldet („evcc 0.310.0 → 0.311.0 aktualisiert"
+2. Ab hier als **Pi-Job** auf dem Pi (läuft weiter, auch wenn die Verbindung
+   abreißt): veraltete Paketquellen umstellen, eine unterbrochene
+   Paketinstallation abschließen (`dpkg --configure -a`, `apt-get -f install`),
+   `apt-get update`, dann `apt-get install --only-upgrade -y evcc` (bei
+   aktiviertem Schalter **„Komplettes System-Upgrade"** stattdessen
+   `apt-get full-upgrade -y`) — nicht-interaktiv, Rückfragen zu
+   Konfigurationsdateien behalten die eigene Version.
+3. `systemctl is-active evcc` → erwartet `active`
+4. Version nachher → Diff wird gemeldet („evcc 0.310.0 → 0.311.0 aktualisiert"
    bzw. „war schon aktuell").
 
 Der Dienst startet beim apt-Upgrade automatisch neu. Mit **„Probelauf (ändert
-nichts)"** läuft dieselbe Sequenz mit `--dry-run` — nichts wird verändert.
+nichts)"** läuft die Sequenz mit `--dry-run` im Vordergrund — nichts wird
+verändert.
 
 **Docker-Installation** — läuft evcc in einem Container, aktualisiert die App
 ihn passend zum Setup:

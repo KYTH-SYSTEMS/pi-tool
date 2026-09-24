@@ -469,11 +469,16 @@ umask 022
 bash "\$d/payload.run" 8>&- 9>&-
 rc=\$?
 case "\$rc" in ''|*[!0-9]*) rc=255 ;; esac
+# job.status first, then rc: whoever sees the rc (the follower, and the app's
+# detection right after it) already reads "done" — never a stale "running".
+status "\$id \$kind done \$rc \$start \$(date +%s) \$boot"
 # rc via tmp + rename; on a full or read-only card into tmpfs instead.
 { printf '%s\\n' "\$rc" >"\$d/rc.tmp" && [ -s "\$d/rc.tmp" ] && mv -f "\$d/rc.tmp" "\$d/rc"; } ||
   printf '%s\\n' "\$rc" >"\$rundir/pi-tool-job-\$id.rc" 2>/dev/null
+# The outcome is visible now: free the locks before the (possibly slow) sync,
+# so a reboot or the next job right after the end is not refused.
+exec 8>&- 9>&-
 sync 2>/dev/null
-status "\$id \$kind done \$rc \$start \$(date +%s) \$boot"
 # Always 0 once started: the outcome is in the files, and no failed unit
 # lingers in systemd.
 exit 0

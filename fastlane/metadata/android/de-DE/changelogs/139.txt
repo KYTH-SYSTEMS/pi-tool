@@ -1,0 +1,3 @@
+Updates laufen auf dem Pi weiter, auch wenn WLAN oder App wegfallen: System-, evcc-, Paket- und Pi-hole-Update sowie „Paketzustand reparieren" laufen als Job auf dem Pi. „Mitlesen" zeigt später Log und Ergebnis.
+
+Erfolg nur noch mit Beleg vom Pi; Rückfragen zu Konfigurationsdateien werden beantwortet. Neustart wird abgelehnt, solange ein Update läuft.

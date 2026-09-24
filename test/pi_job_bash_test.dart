@@ -165,6 +165,7 @@ void main() {
       expect(box.mode('$d/log'), '600');
       expect(box.mode(box.options.status), '644');
       expect(File('$d/payload.sh').existsSync(), isFalse);
+      // Written before the rc — so it must already be there with the RC line.
       expect(File(box.options.status).readAsStringSync(),
           startsWith('$id e2e-test done 7 '));
       expect(File('${box.root}/systemd-run.argv').readAsStringSync(),
@@ -283,6 +284,14 @@ void main() {
       expect(r.exitCode, 75);
       expect(r.stdout, contains(jobRefusedRunningMarker));
       await p.exitCode.timeout(const Duration(seconds: 30));
+      // The wrapper frees the lock right after writing the outcome (before
+      // its sync) — give that moment, then a reboot is allowed again.
+      var free = false;
+      for (var i = 0; i < 50 && !free; i++) {
+        free = (await check()).stdout.toString().contains('ALLOWED');
+        if (!free) await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(free, isTrue, reason: 'Sperre nach Jobende nicht frei');
 
       File('${box.root}/diverted').writeAsStringSync('');
       r = await check();

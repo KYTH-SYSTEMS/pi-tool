@@ -1,0 +1,3 @@
+Updates keep running on the Pi when Wi-Fi or the app go away: system, evcc, package and Pi-hole updates and "Repair package state" run as a job on the Pi. "Follow" shows the log and result later.
+
+Success is only reported with proof from the Pi; config file prompts are answered. Restart is refused while an update runs.
