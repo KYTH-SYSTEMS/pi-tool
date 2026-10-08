@@ -106,8 +106,9 @@ String demoResponseFor(String command, {String? stdin}) {
 
 // ---------------------------------------------------------------------------
 // Canned data — persona: a healthy Raspberry Pi 4 (Bookworm) running apt-evcc
-// (active, up to date) and Pi-hole (active). Everything else absent → 3 clean
-// cards: System, evcc, Pi-hole.
+// (active, up to date), Pi-hole (active) and Tailscale (connected, home
+// network not shared). Everything else absent → 4 cards: System, evcc,
+// Pi-hole, Tailscale.
 // ---------------------------------------------------------------------------
 
 const String _m = '@@PT@@'; // must match _detectMarker in commands.dart
@@ -207,6 +208,17 @@ const String _detectDoc = '$_m'
     '${_m}PIHOLE_S$_m\n'
     '  [✓] FTL is listening on port 53\n'
     '     [✓] Blocking is enabled\n'
+    // Tailscale connected (`tailscale status`, `tailscale ip -4`, then the
+    // node's own status), so its card shows evcc's address over the tailnet.
+    // No TS_LAN section: without a home network the card offers no sharing,
+    // which the demo has no sample backend for.
+    '${_m}TAILSCALE$_m\n'
+    '100.101.102.103  raspberrypi  demo@  linux  -\n'
+    '100.101.102.103\n'
+    '${_m}TS_SELF$_m\n'
+    '{"BackendState":"Running","Self":{"HostName":"raspberrypi",'
+    '"DNSName":"raspberrypi.example.ts.net.",'
+    '"TailscaleIPs":["100.101.102.103"]}}\n'
     // No job.status on the demo Pi: just the boot id.
     '${_m}JOB$_m\n'
     'BOOT 6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b\n';

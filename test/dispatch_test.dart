@@ -4403,6 +4403,373 @@ void main() {
     expect(find.text('Heimnetz-Freigabe beenden'), findsOneWidget);
   });
 
+  // ---- evcc über die Tailscale-Adresse / Heimnetz im Router-Standardbereich ----
+  // Notiz vom 25.09.2026: freigegeben war 192.168.178.0/24, das Testgerät hing
+  // in einem WLAN mit demselben Bereich — die Heimnetz-Adresse von evcc blieb
+  // dort im eigenen Netz. Über die 100.x-Adresse des Pi geht es aus jedem Netz.
+
+  const evccOnPi = ServiceStatus(
+      id: 'evcc',
+      name: 'evcc',
+      installed: true,
+      version: '0.310.0',
+      active: true,
+      detail: 'apt · Dienst aktiv');
+  const evccViaTailscale = 'evcc über Tailscale: http://100.64.0.5:7070';
+  const sameRange = 'Aus einem Netz mit demselben Adressbereich '
+      '(192.168.178.0/24) ist das Heimnetz über Tailscale nicht erreichbar.';
+  const sameRangeEvcc =
+      '$sameRange evcc dort über die Tailscale-Adresse aufrufen.';
+  const ownRange = SubnetRoutes(
+      lan: ['10.20.30.0/24'],
+      advertised: ['10.20.30.0/24'],
+      approved: ['10.20.30.0/24'],
+      machine: 'evcc-pi');
+
+  testWidgets(
+      'Tailscale verbunden + evcc auf dem Pi: die Karte nennt die evcc-Adresse '
+      'über Tailscale', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [evccOnPi, tsWith(const SubnetRoutes())];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.text(evccViaTailscale), findsOneWidget);
+    // Nichts freigegeben → auch nichts, wovor zu warnen wäre.
+    expect(find.textContaining('demselben Adressbereich'), findsNothing);
+  });
+
+  testWidgets(
+      'evcc-Adresse über Tailscale folgt Schema und Port der evcc-Oberfläche',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [evccOnPi, tsWith(const SubnetRoutes())];
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          uiScheme: 'https',
+          uiPort: '7443',
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.text('evcc über Tailscale: https://100.64.0.5:7443'),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'ein in den Einstellungen geänderter evcc-Port steht sofort auf der '
+      'Karte — geteilt wird nie ein veralteter', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [evccOnPi, tsWith(const SubnetRoutes())];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.text(evccViaTailscale), findsOneWidget);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    final port = find.widgetWithText(TextField, 'evcc-Oberfläche: Port');
+    await tester.ensureVisible(port);
+    await tester.enterText(port, '7443');
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(port)).pop();
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    expect(find.text('evcc über Tailscale: http://100.64.0.5:7443'),
+        findsOneWidget);
+    expect(find.text(evccViaTailscale), findsNothing);
+  });
+
+  testWidgets('ohne evcc auf dem Pi: keine evcc-Adresse, kein Teilen-Eintrag',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [ServiceStatus.absent('evcc', 'evcc'), tsWith(lanActive)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.textContaining('evcc über Tailscale'), findsNothing);
+    // Der Hinweis bleibt, verweist aber auf nichts, das es hier nicht gibt.
+    expect(find.text(sameRange), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    expect(find.text('evcc-Adresse teilen'), findsNothing);
+  });
+
+  testWidgets(
+      'Tailscale getrennt: keine evcc-Adresse, kein Hinweis, kein Teilen-Eintrag',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        evccOnPi,
+        // Ein angehaltener Knoten behält seine 100.x — erreichbar ist er nicht.
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: false,
+            version: '100.64.0.5',
+            detail: 'Getrennt',
+            routes: lanActive),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.textContaining('evcc über Tailscale'), findsNothing);
+    expect(find.textContaining('demselben Adressbereich'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    expect(find.text('evcc-Adresse teilen'), findsNothing);
+  });
+
+  testWidgets(
+      '⋮ → „evcc-Adresse teilen" übergibt genau diese Adresse samt '
+      'Voraussetzung', (tester) async {
+    useTallScreen(tester);
+    final shared = <String>[];
+    final u = FakeEvccUpdater()..services = [evccOnPi, tsWith(lanActive)];
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(_ready),
+        updater: u,
+        updateChecker: _noUpdateChecker,
+        apiClient: EvccApiClient(
+            getJson: (_) async =>
+                throw const EvccApiException('kein Netz im Test')),
+        evccReleaseFetcher: () async => null,
+        haVersionFetcher: () async => null,
+        textSharer: (text) async => shared.add(text),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('evcc-Adresse teilen'));
+    await tester.pumpAndSettle();
+
+    expect(shared, [
+      'evcc über Tailscale: http://100.64.0.5:7070\n'
+          'Voraussetzung: Das Gerät ist in Tailscale im selben Tailnet '
+          'angemeldet und verbunden.'
+    ]);
+    // Genau eine Adresse, und zwar die der Karte — keine Heimnetz-Adresse.
+    expect(RegExp(r'https?://\S+').allMatches(shared.single).map((m) => m[0]),
+        ['http://100.64.0.5:7070']);
+    // Teilen ist keine SSH-Aktion: nichts lief gegen den Pi.
+    expect(u.shareLanCalls, 0);
+  });
+
+  for (final (state, routes) in [
+    ('bestätigt', lanActive),
+    ('Bestätigung offen', lanPending),
+  ]) {
+    testWidgets(
+        'Heimnetz im Router-Standardbereich freigegeben ($state): Hinweis auf '
+        'der Karte, direkt über der evcc-Adresse', (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()..services = [evccOnPi, tsWith(routes)];
+      await tester.pumpWidget(page(u));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      expect(find.text(sameRangeEvcc), findsOneWidget);
+      expect(find.text(evccViaTailscale), findsOneWidget);
+      expect(tester.getBottomLeft(find.text(sameRangeEvcc)).dy,
+          tester.getTopLeft(find.text(evccViaTailscale)).dy);
+    });
+  }
+
+  testWidgets('eigener Adressbereich (10.20.30.0/24) freigegeben: kein Hinweis',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [evccOnPi, tsWith(ownRange)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.text('Heimnetz 10.20.30.0/24 freigegeben'), findsOneWidget);
+    expect(find.textContaining('demselben Adressbereich'), findsNothing);
+    expect(find.text(evccViaTailscale), findsOneWidget);
+  });
+
+  testWidgets(
+      '„Heimnetz freigeben?" nennt die Einschränkung, bevor freigegeben wird',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [evccOnPi, tsWith(lanOff)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Noch nicht freigegeben: die Karte hat dazu nichts zu sagen.
+    expect(find.textContaining('demselben Adressbereich'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+
+    final dialog = find.byType(AlertDialog);
+    expect(find.text('Heimnetz freigeben?'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: dialog, matching: find.textContaining(sameRangeEvcc)),
+        findsOneWidget);
+    // Im Dialog steht die Adresse dabei — die Karte liegt dahinter.
+    expect(
+        find.descendant(
+            of: dialog, matching: find.textContaining(evccViaTailscale)),
+        findsOneWidget);
+    expect(u.shareLanCalls, 0);
+  });
+
+  testWidgets(
+      '„Heimnetz freigeben?" mit Hinweis auf einem kleinen Display: läuft nicht '
+      'über, die Adresse bleibt erreichbar', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [evccOnPi, tsWith(lanOff)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+
+    // Shrink to a small phone (360x640 logical): with the note the text is
+    // longer than the dialog may get — a RenderFlex overflow fails here.
+    tester.view.physicalSize = const Size(1080, 1920);
+    tester.view.devicePixelRatio = 3.0;
+    await tester.pumpAndSettle();
+
+    final dialog = find.byType(AlertDialog);
+    final confirm = find.widgetWithText(FilledButton, 'Heimnetz freigeben');
+    expect(tester.getRect(confirm).bottom, lessThanOrEqualTo(640));
+    await tester.drag(
+        find.descendant(
+            of: dialog, matching: find.byType(SingleChildScrollView)),
+        const Offset(0, -3000));
+    await tester.pumpAndSettle();
+    final body = tester.getRect(find.descendant(
+        of: dialog, matching: find.textContaining(evccViaTailscale)));
+    expect(body.bottom, lessThanOrEqualTo(tester.getRect(confirm).top));
+  });
+
+  testWidgets('„Heimnetz freigeben?" ohne evcc: Hinweis ohne Verweis auf evcc',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = [tsWith(lanOff)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining(sameRange), findsOneWidget);
+    expect(find.textContaining('evcc dort'), findsNothing);
+    expect(find.textContaining('evcc über Tailscale'), findsNothing);
+  });
+
+  testWidgets('„Heimnetz freigeben?" bei eigenem Adressbereich: ohne Hinweis',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [
+        evccOnPi,
+        tsWith(const SubnetRoutes(lan: ['10.20.30.0/24'], machine: 'evcc-pi'))
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Heimnetz freigeben'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Heimnetz freigeben?'), findsOneWidget);
+    expect(find.textContaining('10.20.30.0/24'), findsOneWidget);
+    expect(find.textContaining('demselben Adressbereich'), findsNothing);
+  });
+
+  testWidgets(
+      'Fernzugriff-Helfer: auch das Angebot nennt die Einschränkung im '
+      'Router-Standardbereich', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = [evccOnPi, tsWith(lanOff)]
+      ..tailscaleUpUrl = null
+      ..reachableHosts = {'100.64.0.5'};
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.text('Jetzt prüfen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Auch das Heimnetz erreichen?'), findsOneWidget);
+    final dialog = find.byType(AlertDialog);
+    expect(
+        find.descendant(
+            of: dialog, matching: find.textContaining(sameRangeEvcc)),
+        findsOneWidget);
+    expect(
+        find.descendant(
+            of: dialog, matching: find.textContaining(evccViaTailscale)),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'Tailscale-Karte auf 360 dp: Hinweis und evcc-Adresse werden nicht '
+      'abgeschnitten', (tester) async {
+    tester.view.physicalSize = const Size(360, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final u = FakeEvccUpdater()..services = [evccOnPi, tsWith(lanActive)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    final card = tester.getRect(find.ancestor(
+        of: find.byKey(const ValueKey('menu-tailscale')),
+        matching: find.byType(Container)).first);
+    for (final line in [sameRangeEvcc, evccViaTailscale]) {
+      final text = tester.widget<Text>(find.text(line));
+      // Keine Zeilengrenze und keine Auslassung: die Zeile bricht um, so oft
+      // sie muss — eine halbe Adresse nützt niemandem.
+      expect(text.maxLines, isNull, reason: line);
+      expect(text.overflow, isNull, reason: line);
+      final rect = tester.getRect(find.text(line));
+      expect(rect.left, greaterThanOrEqualTo(card.left), reason: line);
+      expect(rect.right, lessThanOrEqualTo(card.right), reason: line);
+      expect(rect.bottom, lessThanOrEqualTo(card.bottom), reason: line);
+    }
+    // Der Satz braucht auf dem Handy mehrere Zeilen — und bekommt sie.
+    expect(tester.getSize(find.text(sameRangeEvcc)).height,
+        greaterThan(tester.getSize(find.text('100.64.0.5')).height * 2));
+    expect(tester.takeException(), isNull);
+  });
+
   // ---- „Pi im WLAN suchen" nur, solange der Pi unbekannt ist ----
 
   testWidgets(
@@ -4499,12 +4866,11 @@ void main() {
     Navigator.of(tester.element(find.text('Zuhause'))).pop();
     await tester.pumpAndSettle();
 
-    // „Oberfläche öffnen" (evcc- und Pi-hole-Karte): hinter den Beispielkarten
-    // steht keine Weboberfläche.
-    expect(find.byIcon(Icons.open_in_browser), findsNWidgets(2));
+    // „Oberfläche öffnen" (evcc-, Pi-hole- und Tailscale-Karte): hinter den
+    // Beispielkarten steht keine Weboberfläche — auch keine Tailscale-Konsole.
+    expect(find.byIcon(Icons.open_in_browser), findsNWidgets(3));
     for (final web in [
-      find.byIcon(Icons.open_in_browser).first,
-      find.byIcon(Icons.open_in_browser).last,
+      for (var i = 0; i < 3; i++) find.byIcon(Icons.open_in_browser).at(i),
     ]) {
       await tester.tap(web);
       await tester.pumpAndSettle();
@@ -4529,6 +4895,30 @@ void main() {
     await tester.tap(find.text('evcc.yaml'));
     await tester.pumpAndSettle();
     expect(find.text('Datei: evcc.yaml'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Demo: die Tailscale-Karte zeigt die evcc-Adresse über Tailscale; die '
+      'Beispiel-Adresse lässt sich nicht als Host übernehmen', (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(emptyProfile);
+    await tester.pumpWidget(demoPage(store));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('evcc über Tailscale: http://100.101.102.103:7070'),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    expect(find.text('evcc-Adresse teilen'), findsOneWidget);
+    // Die 100.x der Beispieldaten gehört zu keinem Pi: als Host übernommen,
+    // stünde sie im echten Profil (und der Tastendruck beendete die Demo).
+    expect(find.textContaining('Diese IP als Host übernehmen'), findsNothing);
+    // Ohne Beispiel-Backend dafür wird in der Demo kein Heimnetz angeboten.
+    expect(find.text('Heimnetz freigeben'), findsNothing);
+    expect(find.text('Demo-Modus – Beispieldaten, kein echter Pi.'),
+        findsOneWidget);
   });
 
   testWidgets(

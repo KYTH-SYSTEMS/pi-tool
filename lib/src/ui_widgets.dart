@@ -1442,6 +1442,7 @@ class _ServiceCard extends StatelessWidget {
     this.isPro = true,
     this.liveLines = const [],
     this.liveMaxLines = 1,
+    this.notes = const [],
   });
 
   final ServiceStatus status;
@@ -1466,6 +1467,11 @@ class _ServiceCard extends StatelessWidget {
 
   /// Lines each [liveLines] entry may wrap to (evcc's values: one).
   final int liveMaxLines;
+
+  /// Lines under [liveLines] that are shown in full, however often they wrap
+  /// (Tailscale: a sentence and an address) — [liveMaxLines] does not apply.
+  /// Half an address is of no use to anyone.
+  final List<String> notes;
 
   @override
   Widget build(BuildContext context) {
@@ -1610,7 +1616,7 @@ class _ServiceCard extends StatelessWidget {
             ),
           // Live measurements (evcc): the values users came for, on the card
           // itself instead of two taps away in the ⋮ (GitHub issue #22).
-          if (status.installed && liveLines.isNotEmpty)
+          if (status.installed && (liveLines.isNotEmpty || notes.isNotEmpty))
             Padding(
               padding: const EdgeInsets.only(left: 30, bottom: 6),
               child: Column(
@@ -1619,6 +1625,7 @@ class _ServiceCard extends StatelessWidget {
                   for (final line in liveLines)
                     Text(line, style: mono, maxLines: liveMaxLines,
                         overflow: TextOverflow.ellipsis),
+                  for (final line in notes) Text(line, style: mono),
                 ],
               ),
             ),

@@ -1244,6 +1244,39 @@
       }
     }
   },
+  "tsLanSameRange": "From a network that uses the same address range ({routes}), the home network cannot be reached over Tailscale.",
+  "@tsLanSameRange": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "tsLanSameRangeEvcc": "From a network that uses the same address range ({routes}), the home network cannot be reached over Tailscale. Open evcc there via its Tailscale address.",
+  "@tsLanSameRangeEvcc": {
+    "placeholders": {
+      "routes": {
+        "type": "String"
+      }
+    }
+  },
+  "tsEvccAddress": "evcc via Tailscale: {url}",
+  "@tsEvccAddress": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "actionShareEvccAddress": "Share evcc address",
+  "shareEvccAddressText": "evcc via Tailscale: {url}\nRequirement: the device is signed in to the same tailnet in Tailscale and connected.",
+  "@shareEvccAddressText": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
   "dialogShareLanTitle": "Share home network?",
   "dialogShareLanBody": "The Pi will then forward Tailscale connections into your home network {routes}. On the road you can reach devices without Tailscale – such as the wallbox, inverter or router – at their usual IP.\n\nThis applies to every device in your tailnet. Tailscale only distributes the route after you approve it in the Tailscale admin console.",
   "@dialogShareLanBody": {

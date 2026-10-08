@@ -189,6 +189,7 @@ class UpdaterPage extends StatefulWidget {
     this.keepAlive,
     this.filePicker,
     this.fileSaver,
+    this.textSharer,
     this.appLauncher,
     this.secureScreen,
     this.historyStore,
@@ -229,6 +230,10 @@ class UpdaterPage extends StatefulWidget {
   /// Saves downloaded bytes to the phone (default: temp file + share sheet).
   /// Injectable so widget tests record instead of hitting platform channels.
   final Future<void> Function(String name, Uint8List bytes)? fileSaver;
+
+  /// Hands a text to other apps (default: the system share sheet). Injectable
+  /// so widget tests record instead of hitting the platform channel.
+  final Future<void> Function(String text)? textSharer;
 
   /// Opens another app (Tailscale) for the remote-access helper. Injectable so
   /// widget tests don't hit the native channel.
@@ -285,6 +290,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.filePicker ?? const ChannelFilePicker();
   late final Future<void> Function(String name, Uint8List bytes) _fileSaver =
       widget.fileSaver ?? _saveAndShareBytes;
+  late final Future<void> Function(String text) _textSharer =
+      widget.textSharer ?? _shareText;
   late final AppLauncher _appLauncher =
       widget.appLauncher ?? const ChannelAppLauncher();
   late final SecureScreen _secureScreen =
@@ -3901,6 +3908,11 @@ class _UpdaterPageState extends State<UpdaterPage>
     await SharePlus.instance.share(ShareParams(files: [XFile(f.path)]));
   }
 
+  /// Default [UpdaterPage.textSharer]: the system share sheet.
+  Future<void> _shareText(String text) async {
+    await SharePlus.instance.share(ShareParams(text: text));
+  }
+
   /// Read-only live status straight from evcc's Web-API (no SSH, no creds).
   /// Best-effort live snapshot for the evcc CARD (GitHub issue #22). Local
   /// HTTP, no SSH and no credentials; every failure is silent — evcc may be
@@ -4474,7 +4486,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title),
-        content: Text(body),
+        // Scrolls when the text is taller than a small phone allows — an
+        // AlertDialog otherwise cuts its end off without a trace.
+        content: SingleChildScrollView(child: Text(body)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -4677,6 +4691,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                           const SizedBox(height: 8),
                           TextField(
                             controller: _uiPort,
+                            // The Tailscale card shows (and shares) evcc's
+                            // address with this port.
+                            onChanged: (_) => setState(() {}),
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               labelText: ctx.l10n.settingsPortLabel,
@@ -5145,6 +5162,13 @@ class _UpdaterPageState extends State<UpdaterPage>
           // Home-network sharing only means something on a connected node.
           final routes = up ? s.routes : null;
           final share = routes?.share ?? RouteShare.unavailable;
+          final evccUrl = _evccTailnetUrl(s);
+          // A shared home network on a range routers ship with cannot be
+          // reached from another network on that range.
+          final sameRange =
+              share == RouteShare.active || share == RouteShare.pending
+                  ? _sameRangeNote(routes!.sharedLan, evcc: evccUrl != null)
+                  : null;
           cards.add(_ServiceCard(
             isPro: _unlocked,
             status: s,
@@ -5164,7 +5188,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                     ? () => _tailscaleSet(logout: false)
                     : _tailscaleUp,
             onOpenWeb: up
-                ? () => _openUrl(kTailscaleMachinesUrl)
+                ? () {
+                    // The sample node is in nobody's Tailscale console.
+                    if (_demoHasNoWebUi()) return;
+                    _openUrl(kTailscaleMachinesUrl);
+                  }
                 : null,
             // Two lines: the state sits at the end of the line and must not be
             // cut off on a phone.
@@ -5174,6 +5202,11 @@ class _UpdaterPageState extends State<UpdaterPage>
                 context.l10n.tsLanActive(routes!.sharedLan.join(', ')),
               if (share == RouteShare.pending)
                 context.l10n.tsLanPending(routes!.sharedLan.join(', ')),
+            ],
+            // The note first, the address it points to right below it.
+            notes: [
+              ?sameRange,
+              if (evccUrl != null) context.l10n.tsEvccAddress(evccUrl),
             ],
             actions: [
               if (s.updateAvailable)
@@ -5189,9 +5222,17 @@ class _UpdaterPageState extends State<UpdaterPage>
               if (!_remoteAccessProven)
                 _CardAction(context.l10n.actionSetupRemoteAccess,
                     () => _proGate(_setupRemoteAccess)),
-              if (up && s.version != null)
+              // Not in the demo: the sample address belongs to no Pi, and
+              // taking it over would write it into the real profile.
+              if (up && s.version != null && !_demoMode)
                 _CardAction(context.l10n.actionUseIpAsHost(s.version!),
                     () => _useTailscaleIp(s.version!)),
+              // For the people who use evcc without Pi-Tool (browser or the
+              // evcc app on another phone). Free: showing and sharing an
+              // address is not a Pro feature.
+              if (evccUrl != null)
+                _CardAction(context.l10n.actionShareEvccAddress,
+                    () => _shareEvccAddress(evccUrl)),
               // Opt-in only — it opens the whole home network to the tailnet.
               // Checking and stopping are never locked: an undo behind a
               // paywall would be a trap.
@@ -5915,6 +5956,48 @@ class _UpdaterPageState extends State<UpdaterPage>
     return null;
   }
 
+  /// evcc's address over the tailnet: only while Tailscale ([tailscale], its
+  /// card status) is connected and evcc is installed on this Pi, else null.
+  /// Scheme and port as everywhere the app addresses evcc's interface.
+  String? _evccTailnetUrl(ServiceStatus? tailscale) {
+    if (tailscale == null || !tailscale.active) return null;
+    if (!_services.any((s) => s.id == 'evcc' && s.installed)) return null;
+    return evccTailnetUrl(
+        scheme: _uiScheme, tailnetIp: tailscale.version, port: _uiPort.text);
+  }
+
+  /// The note for a home network [lan] on a range routers ship with
+  /// ([routerDefaultRoutes]): out of reach from another network on the same
+  /// range. With [evcc] it points to evcc's tailnet address, which works from
+  /// there. Null when [lan] holds no such range.
+  String? _sameRangeNote(List<String> lan, {required bool evcc}) {
+    final ranges = routerDefaultRoutes(lan).join(', ');
+    if (ranges.isEmpty) return null;
+    return evcc
+        ? context.l10n.tsLanSameRangeEvcc(ranges)
+        : context.l10n.tsLanSameRange(ranges);
+  }
+
+  /// [body] of a dialog that offers to share the home network [lan], followed
+  /// by the same note the card shows afterwards ([_sameRangeNote]) — and by
+  /// evcc's tailnet address itself, since the card is out of sight here.
+  String _withSameRangeNote(String body, List<String> lan) {
+    final url = _evccTailnetUrl(_tailscaleStatus);
+    final note = _sameRangeNote(lan, evcc: url != null);
+    if (note == null) return body;
+    return [
+      body,
+      '',
+      note,
+      if (url != null) context.l10n.tsEvccAddress(url),
+    ].join('\n');
+  }
+
+  /// Hands evcc's tailnet address to the share sheet, for the people who use
+  /// evcc without Pi-Tool. No SSH involved, hence no `_prepare`/`_guard`.
+  Future<void> _shareEvccAddress(String url) =>
+      _textSharer(context.l10n.shareEvccAddressText(url));
+
   /// Shares the Pi's home network into the tailnet (subnet router). Opt-in
   /// with an explicit confirmation, since it opens every device at home to the
   /// whole tailnet; [confirmed] skips it only when the remote-access offer has
@@ -5925,7 +6008,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     final known = _tailscaleStatus?.routes?.lan ?? const <String>[];
     if (!confirmed &&
         !await _confirm(
-            l10n.dialogShareLanTitle, l10n.dialogShareLanBody(known.join(', ')),
+            l10n.dialogShareLanTitle,
+            _withSameRangeNote(l10n.dialogShareLanBody(known.join(', ')), known),
             confirmLabel: l10n.actionShareLan)) {
       return;
     }
@@ -6031,8 +6115,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _offerLanShare() async {
     final l10n = context.l10n;
     final lan = _tailscaleStatus?.routes?.lan ?? const <String>[];
-    if (await _confirm(
-        l10n.dialogOfferLanTitle, l10n.dialogOfferLanBody(lan.join(', ')),
+    if (await _confirm(l10n.dialogOfferLanTitle,
+        _withSameRangeNote(l10n.dialogOfferLanBody(lan.join(', ')), lan),
         confirmLabel: l10n.actionShareLan, cancelLabel: l10n.actionNotNow)) {
       _proGate(() => _tailscaleShareLan(confirmed: true));
     }

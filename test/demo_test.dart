@@ -6,6 +6,7 @@ import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/pi_job.dart';
 import 'package:evcc_updater/src/security_check.dart';
+import 'package:evcc_updater/src/services/tailscale.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,6 +30,33 @@ void main() {
       expect(parseInstalledVersion(sections['EVCC_V']!), '0.207.0');
       expect(isServiceActive(sections['EVCC_SVC']!), isTrue);
     });
+
+    test('Tailscale is connected on the demo Pi (backend Running, a 100.x)',
+        () {
+      final ts = parseTailscaleStatus(sections['TAILSCALE']!,
+          self: sections['TS_SELF']!);
+      expect(ts.installed, isTrue);
+      expect(ts.up, isTrue);
+      expect(ts.needsLogin, isFalse);
+      expect(ts.ip, '100.101.102.103');
+      expect(isTailnetClient('${ts.ip} 50000 ${ts.ip} 22'), isTrue,
+          reason: 'inside 100.64.0.0/10, like a real tailnet address');
+    });
+  });
+
+  test('demo cards: evcc + connected Tailscale → evcc address over the tailnet',
+      () async {
+    final services =
+        await buildDemoUpdater().detectServices(config: _cfg, onLog: (_) {});
+    expect(services.any((s) => s.id == 'evcc' && s.installed), isTrue);
+    final ts = services.firstWhere((s) => s.id == 'tailscale');
+    expect(ts.active, isTrue);
+    expect(ts.detail, 'Verbunden · 100.101.102.103');
+    expect(evccTailnetUrl(scheme: 'http', tailnetIp: ts.version, port: '7070'),
+        'http://100.101.102.103:7070');
+    // No home network on offer: the demo has no sample backend for sharing
+    // it, so the card must not show an action that could only fail.
+    expect(ts.routes?.share, RouteShare.unavailable);
   });
 
   test('detectInstall probes return believable values', () {

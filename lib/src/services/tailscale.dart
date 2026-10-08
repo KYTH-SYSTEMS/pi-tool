@@ -459,6 +459,44 @@ class SubnetRoutes {
       );
 }
 
+// ---- Heimnetz im Router-Standardbereich / evcc über das Tailnet ----
+
+/// The address ranges home routers ship with: Fritzbox, the two common
+/// 192.168.0/1 defaults, Speedport. A shared home network on one of them is
+/// out of reach from any other network that uses the same range — the device
+/// there has its own on-link route for it, so the address never enters the
+/// tunnel. Identical subnets, not a fault of the route.
+const List<String> routerDefaultSubnets = [
+  '192.168.178.0/24', // Fritzbox
+  '192.168.0.0/24',
+  '192.168.1.0/24',
+  '192.168.2.0/24', // Speedport
+];
+
+/// Those of [routes] that are one of the [routerDefaultSubnets], in the order
+/// given. The range itself only: home networks are /24 almost without
+/// exception, and a wider or narrower prefix is somebody's deliberate setup.
+List<String> routerDefaultRoutes(List<String> routes) => [
+      for (final r in routes)
+        if (routerDefaultSubnets.contains(r)) r,
+    ];
+
+/// evcc's address over the tailnet. evcc runs on the Pi itself, so the Pi's
+/// own tailnet address reaches it from every network — without a subnet
+/// route, and therefore also from a network on the same range as the home
+/// network. Null without a tailnet address ([isTailnetHost]); an empty [port]
+/// is evcc's default.
+String? evccTailnetUrl({
+  required String scheme,
+  required String? tailnetIp,
+  required String port,
+}) {
+  final host = (tailnetIp ?? '').trim();
+  if (!isTailnetHost(host)) return null;
+  final p = port.trim();
+  return '$scheme://$host:${p.isEmpty ? '7070' : p}';
+}
+
 // ---- Deinstallieren ----
 
 /// Printed as the last line of [buildTailscaleUninstallScript]'s happy path.

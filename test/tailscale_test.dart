@@ -1384,6 +1384,104 @@ all non-default settings:
       skip: _bash == null
           ? 'braucht bash mit /proc (Linux oder Git Bash)'
           : false);
+
+  // ---- Heimnetz im Router-Standardbereich / evcc über das Tailnet ----
+  // Notiz vom 25.09.2026: Freigegeben war 192.168.178.0/24, das Testgerät hing
+  // in einem WLAN mit demselben Bereich — http://192.168.178.113:7070 blieb im
+  // eigenen Netz, statt durch den Tunnel zu gehen.
+
+  group('Router-Standardbereiche', () {
+    test('die Bereiche, mit denen Heimrouter ausgeliefert werden', () {
+      expect(routerDefaultSubnets, [
+        '192.168.178.0/24', // Fritzbox
+        '192.168.0.0/24',
+        '192.168.1.0/24',
+        '192.168.2.0/24', // Speedport
+      ]);
+    });
+
+    test('jeder Standardbereich wird in einer Routenliste erkannt', () {
+      for (final subnet in routerDefaultSubnets) {
+        expect(routerDefaultRoutes([subnet]), [subnet], reason: subnet);
+      }
+    });
+
+    test('andere Netze fallen heraus, die Reihenfolge bleibt', () {
+      expect(
+          routerDefaultRoutes(const [
+            '10.20.30.0/24',
+            '192.168.2.0/24',
+            '172.16.5.0/24',
+            '192.168.178.0/24',
+            'fd00::/64',
+          ]),
+          ['192.168.2.0/24', '192.168.178.0/24']);
+    });
+
+    test('ein eigens gewählter Bereich ist kein Standardbereich', () {
+      expect(routerDefaultRoutes(const ['10.20.30.0/24']), isEmpty);
+      expect(routerDefaultRoutes(const ['192.168.50.0/24']), isEmpty);
+      expect(routerDefaultRoutes(const ['192.168.179.0/24']), isEmpty);
+    });
+
+    test('nur der Bereich selbst zählt, nicht ein größeres oder kleineres Netz',
+        () {
+      expect(routerDefaultRoutes(const ['192.168.0.0/16']), isEmpty);
+      expect(routerDefaultRoutes(const ['192.168.178.0/25']), isEmpty);
+    });
+
+    test('ohne Routen nichts', () {
+      expect(routerDefaultRoutes(const []), isEmpty);
+    });
+  });
+
+  group('evccTailnetUrl', () {
+    test('Schema, Tailnet-Adresse und Port', () {
+      expect(
+          evccTailnetUrl(
+              scheme: 'http', tailnetIp: '100.101.102.103', port: '7070'),
+          'http://100.101.102.103:7070');
+    });
+
+    test('https und ein eigener Port', () {
+      expect(
+          evccTailnetUrl(scheme: 'https', tailnetIp: '100.64.0.5', port: '7443'),
+          'https://100.64.0.5:7443');
+    });
+
+    test('leerer Port → 7070, wie überall in der App', () {
+      expect(evccTailnetUrl(scheme: 'http', tailnetIp: '100.64.0.5', port: ''),
+          'http://100.64.0.5:7070');
+      expect(
+          evccTailnetUrl(scheme: 'http', tailnetIp: '100.64.0.5', port: '  '),
+          'http://100.64.0.5:7070');
+    });
+
+    test('Leerraum um Adresse und Port stört nicht', () {
+      expect(
+          evccTailnetUrl(
+              scheme: 'http', tailnetIp: ' 100.64.0.5 ', port: ' 7070 '),
+          'http://100.64.0.5:7070');
+    });
+
+    test('ohne Tailnet-Adresse gibt es keine Adresse', () {
+      expect(evccTailnetUrl(scheme: 'http', tailnetIp: null, port: '7070'),
+          isNull);
+      expect(
+          evccTailnetUrl(scheme: 'http', tailnetIp: '', port: '7070'), isNull);
+      expect(evccTailnetUrl(scheme: 'http', tailnetIp: '   ', port: '7070'),
+          isNull);
+    });
+
+    test('eine Heimnetz-Adresse ist keine Tailnet-Adresse', () {
+      // Genau die Adresse, die aus einem Netz mit demselben Bereich nicht
+      // durch den Tunnel geht — sie darf nie als „über Tailscale" erscheinen.
+      expect(
+          evccTailnetUrl(
+              scheme: 'http', tailnetIp: '192.168.178.113', port: '7070'),
+          isNull);
+    });
+  });
 }
 
 const String _gitBash = r'C:\Program Files\Git\bin\bash.exe';
