@@ -36,7 +36,9 @@ class ServiceStatus {
   /// Short human status line (mono), e.g. "Dienst aktiv" or "3 Updates".
   final String detail;
 
-  /// Optional vitals line (System card): temperature, free disk/RAM, uptime.
+  /// Optional second line. System card: the vitals (temperature, free
+  /// disk/RAM, uptime). Docker cards: the note that the container is listed
+  /// but not running (restart loop).
   final String health;
 
   /// True when [health] carries a warning (e.g. low disk) — shown emphasized.

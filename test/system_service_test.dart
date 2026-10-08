@@ -239,6 +239,62 @@ void main() {
     });
   });
 
+  group('systemUpdateDetail', () {
+    const day = 24 * 3600;
+    const failed = 'Update-Prüfung fehlgeschlagen — Stand unbekannt';
+
+    test('no summary from the simulation: its own line, never an index age',
+        () {
+      // A fresh index used to read "Paketlisten 0 Tage alt — Stand unbekannt":
+      // the wrong cause, and refreshing the lists does not cure it.
+      for (final age in [0, 3600, 2 * day, 10 * day, null]) {
+        expect(systemUpdateDetail(pending: null, aptAgeSeconds: age), failed,
+            reason: '$age');
+      }
+    });
+
+    test('nothing pending: the index decides what can be claimed', () {
+      expect(systemUpdateDetail(pending: 0, aptAgeSeconds: 3600), 'aktuell');
+      expect(systemUpdateDetail(pending: 0, aptAgeSeconds: 10 * day),
+          'Paketlisten 10 Tage alt — Stand unbekannt');
+      expect(systemUpdateDetail(pending: 0, aptAgeSeconds: null),
+          'Paketlisten-Stand unbekannt');
+    });
+
+    test('updates pending: the count, whatever the index', () {
+      for (final age in [3600, 10 * day, null]) {
+        expect(systemUpdateDetail(pending: 3, aptAgeSeconds: age),
+            '3 Updates verfügbar',
+            reason: '$age');
+      }
+    });
+  });
+
+  group('aptSimulationError', () {
+    test("apt's first error line", () {
+      expect(
+          aptSimulationError('Reading package lists...\n'
+              'W: Target Packages is configured multiple times\n'
+              "E: dpkg was interrupted, you must manually run 'sudo dpkg "
+              "--configure -a' to correct the problem. \n"
+              'E: a second one\n'),
+          "E: dpkg was interrupted, you must manually run 'sudo dpkg "
+          "--configure -a' to correct the problem.");
+    });
+
+    test('no E: line: the last line the run printed', () {
+      expect(aptSimulationError('bash: line 9: apt-get: command not found\n'),
+          'bash: line 9: apt-get: command not found');
+      expect(aptSimulationError('Reading package lists...\nKilled\n\n'),
+          'Killed');
+    });
+
+    test('null when it printed nothing', () {
+      expect(aptSimulationError(''), isNull);
+      expect(aptSimulationError('\n  \n'), isNull);
+    });
+  });
+
   group('parseTemperatureC', () {
     test("reads vcgencmd output (temp=48.3'C)", () {
       expect(parseTemperatureC("temp=48.3'C\n"), 48.3);

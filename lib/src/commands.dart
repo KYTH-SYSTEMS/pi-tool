@@ -60,14 +60,44 @@ const String dockerListSudoCommand =
 /// Like [dockerListCommand], but only containers that are really running: a
 /// plain `docker ps` also lists one in its restart loop ("Restarting (1) …"),
 /// so a crash-looping container passed as "läuft". For verifying an install
-/// or update — detection keeps [dockerListCommand], so a crash-looping evcc
-/// is still found. Same `name|image` lines, same parsers.
+/// or update — detection keeps the unfiltered listing ([dockerListCommand],
+/// [dockerListStateCommand]), so a crash-looping evcc is still found. Same
+/// `name|image` lines, same parsers.
 const String dockerListRunningCommand =
     "docker ps --filter status=running --format '{{.Names}}|{{.Image}}'";
 
 /// sudo variant of [dockerListRunningCommand].
 const String dockerListRunningSudoCommand =
     'LC_ALL=C sudo -S $dockerListRunningCommand';
+
+/// The listing detection reads: [dockerListCommand] with the state as a third
+/// column (`name|image|state`), so a container in its restart loop is still
+/// found but not shown as running (see [dockerContainerState]). `{{.State}}`
+/// came with Docker 20.10; an older client fails on the template, and then the
+/// plain listing answers — lines without a state, as before. The first try's
+/// messages are dropped: a missing docker or a refused socket fails the second
+/// try the same way, and its message is the one the callers read.
+const String dockerListStateCommand =
+    "docker ps --format '{{.Names}}|{{.Image}}|{{.State}}' 2>/dev/null || "
+    '$dockerListCommand';
+
+/// sudo variant of [dockerListStateCommand]: one sudo around both tries, so
+/// the password on stdin is asked for once.
+const String dockerListStateSudoCommand =
+    'LC_ALL=C sudo -S sh -c "$dockerListStateCommand"';
+
+/// The state of container [name] in a [dockerListStateCommand] listing
+/// (`running`, `restarting`, `paused`). Null when its line carries none — the
+/// plain listing of an older Docker — or the container is not listed.
+String? dockerContainerState(String dockerPs, String name) {
+  for (final line in dockerPs.split('\n')) {
+    final parts = line.trim().split('|');
+    if (parts.length < 3 || parts[0].trim() != name) continue;
+    final state = parts[2].trim().toLowerCase();
+    return state.isEmpty ? null : state;
+  }
+  return null;
+}
 
 /// A running evcc Docker container (its name + image).
 class EvccDocker {
@@ -1160,13 +1190,27 @@ echo CONFIG_SAVED
 
 const String _detectMarker = '@@PT@@';
 
+/// Section key of the end marker [buildDetectBatch] prints after its last
+/// probe. Only a batch that ran to its end carries it: a channel that closed
+/// earlier delivers the sections up to that point and nothing else — and a
+/// section that is missing reads like a service that is not installed.
+const String detectEndKey = '__END__';
+
 /// Builds ONE shell script that runs every read-only detection probe, each
 /// preceded by a unique section marker, so the whole detection is a single SSH
 /// round-trip instead of ~13. [probes] is (sectionKey, command) pairs. Each
 /// command's stderr is merged and failures are swallowed, so one missing tool
-/// doesn't abort the rest. Parse the result with [splitDetectSections].
+/// doesn't abort the rest. The last thing it prints is the marker of
+/// [detectEndKey]. Parse the result with [splitDetectSections].
+///
+/// The script is fed to bash on stdin, so everything sits in one group whose
+/// own stdin is /dev/null: bash reads a group to its closing brace before it
+/// runs any of it, and a probe that reads stdin (a wrapper around
+/// `docker exec -i`, say) then gets nothing instead of the lines that follow
+/// it — the end marker among them.
 String buildDetectBatch(List<(String key, String command)> probes) {
   final b = StringBuffer();
+  b.writeln('{');
   for (final (key, cmd) in probes) {
     // A leading blank line guarantees the marker sits on its own line even if
     // the previous command's output had no trailing newline.
@@ -1174,6 +1218,9 @@ String buildDetectBatch(List<(String key, String command)> probes) {
     b.writeln('echo $_detectMarker$key$_detectMarker');
     b.writeln('{ $cmd ; } 2>&1 || true');
   }
+  b.writeln('echo');
+  b.writeln('echo $_detectMarker$detectEndKey$_detectMarker');
+  b.writeln('} </dev/null');
   return b.toString();
 }
 

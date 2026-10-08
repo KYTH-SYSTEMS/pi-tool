@@ -10,7 +10,12 @@ library;
 import 'dart:convert';
 
 import 'commands.dart'
-    show detectShellCommand, dockerListCommand, serviceStatus, versionQuery;
+    show
+        detectEndKey,
+        detectShellCommand,
+        dockerListCommand,
+        serviceStatus,
+        versionQuery;
 import 'evcc_api.dart';
 import 'evcc_updater.dart';
 import 'pi_job.dart';
@@ -221,7 +226,10 @@ const String _detectDoc = '$_m'
     '"TailscaleIPs":["100.101.102.103"]}}\n'
     // No job.status on the demo Pi: just the boot id.
     '${_m}JOB$_m\n'
-    'BOOT 6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b\n';
+    'BOOT 6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b\n'
+    // The end marker of a batch that ran through — without it detection takes
+    // the document for a cut-off one and shows nothing.
+    '$_m$detectEndKey$_m\n';
 
 /// Canned `ls -1Ap` listing (dirs end with `/`), parsed by `parseDirListing`.
 /// Canned output of [buildSecurityProbe] for the demo Pi: hardened SSH, but

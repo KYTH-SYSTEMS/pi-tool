@@ -5092,6 +5092,79 @@ void main() {
   });
 
   testWidgets(
+      'Erkennung ohne Ergebnis (Verbindung mittendrin weg): der gemerkte '
+      'Stand bleibt auf dem Schirm und im Profil', (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(AppConfig(
+      profiles: [
+        Profile(
+            name: 'S',
+            host: '192.168.178.64',
+            password: 'pw',
+            cachedServices: [grafana.toJson()]),
+      ],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    // What detectServices throws for a batch without its end marker.
+    final u = FakeEvccUpdater()
+      ..detectError = const EvccUpdateException(
+          UpdateErrorKind.unknown,
+          'Verbindung während der Aktion abgerissen – Ergebnis unbekannt. '
+          'Details im Log.');
+    await tester.pumpWidget(page(u, store: store));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('menu-grafana')), findsOneWidget);
+
+    await detect(tester);
+    expect(u.detectCalls, 1);
+    expect(find.textContaining('Ergebnis unbekannt'), findsWidgets);
+
+    // Nothing of that detection reached the cards …
+    expect(find.byKey(const ValueKey('menu-grafana')), findsOneWidget);
+    expect(find.byKey(const ValueKey('menu-evcc')), findsNothing);
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+    // … nor the stored profile (any save from here on, e.g. backgrounding).
+    for (final s in const [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(s);
+    }
+    await tester.pump();
+    expect([for (final j in store.saved.active.cachedServices) j['id']],
+        ['grafana']);
+  });
+
+  testWidgets(
+      'Docker-Karte im Restart-Loop: „inaktiv" und darunter der Grund',
+      (tester) async {
+    useTallScreen(tester);
+    // What detection reports for a container `docker ps` lists as restarting.
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            version: 'stable',
+            active: false,
+            detail: 'Docker · homeassistant',
+            health: '⚠ Container startet neu',
+            healthWarning: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.text('inaktiv'), findsOneWidget);
+    expect(find.text('⚠ Container startet neu'), findsOneWidget);
+    expect(find.text('stable  ·  Docker · homeassistant'), findsOneWidget);
+  });
+
+  testWidgets(
       'Profilwechsel: ein Fernzugriff-Ablauf von Pi A steht nicht bei Pi B',
       (tester) async {
     useTallScreen(tester);

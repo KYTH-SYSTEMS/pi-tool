@@ -549,6 +549,8 @@ class EvccUpdater {
   /// Detects ALL known services (evcc, Pi-hole, System) in one SSH session and
   /// returns their status for the service cards. Read-only; never sends the sudo
   /// password unless [allowSudoForDocker] permits the docker-permission retry.
+  /// Throws (result unknown) when the probes did not run to their end marker:
+  /// cards for half a detection would show missing services as not installed.
   Future<List<ServiceStatus>> detectServices({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -568,7 +570,7 @@ class EvccUpdater {
         // apt-service units is cheap, so probe them all here too.
         final units = knownAptServices.map((s) => s.unit).toList();
         final probes = <(String, String)>[
-          ('DOCKER', dockerListCommand),
+          ('DOCKER', dockerListStateCommand),
           ('PENDING', systemPendingCommand),
           ('APTAGE', systemAptAgeCommand),
           ('EVCC_V', versionQuery),
@@ -599,12 +601,22 @@ class EvccUpdater {
         final batch = await runner.run(detectShellCommand,
             stdin: '${buildDetectBatch(probes)}\n');
         final sec = splitDetectSections(batch.stdout);
+        // No end marker: the channel closed while the batch was still running
+        // (the Pi shutting down, a session that was ended). What came through
+        // is part of the picture — every missing section would read as "not
+        // installed" and go to the cards and their cache. The marker alone
+        // decides: the exit status travels after the output and can get lost
+        // behind a batch that did finish.
+        if (!sec.containsKey(detectEndKey)) {
+          throw const EvccUpdateException(
+              UpdateErrorKind.unknown, _resultUnknown);
+        }
 
         // ---- Docker (shared by evcc-docker + Home Assistant) ----
         // sudo retry only if the daemon denied access and it's allowed.
         var dockerPs = sec['DOCKER'] ?? '';
         if (allowSudoForDocker && isDockerPermissionError(dockerPs)) {
-          final sd = await runner.run(dockerListSudoCommand,
+          final sd = await runner.run(dockerListStateSudoCommand,
               stdin: '${config.password}\n');
           if (isSudoPasswordFailure('${sd.stdout}\n${sd.stderr}')) {
             log('sudo-Passwort abgelehnt – Docker-Dienste konnten nicht '
@@ -624,6 +636,16 @@ class EvccUpdater {
         // — otherwise every apt card would claim a currency nobody checked.
         final aptAge = parseAptListsAgeSeconds(sec['APTAGE'] ?? '');
         final aptKnown = pending != null && isAptIndexFresh(aptAge);
+        // No summary line: the simulation itself failed. The System card says
+        // so (systemUpdateDetail); the log gets what apt printed about it.
+        if (pending == null) {
+          final cause = aptSimulationError(sec['PENDING'] ?? '');
+          log(cause == null
+              ? 'Update-Prüfung (apt-get -s full-upgrade) lieferte kein '
+                  'Ergebnis.'
+              : 'Update-Prüfung (apt-get -s full-upgrade) fehlgeschlagen: '
+                  '$cause');
+        }
 
         // ---- evcc (apt or docker) ----
         final aptV = parseInstalledVersion(sec['EVCC_V'] ?? '');
@@ -642,14 +664,17 @@ class EvccUpdater {
           ));
         } else {
           final c = parseEvccDocker(dockerPs);
+          final note = c == null ? null : _dockerNote(dockerPs, c.name);
           out.add(c != null
               ? ServiceStatus(
                   id: 'evcc',
                   name: 'evcc',
                   installed: true,
                   version: c.image,
-                  active: true,
-                  detail: 'Docker · ${c.name}')
+                  active: note == null,
+                  detail: 'Docker · ${c.name}',
+                  health: note ?? '',
+                  healthWarning: note != null)
               : ServiceStatus.absent('evcc', 'evcc'));
         }
 
@@ -676,14 +701,17 @@ class EvccUpdater {
         // ("stable" isn't comparable) so currency can be reconciled vs GitHub.
         final ha = parseHomeAssistant(dockerPs);
         final haRealVersion = parseHaVersion(sec['HA_VERSION'] ?? '');
+        final haNote = ha == null ? null : _dockerNote(dockerPs, ha.name);
         out.add(ha != null
             ? ServiceStatus(
                 id: 'homeassistant',
                 name: 'Home Assistant',
                 installed: true,
                 version: haRealVersion ?? ha.version,
-                active: true,
-                detail: 'Docker · ${ha.name}')
+                active: haNote == null,
+                detail: 'Docker · ${ha.name}',
+                health: haNote ?? '',
+                healthWarning: haNote != null)
             : ServiceStatus.absent('homeassistant', 'Home Assistant'));
 
         // ---- extra apt services (Grafana, InfluxDB, …) ----
@@ -803,11 +831,7 @@ class EvccUpdater {
           active: true,
           updateAvailable: pendingCount > 0,
           updateKnown: aptKnown,
-          detail: pendingCount > 0
-              ? '$pendingCount Updates verfügbar'
-              : aptKnown
-                  ? 'aktuell'
-                  : aptIndexStaleDetail(aptAge),
+          detail: systemUpdateDetail(pending: pending, aptAgeSeconds: aptAge),
           health: health.summary,
           healthWarning: health.warning,
           // Transient: ServiceStatus.toJson leaves it out of the cache.
@@ -819,6 +843,19 @@ class EvccUpdater {
       },
     );
   }
+
+  /// What a Docker card (evcc, Home Assistant) says about container [name]
+  /// when [dockerPs] lists it in a state other than running — `docker ps`
+  /// shows a container in its restart loop too. Null for a running one, and
+  /// for a listing without states (a Docker before 20.10): then the card
+  /// stays what it was, "aktiv". It is the card's second line, not part of
+  /// its detail: the log action reads the container name out of that.
+  static String? _dockerNote(String dockerPs, String name) =>
+      switch (dockerContainerState(dockerPs, name)) {
+        null || 'running' => null,
+        'restarting' => '⚠ Container startet neu',
+        final state => '⚠ Container-Zustand: $state',
+      };
 
   /// Runs one sudo command, streaming output; maps a rejected password / non-zero
   /// exit to a clear [EvccUpdateException]. Used by the Pi-hole + System actions.

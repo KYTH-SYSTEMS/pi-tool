@@ -96,7 +96,14 @@ class FakeSshRunner implements SshRunner {
   final Map<String, Object> runErrors;
 
   final List<String> commandsRun = [];
+
+  /// The stdin of the LAST call of each command.
   final Map<String, String?> stdinByCommand = {};
+
+  /// The stdin of EVERY call of each command, in call order. Root scripts all
+  /// run under [installShellCommand], so [stdinByCommand] only keeps the last
+  /// one of an action that sends several.
+  final Map<String, List<String?>> stdinsByCommand = {};
   bool closed = false;
   bool connected = false;
 
@@ -114,6 +121,7 @@ class FakeSshRunner implements SshRunner {
       {String? stdin, void Function(String chunk)? onOutput}) async {
     commandsRun.add(command);
     stdinByCommand[command] = stdin;
+    (stdinsByCommand[command] ??= []).add(stdin);
 
     if (runErrors.containsKey(command)) throw runErrors[command]!;
 
@@ -148,7 +156,9 @@ class FakeSshRunner implements SshRunner {
 
   /// Rebuilds the batched detection output from the individually-configured
   /// per-command [responses], so the existing per-command tests keep working
-  /// unchanged. Honors [runErrors] on any probe command (throws it).
+  /// unchanged. Honors [runErrors] on any probe command (throws it). Like the
+  /// real batch (`{ cmd ; } 2>&1`), a probe's stderr lands in its section
+  /// behind its stdout, and the script's end marker closes the output.
   String _synthesizeDetectBatch(String script) {
     const m = '@@PT@@';
     final b = StringBuffer();
@@ -159,6 +169,10 @@ class FakeSshRunner implements SshRunner {
         continue;
       }
       final key = t.substring('echo $m'.length, t.length - m.length);
+      if (key == detectEndKey) {
+        b.writeln('$m$key$m'); // the end marker runs no probe
+        continue;
+      }
       var cmd = (i + 1 < lines.length) ? lines[i + 1].trim() : '';
       const wrap = ' ; } 2>&1';
       if (cmd.startsWith('{ ') && cmd.contains(wrap)) {
@@ -166,11 +180,13 @@ class FakeSshRunner implements SshRunner {
       }
       if (runErrors.containsKey(cmd)) throw runErrors[cmd]!;
       final queue = responses[cmd];
-      final outp = (queue == null || queue.isEmpty)
-          ? ''
-          : (queue.length > 1 ? queue.removeAt(0) : queue.first).stdout;
+      final r = (queue == null || queue.isEmpty)
+          ? null
+          : (queue.length > 1 ? queue.removeAt(0) : queue.first);
       b.writeln('$m$key$m');
-      if (outp.isNotEmpty) b.write(outp.endsWith('\n') ? outp : '$outp\n');
+      for (final outp in [r?.stdout ?? '', r?.stderr ?? '']) {
+        if (outp.isNotEmpty) b.write(outp.endsWith('\n') ? outp : '$outp\n');
+      }
     }
     return b.toString();
   }
@@ -371,6 +387,229 @@ class _SilentRunner implements SshRunner {
   Future<void> close() async => closed = true;
 }
 
+/// A [FakeSshRunner] whose detection batch comes back the way a channel
+/// delivered it: [output] in place of the synthesized text (what a real bash
+/// printed), cut off where [cutAt] begins, with [exitCode] as its status.
+class _DetectOutputRunner extends FakeSshRunner {
+  _DetectOutputRunner(super.responses,
+      {this.output, this.cutAt, this.exitCode = 0});
+  final String? output;
+  final String? cutAt;
+  final int? exitCode;
+
+  @override
+  Future<CommandResult> run(String command,
+      {String? stdin, void Function(String chunk)? onOutput}) async {
+    final r = await super.run(command, stdin: stdin, onOutput: onOutput);
+    if (command != detectShellCommand) return r;
+    var out = output ?? r.stdout;
+    if (cutAt != null) out = out.substring(0, out.indexOf(cutAt!));
+    return _r(out, exitCode: exitCode);
+  }
+}
+
+/// [_bash] as an absolute path, for runs whose PATH is a stub directory alone
+/// — a bare `bash` would not be found there.
+final String? _bashAbsolute = _bash == null || Platform.isWindows
+    ? _bash
+    : (Process.runSync('bash', ['-c', 'command -v bash']).stdout as String)
+        .trim();
+
+/// A throwaway Pi for the detection batch. Every command the batch can reach
+/// is a stub in the box, the files it reads live in the box, and PATH holds
+/// the stub directory first — so no docker, apt, systemd or tailscale of the
+/// machine running the tests is ever asked, and nothing is written at all.
+///
+/// The Pi it plays: evcc from apt, Pi-hole, Tailscale connected, package lists
+/// refreshed just now, no Pi Connect. [containers] is what `docker ps` lists
+/// (`name|image|state` lines); the environment of [run] picks the variants:
+/// `DOCKER=old` (a client before 20.10, which has no `{{.State}}`),
+/// `DOCKER=denied` (the socket refuses everyone but root), `APT=broken` (the
+/// simulation ends without its summary line), `EVCC_APT=` (no evcc package).
+class _DetectBox {
+  _DetectBox({String containers = ''})
+      : _dir = Directory.systemTemp.createTempSync('pitool-detect') {
+    root = _dir.path.replaceAll(r'\', '/');
+    for (final d in ['bin', 'etc', 'proc', 'var/lib/apt/lists']) {
+      Directory('$root/$d').createSync(recursive: true);
+    }
+    // What the probes and the stubs themselves need from the real system,
+    // asked in one go together with the directory as bash names it: put into
+    // PATH from inside the shell, a `C:/…` would be split at its colon and
+    // the stubs would not come first.
+    const real = [
+      'sh', 'cat', 'grep', 'head', 'cut', 'expr', 'date', 'stat', 'id',
+    ];
+    final facts =
+        _sh('cd "\$0" && pwd && command -v ${real.join(' ')}', root)
+            .split('\n');
+    expect(facts, hasLength(real.length + 1), reason: '$facts');
+    _bin = '${facts.first.trim()}/bin';
+    for (var i = 0; i < real.length; i++) {
+      _stub(real[i], 'exec ${facts[i + 1].trim()} "\$@"');
+    }
+    File('$root/containers').writeAsStringSync(containers);
+    File('$root/etc/os-release').writeAsStringSync(
+        'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\nVERSION_ID="12"\n');
+    File('$root/proc/mounts').writeAsStringSync(
+        '/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n'
+        '/dev/mmcblk0p1 /boot/firmware vfat rw,relatime 0 0\n');
+    File('$root/proc/boot_id')
+        .writeAsStringSync('6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b\n');
+    _stub('docker', r'''
+if [ "$DOCKER" = denied ] && [ -z "$AS_ROOT" ]; then
+  echo "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock" >&2
+  exit 1
+fi
+case "$1" in
+  ps)
+    fmt=
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --format ]; then fmt=$2; fi
+      shift
+    done
+    case "$fmt" in
+      *'{{.State}}'*)
+        if [ "$DOCKER" = old ]; then
+          echo "Template parsing error: template: :1:24: executing \"\" at <.State>: can't evaluate field State in type *formatter.containerContext" >&2
+          exit 64
+        fi
+        cat "$BOX/containers" ;;
+      *) cut -d'|' -f1,2 "$BOX/containers" ;;
+    esac ;;
+  exec) echo 2026.9.3 ;;
+esac''');
+    // Like `sudo -S`: the password comes as the first line on stdin.
+    _stub('sudo', r'''
+while [ "${1#-}" != "$1" ]; do shift; done
+IFS= read -r pw
+if [ "$pw" != sekret ]; then
+  echo "Sorry, try again." >&2
+  exit 1
+fi
+AS_ROOT=1
+export AS_ROOT
+exec "$@"''');
+    _stub('apt-get', r'''
+if [ "$APT" = broken ]; then
+  echo "E: dpkg was interrupted, you must manually run 'sudo dpkg --configure -a' to correct the problem." >&2
+  exit 100
+fi
+echo "Reading package lists..."
+echo "Building dependency tree..."
+echo "0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded."''');
+    _stub('dpkg-query', r'''
+case "$*" in
+  *'${Package}'*) exit 1 ;;
+esac
+if [ -z "${EVCC_APT-0.207.0}" ]; then
+  echo "dpkg-query: no packages found matching evcc" >&2
+  exit 1
+fi
+printf 'installed %s' "${EVCC_APT-0.207.0}"''');
+    _stub('systemctl', r'''
+case "$1" in
+  is-active)
+    if [ "$2" = evcc ]; then echo active; else echo inactive; exit 3; fi ;;
+  show) echo LoadState=not-found; echo ActiveState=inactive ;;
+esac''');
+    _stub('pihole', r'''
+case "$1" in
+  -v)
+    echo "Core version is v6.0.6 (Latest: v6.0.6)"
+    echo "Web version is v6.0 (Latest: v6.0)"
+    echo "FTL version is v6.0 (Latest: v6.0)" ;;
+  status) echo "  [i] Blocking is enabled" ;;
+esac''');
+    _stub('tailscale', r'''
+case "$*" in
+  "status --json"*) printf '%s' '{"BackendState":"Running","Self":{"HostName":"raspberrypi","TailscaleIPs":["100.101.102.103"]}}' ;;
+  status*) echo "100.101.102.103  raspberrypi  demo@  linux  -" ;;
+  ip*) echo 100.101.102.103 ;;
+  debug*) echo '{"AdvertiseRoutes": null}' ;;
+esac''');
+    _stub('ip',
+        'echo "10.0.0.0/24 dev eth0 proto kernel scope link src 10.0.0.5"');
+    _stub('vcgencmd', r'''echo "temp=47.2'C"''');
+    _stub('df', r'''
+echo "Filesystem     1048576-blocks  Used Available Capacity Mounted on"
+echo "/dev/root              29000M 11000M    16500M      42% /"''');
+    _stub('free', r'''
+echo "               total        used        free      shared  buff/cache   available"
+echo "Mem:            3792         842        1934          62        1015        2721"''');
+    _stub('uptime', 'echo "up 5 days, 3 hours"');
+    _stub('journalctl', 'exit 0');
+    _sh(r'chmod +x "$0"/bin/*', root);
+  }
+
+  final Directory _dir;
+  late final String root;
+  late final String _bin;
+
+  /// Output of [script], with [dir] as its `$0`.
+  static String _sh(String script, String dir) =>
+      (Process.runSync(_bashAbsolute!, ['-c', script, dir]).stdout as String)
+          .trim();
+
+  void _stub(String name, String body) =>
+      File('$root/bin/$name').writeAsStringSync('#!/bin/sh\n$body\n');
+
+  /// [script] with the absolute paths it reads moved into the box.
+  String _rebased(String script) {
+    const box = '@BOX@';
+    final moved = script
+        .replaceAll('/var/lib/apt/lists', '$box/var/lib/apt/lists')
+        .replaceAll('/etc/os-release', '$box/etc/os-release')
+        .replaceAll('/proc/mounts', '$box/proc/mounts')
+        .replaceAll('/proc/sys/kernel/random/boot_id', '$box/proc/boot_id')
+        .replaceAll('/sys/class/thermal/thermal_zone0/temp', '$box/temp')
+        .replaceAll(tailscaleForwardingConf, '$box/etc/forwarding.conf')
+        .replaceAll(jobStatusPath, '$box/job.status');
+    // Nothing the batch reads may still point at the machine running the test.
+    expect(RegExp(r'[ =(]/(etc|var|proc|sys)/').allMatches(moved), isEmpty,
+        reason: moved);
+    return moved.replaceAll(box, root);
+  }
+
+  /// Runs [script] the way the app runs the detection batch — on the stdin of
+  /// `LC_ALL=C bash -s` — and returns what the channel would deliver.
+  Future<CommandResult> run(String script,
+      {Map<String, String> env = const {}}) async {
+    final p = await Process.start(_bashAbsolute!, ['-s'], environment: {
+      'PATH': '$root/bin',
+      'LC_ALL': 'C',
+      'BOX': root,
+      ...env,
+    });
+    final out = p.stdout.transform(utf8.decoder).join();
+    final err = p.stderr.transform(utf8.decoder).join();
+    // The stubs first, set inside the shell: Git Bash's launcher puts its own
+    // directories in front of an inherited PATH.
+    p.stdin.write("export PATH='$_bin':\"\$PATH\"\n");
+    p.stdin.write(_rebased(script));
+    await p.stdin.close();
+    return CommandResult(
+        exitCode: await p.exitCode, stdout: await out, stderr: await err);
+  }
+
+  /// Runs one command line as a remote shell would, with [stdin] on its stdin.
+  Future<CommandResult> exec(String command,
+      {String stdin = '', Map<String, String> env = const {}}) async {
+    final p = await Process.start(
+        _bashAbsolute!,
+        ['-c', "export PATH='$_bin':\"\$PATH\"; ${_rebased(command)}"],
+        environment: {'PATH': '$root/bin', 'BOX': root, ...env});
+    final out = p.stdout.transform(utf8.decoder).join();
+    final err = p.stderr.transform(utf8.decoder).join();
+    p.stdin.write(stdin);
+    await p.stdin.close();
+    return CommandResult(
+        exitCode: await p.exitCode, stdout: await out, stderr: await err);
+  }
+
+  void dispose() => _dir.deleteSync(recursive: true);
+}
+
 FakeSshRunner _happyRunner() => FakeSshRunner({
       _vQuery: [_r('installed 0.310.0\n')],
       _jobStart: [_job(_evccLog(), kind: jobKindEvccUpdate)],
@@ -385,6 +624,37 @@ Matcher _err(UpdateErrorKind kind, [Object? message]) {
 }
 
 void main() {
+  group('FakeSshRunner (the test double)', () {
+    test('keeps the stdin of every call of a command, in order', () async {
+      final runner = FakeSshRunner({});
+      await runner.run(installShellCommand, stdin: 'first script');
+      await runner.run(installShellCommand);
+      await runner.run(installShellCommand, stdin: 'third script');
+      expect(runner.stdinsByCommand[installShellCommand],
+          ['first script', null, 'third script']);
+      // The accessor the existing tests use still names the last one.
+      expect(runner.stdinByCommand[installShellCommand], 'third script');
+      expect(runner.stdinsByCommand['never run'], isNull);
+    });
+
+    test('detection batch: a probe\'s stderr is in its section, like 2>&1',
+        () async {
+      final runner = FakeSshRunner({
+        'both': [_r('out', stderr: 'err')],
+        'failing': [_r('', stderr: 'E: only on stderr\n', exitCode: 100)],
+      });
+      final r = await runner.run(detectShellCommand,
+          stdin: buildDetectBatch(
+              [('A', 'both'), ('B', 'failing'), ('C', 'unscripted')]));
+      final sec = splitDetectSections(r.stdout);
+      expect(sec['A'], 'out\nerr');
+      expect(sec['B'], 'E: only on stderr');
+      expect(sec['C'], '');
+      // The script's end marker closes the synthesized output as well.
+      expect(sec.keys.toList(), ['A', 'B', 'C', detectEndKey]);
+    });
+  });
+
   group('EvccUpdater happy paths', () {
     test('real run upgrades evcc and reports the version change', () async {
       final runner = _happyRunner();
@@ -1852,6 +2122,10 @@ void main() {
       expect(url, 'https://login.tailscale.com/a/again');
       expect(runner.stdinByCommand[installShellCommand],
           contains("tailscale up '--advertise-routes=192.168.178.0/24'"));
+      // Both root scripts ran under the same command: the bare `up` first.
+      final scripts = runner.stdinsByCommand[installShellCommand]!;
+      expect(scripts, hasLength(2));
+      expect(scripts.first, isNot(contains('--advertise-routes')));
     });
 
     test('tailscaleUp: Weigerung mit unlesbaren Flags → Fehler, kein Raten',
@@ -4147,7 +4421,7 @@ void main() {
     test('a generic SSHError maps to unknown with an "SSH-Fehler" message',
         () async {
       final runner = FakeSshRunner({},
-          runErrors: {dockerListCommand: SSHStateError('boom')});
+          runErrors: {dockerListStateCommand: SSHStateError('boom')});
       await expectLater(
         _updaterWith(runner).detectServices(config: _config, onLog: (_) {}),
         throwsA(isA<EvccUpdateException>()
@@ -4187,8 +4461,9 @@ void main() {
       final runner = FakeSshRunner({
         _vQuery: [_r('installed 0.310.0\n')],
         _svc: [_r('active\n')],
-        dockerListCommand: [
-          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        dockerListStateCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable|'
+              'running\n')
         ],
         piholeVersionCommand: [_r('')],
         systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"')],
@@ -4200,8 +4475,544 @@ void main() {
       final ha = list.firstWhere((s) => s.id == 'homeassistant');
       expect(ha.installed, isTrue);
       expect(ha.version, 'stable');
+      expect(ha.active, isTrue);
+      expect(ha.detail, 'Docker · homeassistant');
+      expect(ha.health, isEmpty);
     });
   });
+
+  // The batch prints an end marker last. Without it the channel closed while
+  // probes were still running: the sections that did not arrive would read as
+  // "not installed", and that half picture would go to the cards and the
+  // cache.
+  group('detectServices: a batch that did not run to its end', () {
+    const unknown = 'Verbindung während der Aktion abgerissen – Ergebnis '
+        'unbekannt. Details im Log.';
+    const endMarker = '@@PT@@$detectEndKey@@PT@@';
+
+    _DetectOutputRunner pi({String? cutAt, int? exitCode = 0}) =>
+        _DetectOutputRunner({
+          _vQuery: [_r('installed 0.310.0\n')],
+          _svc: [_r('active\n')],
+          piholeVersionCommand: [
+            _r('Core version is v6.0.4 (Latest: v6.0.4)')
+          ],
+          piholeStatusCommand: [_r('[✓] Pi-hole blocking is enabled')],
+          tailscaleStatusCommand: [
+            _r('100.64.0.5   mypi   linux\n100.64.0.5')
+          ],
+          systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"')],
+          systemPendingCommand: [
+            _r('0 upgraded, 0 newly installed, 0 to remove.')
+          ],
+          systemAptAgeCommand: [_r('3600')],
+        }, cutAt: cutAt, exitCode: exitCode);
+
+    test('the end marker is the last thing the batch the updater sends prints',
+        () async {
+      final runner = pi();
+      await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      final lines = const LineSplitter()
+          .convert(runner.stdinByCommand[detectShellCommand]!)
+          .where((l) => l.isNotEmpty)
+          .toList();
+      // One group with its own stdin; inside it the end marker comes last.
+      expect(lines.first, '{');
+      expect(lines.last, '} </dev/null');
+      expect(lines[lines.length - 2], 'echo $endMarker');
+      // …and the probes in front of it are wrapped as they always were.
+      expect(lines, contains('{ $systemPendingCommand ; } 2>&1 || true'));
+    });
+
+    for (final (name, cutAt) in [
+      ('nothing arrived at all', '@@PT@@DOCKER@@PT@@'),
+      ('the output stops before the Pi-hole probe', '@@PT@@PIHOLE_V@@PT@@'),
+      ('the output stops inside the Tailscale section', '100.64.0.5   mypi'),
+      ('the output stops before the System probes', '@@PT@@OS@@PT@@'),
+      ('every probe answered, only the end marker is missing', endMarker),
+      ('the output stops in the middle of the end marker', '$detectEndKey@@'),
+    ]) {
+      test('$name: result unknown, no cards', () async {
+        final log = <String>[];
+        await expectLater(
+          _updaterWith(pi(cutAt: cutAt, exitCode: null))
+              .detectServices(config: _config, onLog: log.add),
+          _err(UpdateErrorKind.unknown, unknown),
+        );
+        expect(log.join('\n'), isNot(contains('Erkannt:')));
+      });
+    }
+
+    test('an exit status does not make a cut-off batch complete', () async {
+      // bash ended by a signal: an exit status arrives, the rest of the
+      // output never does.
+      await expectLater(
+        _updaterWith(pi(cutAt: '@@PT@@OS@@PT@@', exitCode: 143))
+            .detectServices(config: _config, onLog: (_) {}),
+        _err(UpdateErrorKind.unknown, unknown),
+      );
+    });
+
+    test('a batch with its end marker counts, whatever the exit status',
+        () async {
+      // The marker alone decides: the exit status of a finished command can
+      // get lost on the way (it is sent after the output).
+      for (final exitCode in [0, null]) {
+        final list = await _updaterWith(pi(exitCode: exitCode))
+            .detectServices(config: _config, onLog: (_) {});
+        final byId = {for (final s in list) s.id: s};
+        expect(byId['evcc']!.version, '0.310.0', reason: '$exitCode');
+        expect(byId['pihole']!.installed, isTrue, reason: '$exitCode');
+        expect(byId['tailscale']!.detail, 'Verbunden · 100.64.0.5',
+            reason: '$exitCode');
+        expect(byId['system']!.detail, 'aktuell', reason: '$exitCode');
+      }
+    });
+  });
+
+  // `docker ps` lists a container in its restart loop too. Detection has to
+  // find it (the card and its actions must stay) without calling it running.
+  group('detectServices: Docker containers that are listed but not running',
+      () {
+    const denied = 'permission denied while trying to connect to the Docker '
+        'daemon socket at unix:///var/run/docker.sock';
+
+    Future<Map<String, ServiceStatus>> detect(FakeSshRunner runner,
+        {bool allowSudoForDocker = true}) async {
+      final list = await _updaterWith(runner).detectServices(
+          config: _config,
+          onLog: (_) {},
+          allowSudoForDocker: allowSudoForDocker);
+      return {for (final s in list) s.id: s};
+    }
+
+    test('evcc in its restart loop: card stays, red, with the reason',
+        () async {
+      final byId = await detect(FakeSshRunner({
+        dockerListStateCommand: [
+          _r('db|postgres:16|running\nevcc|evcc/evcc:latest|restarting\n')
+        ],
+      }));
+      final evcc = byId['evcc']!;
+      expect(evcc.installed, isTrue);
+      expect(evcc.version, 'evcc/evcc:latest');
+      expect(evcc.active, isFalse);
+      expect(evcc.health, '⚠ Container startet neu');
+      expect(evcc.healthWarning, isTrue);
+      // The detail keeps its form: the log action reads the name out of it.
+      expect(evcc.detail, 'Docker · evcc');
+      expect(
+          buildServiceLogsCommand(id: evcc.id, detail: evcc.detail).command,
+          startsWith("docker logs --tail 200 'evcc' "));
+    });
+
+    test('Home Assistant in its restart loop: the same', () async {
+      final byId = await detect(FakeSshRunner({
+        dockerListStateCommand: [
+          _r('evcc|evcc/evcc:latest|running\n'
+              'homeassistant|ghcr.io/home-assistant/home-assistant:stable|'
+              'restarting\n')
+        ],
+      }));
+      expect(byId['evcc']!.active, isTrue);
+      expect(byId['evcc']!.health, isEmpty);
+      expect(byId['evcc']!.healthWarning, isFalse);
+      final ha = byId['homeassistant']!;
+      expect(ha.installed, isTrue);
+      expect(ha.active, isFalse);
+      expect(ha.detail, 'Docker · homeassistant');
+      expect(ha.health, '⚠ Container startet neu');
+      expect(ha.healthWarning, isTrue);
+    });
+
+    test('a paused container is not running either; its state is named',
+        () async {
+      final byId = await detect(FakeSshRunner({
+        dockerListStateCommand: [_r('evcc|evcc/evcc:latest|paused\n')],
+      }));
+      expect(byId['evcc']!.active, isFalse);
+      expect(byId['evcc']!.health, '⚠ Container-Zustand: paused');
+    });
+
+    test('a Docker too old to report the state: active, as before', () async {
+      // The probe fell back to the plain `name|image` listing.
+      final byId = await detect(FakeSshRunner({
+        dockerListStateCommand: [
+          _r('evcc|evcc/evcc:latest\n'
+              'homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+      }));
+      for (final id in ['evcc', 'homeassistant']) {
+        expect(byId[id]!.installed, isTrue, reason: id);
+        expect(byId[id]!.active, isTrue, reason: id);
+        expect(byId[id]!.health, isEmpty, reason: id);
+      }
+    });
+
+    test('docker needs sudo: the state comes from the sudo listing', () async {
+      final runner = FakeSshRunner({
+        // Real docker reports this on stderr; the batch merges it (2>&1).
+        dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
+        dockerListStateSudoCommand: [
+          _r('evcc|evcc/evcc:latest|restarting\n')
+        ],
+      });
+      final byId = await detect(runner);
+      expect(byId['evcc']!.installed, isTrue);
+      expect(byId['evcc']!.active, isFalse);
+      expect(runner.stdinByCommand[dockerListStateSudoCommand], 'sekret\n');
+      expect(dockerListStateSudoCommand, isNot(contains('sekret')));
+    });
+
+    test('allowSudoForDocker:false never sends the password', () async {
+      final runner = FakeSshRunner({
+        dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
+        dockerListStateSudoCommand: [_r('evcc|evcc/evcc:latest|running\n')],
+      });
+      final byId = await detect(runner, allowSudoForDocker: false);
+      expect(byId['evcc']!.installed, isFalse);
+      expect(runner.commandsRun, [detectShellCommand]);
+    });
+
+    test('a rejected sudo password: logged, no Docker cards', () async {
+      final runner = FakeSshRunner({
+        dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
+        dockerListStateSudoCommand: [
+          _r('', stderr: 'Sorry, try again.\nsudo: 1 incorrect password attempt',
+              exitCode: 1)
+        ],
+      });
+      final log = <String>[];
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: log.add);
+      expect(list.firstWhere((s) => s.id == 'evcc').installed, isFalse);
+      expect(log.join('\n'), contains('sudo-Passwort abgelehnt'));
+    });
+
+    test('cards cached by an older version load unchanged', () {
+      // What v0.71.0 wrote for a Docker evcc (no state known then).
+      final old = ServiceStatus.fromJson(jsonDecode('{"id":"evcc","name":'
+          '"evcc","installed":true,"version":"evcc/evcc:latest","active":true,'
+          '"updateAvailable":false,"updateKnown":false,"detail":"Docker · evcc",'
+          '"health":"","healthWarning":false,"webPort":null,"aptPackage":null,'
+          '"compatible":true,"routes":null}') as Map<String, dynamic>);
+      expect(old.installed, isTrue);
+      expect(old.active, isTrue);
+      expect(old.detail, 'Docker · evcc');
+      expect(old.health, isEmpty);
+      expect(old.healthWarning, isFalse);
+    });
+
+    test('a restarting card survives the cache round trip', () async {
+      final byId = await detect(FakeSshRunner({
+        dockerListStateCommand: [_r('evcc|evcc/evcc:latest|restarting\n')],
+      }));
+      final back = ServiceStatus.fromJson(
+          jsonDecode(jsonEncode(byId['evcc']!.toJson()))
+              as Map<String, dynamic>);
+      expect(back.active, isFalse);
+      expect(back.detail, 'Docker · evcc');
+      expect(back.health, '⚠ Container startet neu');
+      expect(back.healthWarning, isTrue);
+    });
+  });
+
+  // No summary line from the apt simulation is its own case: the package
+  // lists are not the cause, and refreshing them does not help.
+  group('detectServices: the System card when currency is unknown', () {
+    Future<(ServiceStatus, List<String>)> system(
+        {required CommandResult pending, String age = '3600'}) async {
+      final log = <String>[];
+      final list = await _updaterWith(FakeSshRunner({
+        systemOsCommand: [_r('PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"')],
+        systemPendingCommand: [pending],
+        systemAptAgeCommand: [_r(age)],
+      })).detectServices(config: _config, onLog: log.add);
+      return (list.firstWhere((s) => s.id == 'system'), log);
+    }
+
+    const interrupted = "E: dpkg was interrupted, you must manually run 'sudo "
+        "dpkg --configure -a' to correct the problem.";
+
+    test('simulation failed on a fresh index: says so, not "0 Tage alt"',
+        () async {
+      final (sys, log) =
+          await system(pending: _r('', stderr: interrupted, exitCode: 100));
+      expect(sys.detail, 'Update-Prüfung fehlgeschlagen — Stand unbekannt');
+      expect(sys.updateKnown, isFalse);
+      expect(sys.updateAvailable, isFalse);
+      // apt's own error is in the log, where the cause can be read.
+      expect(
+          log,
+          contains('Update-Prüfung (apt-get -s full-upgrade) fehlgeschlagen: '
+              '$interrupted'));
+    });
+
+    test('simulation failed on an old index: still the simulation', () async {
+      final (sys, _) = await system(
+          pending: _r('', stderr: interrupted, exitCode: 100),
+          age: '${10 * 24 * 3600}');
+      expect(sys.detail, 'Update-Prüfung fehlgeschlagen — Stand unbekannt');
+    });
+
+    test('simulation printed nothing at all: logged without a cause',
+        () async {
+      final (sys, log) = await system(pending: _r(''));
+      expect(sys.detail, 'Update-Prüfung fehlgeschlagen — Stand unbekannt');
+      expect(
+          log,
+          contains('Update-Prüfung (apt-get -s full-upgrade) lieferte kein '
+              'Ergebnis.'));
+    });
+
+    test('nothing pending, index too old: the age, as before', () async {
+      final (sys, log) = await system(
+          pending: _r('0 upgraded, 0 newly installed, 0 to remove.'),
+          age: '${10 * 24 * 3600}');
+      expect(sys.detail, 'Paketlisten 10 Tage alt — Stand unbekannt');
+      expect(sys.updateKnown, isFalse);
+      expect(log.join('\n'), isNot(contains('Update-Prüfung')));
+    });
+
+    test('nothing pending, age unreadable: unknown, as before', () async {
+      final (sys, _) = await system(
+          pending: _r('0 upgraded, 0 newly installed, 0 to remove.'),
+          age: 'stat: cannot stat');
+      expect(sys.detail, 'Paketlisten-Stand unbekannt');
+      expect(sys.updateKnown, isFalse);
+    });
+
+    test('nothing pending on a fresh index: aktuell, nothing logged about it',
+        () async {
+      final (sys, log) = await system(
+          pending: _r('0 upgraded, 0 newly installed, 0 to remove.'));
+      expect(sys.detail, 'aktuell');
+      expect(sys.updateKnown, isTrue);
+      expect(log.join('\n'), isNot(contains('Update-Prüfung')));
+    });
+
+    test('updates pending: the count, whatever the age of the index',
+        () async {
+      for (final age in ['3600', '${10 * 24 * 3600}', '']) {
+        final (sys, _) = await system(
+            pending: _r('3 upgraded, 0 newly installed, 0 to remove.'),
+            age: age);
+        expect(sys.detail, '3 Updates verfügbar', reason: age);
+        expect(sys.updateAvailable, isTrue, reason: age);
+      }
+    });
+  });
+
+  // The batch the updater really sends, run by a real bash against stub
+  // commands, and its real output handed back to the updater.
+  group('detection batch in bash', () {
+    late _DetectBox box;
+    tearDown(() => box.dispose());
+
+    /// The stdin detection sends, exactly as the runner gets it.
+    Future<String> batch() async {
+      final runner = FakeSshRunner({});
+      await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      return runner.stdinByCommand[detectShellCommand]!;
+    }
+
+    /// Detection over [out], the output of a real run.
+    Future<Map<String, ServiceStatus>> cards(CommandResult out,
+        {Map<String, List<CommandResult>> more = const {},
+        List<String>? log}) async {
+      final list = await _updaterWith(
+              _DetectOutputRunner(more, output: out.stdout, exitCode: out.exitCode))
+          .detectServices(config: _config, onLog: log?.add ?? (_) {});
+      return {for (final s in list) s.id: s};
+    }
+
+    test('a complete run: every section, the end marker last, the cards',
+        () async {
+      box = _DetectBox(
+          containers: 'homeassistant|ghcr.io/home-assistant/home-assistant:'
+              'stable|running\n');
+      final script = await batch();
+      final out = await box.run(script);
+      expect(out.exitCode, 0, reason: out.stderr);
+      expect(out.stderr, isEmpty);
+
+      // One section per probe, in the order sent, then the end marker.
+      final sent = RegExp(r'^echo @@PT@@(.+)@@PT@@$', multiLine: true)
+          .allMatches(script)
+          .map((m) => m.group(1)!)
+          .toList();
+      final sec = splitDetectSections(out.stdout);
+      expect(sec.keys.toList(), sent);
+      expect(sent.last, detectEndKey);
+      expect(sent, containsAll(['DOCKER', 'PENDING', 'TAILSCALE', 'OS', 'JOB']));
+      expect(sec['DOCKER'],
+          'homeassistant|ghcr.io/home-assistant/home-assistant:stable|running');
+      expect(sec['EVCC_V'], 'installed 0.207.0'); // printed without a newline
+      expect(sec['JOB'], 'BOOT 6f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b');
+
+      final byId = await cards(out);
+      expect(byId['evcc']!.detail, 'apt · Dienst aktiv');
+      expect(byId['evcc']!.version, '0.207.0');
+      expect(byId['evcc']!.updateKnown, isTrue);
+      expect(byId['pihole']!.version, 'v6.0.6');
+      expect(byId['pihole']!.detail, 'Blocking aktiv');
+      expect(byId['homeassistant']!.active, isTrue);
+      expect(byId['homeassistant']!.version, '2026.9.3');
+      expect(byId['homeassistant']!.detail, 'Docker · homeassistant');
+      expect(byId['piconnect']!.installed, isFalse);
+      expect(byId['tailscale']!.detail, 'Verbunden · 100.101.102.103');
+      final sys = byId['system']!;
+      expect(sys.version, 'Debian GNU/Linux 12 (bookworm)');
+      expect(sys.detail, 'aktuell');
+      expect(sys.updateKnown, isTrue);
+      expect(sys.health,
+          '47.2°C  ·  16.1 GB frei  ·  RAM 2721 MB frei  ·  up 5 days, 3 hours');
+      expect(sys.job, isNull);
+    });
+
+    test('the same run cut off anywhere before the end marker is rejected',
+        () async {
+      box = _DetectBox();
+      final out = (await box.run(await batch())).stdout;
+      final end = out.lastIndexOf('@@PT@@$detectEndKey@@PT@@');
+      expect(end, greaterThan(0));
+      for (final cut in [0, out.indexOf('@@PT@@OS@@PT@@'), end, end + 9]) {
+        await expectLater(
+          cards(_r(out.substring(0, cut), exitCode: null)),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')),
+          reason: 'cut at $cut',
+        );
+      }
+    });
+
+    test('a tool that reads stdin does not cut the detection short', () async {
+      // A `pihole` on the host that hands its stdin on (a wrapper around
+      // `docker exec -i`): the batch arrives on stdin, so the wrapper used to
+      // eat every line after its own — the later probes and the end marker.
+      box = _DetectBox();
+      File('${box.root}/bin/pihole').writeAsStringSync('#!/bin/sh\n'
+          'cat >/dev/null\n'
+          'echo "Core version is v6.0.6 (Latest: v6.0.6)"\n');
+      final out = await box.run(await batch());
+      expect(out.exitCode, 0, reason: out.stderr);
+      final sec = splitDetectSections(out.stdout);
+      expect(sec.keys.last, detectEndKey);
+      final byId = await cards(out);
+      expect(byId['pihole']!.installed, isTrue);
+      expect(byId['tailscale']!.installed, isTrue); // probed after Pi-hole
+      expect(byId['system']!.version, 'Debian GNU/Linux 12 (bookworm)');
+    });
+
+    test('a bash that dies mid-batch leaves no end marker', () async {
+      // The clean channel end of the finding: the shell is gone, the rest of
+      // the script is never read.
+      box = _DetectBox();
+      final script = await batch();
+      final out = await box.run(script.replaceFirst(
+          '{ $systemPendingCommand ; }', r'{ kill -9 $$ ; }'));
+      expect(out.exitCode, isNot(0));
+      final sec = splitDetectSections(out.stdout);
+      expect(sec.containsKey('DOCKER'), isTrue); // ran before the shell died
+      expect(sec.containsKey('OS'), isFalse);
+      expect(sec.containsKey(detectEndKey), isFalse);
+      await expectLater(cards(out),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+    });
+
+    test('Docker evcc in its restart loop: found, not running', () async {
+      box = _DetectBox(
+          containers: 'evcc-db|postgres:16|running\n'
+              'evcc|evcc/evcc:latest|restarting\n');
+      final out = await box.run(await batch(), env: {'EVCC_APT': ''});
+      expect(splitDetectSections(out.stdout)['DOCKER'],
+          'evcc-db|postgres:16|running\nevcc|evcc/evcc:latest|restarting');
+      final evcc = (await cards(out))['evcc']!;
+      expect(evcc.installed, isTrue);
+      expect(evcc.active, isFalse);
+      expect(evcc.detail, 'Docker · evcc');
+      expect(evcc.health, '⚠ Container startet neu');
+    });
+
+    test('a Docker without {{.State}}: the plain listing answers, as before',
+        () async {
+      box = _DetectBox(containers: 'evcc|evcc/evcc:latest|restarting\n');
+      final out = await box
+          .run(await batch(), env: {'EVCC_APT': '', 'DOCKER': 'old'});
+      // No template error in the section, just the lines of the old format.
+      expect(splitDetectSections(out.stdout)['DOCKER'], 'evcc|evcc/evcc:latest');
+      final evcc = (await cards(out))['evcc']!;
+      expect(evcc.installed, isTrue);
+      expect(evcc.active, isTrue);
+      expect(evcc.health, isEmpty);
+    });
+
+    test('no docker at all: the section says so, nothing is retried',
+        () async {
+      box = _DetectBox();
+      File('${box.root}/bin/docker').deleteSync();
+      final out = await box.run(await batch());
+      // One line: the first try's message is dropped, the second one's stays.
+      expect(splitDetectSections(out.stdout)['DOCKER'],
+          matches(RegExp(r'^.*: line \d+: docker: command not found$')));
+      final runner = _DetectOutputRunner({}, output: out.stdout);
+      final list =
+          await _updaterWith(runner).detectServices(config: _config, onLog: (_) {});
+      expect(list.firstWhere((s) => s.id == 'homeassistant').installed, isFalse);
+      expect(runner.commandsRun, [detectShellCommand]);
+    });
+
+    test('the socket refuses the user: the sudo listing carries the state',
+        () async {
+      box = _DetectBox(containers: 'evcc|evcc/evcc:latest|restarting\n');
+      const env = {'EVCC_APT': '', 'DOCKER': 'denied'};
+      final out = await box.run(await batch(), env: env);
+      expect(isDockerPermissionError(splitDetectSections(out.stdout)['DOCKER']!),
+          isTrue);
+
+      final sudo = await box.exec(dockerListStateSudoCommand,
+          stdin: 'sekret\n', env: env);
+      expect(sudo.exitCode, 0, reason: sudo.stderr);
+      expect(sudo.stdout, 'evcc|evcc/evcc:latest|restarting\n');
+
+      final evcc =
+          (await cards(out, more: {dockerListStateSudoCommand: [sudo]}))['evcc']!;
+      expect(evcc.installed, isTrue);
+      expect(evcc.active, isFalse);
+    });
+
+    test('sudo listing on a Docker without {{.State}}: one password, the '
+        'plain listing', () async {
+      box = _DetectBox(containers: 'evcc|evcc/evcc:latest|running\n');
+      final sudo = await box.exec(dockerListStateSudoCommand,
+          stdin: 'sekret\n', env: {'DOCKER': 'old'});
+      expect(sudo.exitCode, 0, reason: sudo.stderr);
+      expect(sudo.stdout, 'evcc|evcc/evcc:latest\n');
+      expect(sudo.stderr, isEmpty);
+    });
+
+    test('sudo listing with a wrong password: nothing listed, sudo says why',
+        () async {
+      box = _DetectBox(containers: 'evcc|evcc/evcc:latest|running\n');
+      final sudo =
+          await box.exec(dockerListStateSudoCommand, stdin: 'falsch\n');
+      expect(sudo.exitCode, isNot(0));
+      expect(sudo.stdout, isEmpty);
+      expect(isSudoPasswordFailure(sudo.stderr), isTrue);
+    });
+
+    test('the apt simulation ends without its summary: its error is in the '
+        'section and on the System card', () async {
+      box = _DetectBox();
+      final out = await box.run(await batch(), env: {'APT': 'broken'});
+      expect(splitDetectSections(out.stdout)['PENDING'],
+          startsWith('E: dpkg was interrupted'));
+      final log = <String>[];
+      final sys = (await cards(out, log: log))['system']!;
+      expect(sys.detail, 'Update-Prüfung fehlgeschlagen — Stand unbekannt');
+      expect(log.join('\n'),
+          contains('fehlgeschlagen: E: dpkg was interrupted, you must'));
+    });
+  }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
 
   group('EvccUpdater Home Assistant actions', () {
     test('installHomeAssistant installs as root, then verifies it is running',

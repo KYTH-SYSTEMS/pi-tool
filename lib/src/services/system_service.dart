@@ -256,6 +256,38 @@ String aptIndexStaleDetail(int? ageSeconds) => ageSeconds == null
     ? 'Paketlisten-Stand unbekannt'
     : 'Paketlisten ${ageSeconds ~/ Duration.secondsPerDay} Tage alt — Stand unbekannt';
 
+/// The System card's detail line. [pending] is [parsePendingUpdates] of the
+/// simulation, [aptAgeSeconds] the age of the package index.
+///
+/// A simulation without a summary line ([pending] null) is a case of its own:
+/// the package lists are not what failed, so the line must not name their age
+/// (a fresh index read "Paketlisten 0 Tage alt — Stand unbekannt") — and
+/// "Paketlisten aktualisieren" would not cure it. Only with nothing pending
+/// does the index decide: current, too old to tell, or of unknown age.
+String systemUpdateDetail({
+  required int? pending,
+  required int? aptAgeSeconds,
+}) {
+  if (pending == null) return 'Update-Prüfung fehlgeschlagen — Stand unbekannt';
+  if (pending > 0) return '$pending Updates verfügbar';
+  return isAptIndexFresh(aptAgeSeconds)
+      ? 'aktuell'
+      : aptIndexStaleDetail(aptAgeSeconds);
+}
+
+/// What a [systemPendingCommand] run without a summary line printed about its
+/// failure: apt's first error (`E: …`), else the last line. Null when it
+/// printed nothing.
+String? aptSimulationError(String simOutput) {
+  final lines = simOutput
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .toList();
+  if (lines.isEmpty) return null;
+  return lines.firstWhere((l) => l.startsWith('E:'), orElse: () => lines.last);
+}
+
 /// True when apt refused to do anything because a previous dpkg run was killed
 /// mid-way (power loss, cancelled update, full disk). Until `dpkg --configure
 /// -a` runs, EVERY install on that Pi fails — so this deserves a named error

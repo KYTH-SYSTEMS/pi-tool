@@ -26,6 +26,17 @@ void main() {
       expect(sections['DISK'], contains('29%'));
     });
 
+    test('ends with the end marker, like a batch that ran through', () {
+      // Without it the detection would read the document as cut off, and the
+      // demo — the Play reviewers' way into the app — would show no cards.
+      expect(sections.keys.last, detectEndKey);
+      // The very line a real batch echoes last.
+      final lastLine = const LineSplitter()
+          .convert(demoResponseFor(detectShellCommand))
+          .last;
+      expect(buildDetectBatch(const []), contains('\necho $lastLine\n'));
+    });
+
     test('the REAL parsers accept the canned values', () {
       expect(parseInstalledVersion(sections['EVCC_V']!), '0.207.0');
       expect(isServiceActive(sections['EVCC_SVC']!), isTrue);
