@@ -26,6 +26,16 @@ systemctl is-active unattended-upgrades 2>/dev/null || true
 # the package. What actually gates the daily run is APT::Periodic, so read the
 # EFFECTIVE value (apt-config folds in every apt.conf.d snippet).
 apt-config dump APT::Periodic::Unattended-Upgrade 2>/dev/null | head -1 || true
+# 32-bit Raspberry Pi OS takes its packages from the origin "Raspbian", but
+# its unattended-upgrades is the unchanged Debian package: the Origins-Pattern
+# names origin=Debian only, so it runs and installs nothing. Said only when
+# that origin is in use AND apt-config could be read AND no pattern lets
+# Raspbian in — on every other system this prints nothing at all.
+if apt-cache policy 2>/dev/null | grep -Eq '[ ,]o=Raspbian(,|$)'; then
+  if d=$(apt-config dump 2>/dev/null) && ! printf '%s\n' "$d" | grep -E '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins)::' | grep -q Raspbian; then
+    echo raspbian-origin-uncovered
+  fi
+fi
 echo __SEC_F2B__
 systemctl is-active fail2ban 2>/dev/null || true
 echo __SEC_PORTS__
@@ -88,6 +98,18 @@ String buildSecurityFixScript(SecurityFix fix) {
     // own </dev/null, and --force-confdef/--force-confold keep a changed
     // conffile without asking — dpkg's question would otherwise read the rest
     // of the script as its answer and abort.
+    //
+    // fail2ban: `enable --now` returns once the server process is forked; a
+    // server that finds no log to read ends a moment later. So the unit is
+    // watched for ten seconds, and only one that stays active gets the marker
+    // — otherwise a journal excerpt and exit 1.
+    //
+    // Debian 12 / Raspberry Pi OS Bookworm without rsyslog has no
+    // /var/log/auth.log, and fail2ban 1.0.2-2 there ends with "Have not found
+    // any log file for sshd jail". Only in that case (not active AND no
+    // auth.log) the sshd jail is pointed at the journal by a drop-in of our
+    // own; a fail2ban that started is left as it is. A drop-in this run
+    // wrote and that did not help is removed again.
     case SecurityFix.fail2ban:
       return '''
 set -e
@@ -95,9 +117,44 @@ export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C
 apt-get update -qq </dev/null 2>&1 || true
 apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y fail2ban </dev/null
-systemctl enable --now fail2ban
+systemctl enable --now fail2ban || true
+stays_up() {
+  local i
+  for i in 1 2 3 4 5; do
+    sleep 2
+    systemctl is-active --quiet fail2ban || return 1
+  done
+}
+j=/etc/fail2ban/jail.d/pitool-sshd.local
+up=0
+wrote=0
+stays_up && up=1
+if [ "\$up" = 0 ] && [ ! -e /var/log/auth.log ]; then
+  echo 'fail2ban startet nicht und /var/log/auth.log fehlt – der SSH-Schutz liest stattdessen das systemd-Journal.'
+  apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y python3-systemd </dev/null
+  mkdir -p /etc/fail2ban/jail.d
+  [ -e "\$j" ] || wrote=1
+  printf '[sshd]\\nenabled = true\\nbackend = systemd\\n' > "\$j"
+  systemctl restart fail2ban || true
+  stays_up && up=1
+fi
+if [ "\$up" = 0 ]; then
+  [ "\$wrote" = 0 ] || rm -f "\$j"
+  echo 'fail2ban läuft nach der Installation nicht. Auszug aus dem Journal:'
+  journalctl -u fail2ban -n 20 --no-pager </dev/null 2>&1 || true
+  exit 1
+fi
 echo SECFIX_OK
 ''';
+    // Automatic updates, 32-bit Raspberry Pi OS only (origin Raspbian in
+    // use): the package's patterns name origin=Debian alone, so a fragment of
+    // our own lets Raspbian in. NOT the "Raspberry Pi Foundation" archive:
+    // kernel, firmware and bootloader packages stay a manual update, on 32-
+    // and 64-bit alike. `${distro_codename}` must reach the file as written
+    // (unattended-upgrades expands it) — hence the quoted heredoc. apt reads
+    // apt.conf.d as any user: 0644 whatever the umask. A fragment that
+    // apt-config then does not list is removed again, without the marker.
+    // Without that origin the script does exactly what it did before.
     case SecurityFix.autoUpdates:
       return '''
 set -e
@@ -106,6 +163,20 @@ export LC_ALL=C
 apt-get update -qq </dev/null 2>&1 || true
 apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y unattended-upgrades </dev/null
 printf 'APT::Periodic::Update-Package-Lists "1";\\nAPT::Periodic::Unattended-Upgrade "1";\\n' > /etc/apt/apt.conf.d/20auto-upgrades
+if apt-cache policy 2>/dev/null | grep -Eq '[ ,]o=Raspbian(,|\$)'; then
+  o=/etc/apt/apt.conf.d/51pitool-unattended-origins
+  cat > "\$o" <<'ORIGINS'
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Raspbian,codename=\${distro_codename},label=Raspbian";
+};
+ORIGINS
+  chmod 0644 "\$o"
+  if ! apt-config dump 2>/dev/null | grep -E '^Unattended-Upgrade::(Origins-Pattern|Allowed-Origins)::' | grep -q Raspbian; then
+    rm -f "\$o"
+    echo 'apt liest die Freigabe der Paketquelle Raspbian nicht ein – Änderung zurückgenommen.'
+    exit 1
+  fi
+fi
 systemctl enable --now unattended-upgrades
 echo SECFIX_OK
 ''';
@@ -246,6 +317,9 @@ List<SecurityFinding> parseSecurityReport(String output) {
     // the default on Debian/Raspberry Pi OS after install is "1").
     final periodicOff = unatt.any((l) =>
         l.contains('apt::periodic::unattended-upgrade') && l.contains('"0"'));
+    // 32-bit Raspberry Pi OS: the daily run happens, but no pattern lets the
+    // origin Raspbian in (the probe prints this line in that case only).
+    final raspbianLeftOut = unatt.contains('raspbian-origin-uncovered');
     updates = periodicOff
         ? (
             title: 'Automatische Sicherheitsupdates',
@@ -254,11 +328,19 @@ List<SecurityFinding> parseSecurityReport(String output) {
                 '(APT::Periodic::Unattended-Upgrade "0") — es wird nichts '
                 'automatisch installiert.'
           )
-        : (
-            title: 'Automatische Sicherheitsupdates',
-            level: SecurityLevel.ok,
-            detail: 'unattended-upgrades läuft.'
-          );
+        : raspbianLeftOut
+            ? (
+                title: 'Automatische Sicherheitsupdates',
+                level: SecurityLevel.warn,
+                detail: 'unattended-upgrades läuft, installiert aber keine '
+                    'Updates aus der Paketquelle Raspbian (32-Bit Raspberry Pi '
+                    'OS) — sie fehlt in Unattended-Upgrade::Origins-Pattern.'
+              )
+            : (
+                title: 'Automatische Sicherheitsupdates',
+                level: SecurityLevel.ok,
+                detail: 'unattended-upgrades läuft.'
+              );
   } else {
     updates = (
       title: 'Automatische Sicherheitsupdates',

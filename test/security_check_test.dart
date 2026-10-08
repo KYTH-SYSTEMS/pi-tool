@@ -1,21 +1,42 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// The shell for the real-bash group: `bash` on Linux/macOS (CI). On Windows
-/// `bash` may be the WSL launcher, so it only runs with an explicit Git Bash
-/// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
-final String? _bash =
-    Platform.isWindows ? Platform.environment['PITOOL_TEST_BASH'] : 'bash';
+import 'on_pi_sandbox.dart';
 
-/// A path the sandbox bash understands (Git Bash wants /c/... on Windows).
-String _posix(String p) {
-  final s = p.replaceAll(r'\', '/');
-  final m = RegExp(r'^([A-Za-z]):/').firstMatch(s);
-  return m == null ? s : '/${m.group(1)!.toLowerCase()}/${s.substring(3)}';
-}
+/// `apt-cache policy` release lines of a 64-bit Raspberry Pi OS (Debian
+/// origins plus the Raspberry Pi archive) …
+const _policyDebian = '''
+ 500 http://archive.raspberrypi.com/debian bookworm/main arm64 Packages
+     release o=Raspberry Pi Foundation,a=stable,n=bookworm,l=Raspberry Pi Foundation,c=main,b=arm64
+     origin archive.raspberrypi.com
+ 500 http://deb.debian.org/debian-security bookworm-security/main arm64 Packages
+     release v=12,o=Debian,a=stable-security,n=bookworm-security,l=Debian-Security,c=main,b=arm64
+     origin deb.debian.org
+ 500 http://deb.debian.org/debian bookworm/main arm64 Packages
+     release v=12.11,o=Debian,a=stable,n=bookworm,l=Debian,c=main,b=arm64
+     origin deb.debian.org
+''';
+
+/// … and of the 32-bit one, whose packages come from Raspbian.
+const _policyRaspbian = '''
+ 500 http://archive.raspberrypi.com/debian bookworm/main armhf Packages
+     release o=Raspberry Pi Foundation,a=stable,n=bookworm,l=Raspberry Pi Foundation,c=main,b=armhf
+     origin archive.raspberrypi.com
+ 500 http://raspbian.raspberrypi.com/raspbian bookworm/main armhf Packages
+     release o=Raspbian,a=stable,n=bookworm,l=Raspbian,c=main,b=armhf
+     origin raspbian.raspberrypi.com
+''';
+
+/// The Origins-Pattern block of the unattended-upgrades package — the same
+/// file on Debian and on Raspbian.
+const _stockOrigins = r'''
+Unattended-Upgrade::Origins-Pattern {
+        // Codename based matching:
+        "origin=Debian,codename=${distro_codename},label=Debian";
+        "origin=Debian,codename=${distro_codename},label=Debian-Security";
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+''';
 
 void main() {
   group('buildSecurityProbe', () {
@@ -176,6 +197,50 @@ __SEC_PORTS__
     });
   });
 
+  // 32-bit Raspberry Pi OS: unattended-upgrades is the unchanged Debian
+  // package, its Origins-Pattern names origin=Debian only — it runs and
+  // installs nothing from Raspbian. The probe says so in one line.
+  group('automatic updates: origin Raspbian left out', () {
+    SecurityFinding updatesOf(String out) => parseSecurityReport(out)
+        .firstWhere((f) => f.title.contains('Sicherheitsupdates'));
+    const running = '__SEC_UNATT__\nenabled\nactive\n'
+        'APT::Periodic::Unattended-Upgrade "1";\n';
+
+    test('running, but Raspbian is in no pattern: not green, own text, fixable',
+        () {
+      final f = updatesOf('${running}raspbian-origin-uncovered\n');
+      expect(f.level, SecurityLevel.warn);
+      expect(
+          f.detail,
+          'unattended-upgrades läuft, installiert aber keine Updates aus der '
+          'Paketquelle Raspbian (32-Bit Raspberry Pi OS) — sie fehlt in '
+          'Unattended-Upgrade::Origins-Pattern.');
+      expect(securityFixFor(f), SecurityFix.autoUpdates);
+    });
+
+    test('without that line the verdict is the one from before', () {
+      final f = updatesOf(running);
+      expect(f.level, SecurityLevel.ok);
+      expect(f.detail, 'unattended-upgrades läuft.');
+      expect(securityFixFor(f), isNull);
+    });
+
+    test('switched off or not installed: that finding comes first', () {
+      final off = updatesOf('__SEC_UNATT__\nenabled\nactive\n'
+          'APT::Periodic::Unattended-Upgrade "0";\n'
+          'raspbian-origin-uncovered\n');
+      expect(off.level, SecurityLevel.warn);
+      expect(off.detail, contains('abgeschaltet'));
+      final missing = updatesOf(
+          '__SEC_UNATT__\ndisabled\ninactive\nraspbian-origin-uncovered\n');
+      expect(missing.level, SecurityLevel.warn);
+      expect(missing.detail, startsWith('Keine automatischen'));
+      // Either way the same fix, which also lets Raspbian in.
+      expect(securityFixFor(off), SecurityFix.autoUpdates);
+      expect(securityFixFor(missing), SecurityFix.autoUpdates);
+    });
+  });
+
   group('securityFixFor', () {
     test('warn findings map to their fix', () {
       expect(
@@ -266,15 +331,43 @@ __SEC_PORTS__
     // from dpkg would read the rest of it as the answer and abort — so apt
     // never gets the script's stdin and never asks.
     test('no apt call can read the script from stdin', () {
-      for (final fix in [SecurityFix.fail2ban, SecurityFix.autoUpdates]) {
+      for (final (fix, calls) in [
+        // update, fail2ban, and python3-systemd for the journal backend
+        (SecurityFix.fail2ban, 3),
+        (SecurityFix.autoUpdates, 2),
+      ]) {
         final lines = buildSecurityFixScript(fix)
             .split('\n')
             .where((l) => l.contains('apt-get'))
             .toList();
-        expect(lines, hasLength(2), reason: '$fix');
+        expect(lines, hasLength(calls), reason: '$fix');
         for (final line in lines) {
           expect(line, contains('</dev/null'), reason: '$fix: "$line"');
         }
+      }
+    });
+
+    test('no unquoted heredoc', () {
+      for (final fix in [SecurityFix.fail2ban, SecurityFix.autoUpdates]) {
+        expect(RegExp(r'<<-?\s*[A-Za-z_]').hasMatch(buildSecurityFixScript(fix)),
+            isFalse,
+            reason: '$fix');
+      }
+    });
+
+    // "Fixed" and "green" must mean the same: probe and fix ask apt in the
+    // same words whether Raspbian is in use and whether a pattern lets it in.
+    test('probe and fix share the Raspbian conditions', () {
+      const inUse =
+          r"apt-cache policy 2>/dev/null | grep -Eq '[ ,]o=Raspbian(,|$)'";
+      const letIn = r"grep -E '^Unattended-Upgrade::(Origins-Pattern|"
+          r"Allowed-Origins)::' | grep -q Raspbian";
+      final fix = buildSecurityFixScript(SecurityFix.autoUpdates);
+      // The probe is one single-quoted `sh -c` argument.
+      final probe = buildSecurityProbe().replaceAll(r"'\''", "'");
+      for (final s in [fix, probe]) {
+        expect(s, contains(inUse));
+        expect(s, contains(letIn));
       }
     });
 
@@ -323,74 +416,306 @@ __SEC_PORTS__
     });
   });
 
-  // The real fix scripts, fed to `bash -s` on stdin exactly like the sudo
-  // shell does. `apt-get` and `systemctl` are logging stubs, and PATH is the
-  // stub directory alone; the apt stub drains its stdin the way dpkg's
-  // conffile prompt would — a call without its own </dev/null swallows the
-  // rest of the script, and the marker never comes.
-  group('buildSecurityFixScript in bash', () {
-    late Directory tmp;
-    late String root; // posix form of tmp
+  // The probe and the fix scripts on a sandboxed Pi (on_pi_sandbox.dart): the
+  // probe as the app sends it, the fixes fed to `bash -s` on stdin exactly
+  // like the sudo shell does. PATH holds stubs only. The apt-get stub drains
+  // its stdin the way dpkg's conffile prompt would — a call without its own
+  // </dev/null swallows the rest of the script, and the marker never comes.
+  // systemctl, apt-cache and apt-config answer from a small model of the Pi:
+  //  - fail2ban stays up when it has a log to read: /var/log/auth.log, or the
+  //    journal (the jail's `backend = systemd` plus python3-systemd);
+  //  - apt-config lists what the files in /etc/apt/apt.conf.d hold as
+  //    Origins-Pattern entries, one `Key:: "value";` line each, like apt.
+  // How fail2ban and apt themselves behave is taken from their sources and
+  // documentation, not measured on a Pi.
+  group('security probe and fixes in bash', () {
+    late PiSandbox pi;
+    const confDir = '/etc/apt/apt.conf.d';
+    const originsFile = '$confDir/51pitool-unattended-origins';
+    const jailFile = '/etc/fail2ban/jail.d/pitool-sshd.local';
+    const noLogFile = 'fail2ban-server[812]: ERROR   Failed during '
+        'configuration: Have not found any log file for sshd jail';
 
     setUp(() {
-      tmp = Directory.systemTemp.createTempSync('secfix');
-      root = _posix(tmp.path);
-      Directory('${tmp.path}/bin').createSync();
-      Directory('${tmp.path}/etc/apt/apt.conf.d').createSync(recursive: true);
-      File('${tmp.path}/bin/apt-get').writeAsStringSync('#!/bin/sh\n'
-          'echo "apt-get \$*" >> "\$STUB/calls"\n'
-          '/bin/cat >/dev/null\n');
-      File('${tmp.path}/bin/systemctl').writeAsStringSync(
-          '#!/bin/sh\necho "systemctl \$*" >> "\$STUB/calls"\n');
-      if (!Platform.isWindows) {
-        Process.runSync('chmod',
-            ['+x', '${tmp.path}/bin/apt-get', '${tmp.path}/bin/systemctl']);
-      }
+      pi = PiSandbox();
+      pi.stub('apt-get', r'''
+"$REAL_CAT" >/dev/null
+case " $* " in *" install -y python3-systemd "*) : > "$S/python3-systemd" ;; esac
+exit 0''');
+      pi.stub('systemctl', r'''
+f2b_has_a_log() {
+  [ -e "$S/f2b-broken" ] && return 1
+  [ -e "$R/var/log/auth.log" ] && return 0
+  [ -e "$S/f2b-reads-journal" ] && return 0
+  [ -e "$S/python3-systemd" ] &&
+    "$REAL_GREP" -qx 'backend = systemd' "$R/etc/fail2ban/jail.d/pitool-sshd.local" 2>/dev/null
+}
+case "$*" in
+  "enable --now fail2ban"|"restart fail2ban")
+    if f2b_has_a_log; then : > "$S/f2b-active"; else "$REAL_RM" -f "$S/f2b-active"; fi ;;
+  "is-active --quiet fail2ban") [ -e "$S/f2b-active" ] || exit 3 ;;
+  "is-active fail2ban")
+    if [ -e "$S/f2b-active" ]; then echo active; else echo inactive; exit 3; fi ;;
+  "enable --now unattended-upgrades") : > "$S/unattended-on" ;;
+  "is-enabled unattended-upgrades")
+    if [ -e "$S/unattended-on" ]; then echo enabled; else echo disabled; exit 1; fi ;;
+  "is-active unattended-upgrades")
+    if [ -e "$S/unattended-on" ]; then echo active; else echo inactive; exit 3; fi ;;
+esac
+exit 0''');
+      pi.stub('journalctl', 'echo "$noLogFile"');
+      pi.stub('apt-cache', r'[ "$*" = policy ] && "$REAL_CAT" "$S/policy"',
+          log: false);
+      pi.stub('apt-config', r'''
+[ "$1" = dump ] || exit 1
+if [ -e "$S/apt-config-broken" ]; then
+  echo "E: Syntax error $R/etc/apt/apt.conf.d/x:2: Extra junk at end of file" >&2
+  exit 100
+fi
+dump() {
+  echo 'APT::Periodic::Unattended-Upgrade "1";'
+  for f in "$R"/etc/apt/apt.conf.d/*; do
+    [ -f "$f" ] || continue
+    "$REAL_AWK" '
+      /^Unattended-Upgrade::Origins-Pattern[ \t]*[{]/ { on = 1; next }
+      /^[}];/ { on = 0 }
+      on && /^[ \t]*"/ { sub(/^[ \t]*/, ""); print "Unattended-Upgrade::Origins-Pattern:: " $0 }
+    ' "$f"
+  done
+}
+if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
+          log: false);
+      pi.stub('sudo', r'while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"',
+          log: false);
+      pi.stub('sh', r'exec /bin/sh "$@"', log: false);
+      pi.stub('sshd', 'echo "permitrootlogin no"; echo "passwordauthentication no"',
+          log: false);
+      pi.stub('ss', 'echo "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*"', log: false);
+      // A 64-bit Raspberry Pi OS with the package's own patterns, nothing
+      // installed or switched on yet.
+      pi.put('/state/policy', _policyDebian);
+      pi.put('$confDir/50unattended-upgrades', _stockOrigins);
     });
-    tearDown(() => tmp.deleteSync(recursive: true));
+    tearDown(() => pi.dispose());
 
-    Future<({int code, String out})> run(SecurityFix fix) async {
-      final script =
-          buildSecurityFixScript(fix).replaceAll('/etc/apt/', '$root/etc/apt/');
-      final p = await Process.start(_bash!, ['-s']);
-      final out = p.stdout.transform(utf8.decoder).join();
-      final err = p.stderr.transform(utf8.decoder).join();
-      p.stdin.add(
-          utf8.encode("export PATH='$root/bin' STUB='$root'\n$script"));
-      await p.stdin.close();
-      final code = await p.exitCode;
-      return (code: code, out: '${await out}${await err}');
+    Future<SandboxRun> fix(SecurityFix f) => pi.run(buildSecurityFixScript(f));
+
+    /// The probe's raw lines between [marker] and the next section.
+    Future<List<String>> section(String marker) async {
+      final r = await pi.run(buildSecurityProbe());
+      expect(r.code, 0, reason: r.err);
+      final lines = r.lines;
+      final from = lines.indexOf(marker);
+      expect(from, greaterThanOrEqualTo(0), reason: r.out);
+      return lines
+          .skip(from + 1)
+          .takeWhile((l) => !l.startsWith('__SEC_'))
+          .toList();
     }
 
-    List<String> calls() => File('${tmp.path}/calls').readAsLinesSync();
+    /// The finding whose title contains [needle], from a fresh probe run.
+    Future<SecurityFinding> finding(String needle) async {
+      final r = await pi.run(buildSecurityProbe());
+      expect(r.code, 0, reason: r.err);
+      return parseSecurityReport(r.out)
+          .firstWhere((f) => f.title.contains(needle));
+    }
 
-    for (final (fix, pkg) in [
-      (SecurityFix.fail2ban, 'fail2ban'),
-      (SecurityFix.autoUpdates, 'unattended-upgrades'),
-    ]) {
-      test('$pkg: apt reading stdin cannot eat the rest of the script',
+    /// What the scripts did to the system: every stub call but the waits.
+    List<String> changes() =>
+        pi.calls.where((c) => !c.startsWith('sleep ')).toList();
+
+    const aptInstall = 'apt-get -o Dpkg::Use-Pty=0 '
+        '-o Dpkg::Options::=--force-confdef '
+        '-o Dpkg::Options::=--force-confold install -y';
+
+    group('automatic updates', () {
+      const periodic = 'APT::Periodic::Update-Package-Lists "1";\n'
+          'APT::Periodic::Unattended-Upgrade "1";\n';
+
+      test('Debian origins: the fix runs what it ran before, and no more',
           () async {
-        final r = await run(fix);
-        expect(r.code, 0, reason: r.out);
-        expect(r.out.trimRight().split('\n').last, 'SECFIX_OK', reason: r.out);
-        final c = calls();
-        expect(c.last, 'systemctl enable --now $pkg', reason: c.join('\n'));
-        final install = c.singleWhere((l) => l.contains(' install '));
-        expect(install, endsWith('install -y $pkg'));
-        expect(install, contains('-o Dpkg::Options::=--force-confdef'));
-        expect(install, contains('-o Dpkg::Options::=--force-confold'));
-        expect(install, contains('-o Dpkg::Use-Pty=0'));
+        final r = await fix(SecurityFix.autoUpdates);
+        expect(r.code, 0, reason: r.err);
+        expect(r.err, isEmpty);
+        expect(r.lines, ['SECFIX_OK']);
+        expect(changes(), [
+          'apt-get update -qq',
+          '$aptInstall unattended-upgrades',
+          'systemctl enable --now unattended-upgrades',
+        ]);
+        expect(pi.ls(confDir), ['20auto-upgrades', '50unattended-upgrades']);
+        expect(pi.read('$confDir/20auto-upgrades'), periodic);
+        expect(pi.read('$confDir/50unattended-upgrades'), _stockOrigins);
       });
-    }
 
-    test('auto updates: the two periodic switches are written', () async {
-      final r = await run(SecurityFix.autoUpdates);
-      expect(r.code, 0, reason: r.out);
-      expect(
-          File('${tmp.path}/etc/apt/apt.conf.d/20auto-upgrades')
-              .readAsStringSync(),
-          'APT::Periodic::Update-Package-Lists "1";\n'
-          'APT::Periodic::Unattended-Upgrade "1";\n');
+      test('Debian origins: the probe prints the section it printed before',
+          () async {
+        expect(await section('__SEC_UNATT__'), [
+          'disabled',
+          'inactive',
+          'APT::Periodic::Unattended-Upgrade "1";',
+        ]);
+        await fix(SecurityFix.autoUpdates);
+        expect(await section('__SEC_UNATT__'), [
+          'enabled',
+          'active',
+          'APT::Periodic::Unattended-Upgrade "1";',
+        ]);
+        final f = await finding('Sicherheitsupdates');
+        expect(f.level, SecurityLevel.ok);
+        expect(f.detail, 'unattended-upgrades läuft.');
+      });
+
+      test('Raspbian with the package\'s patterns: not green although it runs',
+          () async {
+        pi.put('/state/policy', _policyRaspbian);
+        pi.put('/state/unattended-on');
+        expect(await section('__SEC_UNATT__'), [
+          'enabled',
+          'active',
+          'APT::Periodic::Unattended-Upgrade "1";',
+          'raspbian-origin-uncovered',
+        ]);
+        final f = await finding('Sicherheitsupdates');
+        expect(f.level, SecurityLevel.warn);
+        expect(f.detail, contains('Raspbian'));
+        expect(securityFixFor(f), SecurityFix.autoUpdates);
+      });
+
+      test('Raspbian: the fix lets that origin in, and only that one', () async {
+        pi.put('/state/policy', _policyRaspbian);
+        pi.put('/state/unattended-on');
+        final r = await fix(SecurityFix.autoUpdates);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines.last, 'SECFIX_OK');
+        // ${distro_codename} as written: unattended-upgrades expands it.
+        expect(
+            pi.read(originsFile),
+            'Unattended-Upgrade::Origins-Pattern {\n'
+            r'        "origin=Raspbian,codename=${distro_codename},label=Raspbian";'
+            '\n'
+            '};\n');
+        expect(pi.read('$confDir/20auto-upgrades'), periodic);
+        expect(pi.read('$confDir/50unattended-upgrades'), _stockOrigins);
+        // Now the check is green.
+        expect(await section('__SEC_UNATT__'),
+            isNot(contains('raspbian-origin-uncovered')));
+        expect((await finding('Sicherheitsupdates')).level, SecurityLevel.ok);
+      });
+
+      test('Raspbian with a pattern of the user\'s own: green as it is',
+          () async {
+        pi.put('/state/policy', _policyRaspbian);
+        pi.put('/state/unattended-on');
+        pi.put(
+            '$confDir/52local',
+            'Unattended-Upgrade::Origins-Pattern {\n'
+            '        "o=Raspbian,n=bookworm";\n'
+            '};\n');
+        expect((await finding('Sicherheitsupdates')).level, SecurityLevel.ok);
+      });
+
+      test('Raspbian, apt-config unreadable: the verdict from before', () async {
+        pi.put('/state/policy', _policyRaspbian);
+        pi.put('/state/unattended-on');
+        pi.put('/state/apt-config-broken');
+        expect(await section('__SEC_UNATT__'), ['enabled', 'active']);
+        expect((await finding('Sicherheitsupdates')).level, SecurityLevel.ok);
+      });
+
+      test('Raspbian: a fragment apt does not take is removed, no marker',
+          () async {
+        pi.put('/state/policy', _policyRaspbian);
+        pi.put('/state/apt-config-broken');
+        final r = await fix(SecurityFix.autoUpdates);
+        expect(r.code, 1);
+        expect(r.out, isNot(contains('SECFIX_OK')));
+        expect(r.out, contains('zurückgenommen'));
+        expect(pi.exists(originsFile), isFalse);
+      });
     });
-  }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
+
+    group('fail2ban', () {
+      test('with /var/log/auth.log: installed, started, watched — no drop-in',
+          () async {
+        pi.put('/var/log/auth.log', '');
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 0, reason: r.err);
+        expect(r.err, isEmpty);
+        expect(r.lines, ['SECFIX_OK']);
+        expect(changes(), [
+          'apt-get update -qq',
+          '$aptInstall fail2ban',
+          'systemctl enable --now fail2ban',
+          for (var i = 0; i < 5; i++) 'systemctl is-active --quiet fail2ban',
+        ]);
+        expect(pi.exists(jailFile), isFalse);
+        expect((await finding('fail2ban')).level, SecurityLevel.ok);
+      });
+
+      test('without auth.log, but it reads the journal by itself: no drop-in',
+          () async {
+        pi.put('/state/f2b-reads-journal');
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines, ['SECFIX_OK']);
+        expect(pi.exists(jailFile), isFalse);
+        expect(changes().where((c) => c.contains('python3-systemd')), isEmpty);
+      });
+
+      test('without auth.log and not starting: sshd jail on the journal',
+          () async {
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines.last, 'SECFIX_OK');
+        expect(pi.read(jailFile),
+            '[sshd]\nenabled = true\nbackend = systemd\n');
+        final c = changes();
+        expect(
+            c.sublist(c.indexOf('systemctl enable --now fail2ban') + 1), [
+          'systemctl is-active --quiet fail2ban',
+          '$aptInstall python3-systemd',
+          'systemctl restart fail2ban',
+          for (var i = 0; i < 5; i++) 'systemctl is-active --quiet fail2ban',
+        ]);
+        expect((await finding('fail2ban')).level, SecurityLevel.ok);
+      });
+
+      test('not starting although auth.log is there: journal, exit 1, no marker',
+          () async {
+        pi.put('/var/log/auth.log', '');
+        pi.put('/state/f2b-broken');
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 1);
+        expect(r.out, isNot(contains('SECFIX_OK')));
+        expect(r.out, contains(noLogFile));
+        expect(pi.exists(jailFile), isFalse);
+        expect(changes().where((c) => c.contains('python3-systemd')), isEmpty);
+        expect(changes().last, 'journalctl -u fail2ban -n 20 --no-pager');
+      });
+
+      test('still not starting with the drop-in: it goes again, no marker',
+          () async {
+        pi.put('/state/f2b-broken');
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 1);
+        expect(r.out, isNot(contains('SECFIX_OK')));
+        expect(r.out, contains(noLogFile));
+        expect(pi.exists(jailFile), isFalse);
+        final f = await finding('fail2ban');
+        expect(securityFixFor(f), SecurityFix.fail2ban);
+      });
+
+      test('a drop-in from an earlier run is not taken away on failure',
+          () async {
+        pi.put(jailFile, '[sshd]\nenabled = true\nbackend = systemd\n');
+        pi.put('/state/f2b-broken');
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 1);
+        expect(pi.read(jailFile),
+            '[sshd]\nenabled = true\nbackend = systemd\n');
+      });
+    });
+  }, skip: needsBash);
 }
