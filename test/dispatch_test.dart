@@ -301,13 +301,20 @@ class FakeEvccUpdater extends EvccUpdater {
       'docker logs of $name';
 
   List<DiskEntry> disk = const [];
+
+  /// Per-path answers and failures of the drill-down; [disk] is the default.
+  final diskByPath = <String, List<DiskEntry>>{};
+  final diskErrors = <String, Object>{};
   @override
   Future<List<DiskEntry>> diskUsage({
     required SshConfig config,
     required String path,
     required void Function(String line) onLog,
-  }) async =>
-      disk;
+  }) async {
+    final error = diskErrors[path];
+    if (error != null) throw error;
+    return diskByPath[path] ?? disk;
+  }
 
   int stackWirings = 0;
   StackWiringOutcome stackOutcome = StackWiringOutcome.wired;
@@ -698,6 +705,7 @@ class FakeEvccUpdater extends EvccUpdater {
 
   String serviceLogs = '-- journal --\n';
   int logFetches = 0;
+  Object? logError; // thrown by fetchServiceLogs (a poll that fails)
 
   @override
   Future<String> fetchServiceLogs({
@@ -707,6 +715,7 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async {
     logFetches++;
+    if (logError != null) throw logError!;
     return serviceLogs;
   }
 
@@ -988,11 +997,15 @@ class FakeEvccUpdater extends EvccUpdater {
 /// a foreground service while a quick one does not.
 class _FakeKeepAlive implements KeepAliveService {
   int beginCount = 0, endCount = 0;
-  String? lastMessage;
+  String? lastMessage, lastChannelName, lastChannelDescription;
   @override
-  Future<void> begin(String message) async {
+  Future<void> begin(String message,
+      {required String channelName,
+      required String channelDescription}) async {
     beginCount++;
     lastMessage = message;
+    lastChannelName = channelName;
+    lastChannelDescription = channelDescription;
   }
 
   @override
@@ -1006,6 +1019,16 @@ const _ready = AppConfig(
   profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
   activeIndex: 0,
   disclaimerAccepted: true,
+);
+
+/// [_ready] with the remote-access offer dismissed. For layout tests that
+/// connect on a narrow surface: in the test font the offer's own row does not
+/// fit there, and it is not what those tests are about.
+const _readyNoOffer = AppConfig(
+  profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+  activeIndex: 0,
+  disclaimerAccepted: true,
+  remoteAccessDismissed: true,
 );
 
 void main() {
@@ -1102,8 +1125,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // Zurück nach oben: der Einstieg steht über den Zugangsdaten, und die
-    // ListView baut nur, was sichtbar ist.
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, 600));
+    // ListView baut nur, was sichtbar ist. Weit genug für jede Listenlänge —
+    // wie weit der Knopf oben herangeholt wurde, hängt an der Fußzeile.
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('demoEntry')), findsOneWidget,
@@ -2090,6 +2114,58 @@ void main() {
     expect(ka.lastMessage, contains('Update'));
   });
 
+  // Android lists the channel of the ongoing notification in the system
+  // settings, under the name the app created it with.
+  for (final (locale, connect, update, name, description) in const [
+    (
+      Locale('de'),
+      'Verbindung herstellen',
+      'Aktualisieren',
+      'Laufende Aktionen',
+      'Zeigt an, dass Pi-Tool gerade eine Aktion auf dem Pi ausführt.'
+    ),
+    (
+      Locale('en'),
+      'Connect',
+      'Update',
+      'Running actions',
+      'Shows that Pi-Tool is running an action on the Pi.'
+    ),
+  ]) {
+    testWidgets(
+        'keep-alive: the notification channel is named in the app language '
+        '(${locale.languageCode})', (tester) async {
+      useTallScreen(tester);
+      final ka = _FakeKeepAlive();
+      await tester.pumpWidget(MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: locale,
+        home: UpdaterPage(
+          store: _FakeStore(_ready),
+          updater: FakeEvccUpdater(),
+          updateChecker: _noUpdateChecker,
+          apiClient: EvccApiClient(
+              getJson: (_) async =>
+                  throw const EvccApiException('kein Netz im Test')),
+          evccReleaseFetcher: () async => null,
+          haVersionFetcher: () async => null,
+          keepAlive: ka,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, connect));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(OutlinedButton, update));
+      await tester.pumpAndSettle();
+
+      expect(ka.beginCount, 1);
+      expect(ka.lastChannelName, name);
+      expect(ka.lastChannelDescription, description);
+    });
+  }
+
   testWidgets('Abbrechen appears while busy and cancels the connection',
       (tester) async {
     useTallScreen(tester);
@@ -2153,6 +2229,74 @@ void main() {
     expect(find.text('evcc-Dienst neu gestartet.'), findsOneWidget);
     expect(ka.beginCount, 0);
     expect(ka.endCount, 0);
+  });
+
+  // ---- running bar: narrow display, large font ----
+
+  // An ordinary phone at the default font size keeps the labelled button.
+  testWidgets('Laufleiste auf 360 dp: „Abbrechen“ bleibt beschriftet',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()..detectGate = gate;
+    await tester.pumpWidget(page(u, config: _readyNoOffer));
+    await tester.pumpAndSettle();
+
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pump();
+
+    expect(find.widgetWithText(OutlinedButton, 'Abbrechen'), findsOneWidget);
+    expect(find.text('Log'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'Laufleiste bei großer Schrift: läuft nicht über, „Abbrechen“ wird zum '
+      'Symbol mit Tooltip und bricht weiter ab', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()..detectGate = gate;
+    await tester.pumpWidget(page(u, config: _readyNoOffer));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pump();
+
+    // The system font size goes up while the action runs.
+    tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pump();
+
+    // A RenderFlex overflow in the bar would be reported here.
+    expect(tester.takeException(), isNull);
+    final bar = find.ancestor(
+        of: find.byType(LinearProgressIndicator),
+        matching: find.byType(Material)).first;
+    // What is running stays readable next to the two actions.
+    final message =
+        find.descendant(of: bar, matching: find.text('Verbinde …'));
+    expect(tester.getSize(message).width, greaterThan(100));
+    expect(find.descendant(of: bar, matching: find.text('Log')),
+        findsOneWidget);
+    expect(find.descendant(of: bar, matching: find.text('Abbrechen')),
+        findsNothing);
+
+    await tester.tap(find.byTooltip('Abbrechen'));
+    await tester.pump();
+    expect(u.cancelCalls, 1);
+
+    gate.complete();
+    await tester.pumpAndSettle();
   });
 
   testWidgets('an up-to-date service shows "Aktuell", update moves to ⋮',
@@ -4408,6 +4552,85 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets(
+      'Service-Logs: öffnet beim neuesten Eintrag und bleibt im Live-Modus '
+      'dort – außer es wird gerade weiter oben gelesen', (tester) async {
+    useTallScreen(tester);
+    String lines(int n) => [for (var i = 0; i < n; i++) 'zeile $i'].join('\n');
+    final u = FakeEvccUpdater()..serviceLogs = lines(400);
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Logs anzeigen'));
+    await tester.pumpAndSettle();
+
+    ScrollPosition pos() => tester
+        .state<ScrollableState>(find
+            .descendant(
+                of: find.descendant(
+                    of: find.byType(BottomSheet),
+                    matching: find.byType(SingleChildScrollView)),
+                matching: find.byType(Scrollable))
+            .first)
+        .position;
+    expect(pos().maxScrollExtent, greaterThan(0));
+    expect(pos().pixels, pos().maxScrollExtent);
+
+    // Following: a longer tail arrives, the view stays at its end.
+    final before = pos().maxScrollExtent;
+    u.serviceLogs = lines(450);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(pos().maxScrollExtent, greaterThan(before));
+    expect(pos().pixels, pos().maxScrollExtent);
+
+    // Scrolled up to read: the next poll does not pull the view away.
+    pos().jumpTo(100);
+    u.serviceLogs = lines(500);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(pos().pixels, 100);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'Service-Logs: ein fehlgeschlagener Abruf wird gemeldet, der letzte '
+      'Stand bleibt stehen', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..serviceLogs = 'evcc[1]: charging started';
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Logs anzeigen'));
+    await tester.pumpAndSettle();
+    const hint = 'Abruf fehlgeschlagen – angezeigt wird der letzte Stand.';
+    final refresh = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byTooltip('Aktualisieren'));
+    expect(find.text(hint), findsNothing);
+
+    u.logError =
+        const EvccUpdateException(UpdateErrorKind.connection, 'Pi weg');
+    await tester.tap(refresh);
+    await tester.pumpAndSettle();
+    expect(find.text(hint), findsOneWidget);
+    expect(find.textContaining('charging started'), findsOneWidget);
+
+    // The next poll that works takes the hint away again.
+    u
+      ..logError = null
+      ..serviceLogs = 'evcc[1]: charging stopped';
+    await tester.tap(refresh);
+    await tester.pumpAndSettle();
+    expect(find.text(hint), findsNothing);
+    expect(find.textContaining('charging stopped'), findsOneWidget);
+  });
+
   testWidgets('Automatik → Geplante Backups: Einschalten installiert den Timer',
       (tester) async {
     useTallScreen(tester);
@@ -4469,6 +4692,266 @@ void main() {
       Navigator.of(tester.element(hint)).pop();
       await tester.pumpAndSettle();
     }
+  });
+
+  // ---- contrast and tap targets ----
+
+  // The bright brand green has about 1.9:1 against the white of the light
+  // theme; the darkened one is for exactly that surface.
+  for (final brightness in Brightness.values) {
+    testWidgets(
+        'Automatik-Sheets: der Aktiv-Status ist im Theme ${brightness.name} '
+        'ein lesbares Grün', (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..scheduledBackupStatus = (
+          enabled: true,
+          nextRun: 'Mo 03:00',
+          lastResult: null,
+          wrapperOutdated: false
+        )
+        ..autoStatus = (
+          enabled: true,
+          nextRun: 'So 04:00',
+          lastResult: null,
+          wrapperOutdated: false
+        )
+        ..alertsStatus =
+            (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
+      await tester.pumpWidget(MaterialApp(
+        theme: buildAppTheme(brightness),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('de'),
+        home: UpdaterPage(
+          store: _FakeStore(_ready),
+          updater: u,
+          updateChecker: _noUpdateChecker,
+          apiClient: EvccApiClient(
+              getJson: (_) async =>
+                  throw const EvccApiException('kein Netz im Test')),
+          evccReleaseFetcher: () async => null,
+          haVersionFetcher: () async => null,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      await goAutomatik(tester);
+
+      final expected =
+          brightness == Brightness.dark ? kGreen : const Color(0xFF15803D);
+      for (final tile in [
+        'Geplante Backups',
+        'Automatische Updates',
+        'Health-Alerts',
+      ]) {
+        await tester.tap(find.text(tile));
+        await tester.pumpAndSettle();
+        final status = find.textContaining('Aktuell aktiv');
+        expect(tester.widget<Text>(status).style?.color, expected,
+            reason: tile);
+        Navigator.of(tester.element(status)).pop();
+        await tester.pumpAndSettle();
+      }
+    });
+  }
+
+  testWidgets('Fußzeilen-Links und der ntfy-Link sind mindestens 48 dp hoch',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+
+    for (final label in [
+      'Nutzungsbedingungen',
+      'Datenschutz',
+      'Impressum',
+      'Open-Source-Lizenzen',
+      'App bewerten',
+    ]) {
+      expect(tester.getSize(find.widgetWithText(TextButton, label)).height,
+          greaterThanOrEqualTo(48),
+          reason: label);
+    }
+
+    await goAutomatik(tester);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+    final ntfy = find.ancestor(
+        of: find.textContaining('So funktioniert ntfy'),
+        matching: find.byType(InkWell));
+    expect(tester.getSize(ntfy.first).height, greaterThanOrEqualTo(48));
+  });
+
+  testWidgets(
+      'Status-Symbole sagen ihren Zustand auch ohne Farbe (Semantik-Label)',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            health: '81 Grad · 97% belegt',
+            healthWarning: true),
+      ];
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [
+            Profile(name: 'A', host: '1.1.1.1', password: 'pw'),
+            Profile(name: 'B'), // no host → not reachable
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(
+        tester
+            .widget<Icon>(find.byKey(const Key('sessionConnected')))
+            .semanticLabel,
+        'Verbunden');
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alle Pis (Überblick)'));
+    await tester.pumpAndSettle();
+    List<String?> lights() => [
+          for (final i in tester.widgetList<Icon>(find.byIcon(Icons.circle)))
+            i.semanticLabel
+        ];
+    // Warning and OK are the same circle in another colour.
+    expect(lights(), ['Warnung', 'Nicht erreichbar']);
+
+    u.services = const [
+      ServiceStatus(
+          id: 'system',
+          name: 'System (Pi)',
+          installed: true,
+          active: true,
+          health: '48 Grad · 12% belegt'),
+    ];
+    await tester.tap(find.byTooltip('Neu prüfen'));
+    await tester.pumpAndSettle();
+    expect(lights(), ['In Ordnung', 'Nicht erreichbar']);
+
+    u.services = const [
+      ServiceStatus(
+          id: 'system',
+          name: 'System (Pi)',
+          installed: true,
+          active: true,
+          updateAvailable: true,
+          updateKnown: true),
+    ];
+    await tester.tap(find.byTooltip('Neu prüfen'));
+    await tester.pumpAndSettle();
+    expect(lights(), ['Updates verfügbar', 'Nicht erreichbar']);
+  });
+
+  // ---- dialogs on a small display with a large font ----
+
+  /// A small phone (360x640) with the system font size turned up. Applied
+  /// once the dialog is open, so the way to it is not part of the test.
+  void shrinkWithLargeFont(WidgetTester tester) {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  }
+
+  Future<void> openExportPassphrase(WidgetTester tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile exportieren'));
+    await tester.tap(find.text('Profile exportieren'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Passphrase-Dialog: der Sichtbarkeits-Schalter sagt, was er tut',
+      (tester) async {
+    await openExportPassphrase(tester);
+    final dialog = find.byType(AlertDialog);
+
+    final show =
+        find.descendant(of: dialog, matching: find.byTooltip('Anzeigen'));
+    expect(show, findsOneWidget);
+    await tester.tap(show);
+    await tester.pump();
+    expect(find.descendant(of: dialog, matching: find.byTooltip('Verbergen')),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'Passphrase-Dialog (Export) auf kleinem Display mit großer Schrift und '
+      'Tastatur: läuft nicht über, beide Felder bleiben erreichbar',
+      (tester) async {
+    await openExportPassphrase(tester);
+
+    shrinkWithLargeFont(tester);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 260); // keyboard
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+
+    // A RenderFlex overflow in the dialog would be reported here.
+    expect(tester.takeException(), isNull);
+    final ok = find.widgetWithText(FilledButton, 'OK');
+    expect(tester.getRect(ok).bottom, lessThanOrEqualTo(640 - 260));
+    final repeat = find.widgetWithText(TextField, 'Passphrase wiederholen');
+    await tester.ensureVisible(repeat);
+    await tester.pumpAndSettle();
+    expect(tester.getRect(repeat).bottom,
+        lessThanOrEqualTo(tester.getRect(ok).top));
+  });
+
+  testWidgets(
+      'Pi-hole-Passwort-Dialog auf kleinem Display mit großer Schrift: läuft '
+      'nicht über, Passwort und „Fertig“ bleiben erreichbar', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..securityFindings = const [
+        (
+          title: 'Pi-hole-Weboberfläche',
+          level: SecurityLevel.warn,
+          detail: 'Kein Passwort gesetzt.'
+        ),
+      ]
+      ..piholeWebPassword = 'Abc234xyzKLMN567';
+    await tester.pumpWidget(page(u, config: _readyNoOffer));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sicherheits-Check'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Beheben'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pi-hole-Passwort'), findsOneWidget);
+
+    shrinkWithLargeFont(tester);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final done = find.widgetWithText(FilledButton, 'Fertig');
+    expect(tester.getRect(done).bottom, lessThanOrEqualTo(640));
+    // The password is the point of this dialog: the app keeps no copy.
+    final pw = find.byKey(const ValueKey('piholePassword'));
+    await tester.ensureVisible(pw);
+    await tester.pumpAndSettle();
+    expect(
+        tester.getRect(pw).bottom, lessThanOrEqualTo(tester.getRect(done).top));
   });
 
   testWidgets('Automatik: aktuelles Skript oder ausgeschalteter Timer – kein '
@@ -4818,6 +5301,68 @@ void main() {
     expect(find.text('var'), findsOneWidget);
     expect(find.text('huge.img'), findsOneWidget);
     expect(find.text('2.0 GB'), findsOneWidget); // human-readable size
+  });
+
+  // At "/" there is no way up and nothing else to tap: a drill-down that
+  // fails must leave the list standing and offer the folder again.
+  testWidgets(
+      'Speicherplatz analysieren: scheitert ein Unterordner, bleibt die Liste '
+      'stehen und der Abruf lässt sich wiederholen', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..disk = const [
+        (name: 'var', bytes: 2 * 1024 * 1024 * 1024, isDir: true, path: '/var'),
+        (
+          name: 'huge.img',
+          bytes: 500 * 1024 * 1024,
+          isDir: false,
+          path: '/huge.img'
+        ),
+      ]
+      ..diskByPath['/var'] = const [
+        (name: 'log', bytes: 1024 * 1024 * 1024, isDir: true, path: '/var/log'),
+      ]
+      ..diskErrors['/var'] = const EvccUpdateException(
+          UpdateErrorKind.connection, 'Pi nicht erreichbar.');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Speicherplatz analysieren'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('var'));
+    await tester.pumpAndSettle();
+
+    // Still the list of "/", with the folder that failed and the reason.
+    expect(find.text('var'), findsOneWidget);
+    expect(find.text('huge.img'), findsOneWidget);
+    expect(find.text('/var: Pi nicht erreichbar.'), findsOneWidget);
+
+    u.diskErrors.clear();
+    await tester.tap(find.text('Erneut versuchen'));
+    await tester.pumpAndSettle();
+    expect(find.text('log'), findsOneWidget);
+    expect(find.text('huge.img'), findsNothing);
+    expect(find.textContaining('Pi nicht erreichbar.'), findsNothing);
+
+    // An error that is not the updater's own keeps the generic text; going up
+    // clears it.
+    u.diskErrors['/var/log'] = StateError('x');
+    await tester.tap(find.text('log'));
+    await tester.pumpAndSettle();
+    expect(find.text('log'), findsOneWidget);
+    expect(find.text('/var/log: Konnte nicht geladen werden (Rechte?).'),
+        findsOneWidget);
+    await tester.tap(find.byTooltip('Übergeordneter Ordner'));
+    await tester.pumpAndSettle();
+    expect(find.text('huge.img'), findsOneWidget);
+    expect(find.textContaining('Konnte nicht geladen werden'), findsNothing);
   });
 
   testWidgets('Pi Connect: anstehendes Update übernimmt den Primär-Knopf',
@@ -5413,7 +5958,7 @@ void main() {
     expect(u.shareLanCalls, 1);
     // Die Bestätigung passiert außerhalb der App — genau dafür das Popup.
     expect(find.text('Noch ein Schritt: Route bestätigen'), findsOneWidget);
-    expect(find.textContaining('„evcc-pi"'), findsOneWidget);
+    expect(find.textContaining('„evcc-pi“'), findsOneWidget);
     await tester.tap(find.text('Später'));
     await tester.pumpAndSettle();
     expect(find.text('Noch ein Schritt: Route bestätigen'), findsNothing);
@@ -6074,6 +6619,26 @@ void main() {
     await tester.tap(find.text('evcc.yaml'));
     await tester.pumpAndSettle();
     expect(find.text('Datei: evcc.yaml'), findsOneWidget);
+  });
+
+  testWidgets('Demo-Konsole: ein unbekannter Befehl nennt den Demo-Modus',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(demoPage(_FakeStore(emptyProfile)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.terminal_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('consoleField')), 'hostname');
+    await tester.tap(find.byIcon(Icons.keyboard_return));
+    await tester.pumpAndSettle();
+
+    expect(
+        find.textContaining(
+            'Demo-Modus: Befehle werden nicht wirklich ausgeführt.'),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -6769,6 +7334,10 @@ void main() {
     expect(u.restoredPath, '/var/backups/evcc/x.tar.gz');
     expect(u.restoredPihole,
         contains('/var/backups/pi-tool/pihole-backup-x.zip'));
+    // The log marks where the work on the target begins.
+    await goTerminal(tester);
+    expect(find.textContaining('— Ziel-Pi „Zweiter“ (192.168.178.99) —'),
+        findsOneWidget);
   });
 
   // ---- Umzugshelfer: Pi-hole on the target and its web password ----
@@ -8084,6 +8653,35 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Nicht mehr mitlesen'), findsNothing);
       expect(find.text('System aktualisiert.'), findsOneWidget);
+    });
+
+    // The test font is wider than a real one: at this width the label would
+    // push the bar past its edge, as a large font does on a phone.
+    testWidgets(
+        'reicht der Platz nicht für „Nicht mehr mitlesen“, wird der Knopf zum '
+        'Symbol mit Tooltip – ohne Überlauf', (tester) async {
+      tester.view.physicalSize = const Size(360, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final gate = Completer<void>();
+      final u = FakeEvccUpdater()
+        ..services = systemWith()
+        ..startedJob = ref
+        ..jobGate = gate;
+      await tester.pumpWidget(page(u, config: _readyNoOffer));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      await startSystemUpgrade(tester);
+      expect(tester.takeException(), isNull);
+      expect(find.text('Nicht mehr mitlesen'), findsNothing);
+      await tester.tap(find.byTooltip('Nicht mehr mitlesen'));
+      await tester.pump();
+      expect(u.cancelCalls, 1);
+
+      gate.complete();
+      await tester.pumpAndSettle();
     });
 
     testWidgets(

@@ -306,6 +306,44 @@ void main() {
     expect(store.saved.disclaimerAccepted, isTrue); // persisted
   });
 
+  testWidgets(
+      'disclaimer on a small display with a large font: the title wraps '
+      'instead of overflowing, both buttons stay on screen', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'Standard')],
+      activeIndex: 0,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
+    ));
+    await tester.pumpAndSettle();
+
+    // A RenderFlex overflow of the title row would be reported here.
+    expect(tester.takeException(), isNull);
+    expect(tester.getRect(find.text('Willkommen bei Pi-Tool')).right,
+        lessThanOrEqualTo(360 - 20));
+    expect(
+        tester
+            .getRect(
+                find.widgetWithText(FilledButton, 'Akzeptieren und starten'))
+            .bottom,
+        lessThanOrEqualTo(640));
+    expect(
+        tester
+            .getRect(find.widgetWithText(TextButton, 'Ablehnen (App beenden)'))
+            .bottom,
+        lessThanOrEqualTo(640));
+  });
+
   testWidgets('renders the connection screen with the detect hint',
       (tester) async {
     useTallScreen(tester);

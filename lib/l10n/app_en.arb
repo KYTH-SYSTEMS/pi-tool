@@ -71,6 +71,7 @@
   "wLoadpoints": "Loadpoints",
   "wLocked": "Locked",
   "wLogEmpty": "No output yet. Actions (e.g. \"Update\") appear here live as soon as you start a service.",
+  "wLogRefreshFailed": "Refresh failed – showing the last state.",
   "wLogs": "Logs",
   "wMinChars": "At least {n} characters.",
   "@wMinChars": {
@@ -115,6 +116,7 @@
   "wRecheck": "Re-check",
   "wRefresh": "Refresh",
   "wRepeatPassphrase": "Repeat passphrase",
+  "wRetry": "Try again",
   "wScanningWifi": "Searching for SSH devices on Wi-Fi …",
   "wServiceActions": "{name} actions",
   "@wServiceActions": {
@@ -144,7 +146,9 @@
   "wSetupTip": "Tip: if \".local\" doesn't work, use \"Find Pi on Wi-Fi\" or the IP from your router.",
   "wShow": "Show",
   "wSshKey": "SSH key",
+  "wStatusOk": "OK",
   "wStatusUpdate": "Update",
+  "wStatusWarning": "Warning",
   "wSudoPassword": "sudo password",
   "wSudoPasswordHelper": "for sudo on the Pi (leave empty for NOPASSWD sudo)",
   "wTest": "Test",
@@ -565,6 +569,8 @@
   },
   "busyFreeingStorage": "Freeing up storage …",
   "busyDefault": "Operation running …",
+  "keepAliveChannelName": "Running actions",
+  "keepAliveChannelDescription": "Shows that Pi-Tool is running an action on the Pi.",
   "cancel": "Cancel",
   "hostKeyTrustButton": "Pi reinstalled → trust new key",
   "errorNoPiConnected": "No Pi connected.",
@@ -1016,6 +1022,17 @@
   },
   "dialogMigrateBody": "Creates fresh backups (evcc, Pi-hole), fetches them to the phone, installs the services on the target Pi where missing and restores the backups there. THIS Pi stays untouched. Takes several minutes. Experimental.",
   "busyMigrating": "Migration running …",
+  "logMigrationTarget": "— Target Pi “{name}” ({host}) —",
+  "@logMigrationTarget": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "host": {
+        "type": "String"
+      }
+    }
+  },
   "statusMigrated": "Migration finished — check the target Pi via its profile.",
   "errorMigratePiholeV5": "Pi-hole was not moved: this Pi's backup comes from Pi-hole v5 (.tar.gz) and can only be imported through the Pi-hole web interface (Settings → Teleporter). Nothing about Pi-hole was changed on the target Pi.",
   "actionBackupTeleporter": "Back up (Teleporter)",
@@ -1447,7 +1464,7 @@
   "fixDescPiholePassword": "Sets a random password for the Pi-hole web interface and shows it to you once. Without a password Pi-hole v6 asks for no login – anyone on your home network could change DNS settings and blocklists.",
   "statusPiholePasswordKept": "Pi-hole already had a password by now – nothing changed.",
   "stopFollowing": "Stop following",
-  "logStopFollowRequested": "Stopping to follow – the job keeps running on the Pi.",
+  "logStopFollowRequested": "No longer following – the job keeps running on the Pi.",
   "logJobNotice": "NOTE: {detail}",
   "@logJobNotice": {
     "placeholders": {

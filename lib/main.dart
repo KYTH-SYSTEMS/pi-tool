@@ -1640,7 +1640,10 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _keepAliveBegin(String message) async {
     _keepAliveHolds++;
-    await _keepAlive.begin(message);
+    final l10n = context.l10n;
+    await _keepAlive.begin(message,
+        channelName: l10n.keepAliveChannelName,
+        channelDescription: l10n.keepAliveChannelDescription);
   }
 
   Future<void> _keepAliveEnd() async {
@@ -2632,7 +2635,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         piFile = p.split('/').last;
       }
       // -- Target: take stock, install what's missing, restore. --
-      _appendLog('— Ziel-Pi „${target.name}" (${target.host}) —');
+      _appendLog(l10n.logMigrationTarget(target.name, target.host));
       // From here on the TARGET is the Pi at risk of a host-key problem (a
       // re-flashed Pi is exactly this feature's scenario). Without this,
       // "vertrauen und wiederholen" would drop the SOURCE Pi's trusted key —
@@ -3044,6 +3047,12 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// jump to the live log + Abbrechen — so you always see (and can stop) it.
   Widget _runningBar(ThemeData theme) {
     final cs = theme.colorScheme;
+    // Once a Pi-Job runs, the stop button only stops following: neutral, not
+    // error-red, and named for what it does.
+    final follow = _busyJob != null;
+    final stopLabel =
+        follow ? context.l10n.stopFollowing : context.l10n.cancel;
+    final stopIcon = follow ? Icons.visibility_off_outlined : Icons.close;
     return Material(
       color: cs.surfaceContainerHighest,
       child: Column(
@@ -3052,53 +3061,78 @@ class _UpdaterPageState extends State<UpdaterPage>
           const LinearProgressIndicator(minHeight: 3),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(_busyMessage ?? context.l10n.busyDefault,
-                      style: theme.textTheme.bodyMedium,
-                      overflow: TextOverflow.ellipsis),
-                ),
-                TextButton(
-                  // Deliberate gate bypass: while an action runs, jumping to
-                  // its live log must work even before a session exists.
-                  onPressed: () => setState(() => _tab = kTabTerminal),
-                  child: const Text('Log'),
-                ),
-                const SizedBox(width: 2),
-                // Once a Pi-Job runs, this only stops following: neutral, not
-                // error-red, and named for what it does.
-                if (_busyJob != null)
-                  OutlinedButton.icon(
-                    onPressed: _cancel,
-                    icon: const Icon(Icons.visibility_off_outlined, size: 18),
-                    label: Text(context.l10n.stopFollowing),
-                    style: OutlinedButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                    ),
-                  )
-                else
-                  OutlinedButton.icon(
-                    onPressed: _cancel,
-                    icon: const Icon(Icons.close, size: 18),
-                    label: Text(context.l10n.cancel),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: cs.error,
-                      side:
-                          BorderSide(color: cs.error.withValues(alpha: 0.55)),
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                    ),
+            child: LayoutBuilder(
+              builder: (context, box) => Row(
+                children: [
+                  Expanded(
+                    child: Text(_busyMessage ?? context.l10n.busyDefault,
+                        style: theme.textTheme.bodyMedium,
+                        overflow: TextOverflow.ellipsis),
                   ),
-              ],
+                  TextButton(
+                    // Deliberate gate bypass: while an action runs, jumping to
+                    // its live log must work even before a session exists.
+                    onPressed: () => setState(() => _tab = kTabTerminal),
+                    child: const Text('Log'),
+                  ),
+                  const SizedBox(width: 2),
+                  if (_stopLabelFits(box.maxWidth, stopLabel, theme))
+                    OutlinedButton.icon(
+                      onPressed: _cancel,
+                      icon: Icon(stopIcon, size: 18),
+                      label: Text(stopLabel),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: follow ? null : cs.error,
+                        side: follow
+                            ? null
+                            : BorderSide(
+                                color: cs.error.withValues(alpha: 0.55)),
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                      ),
+                    )
+                  else
+                    // Narrow display or large font: the action stays, as its
+                    // icon, and the label moves into the tooltip.
+                    IconButton(
+                      onPressed: _cancel,
+                      tooltip: stopLabel,
+                      color: follow ? null : cs.error,
+                      icon: Icon(stopIcon),
+                    ),
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// Whether the running bar, [width] wide, has room for the labelled stop
+  /// button next to "Log" and a readable part of the message. Measured rather
+  /// than assumed: without the room, the label pushes the message out and the
+  /// row past its edge.
+  bool _stopLabelFits(double width, String label, ThemeData theme) {
+    double textWidth(String text) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: theme.textTheme.labelLarge),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      final measured = painter.width;
+      painter.dispose();
+      return measured;
+    }
+
+    // As laid out in the bar: 12 dp on both sides of each label, the 18 dp
+    // icon with its 8 dp gap, 2 dp between the buttons; a text button is at
+    // least 64 dp wide.
+    final log = textWidth('Log') + 24;
+    final buttons = (log < 64 ? 64 : log) + 2 + 18 + 8 + textWidth(label) + 24;
+    return width - buttons >= 64;
   }
 
   /// A Pi-Job runs on the active Pi without the app following it: what, since
@@ -3650,7 +3684,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                       ? ctx.l10n.statusScheduleActive(status.nextRun ?? '—')
                       : ctx.l10n.statusScheduleOff,
                   style: TextStyle(
-                      color: status.enabled ? kGreen : null,
+                      color: status.enabled
+                          ? _themeGreen(
+                              Theme.of(ctx).brightness == Brightness.dark)
+                          : null,
                       fontWeight: FontWeight.w600),
                 ),
                 if (status.lastResult != null)
@@ -3815,7 +3852,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                       ? ctx.l10n.statusScheduleActive(status.nextRun ?? '—')
                       : ctx.l10n.statusScheduleOff,
                   style: TextStyle(
-                      color: status.enabled ? kGreen : null,
+                      color: status.enabled
+                          ? _themeGreen(
+                              Theme.of(ctx).brightness == Brightness.dark)
+                          : null,
                       fontWeight: FontWeight.w600),
                 ),
                 if (status.lastResult != null)
@@ -3980,6 +4020,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           title: Text(ctx.l10n.piholePasswordTitle),
+          // The password stands below the text: on a small phone or with a
+          // large font it must be reachable by scrolling, not cut off.
+          scrollable: true,
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -4884,6 +4927,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: Text(ctx.l10n.dialogTrustPiTitle),
+        // The warning below the fingerprint must stay reachable on a small
+        // phone or with a large font.
+        scrollable: true,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -4935,13 +4981,13 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   // Small, muted footer link (Datenschutz/Impressum/Lizenzen) shown under the
-  // version line.
+  // version line. Small in type only: the tap target keeps 48 dp.
   Widget _legalLink(String label, VoidCallback onTap) {
     final theme = Theme.of(context);
     return TextButton(
       onPressed: onTap,
       style: TextButton.styleFrom(
-        minimumSize: Size.zero,
+        minimumSize: const Size(48, 48),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         foregroundColor: theme.colorScheme.onSurfaceVariant,
@@ -6752,12 +6798,13 @@ class _UpdaterPageState extends State<UpdaterPage>
                             fontWeight: FontWeight.w600, fontSize: 13)),
                   ),
                   if (_connected)
-                    const Padding(
-                      padding: EdgeInsets.only(left: 6),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
                       child: Icon(Icons.check_circle,
-                          key: Key('sessionConnected'),
+                          key: const Key('sessionConnected'),
                           size: 14,
-                          color: Colors.green),
+                          color: Colors.green,
+                          semanticLabel: context.l10n.wConnected),
                     ),
                   Icon(Icons.arrow_drop_down,
                       size: 22, color: theme.colorScheme.onSurfaceVariant),

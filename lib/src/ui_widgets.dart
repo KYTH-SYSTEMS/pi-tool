@@ -438,11 +438,20 @@ class _AlertsSheetState extends State<_AlertsSheet> {
               const SizedBox(height: 6),
               InkWell(
                 onTap: widget.onOpenNtfy,
-                child: Text(
-                  context.l10n.wAlertsNtfyLink,
-                  style: TextStyle(
-                    color: theme.colorScheme.primary,
-                    fontSize: 13,
+                // A tap target of at least 48 dp, not just the line of text.
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: 1,
+                    heightFactor: 1,
+                    child: Text(
+                      context.l10n.wAlertsNtfyLink,
+                      style: TextStyle(
+                        color: theme.colorScheme.primary,
+                        fontSize: 13,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -452,7 +461,9 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                     ? context.l10n.wAlertsActiveSince(status.lastCheck ?? '—')
                     : context.l10n.statusScheduleOff,
                 style: TextStyle(
-                  color: status.enabled ? kGreen : null,
+                  color: status.enabled
+                      ? _themeGreen(theme.brightness == Brightness.dark)
+                      : null,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -597,11 +608,13 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
   late List<DiskEntry> _entries = widget.initialEntries;
   bool _loading = false;
   String? _error;
+  String? _failedPath; // the folder [_error] is about, for "Erneut versuchen"
 
   Future<void> _load(String path) async {
     setState(() {
       _loading = true;
       _error = null;
+      _failedPath = null;
     });
     try {
       final e = await widget.fetch(path);
@@ -611,11 +624,16 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
         _entries = e;
         _loading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      // [_path] and [_entries] stay: at "/" there is no way up, so a list
+      // replaced by the error would leave nothing to tap.
       setState(() {
         _loading = false;
-        _error = context.l10n.wLoadFailedPerms;
+        _failedPath = path;
+        _error = e is EvccUpdateException
+            ? e.message
+            : context.l10n.wLoadFailedPerms;
       });
     }
   }
@@ -647,12 +665,30 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
             ),
           ),
           const Divider(height: 1),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 8, 0),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline,
+                      size: 18, color: Theme.of(context).colorScheme.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('$_failedPath: $_error',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
+                  ),
+                  TextButton(
+                    onPressed: () => _load(_failedPath!),
+                    child: Text(context.l10n.wRetry),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(child: Text(_error!))
-                    : _entries.isEmpty
+                : _entries.isEmpty
                         ? Center(child: Text(context.l10n.wEmpty))
                         : ListView.builder(
                             itemCount: _entries.length,
@@ -822,7 +858,9 @@ class _DockerSheetState extends State<_DockerSheet> {
 
 /// Service-log sheet with an optional **Live** mode: while on, it re-fetches the
 /// log tail every few seconds (journalctl-follow-ish via polling — no PTY, no
-/// background service). The timer is cancelled on dispose.
+/// background service). The timer is cancelled on dispose. It opens at the
+/// newest entry and stays there while following; a fetch that fails leaves
+/// the last log in place under a line that says so.
 class _LiveLogSheet extends StatefulWidget {
   const _LiveLogSheet({
     required this.title,
@@ -841,12 +879,29 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
   late String _logs = widget.initial;
   bool _live = false;
   bool _loading = false;
+  bool _failed = false; // the last fetch failed: what is shown is older
   Timer? _timer;
+  final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollToEnd(); // a log is read from its newest entry
+  }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _scroll.dispose();
     super.dispose();
+  }
+
+  /// Jumps to the newest entry once the text is laid out.
+  void _scrollToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
   }
 
   void _toggleLive(bool on) {
@@ -869,13 +924,22 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
     try {
       final l = await widget.fetch();
       if (!mounted) return;
+      // Stay at the newest entry — unless someone scrolled up to read.
+      final atEnd = !_scroll.hasClients ||
+          _scroll.position.pixels >= _scroll.position.maxScrollExtent - 24;
       setState(() {
         _logs = l;
         _loading = false;
+        _failed = false;
       });
+      if (atEnd) _scrollToEnd();
     } catch (_) {
       if (!mounted) return;
-      setState(() => _loading = false);
+      // The log on screen stays; say that it is no longer the current one.
+      setState(() {
+        _loading = false;
+        _failed = true;
+      });
     }
   }
 
@@ -911,8 +975,28 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
             ),
           ),
           const Divider(height: 1),
+          if (_failed)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline,
+                      size: 16, color: Theme.of(context).colorScheme.error),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      context.l10n.wLogRefreshFailed,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.error),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: SingleChildScrollView(
+              controller: _scroll,
               padding: const EdgeInsets.all(12),
               child: SelectableText(
                 _logs.trim().isEmpty ? context.l10n.wNoOutput : _logs,
@@ -1071,6 +1155,16 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
     return kGreen;
   }
 
+  /// What the traffic light says, for a screen reader: the colour alone tells
+  /// a warning from "all fine" — the health text next to it is the same kind
+  /// of line in both cases.
+  String _labelFor(BuildContext ctx, PiSnapshot s) {
+    if (!s.reachable) return ctx.l10n.probeUnreachable;
+    if (s.warning) return ctx.l10n.wStatusWarning;
+    if (s.updates) return ctx.l10n.wUpdatesAvailable;
+    return ctx.l10n.wStatusOk;
+  }
+
   /// Indices of reachable Pis that have pending updates.
   List<int> get _updatable => [
         for (var i = 0; i < widget.profiles.length; i++)
@@ -1187,7 +1281,9 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                   subtitle =
                       i == _probing ? ctx.l10n.wChecking : ctx.l10n.wWaiting;
                 } else {
-                  leading = Icon(Icons.circle, color: _colorFor(ctx, snap));
+                  leading = Icon(Icons.circle,
+                      color: _colorFor(ctx, snap),
+                      semanticLabel: _labelFor(ctx, snap));
                   subtitle = [
                     if (snap.updates) ctx.l10n.wUpdatesAvailable,
                     snap.detail,
@@ -2193,6 +2289,8 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.title),
+      // With the keyboard up, both fields do not fit a small phone.
+      scrollable: true,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2214,6 +2312,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
               errorText: _errorText(context),
               suffixIcon: IconButton(
                 icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                tooltip: _obscure ? context.l10n.wShow : context.l10n.wHide,
                 onPressed: () => setState(() => _obscure = !_obscure),
               ),
             ),
@@ -2413,9 +2512,11 @@ class _DisclaimerScreen extends StatelessWidget {
                     chevronColor: theme.colorScheme.onSurface,
                   ),
                   const SizedBox(width: 10),
-                  Text(
-                    context.l10n.wWelcomeTitle,
-                    style: theme.textTheme.titleLarge,
+                  Flexible(
+                    child: Text(
+                      context.l10n.wWelcomeTitle,
+                      style: theme.textTheme.titleLarge,
+                    ),
                   ),
                 ],
               ),

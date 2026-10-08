@@ -8,7 +8,13 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 /// is false). Injected into the UI so tests can substitute a fake.
 abstract class KeepAliveService {
   /// Begin keeping alive, showing [message] in the ongoing notification.
-  Future<void> begin(String message);
+  /// [channelName] and [channelDescription] label its notification channel in
+  /// the system settings, in the app's language.
+  Future<void> begin(
+    String message, {
+    required String channelName,
+    required String channelDescription,
+  });
 
   /// Stop keeping alive.
   Future<void> end();
@@ -20,14 +26,15 @@ abstract class KeepAliveService {
 class ForegroundKeepAlive implements KeepAliveService {
   bool _initialized = false;
 
-  void _ensureInit() {
+  // The texts of the first call stay: the plugin creates the channel once and
+  // leaves an existing one as it is, so a later language has no effect anyway.
+  void _ensureInit(String channelName, String channelDescription) {
     if (_initialized) return;
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'pi_tool_action',
-        channelName: 'Laufende Aktionen',
-        channelDescription:
-            'Zeigt an, dass Pi-Tool gerade eine Aktion auf dem Pi ausführt.',
+        channelName: channelName,
+        channelDescription: channelDescription,
         onlyAlertOnce: true,
       ),
       iosNotificationOptions: const IOSNotificationOptions(
@@ -44,10 +51,14 @@ class ForegroundKeepAlive implements KeepAliveService {
   }
 
   @override
-  Future<void> begin(String message) async {
+  Future<void> begin(
+    String message, {
+    required String channelName,
+    required String channelDescription,
+  }) async {
     if (!Platform.isAndroid) return;
     try {
-      _ensureInit();
+      _ensureInit(channelName, channelDescription);
       if (await FlutterForegroundTask.checkNotificationPermission() !=
           NotificationPermission.granted) {
         await FlutterForegroundTask.requestNotificationPermission();

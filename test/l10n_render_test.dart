@@ -44,4 +44,18 @@ void main() {
     expect(en.loadFailedResetBody, contains('"Import profiles"'));
     expect(en.loadFailedResetBody, contains('\n\n'));
   });
+
+  // Texts the UI layer used to carry in German only, or in English that read
+  // as "we stop in order to follow".
+  testWidgets('log lines of the UI layer exist in both languages',
+      (tester) async {
+    final en = await l10nFor(tester, const Locale('en'));
+    expect(en.logStopFollowRequested,
+        'No longer following – the job keeps running on the Pi.');
+    expect(en.logMigrationTarget('Keller', '10.0.0.7'),
+        '— Target Pi “Keller” (10.0.0.7) —');
+    final de = await l10nFor(tester, const Locale('de'));
+    expect(de.logMigrationTarget('Keller', '10.0.0.7'),
+        '— Ziel-Pi „Keller“ (10.0.0.7) —');
+  });
 }

@@ -295,7 +295,7 @@ String _terminalResponse(String wrapped) {
     case 'echo':
       return '${inner.length > 5 ? inner.substring(5) : ''}\n';
     default:
-      return 'Demo-Modus: Befehle werden nicht wirklich ausgefuehrt.\n';
+      return 'Demo-Modus: Befehle werden nicht wirklich ausgeführt.\n';
   }
 }
 
