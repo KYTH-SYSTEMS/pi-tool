@@ -152,8 +152,13 @@ void main() {
           lessThan(launcher.indexOf('install -d')));
       expect(launcher, contains('install -d -m 0755 "\$top"'));
       expect(launcher, contains('install -d -m 0700 "\$base"'));
-      expect(launcher,
-          contains('systemctl is-active --quiet pi-tool-autoupdate.service'));
+      // The unit's ActiveState, not `is-active`: a oneshot service is
+      // "activating" for its whole run, and is-active says no to that.
+      expect(
+          launcher,
+          contains('systemctl show -p ActiveState --value '
+              'pi-tool-autoupdate.service'));
+      expect(launcher, isNot(contains('systemctl is-active')));
       expect(launcher, contains(r'flock -n -E 75 "$lock" true'));
       final busy = launcher.indexOf(r'flock -n -E 75 "$lock" true');
       expect(busy, lessThan(launcher.indexOf(r'mkdir -m 0700 "$d"')));
@@ -278,7 +283,7 @@ void main() {
         expect(p.indexOf('pitool_repair\n'),
             lessThan(p.indexOf('pitool_update_lists\n')));
         expect(p, contains('Acquire::AllowReleaseInfoChange::Suite=true'));
-        expect(p, contains(r'echo "PITOOL_APT_UPDATE_RC=$?"'));
+        expect(p, contains(r'echo "PITOOL_APT_UPDATE_RC=$lrc"'));
         expect(p, contains(jobUpgradeMarker));
       }
       expect(sys, contains(r'apt-get "${O[@]}" full-upgrade -y'));
@@ -502,6 +507,49 @@ void main() {
           isA<JobRunNoStart>());
     });
 
+    test('an exit code of 1–127 without any control line: the script never '
+        'got to work', () {
+      // User not in sudoers (1), sudo or bash missing (127), a launcher
+      // called with the wrong arguments (2).
+      for (final code in [1, 2, 126, 127]) {
+        expect(
+            c('',
+                err: 'pi is not in the sudoers file.  This incident will be '
+                    'reported.\n',
+                exit: code),
+            isA<JobRunEarlyExit>()
+                .having((e) => e.exitCode, 'exitCode', code),
+            reason: 'Exit $code');
+      }
+      // Output that is no control line of this job changes nothing.
+      expect(c('bash: line 1: sudo: command not found\n', exit: 127),
+          isA<JobRunEarlyExit>());
+      expect(c('PITOOL_JOB_STARTED $_other x\n', exit: 1),
+          isA<JobRunEarlyExit>());
+    });
+
+    test('…but null, 0, the launcher\'s own 3 and a signal death stay '
+        '"unclear"', () {
+      // 0 and 3 are only ever returned by a launcher that ran: after its
+      // control lines (0 — they got lost) or with the start unproven (3). At
+      // 128+n a signal ended it, possibly after the job was handed over.
+      for (final code in <int?>[null, 0, 3, 129, 137, 143, 255]) {
+        expect(c('', exit: code),
+            isA<JobRunDetached>().having((d) => d.started, 'started', isFalse),
+            reason: 'Exit $code');
+      }
+    });
+
+    test('an early exit never overrides a control line', () {
+      expect(c('PITOOL_JOB_STARTED $_id x\nhalf\n', exit: 1),
+          isA<JobRunDetached>().having((d) => d.started, 'started', isTrue));
+      expect(c('PITOOL_JOB_NOSTART $_id lock\n', exit: 1),
+          isA<JobRunNoStart>());
+      expect(c(_done('A'), exit: 1), isA<JobRunRc>());
+      expect(c('', err: 'sudo: 3 incorrect password attempts\n', exit: 1),
+          isA<JobRunSudoFailure>());
+    });
+
     test('HB lines on stderr never reach the log', () {
       final r = classifyJobRun(
           stdout: _done('A'),
@@ -722,6 +770,18 @@ void main() {
       expect(aptFailureCause('E: Could not get lock /var/lib/dpkg/lock'),
           contains('andere Paketinstallation'));
       expect(aptFailureCause('dpkg was interrupted'), dpkgInterruptedMessage);
+    });
+
+    test('waiting for the lock and then failing for another reason is not '
+        '"another package run"', () {
+      const log = 'Waiting for cache lock: Could not get lock '
+          '/var/lib/dpkg/lock-frontend. It is held by process 1234 '
+          '(unattended-upgr)...\n'
+          'E: Unable to correct problems, you have held broken packages.\n';
+      expect(aptFailureCause(log), isNull);
+      final o = evaluateJob(jobKindSystemUpgrade, 100, '$jobUpgradeMarker\n$log');
+      expect(o.message,
+          'System-Upgrade fehlgeschlagen (Exit 100). Details im Log.');
     });
 
     test('kind labels are German and exist for every Tier-1 kind', () {

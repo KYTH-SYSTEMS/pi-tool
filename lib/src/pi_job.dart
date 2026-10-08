@@ -485,6 +485,10 @@ exit 0
 ''';
 }
 
+/// Exit code of the launcher when the wrapper did not report in time: whether
+/// the job starts is unknown, and no control line says so.
+const int jobStartUnclearExit = 3;
+
 /// The launcher (mode `pitool-job-start <id>`). See SPEC v2 §4.1.
 String buildJobLauncherScript({
   required String id,
@@ -533,11 +537,15 @@ pitool_job_main() {
     printf 'PITOOL_JOB_NOSTART %s setup\\n' "\$id"
     return 1
   fi
-  # Busy? Checked before anything of this job is written.
-  if systemctl is-active --quiet pi-tool-autoupdate.service 2>/dev/null; then
-    printf 'PITOOL_JOB_BUSY %s - autoupdate -\\n' "\$id"
-    return 0
-  fi
+  # Busy? Checked before anything of this job is written. The on-Pi
+  # auto-update is a oneshot unit: "activating" for its whole run, which
+  # `is-active` answers with "no" — so read the state itself. No such unit,
+  # or no systemd: "inactive" or nothing, and the job goes ahead.
+  case "\$(systemctl show -p ActiveState --value pi-tool-autoupdate.service 2>/dev/null)" in
+    active|activating|deactivating|reloading)
+      printf 'PITOOL_JOB_BUSY %s - autoupdate -\\n' "\$id"
+      return 0 ;;
+  esac
   flock -n -E 75 "\$lock" true
   f=\$?
   if [ "\$f" -eq 75 ]; then
@@ -614,7 +622,7 @@ PITOOL_RUNSH
     fi
     # No control line: the app reports "start unclear", never success.
     echo 'Pi-Tool: Der Job meldet sich nicht – ob er startet, ist unklar.' >&2
-    return 3
+    return $jobStartUnclearExit
   fi
   printf 'PITOOL_JOB_STARTED %s %s\\n' "\$id" "\$kind"
   pitool_follow "\$d" "\$id"
@@ -709,12 +717,35 @@ pitool_repair() {
 
 /// Refreshes the package lists. Tolerant (one dead third-party repo must not
 /// block the upgrade) but reported: the app warns when the lists are partial.
+/// The exit status only ever goes into the marker line — nothing here ends
+/// the payload.
+///
+/// Error-Mode=any: without it `apt-get update` exits 0 when a download failed
+/// (no internet, no DNS) and the old lists stay in use — the upgrade then
+/// finds nothing and the app would report "System aktualisiert." without the
+/// hint. An apt too old to know the key (before 2.1.16, i.e. Buster) ignores
+/// it and keeps exiting 0.
+///
+/// After a clean run the lists directory gets a fresh timestamp: that mtime
+/// is the age the app measures (`systemAptAgeCommand`), and apt itself only
+/// changes it when an index file is replaced. Clean as in
+/// `systemAptRefreshCommand`: exit 0 and no failed download in the output —
+/// the second half for the old apt above.
 const String _shUpdateLists = r'''
 pitool_update_lists() {
+  local lout lrc
   echo 'Pi-Tool: Lade die Paketlisten …'
   pitool_wait_apt_locks
-  apt-get -o Acquire::AllowReleaseInfoChange::Suite=true -o Acquire::Retries=3 update -qq
-  echo "PITOOL_APT_UPDATE_RC=$?"
+  lout=$(apt-get -o APT::Update::Error-Mode=any -o Acquire::AllowReleaseInfoChange::Suite=true -o Acquire::Retries=3 update -qq 2>&1)
+  lrc=$?
+  [ -z "$lout" ] || printf '%s\n' "$lout"
+  if [ "$lrc" -eq 0 ]; then
+    case "$lout" in
+      *'Failed to fetch'*|*'failed to download'*) ;;
+      *) touch /var/lib/apt/lists ;;
+    esac
+  fi
+  echo "PITOOL_APT_UPDATE_RC=$lrc"
 }
 ''';
 
@@ -970,6 +1001,15 @@ class JobRunBadHeader extends JobRun {
   const JobRunBadHeader();
 }
 
+/// The command ended with [exitCode] and without any control line: the job
+/// script never got to work (the user may not use sudo: 1, sudo or bash
+/// missing: 127, a launcher called with the wrong arguments: 2). For a
+/// launcher run this proves that nothing was started.
+class JobRunEarlyExit extends JobRun {
+  const JobRunEarlyExit(this.exitCode);
+  final int exitCode;
+}
+
 /// No terminal line: the connection ended first. [started] says whether the
 /// job confirmed its start; [log] is what arrived so far.
 class JobRunDetached extends JobRun {
@@ -1000,6 +1040,13 @@ String stripJobHeartbeats(String text, String id) =>
 /// artificial newline in front of it — payload output is never filtered
 /// otherwise. No terminal line means detached: exit 0 without RC is never
 /// success.
+///
+/// No control line at all, but an exit code of 1–127: the script never got to
+/// work ([JobRunEarlyExit]). Everything else without a line stays detached
+/// with the start unconfirmed — no exit code (the connection ended), 0 and
+/// [jobStartUnclearExit] (only a launcher that ran returns them: its lines
+/// got lost, or the start is unproven) and 128+n (ended by a signal, possibly
+/// after the job was handed to systemd).
 JobRun classifyJobRun({
   required String stdout,
   required String stderr,
@@ -1076,6 +1123,12 @@ JobRun classifyJobRun({
       return const JobRunSudoFailure();
     }
     if (exitCode == jobBadHeaderExit) return const JobRunBadHeader();
+    if (exitCode != null &&
+        exitCode > 0 &&
+        exitCode < 128 &&
+        exitCode != jobStartUnclearExit) {
+      return JobRunEarlyExit(exitCode);
+    }
   }
   return JobRunDetached(
     started: logStart != null,

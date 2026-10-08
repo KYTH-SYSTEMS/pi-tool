@@ -523,14 +523,29 @@ const String jobRefusedRunningMarker = 'PITOOL_REFUSED_JOB_RUNNING';
 /// only the postinst brings them back — a reboot in between does not boot.
 const String jobRefusedBootMarker = 'PITOOL_REFUSED_BOOT_INCOMPLETE';
 
+/// Printed (exit 75) by [jobPowerGuard] while the on-Pi auto-update
+/// (auto_update.dart) runs: a reboot would stop apt and dpkg half-way.
+const String jobRefusedAutoUpdateMarker = 'PITOOL_REFUSED_AUTOUPDATE_RUNNING';
+
 /// Refuses a reboot/poweroff from the app while a job runs (flock probe on
 /// /var/lib/pi-tool/jobs/lock — `-E 75` separates "held" from any open
-/// error) or while the kernel diversion is in place. A missing lock file
-/// means no job ever ran here: allowed. Runs under `sh -c '…'`, so it holds
-/// no single quote.
+/// error), while the on-Pi auto-update runs, or while the kernel diversion is
+/// in place. A missing lock file means no job ever ran here: allowed.
+///
+/// The auto-update is a oneshot unit, "activating" for its whole run — which
+/// `systemctl is-active` answers with "no", so the unit's ActiveState is read
+/// instead. A Pi without that unit says "inactive", one without systemd
+/// nothing: both allowed. Asked before the diversion: while an upgrade runs,
+/// a diversion is its work in progress, not a reason to repair.
+///
+/// Runs under `sh -c '…'`, so it holds no single quote.
 const String jobPowerGuard = 'l=/var/lib/pi-tool/jobs/lock; '
     r'if [ -e "$l" ]; then flock -n -E 75 "$l" true; '
     r'if [ $? -eq 75 ]; then echo ' '$jobRefusedRunningMarker; exit 75; fi; fi; '
+    r'case "$(systemctl show -p ActiveState --value '
+    'pi-tool-autoupdate.service 2>/dev/null)" in '
+    'active|activating|deactivating|reloading) '
+    'echo $jobRefusedAutoUpdateMarker; exit 75;; esac; '
     'if dpkg-divert --list 2>/dev/null | grep -q rpikernelhack; then '
     'echo $jobRefusedBootMarker; exit 75; fi';
 

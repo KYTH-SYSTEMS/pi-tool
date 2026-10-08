@@ -3085,6 +3085,26 @@ void main() {
       );
     });
 
+    // No job is named (no ref, no jobKind): the UI then shows this very
+    // text instead of the "nothing was started" line of a refused job start.
+    test('the running on-Pi auto-update refuses the reboot, in plain words',
+        () async {
+      final runner = FakeSshRunner({
+        rebootCommand: [_r('$jobRefusedAutoUpdateMarker\n', exitCode: 75)],
+      });
+      await expectLater(
+        _updaterWith(runner).reboot(config: _config, onLog: (_) {}),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobBusy)
+            .having((e) => e.ref, 'ref', isNull)
+            .having((e) => e.jobKind, 'jobKind', isNull)
+            .having((e) => e.message, 'message',
+                allOf(startsWith('Neustart abgelehnt: '),
+                    contains('automatischen Updates'),
+                    isNot(contains('Exit 75'))))),
+      );
+    });
+
     test('treats a dropped connection as success', () async {
       final runner = FakeSshRunner({},
           runErrors: {rebootCommand: const SocketException('closed')});
@@ -3325,6 +3345,17 @@ void main() {
       await expectLater(
         _updaterWith(boot).shutdown(config: _config, onLog: (_) {}),
         _err(UpdateErrorKind.unknown, contains('Paketzustand reparieren')),
+      );
+      final auto = FakeSshRunner({
+        shutdownCommand: [_r('$jobRefusedAutoUpdateMarker\n', exitCode: 75)],
+      });
+      await expectLater(
+        _updaterWith(auto).shutdown(config: _config, onLog: (_) {}),
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobBusy)
+            .having((e) => e.message, 'message',
+                allOf(startsWith('Herunterfahren abgelehnt: '),
+                    contains('automatischen Updates')))),
       );
     });
 
@@ -3723,6 +3754,39 @@ void main() {
                 .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
                 .having((e) => e.startConfirmed, 'startConfirmed', isFalse))));
 
+    // The start failed before the launcher ran (user not in sudoers: 1, sudo
+    // missing: 127). No job exists — so no JobException: that would put a
+    // job into the job bar and drop the session as "connection lost".
+    for (final (code, stderr) in [
+      (1, 'pi is not in the sudoers file.  This incident will be reported.\n'),
+      (127, 'bash: line 1: sudo: command not found\n'),
+    ]) {
+      test('exit $code without any line → start failed, nothing started',
+          () => upgradeWith(
+              _r('', stderr: stderr, exitCode: code),
+              throwsA(isA<EvccUpdateException>()
+                  .having((e) => e, 'no JobException', isNot(isA<JobException>()))
+                  .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)
+                  .having(
+                      (e) => e.message,
+                      'message',
+                      allOf(contains('(Exit $code)'),
+                          contains('nichts gestartet'),
+                          isNot(contains('Verbindung')))))));
+    }
+
+    test('the launcher\'s own exit 3 without a line stays "start unclear"', () =>
+        upgradeWith(
+            _r('',
+                stderr: 'Pi-Tool: Der Job meldet sich nicht – ob er startet, '
+                    'ist unklar.\n',
+                exitCode: 3),
+            throwsA(isA<JobException>()
+                .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+                .having((e) => e.startConfirmed, 'startConfirmed', isFalse)
+                .having((e) => e.ref, 'ref',
+                    const JobRef(id: _jobId, kind: jobKindSystemUpgrade)))));
+
     test('RC with a foreign id is ignored → detached', () => upgradeWith(
         _r('PITOOL_JOB_STARTED $_jobId system-upgrade\nx\n'
             '\nPITOOL_JOB_RC fedcba9876543210 0\n'),
@@ -3957,6 +4021,25 @@ void main() {
               .followJob(config: _config, jobId: _jobId, onLog: (_) {}),
           throwsA(isA<JobException>()
               .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)));
+    });
+
+    // Only a launcher's early exit proves that nothing was started. A
+    // follower that could not run says nothing about the job: it stays in the
+    // job bar, as before.
+    test('the follower ends early (exit 1, no line) → the job stays followable',
+        () async {
+      final runner = FakeSshRunner({
+        _jobFollow: [
+          _r('', stderr: 'pi is not in the sudoers file.\n', exitCode: 1)
+        ],
+      });
+      await expectLater(
+          _updaterWith(runner)
+              .followJob(config: _config, jobId: _jobId, onLog: (_) {}),
+          throwsA(isA<JobException>()
+              .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+              .having((e) => e.startConfirmed, 'startConfirmed', isFalse)
+              .having((e) => e.ref?.id, 'ref.id', _jobId)));
     });
 
     test('an invalid id never reaches the Pi', () async {
@@ -4800,7 +4883,7 @@ void main() {
       await _updaterWith(runner).updateAptPackage(
           config: _config, package: 'grafana', onLog: (_) {});
       final payload = _payloadOf(runner);
-      expect(payload, contains(r'echo "PITOOL_APT_UPDATE_RC=$?"'));
+      expect(payload, contains(r'echo "PITOOL_APT_UPDATE_RC=$lrc"'));
       expect(payload,
           contains(r'''apt-get "${O[@]}" install --only-upgrade -y 'grafana' '''
               .trimRight()));

@@ -36,7 +36,8 @@ const String systemAptAgeCommand =
 /// Clean = exit 0 and no failed download. apt also exits 0 when sources could
 /// not be reached ("W: Failed to fetch …", the old lists stay in use); a
 /// stamp then would pass a stale index off as fresh. apt's output and exit
-/// status are handed on unchanged. Only here, not in the Pi-Job payloads.
+/// status are handed on unchanged. The Pi-Job payloads set the same stamp
+/// under the same condition (`pitool_update_lists` in pi_job.dart).
 const String systemAptRefreshCommand = "LC_ALL=C sudo -S sh -c '"
     r'out=$(LC_ALL=C apt-get update -qq 2>&1); rc=$?; '
     r'[ -z "$out" ] || printf "%s\n" "$out"; '

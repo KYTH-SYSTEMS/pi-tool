@@ -3,6 +3,9 @@
 // Windows lacks — CI (ubuntu) runs them. Every on-Pi path is rebased into a
 // temp root via JobScriptOptions; systemd-run is a stub that records its argv
 // and starts the wrapper with setsid -f, like the no-systemd fallback does.
+//
+// The groups at the end need none of that and run in any bash (Git Bash
+// included): a sandboxed Pi (on_pi_sandbox.dart) whose PATH holds stubs only.
 @TestOn('vm')
 library;
 
@@ -11,7 +14,11 @@ import 'dart:io';
 
 import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/pi_job.dart';
+import 'package:evcc_updater/src/services/system_service.dart'
+    show isAptIndexFresh;
 import 'package:flutter_test/flutter_test.dart';
+
+import 'on_pi_sandbox.dart';
 
 final Object _linuxOnly =
     Platform.isLinux ? false : 'braucht flock/setsid/proc – läuft in Linux-CI';
@@ -299,4 +306,255 @@ void main() {
       expect(r.stdout, contains(jobRefusedBootMarker));
     }, skip: _linuxOnly);
   });
+
+  // The on-Pi auto-update is a oneshot unit: "activating" for its whole run,
+  // which `systemctl is-active` answers with exit 3. Launcher and power guard
+  // read the unit's ActiveState instead. The systemctl stub answers both
+  // questions the way systemd does, from the state a test sets.
+  group('laufendes Auto-Update (ActiveState) in bash', () {
+    late PiSandbox pi;
+    const id = '9999999999999999';
+    const lock = '/var/lib/pi-tool/jobs/lock';
+
+    /// [state] as `systemctl show -p ActiveState --value` prints it; `-` is a
+    /// systemctl that cannot answer (prints nothing, exit 1).
+    void autoUpdate(String state) => pi.put('/state/autoupdate', '$state\n');
+
+    setUp(() {
+      pi = PiSandbox();
+      pi.stub('systemctl', r'''
+state=$("$REAL_CAT" "$S/autoupdate" 2>/dev/null)
+[ "$state" = - ] && exit 1
+case "$*" in
+  "show -p ActiveState --value pi-tool-autoupdate.service") echo "${state:-inactive}" ;;
+  "is-active --quiet pi-tool-autoupdate.service") [ "$state" = active ] || exit 3 ;;
+  *) exit 1 ;;
+esac''');
+      // The job lock is held whenever a test puts the lock file there.
+      pi.stub('flock', 'exit 75');
+      pi.stub('install', r'for a; do d=$a; done; exec "$REAL_MKDIR" -p "$d"',
+          log: false);
+      pi.stub('dpkg-divert', r'''
+[ -e "$S/diverted" ] && echo "local diversion of /boot/kernel7.img to /usr/share/rpikernelhack/kernel7.img by rpikernelhack"
+exit 0''', log: false);
+      pi.stub('sudo', r'while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"',
+          log: false);
+      pi.stub('sh', r'exec /bin/sh "$@"', log: false);
+      pi.stub('reboot', r': > "$S/rebooted"');
+      pi.stub('poweroff', r': > "$S/powered-off"');
+    });
+    tearDown(() => pi.dispose());
+
+    /// The launcher as `bash -s` gets it, with the arguments the bootstrap
+    /// hands on. The stubbed flock reports the job lock as held, so a launcher
+    /// that gets past the auto-update check ends there — nothing is started.
+    Future<JobRun> launch() async {
+      final launcher = buildJobLauncherScript(
+          id: id,
+          kind: jobKindSystemUpgrade,
+          payload: buildJobPayload('echo x'),
+          options: JobScriptOptions(root: pi.root, path: '${pi.root}/bin'));
+      final r = await pi.run('set -- pitool-job-start $id\n$launcher',
+          rebase: false);
+      return classifyJobRun(
+          stdout: r.out, stderr: r.err, exitCode: r.code, id: id);
+    }
+
+    List<String> lockProbes() =>
+        pi.calls.where((c) => c.startsWith('flock ')).toList();
+
+    for (final state in ['activating', 'active', 'deactivating', 'reloading']) {
+      test('Launcher: ActiveState $state → BUSY autoupdate, nichts angelegt',
+          () async {
+        autoUpdate(state);
+        final run = await launch();
+        expect(run,
+            isA<JobRunBusy>().having((b) => b.kind, 'kind', 'autoupdate'));
+        expect(lockProbes(), isEmpty);
+        expect(pi.exists('/var/lib/pi-tool/jobs/$id'), isFalse);
+      });
+    }
+
+    for (final state in ['inactive', 'failed', '-']) {
+      test('Launcher: ActiveState "$state" → weiter zur Job-Sperre', () async {
+        autoUpdate(state);
+        final run = await launch();
+        // Held by the stub: BUSY, but not because of the auto-update.
+        expect(
+            run,
+            isA<JobRunBusy>()
+                .having((b) => b.kind, 'kind', isNot('autoupdate')));
+        expect(lockProbes(), hasLength(1));
+      });
+    }
+
+    test('Launcher: ohne systemctl (kein systemd) → weiter zur Job-Sperre',
+        () async {
+      pi.remove('/bin/systemctl');
+      final run = await launch();
+      expect(run,
+          isA<JobRunBusy>().having((b) => b.kind, 'kind', isNot('autoupdate')));
+      expect(lockProbes(), hasLength(1));
+    });
+
+    for (final state in ['activating', 'active', 'deactivating', 'reloading']) {
+      test('Neustart: ActiveState $state → abgelehnt, kein reboot', () async {
+        autoUpdate(state);
+        final r = await pi.run(rebootCommand);
+        expect(r.code, 75, reason: r.err);
+        expect(r.lines, [jobRefusedAutoUpdateMarker]);
+        expect(pi.exists('/state/rebooted'), isFalse);
+      });
+    }
+
+    test('Herunterfahren: während des Auto-Updates abgelehnt', () async {
+      autoUpdate('activating');
+      final r = await pi.run(shutdownCommand);
+      expect(r.code, 75, reason: r.err);
+      expect(r.lines, [jobRefusedAutoUpdateMarker]);
+      expect(pi.exists('/state/powered-off'), isFalse);
+    });
+
+    for (final state in ['inactive', 'failed', '-']) {
+      test('Neustart: ActiveState "$state" → wie bisher erlaubt', () async {
+        autoUpdate(state);
+        final r = await pi.run(rebootCommand);
+        expect(r.code, 0, reason: r.err);
+        expect(r.out, isEmpty);
+        expect(r.err, isEmpty);
+        expect(pi.exists('/state/rebooted'), isTrue);
+      });
+    }
+
+    test('Neustart und Herunterfahren ohne systemctl: wie bisher erlaubt',
+        () async {
+      pi.remove('/bin/systemctl');
+      var r = await pi.run(rebootCommand);
+      expect(r.code, 0, reason: r.err);
+      expect(r.err, isEmpty);
+      expect(pi.exists('/state/rebooted'), isTrue);
+      r = await pi.run(shutdownCommand);
+      expect(r.code, 0, reason: r.err);
+      expect(pi.exists('/state/powered-off'), isTrue);
+    });
+
+    test('ein laufender Pi-Job wird vor dem Auto-Update genannt', () async {
+      autoUpdate('activating');
+      pi.put(lock, '');
+      final r = await pi.run(rebootCommand);
+      expect(r.code, 75, reason: r.err);
+      expect(r.lines, [jobRefusedRunningMarker]);
+      expect(pi.exists('/state/rebooted'), isFalse);
+    });
+
+    test('das Auto-Update wird vor dem halben Kernel-Update genannt', () async {
+      // The diversion is in place while the upgrade that will finish it runs.
+      autoUpdate('activating');
+      pi.put('/state/diverted', '');
+      final r = await pi.run(rebootCommand);
+      expect(r.code, 75, reason: r.err);
+      expect(r.lines, [jobRefusedAutoUpdateMarker]);
+    });
+
+    test('halbes Kernel-Update ohne laufendes Auto-Update: wie bisher', () async {
+      pi.put('/state/diverted', '');
+      final r = await pi.run(rebootCommand);
+      expect(r.code, 75, reason: r.err);
+      expect(r.lines, [jobRefusedBootMarker]);
+      expect(pi.exists('/state/rebooted'), isFalse);
+    });
+  }, skip: needsBash);
+
+  // pitool_update_lists as part of the system-upgrade payload. apt-get answers
+  // `update` the way apt does, in the mode a test sets; nothing is downloaded.
+  group('Paketlisten im Job-Payload in bash', () {
+    late PiSandbox pi;
+    const lists = '/var/lib/apt/lists';
+    const fetchFailed = "Failed to fetch "
+        "http://deb.debian.org/debian/dists/bookworm/InRelease  Temporary "
+        "failure resolving 'deb.debian.org'";
+
+    setUp(() async {
+      pi = PiSandbox();
+      // "failed": apt ≥ 2.1.16 honours Error-Mode=any — a download that failed
+      // is an error. "warned": an older apt ignores the option, the same
+      // failure is a warning and the exit status 0.
+      pi.stub('apt-get', '''
+case " \$* " in
+  *" update "*)
+    case "\$("\$REAL_CAT" "\$S/update" 2>/dev/null)" in
+      failed)
+        echo "E: $fetchFailed" >&2
+        echo "E: Some index files failed to download. They have been ignored, or old ones used instead." >&2
+        exit 100 ;;
+      warned)
+        echo "W: $fetchFailed" >&2
+        echo "W: Some index files failed to download. They have been ignored, or old ones used instead." >&2 ;;
+    esac ;;
+esac
+exit 0''');
+      pi.stub('dpkg', 'exit 0');
+      await pi.setAge(lists, '10 days ago');
+    });
+    tearDown(() => pi.dispose());
+
+    Future<SandboxRun> upgrade() => pi.run(buildSystemUpgradePayload());
+
+    List<String> apt(String verb) => pi.calls
+        .where((c) => c.startsWith('apt-get ') && c.contains(' $verb'))
+        .toList();
+
+    Future<bool> listsFresh() async =>
+        isAptIndexFresh(await pi.ageSeconds(lists));
+
+    test('apt-get update läuft mit Error-Mode=any', () async {
+      final r = await upgrade();
+      expect(r.code, 0, reason: r.err);
+      expect(apt('update'), [
+        'apt-get -o APT::Update::Error-Mode=any '
+            '-o Acquire::AllowReleaseInfoChange::Suite=true '
+            '-o Acquire::Retries=3 update -qq'
+      ]);
+    });
+
+    test('Listen geladen: RC 0, und das gemessene Alter springt zurück',
+        () async {
+      expect(await listsFresh(), isFalse);
+      final r = await upgrade();
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines, contains('PITOOL_APT_UPDATE_RC=0'));
+      expect(await listsFresh(), isTrue);
+      expect(evaluateJob(jobKindSystemUpgrade, r.code, r.out).listsIncomplete,
+          isFalse);
+    });
+
+    test('Download fehlgeschlagen (rc 100): nur der Marker, das Upgrade läuft',
+        () async {
+      pi.put('/state/update', 'failed');
+      final r = await upgrade();
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines, contains('PITOOL_APT_UPDATE_RC=100'));
+      expect(r.out, contains('E: $fetchFailed'));
+      // The upgrade still ran — after the lists step.
+      final calls = pi.calls;
+      final upgradeAt = calls.indexWhere((c) => c.endsWith(' full-upgrade -y'));
+      expect(upgradeAt, greaterThan(calls.indexOf(apt('update').single)));
+      final o = evaluateJob(jobKindSystemUpgrade, r.code, r.out);
+      expect(o.success, isTrue);
+      expect(o.listsIncomplete, isTrue);
+      // Old lists stay old: nothing may pass them off as fresh.
+      expect(await listsFresh(), isFalse);
+    });
+
+    test('älteres apt (Exit 0 trotz Fehlschlag): das Alter bleibt stehen',
+        () async {
+      pi.put('/state/update', 'warned');
+      final r = await upgrade();
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines, contains('PITOOL_APT_UPDATE_RC=0'));
+      expect(r.out, contains('W: $fetchFailed'));
+      expect(apt('full-upgrade'), hasLength(1));
+      expect(await listsFresh(), isFalse);
+    });
+  }, skip: needsBash);
 }

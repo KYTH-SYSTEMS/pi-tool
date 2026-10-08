@@ -3388,11 +3388,15 @@ class EvccUpdater {
         }
         log('Lese den Pi-Job mit (ID $jobId) …');
         _jobTouched[runner] = true;
-        final run = await _driveJob(runner, log,
+        var run = await _driveJob(runner, log,
             command: jobFollowCommand(jobId),
             stdin: buildJobFollowStdin(password: config.password, id: jobId),
             id: jobId,
             onJobStarted: onJobStarted);
+        // Only a launcher's early exit proves something (nothing started). A
+        // follower that never got to work says nothing about the job: as
+        // unclear as before, and the job stays in the job bar.
+        if (run is JobRunEarlyExit) run = const JobRunDetached(started: false);
         if (run is JobRunRc) {
           final o = evaluateJob(run.kind ?? 'unknown', run.rc, run.log);
           log(o.message);
@@ -3583,6 +3587,13 @@ class EvccUpdater {
       case JobRunBadHeader():
         return const EvccUpdateException(UpdateErrorKind.unknown,
             'Pi-Tool-Startkopf fehlt – der Job wurde nicht gestartet.');
+      case JobRunEarlyExit(:final exitCode):
+        // Not a JobException: there is no job to show or to follow, and the
+        // session is as good as before.
+        return EvccUpdateException(
+            UpdateErrorKind.unknown,
+            'Hintergrund-Job konnte nicht gestartet werden (Exit $exitCode) – '
+            'es wurde nichts gestartet. Details im Log.');
       case JobRunDetached(:final started):
         final reason = _cancelRequested(runner)
             ? JobDetachReason.userStopped
@@ -3631,6 +3642,13 @@ class EvccUpdater {
           '$action abgelehnt: Auf dem Pi läuft noch ein Pi-Job (z. B. ein '
           'Update) – das würde ihn mitten in der Paketinstallation abbrechen. '
           'Bitte warten, bis er fertig ist.');
+    }
+    if (output.contains(jobRefusedAutoUpdateMarker)) {
+      throw JobException(
+          UpdateErrorKind.jobBusy,
+          '$action abgelehnt: Auf dem Pi laufen gerade die automatischen '
+          'Updates – das würde sie mitten in der Paketinstallation abbrechen. '
+          'Bitte in ein paar Minuten erneut versuchen.');
     }
     if (output.contains(jobRefusedBootMarker)) {
       throw EvccUpdateException(
