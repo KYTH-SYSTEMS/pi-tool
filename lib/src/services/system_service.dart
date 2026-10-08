@@ -25,6 +25,27 @@ const Duration kAptIndexMaxAge = Duration(days: 3);
 const String systemAptAgeCommand =
     'expr \$(date +%s) - \$(stat -c %Y /var/lib/apt/lists) 2>/dev/null';
 
+/// The refresh behind "Paketlisten aktualisieren" (root): `apt-get update`,
+/// then — after a clean run only — a fresh timestamp on /var/lib/apt/lists.
+///
+/// [systemAptAgeCommand] measures that directory's mtime, but apt changes it
+/// only when an index file is replaced or removed. When every source answers
+/// "Hit", the age stayed where it was and the cards went on saying "Stand
+/// unbekannt" right after a refresh that had worked.
+///
+/// Clean = exit 0 and no failed download. apt also exits 0 when sources could
+/// not be reached ("W: Failed to fetch …", the old lists stay in use); a
+/// stamp then would pass a stale index off as fresh. apt's output and exit
+/// status are handed on unchanged. Only here, not in the Pi-Job payloads.
+const String systemAptRefreshCommand = "LC_ALL=C sudo -S sh -c '"
+    r'out=$(LC_ALL=C apt-get update -qq 2>&1); rc=$?; '
+    r'[ -z "$out" ] || printf "%s\n" "$out"; '
+    r'if [ "$rc" -eq 0 ]; then case "$out" in '
+    '*"Failed to fetch"*|*"failed to download"*) ;; '
+    '*) touch /var/lib/apt/lists ;; esac; fi; '
+    r'exit "$rc"'
+    "'";
+
 /// Human-readable uptime (no sudo).
 const String systemUptimeCommand = 'uptime -p';
 

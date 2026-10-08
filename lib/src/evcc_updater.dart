@@ -2136,9 +2136,11 @@ class EvccUpdater {
           log('Paketlisten aktualisieren …');
           await _fixEolSources(runner, log, config);
           // Same tolerance as the upgrade path: one flaky third-party repo must
-          // not sink a refresh that updated everything else.
-          await _sudoCommand(runner, log, config,
-              'LC_ALL=C sudo -S apt-get update -qq', 'apt-get update',
+          // not sink a refresh that updated everything else. After a clean run
+          // the command stamps the lists directory, so the age the detection
+          // measures is reset even when no index file changed.
+          await _sudoCommand(
+              runner, log, config, systemAptRefreshCommand, 'apt-get update',
               checkExit: false);
           log('Paketlisten aktualisiert.');
         },

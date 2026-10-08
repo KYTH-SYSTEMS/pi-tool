@@ -2926,10 +2926,27 @@ void main() {
     });
 
     test('_sudoCommand without checkExit stays tolerant', () async {
+      for (final exitCode in [null, 100]) {
+        final runner = FakeSshRunner({
+          systemAptRefreshCommand: [_r('', exitCode: exitCode)],
+        });
+        await _updaterWith(runner)
+            .refreshAptIndex(config: _config, onLog: (_) {});
+        expect(runner.commandsRun, contains(systemAptRefreshCommand));
+        expect(runner.stdinByCommand[systemAptRefreshCommand], 'sekret\n');
+      }
+    });
+
+    test('refreshAptIndex: a rejected sudo password is still an error',
+        () async {
       final runner = FakeSshRunner({
-        _aptUpdate: [_r('', exitCode: null)],
+        systemAptRefreshCommand: [
+          _r('', stderr: 'Sorry, try again.\n', exitCode: 1)
+        ],
       });
-      await _updaterWith(runner).refreshAptIndex(config: _config, onLog: (_) {});
+      await expectLater(
+          _updaterWith(runner).refreshAptIndex(config: _config, onLog: (_) {}),
+          _err(UpdateErrorKind.sudo, contains('Passwort')));
     });
 
     test('_runRootScript (Home Assistant install)', () async {
@@ -3049,7 +3066,7 @@ void main() {
   // Tailscale install (2026-09-23) — and would fail every other apt action. So
   // every action that installs or upgrades packages repoints such sources first.
   group('EOL package sources', () {
-    const upd = 'LC_ALL=C sudo -S apt-get update -qq';
+    const upd = systemAptRefreshCommand;
 
     void expectRepairFirst(FakeSshRunner runner, String next) {
       final cmds = runner.commandsRun;

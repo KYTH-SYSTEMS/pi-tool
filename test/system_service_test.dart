@@ -1,7 +1,159 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:evcc_updater/src/services/system_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// The bash for the sandbox runs — absolute, because PATH inside the sandbox
+/// is the stub directory alone. On Windows `bash` may be the WSL launcher, so
+/// the group only runs with an explicit Git Bash
+/// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
+final String? _bash = Platform.isWindows
+    ? Platform.environment['PITOOL_TEST_BASH']
+    : (Process.runSync('bash', ['-c', 'command -v bash']).stdout as String)
+        .trim();
+
+/// A throwaway Pi for [systemAptRefreshCommand]: `sudo` and `apt-get` are
+/// stubs, PATH holds only the stub directory, and /var/lib/apt/lists is a
+/// directory in the sandbox whose package lists are ten days old.
+class _AptBox {
+  _AptBox() : _dir = Directory.systemTemp.createTempSync('pitool-apt') {
+    root = _dir.path.replaceAll(r'\', '/');
+    Directory('$root/bin').createSync();
+    Directory(lists).createSync(recursive: true);
+    for (final tool in ['sh', 'touch', 'expr', 'date', 'stat']) {
+      final real = (Process.runSync(_bash!, ['-c', 'command -v $tool']).stdout
+              as String)
+          .trim();
+      _stub(tool, 'exec $real "\$@"');
+    }
+    // Like `sudo -S`: the password comes as the first line on stdin.
+    _stub('sudo', r'''
+while [ "${1#-}" != "$1" ]; do shift; done
+IFS= read -r pw
+if [ "$pw" != sekret ]; then
+  echo "Sorry, try again." >&2
+  exit 1
+fi
+exec "$@"''');
+    // Message texts as in apt-pkg/update.cc ("Failed to fetch %s  %s", "Some
+    // index files failed to download. …"). A transient failure is a warning
+    // and exits 0; with -qq a run without one prints nothing. The stub never
+    // touches the lists directory — like apt when every source answers "Hit".
+    _stub('apt-get', r'''
+echo "apt-get $*" >> "$BOX/calls"
+case "$APT_MODE" in
+  clean) ;;
+  notice)
+    echo "W: Target Packages (main/binary-arm64/Packages) is configured multiple times in /etc/apt/sources.list:1 and /etc/apt/sources.list.d/raspi.list:1" >&2
+    ;;
+  transient)
+    echo "W: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease  Temporary failure resolving 'deb.debian.org'" >&2
+    echo "W: Some index files failed to download. They have been ignored, or old ones used instead." >&2
+    ;;
+  error)
+    echo "E: The repository 'http://raspbian.raspberrypi.org/raspbian buster Release' does no longer have a Release file." >&2
+    exit 100
+    ;;
+esac
+exit 0''');
+    Process.runSync(_bash!, ['-c', r'chmod +x "$0"/bin/*', root]);
+    Process.runSync(_bash!, ['-c', r'touch -d "10 days ago" "$0"', lists]);
+  }
+
+  final Directory _dir;
+  late final String root;
+  String get lists => '$root/var/lib/apt/lists';
+
+  void _stub(String name, String body) =>
+      File('$root/bin/$name').writeAsStringSync('#!/bin/sh\n$body\n');
+
+  String _rebased(String command) =>
+      command.replaceAll('/var/lib/apt/lists', lists);
+
+  /// Whether the apt-get stub was called at all.
+  bool get aptRan => File('$root/calls').existsSync();
+
+  /// Runs the refresh like the app does: the command line in a shell, the
+  /// sudo password on stdin.
+  Future<({int code, String out})> refresh(String mode,
+      {String password = 'sekret'}) async {
+    final p = await Process.start(
+        _bash!, ['-c', _rebased(systemAptRefreshCommand)],
+        environment: {'PATH': '$root/bin', 'APT_MODE': mode, 'BOX': root});
+    final out = p.stdout.transform(utf8.decoder).join();
+    final err = p.stderr.transform(utf8.decoder).join();
+    p.stdin.write('$password\n');
+    await p.stdin.close();
+    return (code: await p.exitCode, out: '${await out}${await err}');
+  }
+
+  /// What detection concludes from the age its probe measures here: whether
+  /// the lists are recent enough to trust "nothing pending".
+  Future<bool> indexFresh() async {
+    final r = await Process.run(_bash!, ['-c', _rebased(systemAptAgeCommand)],
+        environment: {'PATH': '$root/bin'});
+    final seconds = parseAptListsAgeSeconds(r.stdout as String);
+    expect(seconds, isNotNull, reason: '${r.stdout}${r.stderr}');
+    return isAptIndexFresh(seconds);
+  }
+
+  void dispose() => _dir.deleteSync(recursive: true);
+}
+
 void main() {
+  // apt only changes the mtime of /var/lib/apt/lists when an index file is
+  // replaced or removed. When every source answers "Hit" (frozen EOL archive,
+  // a quiet week), a refresh left the measured age where it was, and the apt
+  // cards kept saying "Paketlisten N Tage alt — Stand unbekannt".
+  group('systemAptRefreshCommand in bash', () {
+    late _AptBox box;
+    setUp(() => box = _AptBox());
+    tearDown(() => box.dispose());
+
+    test('every source answers "Hit": the measured age still jumps back',
+        () async {
+      expect(await box.indexFresh(), isFalse);
+      final r = await box.refresh('clean');
+      expect(r.code, 0, reason: r.out);
+      expect(box.aptRan, isTrue);
+      expect(await box.indexFresh(), isTrue);
+    });
+
+    test('a warning that is not about a download does not stand in the way',
+        () async {
+      final r = await box.refresh('notice');
+      expect(r.code, 0, reason: r.out);
+      expect(r.out, contains('is configured multiple times'));
+      expect(await box.indexFresh(), isTrue);
+    });
+
+    test('sources not reachable (apt exits 0 all the same): age stays', () async {
+      // The old lists remain in use — claiming them fresh would bring back
+      // the green "aktuell" over an index nobody refreshed.
+      final r = await box.refresh('transient');
+      expect(r.code, 0, reason: r.out);
+      expect(r.out, contains('W: Failed to fetch'));
+      expect(await box.indexFresh(), isFalse);
+    });
+
+    test('apt fails: age stays, apt\'s message and exit status are handed on',
+        () async {
+      final r = await box.refresh('error');
+      expect(r.code, 100, reason: r.out);
+      expect(r.out, contains('does no longer have a Release file'));
+      expect(await box.indexFresh(), isFalse);
+    });
+
+    test('rejected sudo password: nothing runs', () async {
+      final r = await box.refresh('clean', password: 'falsch');
+      expect(r.code, isNot(0));
+      expect(r.out, contains('Sorry, try again.'));
+      expect(box.aptRan, isFalse);
+      expect(await box.indexFresh(), isFalse);
+    });
+  }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
+
   group('parseOsPrettyName', () {
     test('reads PRETTY_NAME from os-release', () {
       const out = 'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\n'
