@@ -39,6 +39,13 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   auf, die bleibt, bis du das Profil wechselst. **Automatik, Terminal und Dateien**
   sind bis dahin dezent gesperrt (ausgegraut) und werden erst nach dem Verbinden
   freigeschaltet. So ist immer klar, wann die App den Pi wirklich kontaktiert.
+- **Beim Start automatisch verbinden** — Schalter in der Zugangsdaten-Karte,
+  pro Pi und standardmäßig aus. Genau ein Pi kann das: Beim Einschalten wird es
+  bei den anderen abgeschaltet. Verbunden wird nur beim App-Start, nicht beim
+  späteren Profilwechsel — und nie an der App-Sperre vorbei: Ist sie aktiv,
+  bleibt es beim Verbinden von Hand. Bis eine Erkennung vorliegt, zeigt die App
+  die Karten des letzten bekannten Stands, gekennzeichnet als „Stand von
+  vorhin".
 - **Demo-Modus** — „Demo ausprobieren" auf dem Verbindungs-Bildschirm zeigt die
   ganze App mit Beispieldaten (alle Tabs, alle Pro-Features), **ohne** einen echten
   Raspberry Pi — zum Kennenlernen, und damit App-Reviewer die App ohne Gerät prüfen können.
@@ -229,7 +236,7 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   dem Verwaltungs-Tab (PV, Netz, Hausverbrauch sowie Batterie-Ladestand und
   Ladepunkt), gelesen aus der evcc-Web-API. Das vollständige Bild inklusive
   aller Ladepunkte liegt im App-⋮ unter „evcc-Status (Live)". Rein lesend.
-- **Pi im Netzwerk suchen** — findet im selben WLAN Geräte mit offenem
+- **Pi im WLAN suchen** — findet im selben WLAN Geräte mit offenem
   SSH-Port und übernimmt die IP per Tippen. Wird beim ersten Start und nach
   „Profil hinzufügen" (solange noch kein Host eingetragen ist) prominent als
   Knopf angeboten; sonst jederzeit über das ⋮-Menü.
@@ -317,22 +324,22 @@ Zwei Orte, dieselbe Quelle:
 - **App-⋮ → „evcc-Status (Live)"** zeigt das vollständige Bild inklusive aller
   Ladepunkte, Fahrzeug-Ladestände und Modi.
 
-### Pi im Netzwerk finden
+### Pi im WLAN suchen
 
-⋮-Menü → **„Pi im Netzwerk suchen"** scannt das lokale `/24`-Netz nach Geräten
+⋮-Menü → **„Pi im WLAN suchen"** scannt das lokale `/24`-Netz nach Geräten
 mit offenem **SSH-Port (22)** und listet sie auf — Tippen übernimmt die IP ins
 Host-Feld. Funktioniert nur im **selben WLAN**; findet die App nichts, einfach
 die IP von Hand eintragen.
 
 ### evcc installieren
 
-Über den Button **„evcc installieren"** (Abschnitt „Erstinstallation auf neuem
-Pi") richtet die App evcc auf einem frisch konfigurierten Pi ein (nach
+Über **„+ Dienst hinzufügen" → „evcc"** (Verwaltungs-Tab, nach dem Verbinden)
+richtet die App evcc auf einem frisch konfigurierten Pi ein (nach
 [offizieller evcc-Doku](https://docs.evcc.io/en/installation/linux)): offizielles
 apt-Repo via `setup.deb.sh` hinzufügen → `apt install -y evcc` →
 `systemctl enable --now evcc`. Alles läuft als root über **einen** `sudo -S bash
 -s`-Aufruf (Passwort als erste stdin-Zeile, **nie** in der Befehlszeile). Danach
-zeigt die App **„Einrichtung öffnen"** → `http://<pi>:7070`. Über die
+zeigt die App **„evcc-Einrichtung öffnen"** → `http://<pi>:7070`. Über die
 Einstellungen lässt sich vorab der **nightly-Kanal** (unstable) wählen.
 
 ## Installation
@@ -366,9 +373,11 @@ Einstellungen lässt sich vorab der **nightly-Kanal** (unstable) wählen.
 
 Mehrere Pis verwaltest du über die **Profilleiste** oben (umschalten, anlegen,
 umbenennen, löschen). In den **Einstellungen** (⋮-Menü): App-Sperre per
-Biometrie/PIN, Status beim Start prüfen, HTTPS + Port der evcc-Oberfläche,
-Design (System/Hell/Dunkel), nightly-Kanal, **Support kontaktieren**
-(support@kyth.systems).
+Biometrie/PIN, Sprache, Backup vor Update, HTTPS + Port der evcc-Oberfläche,
+Design (System/Hell/Dunkel), nightly-Kanal, Profil-Export/-Import, **Support
+kontaktieren** (support@kyth.systems). „Beim Start automatisch verbinden" ist
+keine globale Einstellung, sondern ein Schalter je Pi in der
+Zugangsdaten-Karte.
 
 Alle Eingaben werden **verschlüsselt im Android Keystore** gespeichert
 (`flutter_secure_storage`) und automatisch gesichert — einmal eintragen, danach
@@ -384,8 +393,13 @@ nur noch tippen.
   werden **keine** Zugangsdaten gesendet.
 - Kein Account, kein Cloud-Backend. Annahme: LAN-Nutzung (zuhause im WLAN).
   Remote optional über **Tailscale-IP** (kein Portforwarding nötig).
-- Optionale **App-Sperre** per Biometrie/PIN; der Bildschirm ist gegen
-  Screenshots/Recents geschützt (`FLAG_SECURE`).
+- Optionale **App-Sperre** per Biometrie/PIN. Screenshots, Bildschirmaufnahmen
+  und die Vorschau in der App-Übersicht (Recents) sind nur dort gesperrt, wo
+  Zugangsdaten zu sehen sein können (`FLAG_SECURE`): auf dem Sperrbildschirm und
+  bei aufgeklappter Zugangsdaten-Karte. Dienst-Karten, Logs, Terminal,
+  Datei-Vorschau und Config-Editor sind seit v0.65.0 **nicht** mehr geschützt —
+  was dort steht, kann in einem Screenshot und in der Recents-Vorschau
+  erscheinen.
 - **Host-Key-Verifizierung (TOFU):** Beim ersten Connect zeigt die App den
   SSH-Fingerprint zur **Bestätigung** an und merkt ihn erst nach Zustimmung;
   danach wird er geprüft. Ändert er sich (möglicher MITM oder neu aufgesetzter
@@ -394,28 +408,58 @@ nur noch tippen.
 
 ## Build & Releases (CI)
 
-Der APK-Build läuft komplett in **GitHub Actions** — lokal ist **keine
-Android-Toolchain** nötig.
+Build, Signierung und Veröffentlichung laufen komplett in **GitHub Actions** —
+lokal ist **keine Android-Toolchain** nötig. Die Mechanik im Detail steht in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §8.
 
 - Workflow: [`.github/workflows/build.yml`](.github/workflows/build.yml)
-- Trigger: Push auf `main` (baut + testet) und Tag `v*` (baut + signiert +
-  legt ein **Release mit `app-release.apk`** an).
+- Trigger: Push auf `main` (analysiert, testet, baut), Pull Request gegen
+  `main` (analysiert, testet, Debug-APK als Compile-Check) und Tag `v*`
+  (**veröffentlicht**, siehe unten).
 - Schritte: `flutter pub get` → `flutter analyze` → `flutter test` →
   `flutter build apk --release --target-platform android-arm64,android-arm`
-  (**fat APK**: arm64 + armeabi-v7a), signiert mit einem Release-Keystore aus
-  den Repo-Secrets. Zusätzlich entsteht ein **`.aab`** für den Play Store.
+  (**fat APK**: arm64 + armeabi-v7a) und `flutter build appbundle --release`
+  (**`.aab`** für Google Play), beides signiert mit dem Release-Keystore aus
+  den Repo-Secrets.
 
 ### Ein neues Release veröffentlichen
 
-```bash
-# Version in pubspec.yaml anheben (z. B. 0.8.0+16), committen, dann:
-git tag v0.8.0
-git push origin v0.8.0
-```
+> ⚠️ **Jedes `v*`-Tag veröffentlicht automatisch** — als GitHub-Release mit
+> `app-release.apk` **und bei Google Play in der Produktions-Spur mit 100 %
+> Rollout**. Hochgeladen werden das `.aab` und die Store-Texte aus
+> `fastlane/metadata/android/**` (Titel, Kurz- und Langbeschreibung, Changelog);
+> es gibt keinen Entwurf und keine Zwischenkontrolle. Screenshots und Grafiken
+> im Store bleiben unberührt.
 
-CI baut die signierte APK und hängt sie ans GitHub-Release.
+1. Version in `pubspec.yaml` anheben (z. B. `0.8.0+16`) und den Changelog
+   `fastlane/metadata/android/{de-DE,en-US}/changelogs/16.txt` anlegen
+   (Dateiname = versionCode, der Teil hinter dem `+`). Committen, pushen, den
+   main-Build abwarten.
+2. Optional der Trockenlauf — er baut das Bundle und lässt es samt Texten von
+   der Play-API prüfen, veröffentlicht aber nichts:
 
-### Benötigte Repo-Secrets (Signierung)
+   ```bash
+   gh workflow run build.yml -f play_dry_run=true
+   ```
+
+3. Taggen. Der Tag-Name muss der pubspec-Version entsprechen (`v` + Teil vor
+   dem `+`):
+
+   ```bash
+   git tag v0.8.0
+   git push origin v0.8.0
+   ```
+
+Vor dem Bauen prüft der Tag-Lauf, dass Tag und pubspec-Version übereinstimmen,
+dass der Changelog des versionCode in **beiden** Sprachen existiert und dass
+alle Store-Texte die Play-Limits einhalten (Titel 30, Kurzbeschreibung 80,
+Langbeschreibung 4000, Changelog 500 Zeichen). Danach entsteht zuerst das
+GitHub-Release mit der APK (Release-Text = der Changelog in beiden Sprachen,
+darunter die automatisch erzeugte Commit-Liste), zuletzt der Play-Upload
+(`fastlane android play_release`) — ein Ausfall bei Google kostet die
+Sideload-Nutzer so nicht ihre APK.
+
+### Benötigte Repo-Secrets
 
 | Secret | Inhalt |
 |--------|--------|
@@ -423,10 +467,15 @@ CI baut die signierte APK und hängt sie ans GitHub-Release.
 | `KEYSTORE_PASSWORD` | Keystore-Passwort |
 | `KEY_ALIAS` | Key-Alias (`evcc`) |
 | `KEY_PASSWORD` | Key-Passwort |
+| `PLAY_SERVICE_ACCOUNT_JSON` | JSON-Schlüssel des Google-Dienstkontos für den Play-Upload |
 
 > Der Keystore wird **nie** ins Repo committet (`.gitignore`). Bewahre die
 > `.jks`-Datei + Passwort sicher auf — sie wird für künftige signierte Updates
-> gebraucht.
+> gebraucht. Ohne Keystore-Secret bricht ein Tag-Lauf ab; fehlt nur
+> `PLAY_SERVICE_ACCOUNT_JSON`, entsteht das GitHub-Release und der Play-Upload
+> wird mit einer Warnung übersprungen. Die Einmal-Einrichtung der Google-Seite
+> (Dienstkonto, Berechtigungen) steht in
+> [`store/play-ci-publishing.md`](store/play-ci-publishing.md).
 
 ## Verteilung: Google Play **und** Sideload
 
@@ -435,10 +484,14 @@ Beide Wege funktionieren parallel, ohne sich zu stören:
 - **Google Play (seit 26.07.2026 live):**
   [`systems.kyth.pitool`](https://play.google.com/store/apps/details?id=systems.kyth.pitool)
   — veröffentlicht von der **KYTH. Systems UG (haftungsbeschränkt)**. Updates
-  kommen automatisch über Play. Hochgeladen wird das **`.aab`** (App Bundle),
-  das derselbe CI-Lauf als Artifact **`pi-tool-playstore-aab`** erzeugt.
+  kommen automatisch über Play. Das **`.aab`** (App Bundle) und die Store-Texte
+  lädt der CI-Lauf jedes `v*`-Tags selbst hoch (Produktions-Spur, 100 %
+  Rollout, siehe [Build & Releases](#build--releases-ci)); das Bundle liegt
+  zusätzlich als Artifact **`pi-tool-playstore-aab`** am Lauf.
   - Datenschutzerklärung: <https://pi-tool.kyth.systems/privacy.html>
-  - Store-Assets + Texte + Data-Safety: [`store/play/listing.md`](store/play/listing.md)
+  - Store-Texte: `fastlane/metadata/android/**` (einzige Quelle, geht mit dem
+    Tag live). Data-Safety, Foreground-Service-Erklärung und Console-Notizen:
+    [`store/play/listing.md`](store/play/listing.md)
 - **Sideload (Alternative):** Die signierte **`app-release.apk`** am `v*`-Release —
   laden + installieren direkt, ohne Google-Konto.
 
@@ -486,4 +539,4 @@ Widget-Tests mit injizierten Fakes).
 
 - iOS: bewusst später. Die Flutter-Codebasis hält die Tür offen.
 - Docker-`run`-Rekonstruktion deckt die gängigen Fälle ab; exotische Flags
-  (`--mount type=volume`, custom `--entrypoint`) werden noch nicht übernommen.
+  (z. B. `--mount type=volume`) werden noch nicht übernommen.

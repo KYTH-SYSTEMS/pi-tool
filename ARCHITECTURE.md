@@ -732,9 +732,32 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   `AppConfigStore` (Key `app_config_v1`) migriert einmalig aus den 14 Legacy-Flat-
   Keys und **löscht sie danach** (kein Klartext-Credential-Rest). Alles
   (Passwörter, PEM-Keys) nur in `FlutterSecureStorage` (Keystore).
+  Zwei Profil-Felder seit v0.65.0:
+  - **`Profile.autoConnect`** — dieser Pi verbindet beim App-Start von selbst
+    (Ablauf in §7 „Verbundene Sitzung"). Default `false`: eine Verbindung
+    erlaubt sudo-fähige Befehle, also Entscheidung je Pi und keine globale
+    Einstellung. Schalter `autoConnectSwitch` in der `_ConnectionCard`;
+    `_setAutoConnect` nimmt es beim Einschalten allen anderen Profilen weg —
+    höchstens **ein** Profil trägt es (zwei würden beim Start um das Host-Feld
+    konkurrieren).
+  - **`Profile.cachedServices`** — die letzte Erkennung dieses Pi als rohes
+    JSON (`ServiceStatus.toJson`, keine Zugangsdaten), geschrieben von
+    `_currentProfile()` aus `_services`. Beim App-Start füllt `_applyProfile`
+    daraus `_services` und setzt `_servicesFromCache`; solange das gilt und
+    keine Sitzung besteht, steht über den Karten der Hinweis `wCachedState`
+    („Stand von vorhin") — ein gemerkter Stand wird nie als aktuell ausgegeben.
+    Die erste echte Erkennung ersetzt ihn (`_servicesFromCache = false`). Ein
+    Profilwechsel zeigt den Cache nicht: `_resetDetectionForNewPi` leert
+    `_services` direkt nach `_applyProfile`.
 - **`settings_store.dart`** — Legacy-Migrationsquelle, `HistoryStore`,
   `SecureHostKeyStore`. Passwort-Feld ist dual: SSH+sudo (Passwort-Modus) bzw.
   nur sudo (Key-Modus).
+- **`history.dart`** — reines Modell des Aktions-Verlaufs („Update-Verlauf"):
+  `HistoryEntry` (`when`, `text`), `capHistory` (höchstens 30 Einträge, die
+  ältesten fallen heraus), `parseHistory`/`encodeHistory` (tolerant: alles
+  Unerwartete → leere Liste) und `formatTimestamp` (ohne intl-Abhängigkeit).
+  Persistiert wird über `HistoryStore` in `settings_store.dart` (Key
+  `history_v1`).
 - **`entitlement.dart`** — **schlafendes Freemium**: `DormantEntitlement` = jeder
   ist Pro (Sideload-Nutzer verlieren nichts vor dem Play-Launch). Pro-Features:
   `backups`, `console`, `cleanup`, `multiPi`, `automation` (geplante Updates +
@@ -809,6 +832,30 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   SSH-Aktionen am Leben; führt **keinen** eigenen Code aus). Best-effort, darf die
   Aktion nie brechen.
 - **`authenticator.dart`** — App-Lock (Biometrie/PIN, `local_auth`). Fail-closed.
+- **`secure_screen.dart` + native `MainActivity`** (v0.65.0) — `SecureScreen`-Seam
+  (Default `ChannelSecureScreen` über MethodChannel `pi_tool/secure`, Methode
+  `setSecure`; kein Plugin) schaltet Androids `FLAG_SECURE` zur Laufzeit. Das
+  Flag sperrt Screenshots und Bildschirmaufnahmen und leert die
+  Recents-Vorschau. Bis v0.64.x galt es app-weit; seitdem ist es **eingegrenzt**
+  auf die Ansichten, in denen Zugangsdaten stehen können — **Sperrbildschirm
+  und aufgeklappte Zugangsdaten-Karte**: `_applyScreenshotPolicy()` in
+  `main.dart` setzt `_locked || _connExpanded`. Dienst-Karten, Logs (Passwörter
+  sind dort redigiert), Terminal, Dateien und Config-Editor sind bewusst frei,
+  damit Nutzer die App zeigen können (Meldung 2026-08-12).
+  **Invarianten:** `MainActivity.onCreate` setzt das Flag **immer zuerst** — die
+  App ist geschützt, bevor Dart läuft; der Kanal lockert nur. Ein fehlendes
+  Argument zählt nativ als `secure = true`, ein Kanal-Fehler wird in Dart
+  geschluckt: das Flag bleibt dann, wie es war, und der Startzustand ist
+  „gesperrt". Angewendet wird die Policy nach dem Laden der Einstellungen, beim
+  Sperren (Lifecycle `paused`/`hidden`), nach dem Entsperrversuch und beim
+  Auf-/Zuklappen der Karte über ihren Kopf. **Stand v0.70.0 nicht** an den
+  Stellen, die `_connExpanded` programmatisch setzen (Einklappen nach
+  erfolgreichem Verbinden; Aufklappen durch `_useTailscaleIp`, `_useHomeHost`,
+  `_remoteAccessViaTailscale`, `_exitDemo`; Profilwechsel über `_applyProfile`)
+  — dort folgt das Flag erst dem nächsten der genannten Ereignisse. Regel für
+  neuen Code: wer `_locked` oder `_connExpanded` ändert, ruft danach
+  `_applyScreenshotPolicy()`. Seam injizierbar für Tests
+  (`UpdaterPage.secureScreen`).
 
 ## 7. UI-Shell (`main.dart`, `ui_widgets.dart` (part), `kyth_splash.dart`)
 
@@ -829,7 +876,16 @@ Profilwechsel (`_resetDetectionForNewPi`), Zugangsdaten-Edit
 (`_invalidateConnTest`), Verbindungs-Fehlern (`connection`/`auth`/
 `hostKeyChanged` im `_guard`-Catch) und **nach „Pi herunterfahren"** — mit
 Snap-Back auf Tab Verwaltung. `_beginBusy` fasst `_connected` bewusst NICHT an.
-In-Memory, nie persistiert (Kaltstart = getrennt; Resume löst kein SSH aus).
+In-Memory, nie persistiert: jeder Kaltstart beginnt getrennt, ein Resume löst
+kein SSH aus (`didChangeAppLifecycleState` speichert und sperrt nur).
+**Auto-Verbinden (v0.65.0):** Trägt das aktive Profil `Profile.autoConnect`,
+stellt der Kaltstart die Sitzung selbst her — `_loadSettings` ruft nach dem
+ersten Frame `_testConnection()`, also den gewöhnlichen Handler samt `_guard`
+und Host-Key-Prüfung. Bedingungen: `!_locked` (**nie an der App-Sperre vorbei**
+— ist die Sperre aktiv, wird auch nach dem Entsperren nicht nachgeholt),
+`_credsComplete()`, `!_busy`, `!_connected`. Genau einmal pro App-Start; ein
+späterer Profilwechsel bleibt manuelles Verbinden. Bis die Erkennung landet,
+zeigen die Karten den gemerkten Stand (`Profile.cachedServices`, §6).
 Bewusster Gate-Bypass: der „Log"-Sprung der Running-Bar öffnet den Terminal-Tab
 auch ohne Sitzung (laufende Aktion → Log muss sichtbar sein).
 
@@ -889,10 +945,11 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   `_busyMessage != null` gekoppelt (nicht `_busy`) → zeigt echte SSH-Arbeit, nicht
   während ein Bestätigen-Dialog `_busy` hält; die **Host-Key-Leiste**; der
   **Status-Banner**.
-- **Achtung:** Flows, die an eine Page/Sheet übergeben (`_browseFiles`,
-  `_guidedSetup`), müssen `_busy` nach `_prepare()` selbst freigeben — sonst
-  UI-Deadlock. Mehrphasige Flows (Liste→Auswahl→Bestätigen→Aktion) rufen vor dem
-  zweiten `_guard` erneut `_beginBusy()`.
+- **Achtung:** Flows, die nach `_prepare()` an eine Page/ein Sheet übergeben
+  (heute `_guidedSetup` mit seinem Auswahl-Sheet), müssen `_busy` selbst
+  freigeben — sonst UI-Deadlock. Mehrphasige Flows
+  (Liste→Auswahl→Bestätigen→Aktion) rufen vor dem zweiten `_guard` erneut
+  `_beginBusy()`.
 - **Profile:** Umschalter in der App-Leiste (`Key('profileSwitcher')`, neutrales
   Server-Icon — *keine* Farbe, die wie Status-LED wirkt); pro Zeile ⋮
   (umbenennen/löschen). Wechsel ruft `_resetDetectionForNewPi()` (nichts leckt
@@ -974,11 +1031,27 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Follower, Guard und eine harmlose Payload (echo/sleep) samt Befehlen.
 - **l10n:** `l10n_keys_test.dart` erzwingt denselben Schlüsselsatz in
   `app_de.arb` und `app_en.arb`.
-- **CI** (`.github/workflows/build.yml`): ein Job — analyze → test → (auf Tag:
-  Store-Texte gegen die Play-Limits prüfen) → signieren → **fat APK**
-  (arm64+armeabi-v7a) + AAB → **Signing-Material löschen, bevor** Dritt-Actions
-  laufen → APK-Artefakt → auf `v*`-Tag GitHub-Release → **Play-Upload**. Actions
-  SHA-gepinnt, Secrets nur im jeweiligen Step, Tag ohne Keystore = harter Fehler.
+- **CI** (`.github/workflows/build.yml`): ein Job — (auf Tag: Tag-Name gegen
+  die pubspec-Version prüfen) → analyze → test → (auf Tag: Store-Texte gegen die
+  Play-Limits prüfen) → signieren → **fat APK** (arm64+armeabi-v7a) + AAB →
+  **Signing-Material löschen, bevor** Dritt-Actions laufen → APK-Artefakt → auf
+  `v*`-Tag GitHub-Release → **Play-Upload**. Actions SHA-gepinnt, Secrets nur im
+  jeweiligen Step, Tag ohne Keystore = harter Fehler.
+- **Tag == Version** (Schritt „Require tag to match the pubspec version",
+  direkt nach dem Checkout): Der Tag-Name muss `v` + pubspec-Version (Teil vor
+  dem `+`) sein, sonst bricht der Lauf ab, bevor etwas gebaut wird. Sonst hinge
+  nichts die beiden zusammen: Das GitHub-Release trägt den Tag-Namen, APK/AAB
+  und Changelog aber Version und versionCode aus `pubspec.yaml`. Ein Tag auf
+  einem Commit ohne Versions-Bump ergäbe ein falsch benanntes öffentliches
+  Release, der Play-Upload scheiterte danach am schon verwendeten versionCode,
+  und Sideload-Installationen — deren Update-Check den Tag-Namen vergleicht
+  (`update_check.dart`) — sähen dauerhaft ein Update-Banner.
+- **Pull Requests** (gegen `main`): analyze + test + Debug-APK (arm64) als
+  Compile-Check; veröffentlicht wird nie etwas. Fork- und Dependabot-PRs
+  bekommen keine Secrets, dort wird auch nichts signiert. Ein PR aus einem
+  Branch **dieses** Repos bekommt sie: Der Keystore wird angelegt, ein
+  signiertes Release-AAB aus dem PR-Code gebaut und als Workflow-Artefakt
+  hochgeladen (die Schritte hängen nur an `HAS_KEYSTORE`).
 - **Play-Upload** (`fastlane/Fastfile`, Lane `play_release`): `supply` lädt auf
   `v*`-Tag den signierten AAB in die **Produktions-Spur mit Status `completed`
   (= 100 % Rollout, kein Draft)** und dazu die Texte aus `fastlane/metadata/**`
@@ -992,7 +1065,10 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   GitHub-Release (ein Google-Ausfall darf die Sideload-Nutzer nicht ihr APK
   kosten). Fehlt das Secret, bleibt es bei einer Warnung. Trockenlauf ohne
   Veröffentlichung: Workflow manuell mit `play_dry_run = true` starten (Lane
-  `play_validate` → `validate_only`). Die **Einmal-Einrichtung** der Google-Seite
+  `play_validate` → `validate_only`). Mit `play_dry_run` laufen GitHub-Release
+  und `play_release` auf **keiner** Ref — auch nicht, wenn der Lauf von Hand auf
+  einer Tag-Ref gestartet wird (`gh workflow run --ref v…`; beide Schritte
+  tragen `&& !inputs.play_dry_run`). Die **Einmal-Einrichtung** der Google-Seite
   (Dienstkonto, Berechtigungen, Secret) steht in `store/play-ci-publishing.md`.
 - **Store-Text-Vorprüfung:** Weil ein Tag ungebremst an alle Nutzer geht, prüft
   die CI **vor** dem Bauen: Changelog `<versionCode>.txt` muss in **beiden**

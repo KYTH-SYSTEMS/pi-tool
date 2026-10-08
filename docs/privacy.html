@@ -54,7 +54,7 @@
 
   <p class="eyebrow">Datenschutz</p>
   <h1>Pi-Tool — Datenschutzerklärung</h1>
-  <p class="muted">Stand: 26. Juli 2026. Diese App ist ein <strong>inoffizielles</strong> Community-Tool und
+  <p class="muted">Stand: 8. Oktober 2026. Diese App ist ein <strong>inoffizielles</strong> Community-Tool und
   steht in keiner Verbindung zum evcc-Projekt. <strong>Nutzung auf eigene Gefahr — keine Haftung
   für Schäden an System, Daten oder Hardware</strong> (MIT-Lizenz, „AS IS").</p>
 
@@ -87,9 +87,12 @@
       Zustimmung wird er lokal gespeichert (Trust-On-First-Use). Ändert er sich später, wird die
       Verbindung aus Sicherheitsgründen blockiert, bevor ein Passwort gesendet wird.</li>
     <li><strong>evcc-Web-API</strong> (Live-Status): ein lesender HTTP-Aufruf an
-      <code>http(s)://&lt;dein Host&gt;:&lt;Port&gt;/api/state</code> auf deinem eigenen Gerät – nur wenn du
-      „evcc-Status (Live)" öffnest. Keine Zugangsdaten werden dabei gesendet.</li>
-    <li><strong>Lokaler Netzwerk-Scan</strong> („Pi im Netzwerk suchen"): auf dein Antippen prüft die App in
+      <code>http(s)://&lt;dein Host&gt;:&lt;Port&gt;/api/state</code> auf deinem eigenen Gerät – nach jedem
+      erfolgreichen „Verbindung herstellen", sofern auf deinem Pi evcc erkannt wurde (für die Live-Werte
+      auf der evcc-Karte), und wenn du „evcc-Status (Live)" öffnest. Hast du für einen Pi „Beim Start
+      automatisch verbinden" eingeschaltet, verbindet sich die App beim Start von selbst – der Aufruf
+      erfolgt dann schon beim Öffnen der App. Keine Zugangsdaten werden dabei gesendet.</li>
+    <li><strong>Lokaler Netzwerk-Scan</strong> („Pi im WLAN suchen"): auf dein Antippen prüft die App in
       deinem eigenen WLAN, welche Geräte den SSH-Port (22) offen haben. Es werden dabei nur lokale
       Verbindungsversuche in deinem eigenen Netzwerk gemacht; <strong>an uns oder Dritte werden keine
       Daten übertragen</strong>.</li>
@@ -150,6 +153,30 @@
       (Update/Installation) weiterläuft, wenn du die App in den Hintergrund schickst; währenddessen ist
       eine Benachrichtigung sichtbar. Übertragen werden dabei nur die von dir ausgelösten Befehle zu
       deinem eigenen Pi.</li>
+  </ul>
+  <p>Vier weitere Berechtigungen gelangen über eingebundene Bibliotheken in die installierte App; im
+  eigenen Manifest von Pi-Tool stehen sie nicht. Android führt alle vier als „normale" Berechtigungen
+  und fragt dafür nicht nach:</p>
+  <ul>
+    <li><strong>Gerät wach halten</strong> (<code>WAKE_LOCK</code>) — aus der Bibliothek des
+      Vordergrunddienstes (<code>flutter_foreground_task</code>). Solange eine von dir gestartete
+      SSH-Aktion läuft, hält der Dienst den Prozessor wach, damit sie bei ausgeschaltetem Bildschirm nicht
+      mittendrin anhält. Mit dem Ende der Aktion endet auch das.</li>
+    <li><strong>Start nach dem Hochfahren</strong> (<code>RECEIVE_BOOT_COMPLETED</code>) — aus derselben
+      Bibliothek, von Pi-Tool <strong>nicht genutzt</strong>. Die Bibliothek bringt dazu einen Empfänger
+      mit, den Android nach dem Hochfahren des Geräts und nach einem Update der App aufruft. In Pi-Tool
+      kehrt er sofort zurück und <strong>startet keinen Dienst</strong>: Die App hat den automatischen
+      Start nicht eingeschaltet, und ihr Vordergrunddienst ist so eingetragen, dass er nur zusammen mit
+      der geöffneten App läuft. Übertragen wird dabei nichts.</li>
+    <li><strong>Fingerabdruck (Vorgänger)</strong> (<code>USE_FINGERPRINT</code>) — aus der
+      Android-Bibliothek <code>androidx.biometric</code>, auf der die App-Sperre aufbaut. Es ist die
+      Vorgänger-Berechtigung von <code>USE_BIOMETRIC</code> für Android 8.1 und älter und dient demselben
+      Zweck; auch hier erhält die App keinerlei biometrische Daten.</li>
+    <li><strong>Netzwerkstatus</strong> (<code>ACCESS_NETWORK_STATE</code>) — aus der
+      Android-Medienbibliothek (<code>androidx.media3</code>), die das kurze Startvideo abspielt. Die
+      Berechtigung erlaubt nur die Abfrage, ob und über welche Art von Netz das Gerät verbunden ist. Das
+      Startvideo liegt in der App und wird nicht aus dem Netz geladen; Pi-Tool selbst wertet den
+      Netzwerkstatus nicht aus und überträgt ihn nicht.</li>
   </ul>
   <p class="muted">Die App enthält <strong>keine</strong> Analyse-, Werbe- oder Tracking-Bibliotheken und
   fordert keine Berechtigungen für Standort, Kontakte, Kamera oder Mikrofon an. Einen Android-Dienst, der
@@ -219,8 +246,11 @@
   latest version tag (<code>home-assistant/core</code>);
   no account, usage or credential data is sent, but GitHub Inc. (USA) unavoidably receives your device's
   IP address as a recipient in a third country (legal basis: our legitimate interest in update checks,
-  Art. 6(1)(f) GDPR). It makes a read-only HTTP call to your own evcc web API (<code>/api/state</code>) when you
-  open the live status, and — only when you tap "find Pi" — probes the SSH port of devices on your own local
+  Art. 6(1)(f) GDPR). It makes a read-only HTTP call to your own evcc web API (<code>/api/state</code>) after
+  every successful "Connect" if evcc was detected on your Pi (for the live values on the evcc card) and when you
+  open the live status; if you switched on "Connect automatically on start" for a Pi, the app connects by itself
+  on launch, so the call is then made as soon as you open the app. No credentials are sent with it. Only when
+  you tap "Find Pi on Wi-Fi" does the app probe the SSH port of devices on your own local
   Wi-Fi (local connection attempts only; no data is sent to us or any third party). Uninstalling the app deletes
   all stored data. This is an
   <strong>unofficial</strong> community tool, not affiliated with the mentioned projects.</p>
@@ -243,8 +273,21 @@
   "confirmed"/"cancelled" and no biometric data); <code>POST_NOTIFICATIONS</code> so Android may show the
   foreground service's ongoing notification (local only — no push service, no push tokens, no Firebase); and
   <code>FOREGROUND_SERVICE</code>/<code>FOREGROUND_SERVICE_DATA_SYNC</code> so a long SSH action keeps running
-  while the app is in the background. No analytics, ad or tracking libraries; no location, contacts, camera or
-  microphone permissions.</p>
+  while the app is in the background. Four more permissions reach the installed app through bundled libraries
+  (they are not in Pi-Tool's own manifest; Android classes all four as "normal" permissions and does not prompt
+  for them):
+  <code>WAKE_LOCK</code>, from the foreground-service library (<code>flutter_foreground_task</code>), keeps the
+  processor awake while an SSH action you started is running; <code>RECEIVE_BOOT_COMPLETED</code>, from the same
+  library, is <strong>not used</strong> by Pi-Tool — the library ships a receiver that Android calls after the
+  device boots and after an app update, and in Pi-Tool it returns immediately and <strong>starts no
+  service</strong>, because the app never enabled auto-start and its foreground service is registered to run
+  only alongside the open app; <code>USE_FINGERPRINT</code>, from the Android library
+  <code>androidx.biometric</code> that the app lock builds on, is the predecessor of <code>USE_BIOMETRIC</code>
+  for Android 8.1 and older and serves the same purpose; <code>ACCESS_NETWORK_STATE</code>, from the Android
+  media library (<code>androidx.media3</code>) that plays the short start-up video, only allows asking whether
+  and over which kind of network the device is connected — the video is bundled with the app, and Pi-Tool itself
+  neither evaluates nor transmits the network state. No analytics, ad or tracking libraries; no location,
+  contacts, camera or microphone permissions.</p>
   <p><strong>Pro purchase:</strong> the one-time Pro unlock is bought via Google Play. The seller
   (merchant of record) is the Google entity named at checkout (Google Commerce Limited); payment is
   handled by Google under Google's privacy policy and Play terms. We receive no payment data and
