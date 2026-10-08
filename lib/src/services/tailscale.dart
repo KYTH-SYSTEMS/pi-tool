@@ -484,15 +484,17 @@ List<String> routerDefaultRoutes(List<String> routes) => [
 /// evcc's address over the tailnet. evcc runs on the Pi itself, so the Pi's
 /// own tailnet address reaches it from every network — without a subnet
 /// route, and therefore also from a network on the same range as the home
-/// network. Null without a tailnet address ([isTailnetHost]); an empty [port]
-/// is evcc's default.
+/// network. Null unless [tailnetIp] is an IPv4 address from the tailnet
+/// range (100.64.0.0/10) — the address is handed to other people, and a card
+/// restored from the cache or an imported profile could carry anything. An
+/// empty [port] is evcc's default.
 String? evccTailnetUrl({
   required String scheme,
   required String? tailnetIp,
   required String port,
 }) {
   final host = (tailnetIp ?? '').trim();
-  if (!isTailnetHost(host)) return null;
+  if (host.contains(':') || !_isTailnetAddress(host)) return null;
   final p = port.trim();
   return '$scheme://$host:${p.isEmpty ? '7070' : p}';
 }

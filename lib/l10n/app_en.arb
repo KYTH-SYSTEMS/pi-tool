@@ -1244,7 +1244,7 @@
       }
     }
   },
-  "tsLanSameRange": "From a network that uses the same address range ({routes}), the home network cannot be reached over Tailscale.",
+  "tsLanSameRange": "From a network that uses the same address range ({routes}), the home network may not be reachable over Tailscale.",
   "@tsLanSameRange": {
     "placeholders": {
       "routes": {
@@ -1252,7 +1252,7 @@
       }
     }
   },
-  "tsLanSameRangeEvcc": "From a network that uses the same address range ({routes}), the home network cannot be reached over Tailscale. Open evcc there via its Tailscale address.",
+  "tsLanSameRangeEvcc": "From a network that uses the same address range ({routes}), the home network may not be reachable over Tailscale. Open evcc there via its Tailscale address.",
   "@tsLanSameRangeEvcc": {
     "placeholders": {
       "routes": {

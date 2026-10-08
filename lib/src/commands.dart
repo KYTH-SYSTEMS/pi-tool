@@ -1109,7 +1109,7 @@ fi
 # the original's owner/mode first (a fresh inode would reset them to root+umask).
 d=\$(dirname $p)
 tmp=\$(mktemp "\$d/.pitool-cfg.XXXXXX")
-printf '%s' '$base64Content' | base64 -d > "\$tmp"
+printf '%s' ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"
 if [ -f $p ]; then
   chmod --reference=$p "\$tmp" 2>/dev/null || true
   chown --reference=$p "\$tmp" 2>/dev/null || true

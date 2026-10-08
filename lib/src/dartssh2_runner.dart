@@ -11,8 +11,9 @@ import 'ssh_runner.dart';
 /// Real [SshRunner] backed by dartssh2 (pure-Dart SSH, password auth).
 ///
 /// Thin I/O adapter: no parsing or business logic lives here (that is in the
-/// unit-tested pure layer). Exercised end-to-end by the manual dry-run against
-/// the real Pi (see README).
+/// unit-tested pure layer). Exercised end-to-end against a real SSH peer by
+/// test/ssh_integration_test.dart (with tool/ssh_test_server.py) — run that
+/// before shipping a dartssh2 upgrade.
 class Dartssh2Runner implements SshRunner {
   final SshConfig config;
   final HostKeyStore _hostKeyStore;

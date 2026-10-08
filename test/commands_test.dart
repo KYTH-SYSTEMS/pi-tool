@@ -1140,6 +1140,10 @@ class _Sandbox {
         environment: {'PATH': '$root/bin', ...env});
     final out = p.stdout.transform(utf8.decoder).join();
     final err = p.stderr.transform(utf8.decoder).join();
+    // Stubs first, set INSIDE the shell: Git Bash's launcher puts its own
+    // directories in front of an inherited PATH, so on Windows the environment
+    // alone would let a real binary of the same name win over its stub.
+    p.stdin.add(utf8.encode("export PATH='$root/bin':\"\$PATH\"\n"));
     p.stdin.add(utf8.encode(rebased));
     await p.stdin.close();
     return _Run(await p.exitCode, await out, await err);

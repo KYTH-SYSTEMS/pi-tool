@@ -1481,6 +1481,26 @@ all non-default settings:
               scheme: 'http', tailnetIp: '192.168.178.113', port: '7070'),
           isNull);
     });
+
+    test('nur eine IPv4-Adresse aus 100.64.0.0/10 zählt', () {
+      // Der Wert wird an andere weitergegeben und kann aus einer gemerkten
+      // Karte oder einem importierten Profil stammen.
+      for (final other in [
+        '100.1.2.3', // 100.x, aber öffentlicher Adressraum
+        '100.128.0.1', // knapp außerhalb von /10
+        '100.foo',
+        'pi.example.ts.net',
+        'fd7a:115c:a1e0::1234',
+        '100.64.0.5/evil',
+      ]) {
+        expect(evccTailnetUrl(scheme: 'http', tailnetIp: other, port: '7070'),
+            isNull,
+            reason: other);
+      }
+      expect(
+          evccTailnetUrl(scheme: 'http', tailnetIp: '100.127.255.254', port: ''),
+          'http://100.127.255.254:7070');
+    });
   });
 }
 

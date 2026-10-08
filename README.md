@@ -111,6 +111,16 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   prüfen" liest den Stand danach neu. Die Karte zeigt, ob die Freigabe aktiv oder
   noch offen ist; „Heimnetz-Freigabe beenden" nimmt sie zurück (von Hand gesetzte
   Routen bleiben). Bewusst Opt-in: Die Freigabe gilt für alle Geräte im Tailnet.
+  Liegt das Heimnetz in einem Bereich, mit dem Router ausgeliefert werden
+  (`192.168.178.0/24`, `192.168.0.0/24`, `192.168.1.0/24`, `192.168.2.0/24`),
+  weisen Karte und Freigabe-Dialog darauf hin: Aus einem Netz mit demselben
+  Bereich ist das Heimnetz über Tailscale unter Umständen nicht erreichbar.
+- **evcc-Adresse über Tailscale** — ist Tailscale verbunden und evcc auf dem Pi
+  installiert, zeigt die Tailscale-Karte die Adresse der evcc-Oberfläche über
+  die Tailnet-Adresse des Pi (z. B. `http://100.x.y.z:7070`). Sie funktioniert
+  aus jedem Netz und ohne Heimnetz-Freigabe, weil evcc auf dem Pi selbst läuft.
+  „evcc-Adresse teilen" im ⋮ der Karte gibt sie weiter — für alle, die evcc im
+  Browser oder in der evcc-App nutzen und Pi-Tool nicht haben.
 - **Fernzugriff mit einem Tap (Tailscale)** — im ⋮-Menü liegt „Fernzugriff:
   Tailscale öffnen" (erreichbar, wenn du unterwegs und nicht verbunden bist): es
   setzt die zuletzt gemerkte Tailnet-IP (100.x) des Pi als Host und öffnet die

@@ -4487,8 +4487,14 @@ class _UpdaterPageState extends State<UpdaterPage>
       builder: (ctx) => AlertDialog(
         title: Text(title),
         // Scrolls when the text is taller than a small phone allows — an
-        // AlertDialog otherwise cuts its end off without a trace.
-        content: SingleChildScrollView(child: Text(body)),
+        // AlertDialog otherwise cuts its end off without a trace. The thumb is
+        // always shown then: without it nothing says there is more to read,
+        // and the end of the text is where the caveats stand.
+        // (Both share the route's primary scroll controller.)
+        content: Scrollbar(
+          thumbVisibility: true,
+          child: SingleChildScrollView(primary: true, child: Text(body)),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -5230,7 +5236,9 @@ class _UpdaterPageState extends State<UpdaterPage>
               // For the people who use evcc without Pi-Tool (browser or the
               // evcc app on another phone). Free: showing and sharing an
               // address is not a Pro feature.
-              if (evccUrl != null)
+              // Not in the demo: the sample address leads nowhere, so it
+              // must not travel to other people.
+              if (evccUrl != null && !_demoMode)
                 _CardAction(context.l10n.actionShareEvccAddress,
                     () => _shareEvccAddress(evccUrl)),
               // Opt-in only — it opens the whole home network to the tailnet.
@@ -5995,8 +6003,14 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Hands evcc's tailnet address to the share sheet, for the people who use
   /// evcc without Pi-Tool. No SSH involved, hence no `_prepare`/`_guard`.
-  Future<void> _shareEvccAddress(String url) =>
-      _textSharer(context.l10n.shareEvccAddressText(url));
+  Future<void> _shareEvccAddress(String url) async {
+    try {
+      await _textSharer(context.l10n.shareEvccAddressText(url));
+    } catch (_) {
+      // The share sheet not opening shows by itself; what must not happen is
+      // an unhandled error from a menu tap.
+    }
+  }
 
   /// Shares the Pi's home network into the tailnet (subnet router). Opt-in
   /// with an explicit confirmation, since it opens every device at home to the

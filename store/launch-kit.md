@@ -111,8 +111,11 @@ Org-Konto (spart 14 Tage + das Organisieren von 12 Testern).
 ---
 
 ## 7. F-Droid — Reichweiten-Kanal (Strategie nach IzzyOnDroid-Absage)
-Unsere App ist FOSS (MIT), **ohne** proprietäre/Google-Bibliotheken (kein Firebase/GMS,
-kein Tracking) → technisch F-Droid-tauglich.
+Unsere App ist FOSS (MIT), ohne Firebase und ohne Tracking. Seit v0.71.0 ist
+allerdings Googles Play-Review-Bibliothek (`com.google.android.play:review`, für
+die Bewertungs-Anfrage) eingebunden — eine proprietäre Bibliothek, mit der ein
+Build in dieser Form **nicht** mehr F-Droid-tauglich ist. Für F-Droid bräuchte es
+eine Build-Variante ohne sie.
 
 > **IzzyOnDroid: ABGELEHNT (2026-07-12).** Grund: „the level of LLM assistance used in
 > this application exceeds our acceptable thresholds" — Verstoß gegen die *App Inclusion

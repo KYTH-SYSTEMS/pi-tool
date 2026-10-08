@@ -47,7 +47,9 @@ Commit-Liste selbst nicht von Hand pflegen.
 - Release: Version in `pubspec.yaml` bumpen, `whats_new.dart` ergänzen, **bei
   Feature-Änderung die Docs oben mitziehen** (README/Pages/fastlane/Changelog),
   `git commit -F <datei>` (PowerShell-Heredocs brechen), main-Build abwarten,
-  dann `v*`-Tag → CI baut signiertes APK + Release.
+  dann `v*`-Tag → CI baut signiertes APK + Release. Der Tag muss exakt
+  `v<pubspec-Version>` heißen (ohne `+versionCode`), sonst bricht die CI vor
+  dem Bauen ab.
 - **Der Tag veröffentlicht auch bei Google Play** (Produktions-Spur, 100 %
   Rollout, `fastlane supply` — siehe ARCHITECTURE.md §8). Konsequenzen:
   - Der fastlane-Changelog `<versionCode>.txt` muss in **de-DE UND en-US**

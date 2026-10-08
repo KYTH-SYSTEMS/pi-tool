@@ -4417,7 +4417,8 @@ void main() {
       detail: 'apt · Dienst aktiv');
   const evccViaTailscale = 'evcc über Tailscale: http://100.64.0.5:7070';
   const sameRange = 'Aus einem Netz mit demselben Adressbereich '
-      '(192.168.178.0/24) ist das Heimnetz über Tailscale nicht erreichbar.';
+      '(192.168.178.0/24) ist das Heimnetz über Tailscale unter Umständen '
+      'nicht erreichbar.';
   const sameRangeEvcc =
       '$sameRange evcc dort über die Tailscale-Adresse aufrufen.';
   const ownRange = SubnetRoutes(
@@ -4911,7 +4912,9 @@ void main() {
         findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
     await tester.pumpAndSettle();
-    expect(find.text('evcc-Adresse teilen'), findsOneWidget);
+    // Die Beispiel-Adresse führt nirgendwohin: kein Weg, sie an andere zu
+    // geben.
+    expect(find.text('evcc-Adresse teilen'), findsNothing);
     // Die 100.x der Beispieldaten gehört zu keinem Pi: als Host übernommen,
     // stünde sie im echten Profil (und der Tastendruck beendete die Demo).
     expect(find.textContaining('Diese IP als Host übernehmen'), findsNothing);

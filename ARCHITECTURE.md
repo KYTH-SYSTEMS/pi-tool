@@ -620,6 +620,23 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   Adressen (`_rememberLanHost`/`_rememberTailscaleIp` brechen im Demo ab). Die Bestätigung in der
   Tailscale-Konsole kann die App nicht leisten (kein API-Key) — fehlt sie, erklärt
   `_reportLanShare` den Schritt als Popup mit Direktlink (`kTailscaleMachinesUrl`).
+  **Router-Standardbereiche:** `routerDefaultSubnets` (Fritzbox `192.168.178.0/24`,
+  `192.168.0.0/24`, `192.168.1.0/24`, Speedport `192.168.2.0/24`) und
+  `routerDefaultRoutes(routes)` — nur der exakte /24. Ist ein freigegebener
+  (`RouteShare.active`/`pending`) bzw. ein freizugebender Bereich darunter,
+  steht der Hinweis `tsLanSameRange[Evcc]` auf der Karte und in beiden Dialogen
+  (`_tailscaleShareLan`, `_offerLanShare`): Aus einem Netz mit demselben Bereich
+  geht die Adresse je nach Betriebssystem des Geräts nicht in den Tunnel
+  (belegt am 25.09.2026 mit einem iPhone; deshalb „unter Umständen").
+  **evcc über das Tailnet:** `evccTailnetUrl(scheme, tailnetIp, port)` baut die
+  Adresse der evcc-Oberfläche auf der 100.x des Pi (nur IPv4 aus 100.64.0.0/10,
+  sonst null; leerer Port = 7070) aus `_uiScheme`/`_uiPort`. Die Karte zeigt sie
+  bei verbundenem Tailscale + installiertem evcc; ⋮ „evcc-Adresse teilen"
+  reicht sie über den Seam `UpdaterPage.textSharer` (Default `share_plus`) an
+  das Teilen-Blatt — frei, kein Pro-Schalter, kein SSH (also ohne
+  `_prepare`/`_guard`), im Demo-Modus ausgeblendet. Lange Hinweise stehen in
+  `_ServiceCard.notes` (ohne Zeilengrenze; `liveLines` kürzt nach
+  `liveMaxLines`).
   **Folge für `up`:** Ein Knoten in `NeedsLogin` (Schlüssel abgelaufen) mit
   gesetzter Route verweigert ein nacktes `tailscale up` („requires mentioning all
   non-default flags") und nennt den erwarteten Befehl. `tailscaleUp` wiederholt
@@ -1061,7 +1078,11 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   Demo-Aktionen schreiben keinen Verlauf (`_addHistory` ist dort ein No-op —
   und zählen damit auch nicht für die Bewertungs-Anfrage), und „Web öffnen"
   auf einer Demo-Karte sagt nur, dass es keine Weboberfläche gibt
-  (`_demoHasNoWebUi`), statt nach einem Host zu fragen. Gemeinsamer Ausstieg
+  (`_demoHasNoWebUi`), statt nach einem Host zu fragen. Die Demo-Persona hat
+  ein verbundenes Tailscale (Beispiel-Adresse 100.101.102.103, kein
+  freigegebenes Heimnetz), damit die Karte die evcc-Adresse zeigt; „Diese IP
+  als Host übernehmen" und „evcc-Adresse teilen" fehlen dort — die Adresse
+  gehört zu keinem Pi und darf weder ins Profil noch zu anderen Leuten. Gemeinsamer Ausstieg
   ist `_leaveDemo()` (echtes Backend zurück, Beispielkarten vom Bildschirm, der
   zuvor gemerkte Stand des Profils kommt als gemerkter Stand wieder) — über
   „Beenden", einen Tastendruck in den Zugangsdaten (`_invalidateConnTest`) und
