@@ -835,8 +835,11 @@ echo 'evcc vollständig entfernt: Programm, Konfiguration, Daten, Backups, Paket
 
 /// Root/bash script that snapshots the evcc config + database into a
 /// timestamped archive under `/var/backups/evcc/` before an update. The DB path
-/// is taken from the config's `dsn:` if set, otherwise probed at the common
-/// default locations (it varies by service user). Run via [installShellCommand].
+/// is taken from the config's `dsn:` if it names a file, otherwise probed at
+/// the default locations — the service's first, the legacy `/root/.evcc` last.
+/// The database's `-wal`/`-shm` go along (evcc keeps running). The archive is
+/// written atomically, and the 10 newest are kept. Run via
+/// [installShellCommand].
 ///
 /// Prints `EVCC_BACKUP_OK <path>` on success, `EVCC_BACKUP_EMPTY` when there is
 /// nothing to back up (not an error), or `EVCC_BACKUP_FAIL` + exit 1 on failure.
@@ -844,22 +847,62 @@ String buildBackupScript() {
   return r'''
 mkdir -p /var/backups/evcc
 chmod 0755 /var/backups/evcc 2>/dev/null || true
+# Left behind by a run that was killed half-way.
+rm -f /var/backups/evcc/evcc-backup-*.tar.gz.part
 ts=$(date +%Y%m%d-%H%M%S)
 out="/var/backups/evcc/evcc-backup-$ts.tar.gz"
-files=""
-if [ -f /etc/evcc.yaml ]; then files="$files /etc/evcc.yaml"; fi
+# The file list lives in the positional parameters, so a path with a space
+# stays ONE argument.
+set --
+if [ -f /etc/evcc.yaml ]; then set -- "$@" /etc/evcc.yaml; fi
 db=""
 if [ -f /etc/evcc.yaml ]; then
-  db=$(grep -E '^[[:space:]]*dsn:' /etc/evcc.yaml 2>/dev/null | head -n1 | sed 's/.*dsn:[[:space:]]*//')
+  db=$(grep -E '^[[:space:]]*dsn:' /etc/evcc.yaml 2>/dev/null | head -n1 | tr -d '\r' | sed 's/^[[:space:]]*dsn:[[:space:]]*//')
+  # The bare value: inside quotes up to the closing one, otherwise without a
+  # trailing ` # comment` and whitespace.
+  case "$db" in
+    \"*) db=${db#\"}; db=${db%%\"*} ;;
+    \'*) db=${db#\'}; db=${db%%\'*} ;;
+    *) db=$(printf '%s\n' "$db" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//') ;;
+  esac
 fi
 if [ -z "$db" ] || [ ! -f "$db" ]; then
-  for c in /root/.evcc/evcc.db /var/lib/evcc/.evcc/evcc.db /var/lib/evcc/evcc.db /home/*/.evcc/evcc.db; do
+  if [ -n "$db" ]; then echo "Hinweis: Der dsn-Eintrag in /etc/evcc.yaml nennt keine vorhandene Datei – suche die Datenbank an den Standardorten."; fi
+  db=""
+  # The service's database first (the package runs evcc as user evcc on
+  # /var/lib/evcc/evcc.db). /root/.evcc comes LAST: the package's migration
+  # copies that database and leaves the original behind, so next to a live one
+  # it is a stale leftover.
+  for c in /var/lib/evcc/evcc.db /var/lib/evcc/.evcc/evcc.db /home/*/.evcc/evcc.db /root/.evcc/evcc.db; do
     if [ -f "$c" ]; then db="$c"; break; fi
   done
 fi
-if [ -n "$db" ] && [ -f "$db" ]; then files="$files $db"; fi
-if [ -z "$files" ]; then echo "EVCC_BACKUP_EMPTY"; exit 0; fi
-if tar -czf "$out" $files; then chmod 0644 "$out" 2>/dev/null || true; echo "EVCC_BACKUP_OK $out"; else echo "EVCC_BACKUP_FAIL"; exit 1; fi
+if [ -n "$db" ]; then
+  set -- "$@" "$db"
+  # evcc keeps running: with SQLite's WAL mode, committed writes sit in
+  # <db>-wal until the next checkpoint, so the files belong together.
+  for s in -wal -shm; do
+    if [ -f "$db$s" ]; then set -- "$@" "$db$s"; fi
+  done
+fi
+if [ "$#" -eq 0 ]; then echo "EVCC_BACKUP_EMPTY"; exit 0; fi
+# Atomic: a failed or partial tar must never sit in the restore list as the
+# newest backup.
+tar -czf "$out.part" --warning=no-file-changed -- "$@"
+rc=$?
+# Exit 1 = "file changed as we read it" (evcc keeps running; the warning text
+# is muted above): the archive is written, so it counts. Only exit >= 2 is a
+# failure.
+if [ "$rc" -le 1 ] && mv -f "$out.part" "$out"; then
+  chmod 0644 "$out" 2>/dev/null || true
+  # Keep the 10 newest. Line by line: no word splitting on the names.
+  ls -1t /var/backups/evcc/evcc-backup-*.tar.gz 2>/dev/null | tail -n +11 | while IFS= read -r old; do rm -f -- "$old"; done
+  echo "EVCC_BACKUP_OK $out"
+else
+  rm -f "$out.part"
+  echo "EVCC_BACKUP_FAIL"
+  exit 1
+fi
 ''';
 }
 
@@ -1020,10 +1063,15 @@ String buildConfigReadCommand(String path) =>
     // English-only) instead of falling through to "file missing/no rights".
     "LC_ALL=C sudo -S -p '' cat ${shSingleQuote(path)}";
 
-/// Root script that backs the current [path] up (under /var/backups/pi-tool),
-/// then overwrites it with [base64Content]. Base64 sidesteps ALL shell-quoting
-/// / injection issues with arbitrary file content (b64 is only `A-Za-z0-9+/=`).
-/// Prints `CONFIG_SAVED` on success.
+/// The backup timestamp of [buildConfigWriteScript] (`date +%Y%m%d-%H%M%S`) as
+/// a glob.
+const String _configBackupTsGlob = '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-'
+    '[0-9][0-9][0-9][0-9][0-9][0-9]';
+
+/// Root script that backs the current [path] up (under /var/backups/pi-tool,
+/// the 5 newest per file are kept), then overwrites it with [base64Content].
+/// Base64 sidesteps ALL shell-quoting / injection issues with arbitrary file
+/// content (b64 is only `A-Za-z0-9+/=`). Prints `CONFIG_SAVED` on success.
 String buildConfigWriteScript({
   required String path,
   required String base64Content,
@@ -1034,7 +1082,10 @@ set -e
 mkdir -p /var/backups/pi-tool
 if [ -f $p ]; then
   cp $p "/var/backups/pi-tool/config-\$(basename $p)-\$(date +%Y%m%d-%H%M%S).bak"
-  ls -1t "/var/backups/pi-tool/config-\$(basename $p)-"* 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
+  # Keep the 5 newest of THIS file: the glob is the timestamp above, so
+  # evcc.yaml does not count (or delete) the backups of evcc.yaml-old. Line by
+  # line — xargs would split a name at a space and stop at an apostrophe.
+  ls -1t "/var/backups/pi-tool/config-\$(basename $p)-"$_configBackupTsGlob.bak 2>/dev/null | tail -n +6 | while IFS= read -r old; do rm -f -- "\$old"; done || true
 fi
 # Write to a temp file, then atomically rename over the target so a mid-write
 # failure (full disk, killed) never leaves a truncated live config. Preserve
@@ -1148,16 +1199,43 @@ List<String> parseBackupList(String lsOutput) => lsOutput
     .toList();
 
 /// Root/bash script (run via [installShellCommand]) that restores [archivePath]:
-/// stop evcc, extract the archive back to `/`, restart evcc. The backup stores
-/// relative paths (tar strips the leading `/`), so `-C /` puts every file back
-/// in its original location (e.g. /etc/evcc.yaml + the database).
+/// check the archive, stop evcc, extract the archive back to `/`, restart evcc.
+/// The backup stores relative paths (tar strips the leading `/`), so `-C /`
+/// puts every file back in its original location (e.g. /etc/evcc.yaml + the
+/// database). A broken archive is refused before anything changes, and a
+/// `trap` starts evcc again if a later step aborts. Prints `RESTORE_OK` last.
 String buildRestoreScript(String archivePath) {
   final a = shSingleQuote(archivePath);
   return '''
 set -e
 if [ ! -f $a ]; then echo "Backup nicht gefunden."; exit 1; fi
+# Read the whole archive BEFORE anything changes: a truncated or corrupt file
+# must neither stop evcc nor overwrite half of the live files. (The two echo
+# lines also keep a large archive from looking like a stalled connection.)
+echo "Prüfe das Backup-Archiv …"
+if ! members=\$(tar --quoting-style=literal -tzf $a 2>/dev/null); then
+  echo "Das Backup-Archiv ist beschädigt oder unvollständig – nichts geändert."
+  exit 1
+fi
+echo "Archiv in Ordnung – spiele es ein …"
+# Armed before the stop: whatever aborts from here on (tar, a full disk, a
+# closed channel), evcc is started again.
+trap 'systemctl start evcc >/dev/null 2>&1 || true' EXIT
 systemctl stop evcc 2>/dev/null || true
+# A live <db>-wal/-shm belongs to the database that is being replaced: left
+# next to the restored file, SQLite would apply it to the wrong database. An
+# archive that carries its own pair overwrites them below.
+printf '%s\\n' "\$members" | while IFS= read -r m; do
+  case "\$m" in
+    ../*|*/../*) ;;
+    *.db)
+      for s in -wal -shm; do
+        printf '%s\\n' "\$members" | grep -qxF -- "\$m\$s" || rm -f -- "/\$m\$s"
+      done ;;
+  esac
+done
 tar -xzf $a -C /
+trap - EXIT
 systemctl start evcc
 echo RESTORE_OK
 ''';

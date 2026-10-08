@@ -75,6 +75,9 @@ String buildAlertsInstallScript({
   return '''
 set -e
 mkdir -p /var/lib/pi-tool
+# A new destination has not heard of the current problems yet: forget what the
+# previous one was sent, so the first run pushes them again.
+rm -f /var/lib/pi-tool/alerts.last
 cat > /usr/local/lib/$alertsUnit.sh <<'WRAP'
 #!/bin/sh
 mkdir -p /var/lib/pi-tool
@@ -109,9 +112,14 @@ pend=\$(LC_ALL=C apt-get -s upgrade 2>/dev/null | grep -c '^Inst ')
 hash=\$(printf '%s' "\$problems" | md5sum | awk '{print \$1}')
 last=\$(cat /var/lib/pi-tool/alerts.last 2>/dev/null)
 if [ -n "\$problems" ] && [ "\$hash" != "\$last" ]; then
-  printf 'Pi-Tool hat Probleme erkannt:%b' "\$problems" | \\
-    curl -s -H 'Title: Pi-Tool' -H 'Priority: high' --data-binary @- "\$URL/\$TOPIC" >/dev/null 2>&1
-  printf '%s' "\$hash" > /var/lib/pi-tool/alerts.last
+  # Remember the hash only once the push went out: a failed one (no DNS or
+  # internet, an HTTP error — hence -f) is tried again at the next run instead
+  # of counting as sent. The timeouts bound the oneshot unit, which has no
+  # start timeout of its own.
+  if printf 'Pi-Tool hat Probleme erkannt:%b' "\$problems" | \\
+    curl -fsS --connect-timeout 10 --max-time 30 -H 'Title: Pi-Tool' -H 'Priority: high' --data-binary @- "\$URL/\$TOPIC" >/dev/null 2>&1; then
+    printf '%s' "\$hash" > /var/lib/pi-tool/alerts.last
+  fi
 elif [ -z "\$problems" ]; then
   : > /var/lib/pi-tool/alerts.last
 fi
@@ -140,9 +148,11 @@ echo ALERTS_INSTALLED
 ''';
 }
 
-/// Root script that removes the alerts timer, service and wrapper.
+/// Root script that removes the alerts timer, service and wrapper. `set -e`: a
+/// failing `rm` (read-only root) must end without the marker.
 String buildAlertsRemoveScript() {
   return '''
+set -e
 systemctl disable --now $alertsUnit.timer 2>/dev/null || true
 rm -f /etc/systemd/system/$alertsUnit.timer \\
   /etc/systemd/system/$alertsUnit.service \\

@@ -23,7 +23,9 @@ String autoUpdateOnCalendar(
 /// releases (eol_sources.dart — bash, hence the bash shebang), runs a full apt
 /// upgrade, and — if evcc was running but died during the upgrade — brings it
 /// back (self-heal), writing a one-line result to
-/// /var/lib/pi-tool/autoupdate.status.
+/// /var/lib/pi-tool/autoupdate.status: `<time> ok` or `<time> fehler(rc=N)`,
+/// plus `; evcc-neustart` after a self-heal and `; backup-fehler(rc=N)` when
+/// the evcc backup before the upgrade could not be written.
 String buildAutoUpdateInstallScript({required String onCalendar}) {
   return '''
 set -e
@@ -34,15 +36,28 @@ export DEBIAN_FRONTEND=noninteractive
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 ts=\$(date '+%Y-%m-%d %H:%M:%S')
 was=\$(systemctl is-active evcc 2>/dev/null)
+bak=""
 if dpkg-query -W evcc >/dev/null 2>&1; then
-  # Atomic: a failed/partial tar must not become the newest file and evict a
-  # good pre-upgrade backup on rotation.
-  bout="/var/backups/pi-tool/autoupdate-evcc-\$(date +%Y%m%d-%H%M%S).tar.gz"
-  if tar -czf "\$bout.part" /etc/evcc.yaml /var/lib/evcc 2>/dev/null; then
-    mv "\$bout.part" "\$bout"
-    ls -1t /var/backups/pi-tool/autoupdate-evcc-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
-  else
-    rm -f "\$bout.part"
+  # Only what is present: the package ships no /etc/evcc.yaml (an evcc set up
+  # in its web UI never has one), and ONE path tar cannot stat fails the whole
+  # archive.
+  set --
+  [ -f /etc/evcc.yaml ] && set -- "\$@" /etc/evcc.yaml
+  [ -d /var/lib/evcc ] && set -- "\$@" /var/lib/evcc
+  if [ "\$#" -gt 0 ]; then
+    # Atomic: a failed/partial tar must not become the newest file and evict a
+    # good pre-upgrade backup on rotation.
+    bout="/var/backups/pi-tool/autoupdate-evcc-\$(date +%Y%m%d-%H%M%S).tar.gz"
+    tar -czf "\$bout.part" "\$@" 2>/dev/null
+    brc=\$?
+    # Exit 1 = "file changed as we read it" (evcc keeps running): the archive
+    # is written, so it counts. Only exit >= 2 is a failure.
+    if [ "\$brc" -le 1 ] && mv "\$bout.part" "\$bout"; then
+      ls -1t /var/backups/pi-tool/autoupdate-evcc-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f -- || true
+    else
+      rm -f "\$bout.part"
+      bak="; backup-fehler(rc=\$brc)"
+    fi
   fi
 fi
 $eolSourcesFixScript
@@ -57,7 +72,7 @@ if [ "\$was" = "active" ] && [ "\$(systemctl is-active evcc 2>/dev/null)" != "ac
   heal="; evcc-neustart"
 fi
 if [ "\$rc" = "0" ]; then res="ok"; else res="fehler(rc=\$rc)"; fi
-echo "\$ts \$res\$heal" > /var/lib/pi-tool/autoupdate.status
+echo "\$ts \$res\$heal\$bak" > /var/lib/pi-tool/autoupdate.status
 WRAP
 chmod +x /usr/local/lib/$autoUpdateUnit.sh
 cat > /etc/systemd/system/$autoUpdateUnit.service <<'SVC'
@@ -82,9 +97,11 @@ echo AUTOUPDATE_INSTALLED
 ''';
 }
 
-/// Root script that removes the timer, service and wrapper again.
+/// Root script that removes the timer, service and wrapper again. `set -e`: a
+/// failing `rm` (read-only root) must end without the marker.
 String buildAutoUpdateRemoveScript() {
   return '''
+set -e
 systemctl disable --now $autoUpdateUnit.timer 2>/dev/null || true
 rm -f /etc/systemd/system/$autoUpdateUnit.timer \\
   /etc/systemd/system/$autoUpdateUnit.service \\

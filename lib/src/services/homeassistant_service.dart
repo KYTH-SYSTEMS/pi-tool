@@ -116,7 +116,8 @@ echo "BACKUP_OK \$out"
 
 /// Root/bash script (sudo shell) that restores a HA config backup: stop the
 /// container, extract the tar into [configPath], start it again. The restart is
-/// in a `trap`, so even a failing tar can't leave Home Assistant stopped.
+/// in a `trap` set before the stop, so neither a failing tar nor an abort while
+/// stopping can leave Home Assistant stopped.
 /// Extracts OVER the existing config (no wipe — a wipe on a bad archive would
 /// be worse than leftover files).
 String buildHomeAssistantRestoreScript({
@@ -128,17 +129,20 @@ String buildHomeAssistantRestoreScript({
   final c = shSingleQuote(configPath);
   final n = shSingleQuote(containerName);
   // The trap guarantees the container is brought back up if the tar aborts
-  // under `set -e` (script exits non-zero, no RESTORE_OK → surfaced). On the
-  // happy path we clear the trap and start VISIBLY, then verify the container
-  // is actually running before RESTORE_OK — a swallowed start failure would
-  // otherwise leave HA down while we report success (it runs with
-  // --restart=unless-stopped, so a manual stop persists across reboots).
+  // under `set -e` (script exits non-zero, no RESTORE_OK → surfaced). It is
+  // armed BEFORE the stop: a cancel closes the channel, `docker stop` then
+  // stops the container and dies writing its name (SIGPIPE), and `set -e`
+  // ends the script right there. On the happy path we clear the trap and
+  // start VISIBLY, then verify the container is actually running before
+  // RESTORE_OK — a swallowed start failure would otherwise leave HA down while
+  // we report success (it runs with --restart=unless-stopped, so a manual stop
+  // persists across reboots).
   return '''
 set -e
 if [ ! -f $a ]; then echo "RESTORE_FAIL_MISSING"; exit 1; fi
 if [ ! -d $c ]; then echo "RESTORE_FAIL_NOCONF"; exit 1; fi
-docker stop $n
 trap "docker start $n >/dev/null 2>&1 || true" EXIT
+docker stop $n
 tar -xzf $a -C $c
 trap - EXIT
 docker start $n

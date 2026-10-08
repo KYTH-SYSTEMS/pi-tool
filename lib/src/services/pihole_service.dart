@@ -89,8 +89,10 @@ PiholeVersion? parsePiholeVersion(String output) {
 
 /// Root/bash script (run via the sudo shell) that exports a Pi-hole
 /// **Teleporter** backup — the official, importable format — into the backup
-/// dir. Tries the v5 CLI (`pihole -a -t`) and falls back to v6's
-/// `pihole-FTL --teleporter`, then moves the produced archive to a stable name.
+/// dir. Tries the v5 CLI (`pihole -a -t`) and, when that left no archive
+/// behind, v6's `pihole-FTL --teleporter`, then moves the produced archive to a
+/// stable name. The generation is **not** picked by exit code: v6 dropped `-a`
+/// and answers it with its help text and exit 0 (see [piholeRestartCommand]).
 /// Prints `BACKUP_OK <path>` on success.
 String buildPiholeBackupScript() {
   return r'''
@@ -99,7 +101,10 @@ mkdir -p /var/backups/pi-tool
 chmod 0755 /var/backups/pi-tool 2>/dev/null || true
 d=$(mktemp -d)
 cd "$d"
-pihole -a -t >/dev/null 2>&1 || pihole-FTL --teleporter >/dev/null 2>&1 || true
+pihole -a -t >/dev/null 2>&1 || true
+if ! ls *.tar.gz >/dev/null 2>&1; then
+  pihole-FTL --teleporter >/dev/null 2>&1 || true
+fi
 f=$(ls -1t *.tar.gz *.zip 2>/dev/null | head -n1)
 if [ -z "$f" ]; then echo "BACKUP_FAIL"; cd /; rm -rf "$d"; exit 1; fi
 case "$f" in
