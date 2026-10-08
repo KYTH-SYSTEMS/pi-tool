@@ -114,6 +114,21 @@ class SystemUpgradeResult {
   final bool listsIncomplete;
 }
 
+/// What a container update ([EvccUpdater.updateDocker],
+/// [EvccUpdater.updateHomeAssistant], [EvccUpdater.updateDockerContainer]) did.
+enum DockerUpdateOutcome {
+  /// A new image was pulled and the container recreated (or compose ran).
+  updated,
+
+  /// The tag still points to the image the container runs: nothing was
+  /// stopped or recreated.
+  tagCurrent,
+
+  /// Like [tagCurrent], and the tag names a version: a newer one only comes
+  /// with another tag.
+  pinnedTagCurrent,
+}
+
 /// A job that ended with an exit code, with its complete log.
 class JobRunResult {
   const JobRunResult({required this.ref, required this.rc, required this.log});
@@ -2214,11 +2229,15 @@ class EvccUpdater {
   /// and recreate it (reconstructed from `docker inspect`, so the user's mounts
   /// stay; HA state lives in the bound /config volume, so no data is lost). The
   /// old container is kept as a rollback. Experimental.
-  Future<void> updateHomeAssistant({
+  ///
+  /// A tag that brought no new image leaves the container untouched (see
+  /// [DockerUpdateOutcome]); a hand-made container the recreate could not
+  /// rebuild faithfully is refused before anything is pulled.
+  Future<DockerUpdateOutcome> updateHomeAssistant({
     required SshConfig config,
     required void Function(String line) onLog,
   }) {
-    return _withConnection<void>(
+    return _withConnection<DockerUpdateOutcome>(
       config: config,
       onLog: onLog,
       body: (runner, log) async {
@@ -2267,6 +2286,7 @@ class EvccUpdater {
         // drop named volumes). Otherwise rebuild an equivalent `docker run`.
         final compose = composeInfoFromInspect(obj);
         final String script;
+        String? recreated;
         if (compose != null) {
           log('Aktualisiere via docker compose in ${compose.workingDir} '
               '(Dienst ${compose.service}) …');
@@ -2283,16 +2303,20 @@ class EvccUpdater {
               'automatisch aktualisiert werden – bitte ein Image-Tag setzen.',
             );
           }
+          _requireRecreatable(obj);
+          recreated = image;
           script = dockerRunRecreateScript(
             name: ha.name,
             image: image,
             runCommand: buildDockerRunCommand(obj, image: image),
           );
         }
-        await _runRootScript(runner, log, config,
+        final out = await _runRootScript(runner, log, config,
             sudo: sudo,
             script: script,
             failMsg: 'Home-Assistant-Update fehlgeschlagen');
+        final current = _tagCurrentOutcome(log, out, recreated);
+        if (current != null) return current;
 
         final verify = await runner.run(
           sudo ? dockerListRunningSudoCommand : dockerListRunningCommand,
@@ -2306,6 +2330,7 @@ class EvccUpdater {
           );
         }
         log('Fertig – Home Assistant läuft wieder.');
+        return DockerUpdateOutcome.updated;
       },
     );
   }
@@ -2464,12 +2489,16 @@ class EvccUpdater {
   /// `docker run` from the inspect data and recreates the container, keeping the
   /// old one (renamed) as a rollback — volumes are reused, so no data is lost.
   /// Experimental: not validated against a real Docker host. Throws on failure.
-  Future<void> updateDocker({
+  ///
+  /// A tag that brought no new image leaves the container untouched (see
+  /// [DockerUpdateOutcome]); a container the recreate could not rebuild
+  /// faithfully is refused before anything is pulled.
+  Future<DockerUpdateOutcome> updateDocker({
     required SshConfig config,
     required InstallDetection detection,
     required void Function(String line) onLog,
   }) {
-    return _withConnection<void>(
+    return _withConnection<DockerUpdateOutcome>(
       config: config,
       onLog: onLog,
       body: (runner, log) async {
@@ -2508,6 +2537,7 @@ class EvccUpdater {
 
         final compose = composeInfoFromInspect(obj);
         final String script;
+        String? recreated;
         if (compose != null) {
           log('Aktualisiere via docker compose in ${compose.workingDir} '
               '(Dienst ${compose.service}) …');
@@ -2527,6 +2557,8 @@ class EvccUpdater {
               'Definition ein Image-Tag setzen und manuell neu ziehen.',
             );
           }
+          _requireRecreatable(obj);
+          recreated = image;
           script = dockerRunRecreateScript(
             name: container.name,
             image: image,
@@ -2534,8 +2566,10 @@ class EvccUpdater {
           );
         }
 
-        await _runRootScript(runner, log, config,
+        final out = await _runRootScript(runner, log, config,
             sudo: sudo, script: script, failMsg: 'Docker-Update fehlgeschlagen');
+        final current = _tagCurrentOutcome(log, out, recreated);
+        if (current != null) return current;
 
         final verify = await runner.run(
           sudo ? dockerListRunningSudoCommand : dockerListRunningCommand,
@@ -2549,14 +2583,45 @@ class EvccUpdater {
           );
         }
         log('Fertig – evcc-Container läuft wieder.');
+        return DockerUpdateOutcome.updated;
       },
     );
   }
 
+  /// Refuses a plain `docker run` container that [buildDockerRunCommand]
+  /// cannot rebuild without losing something (see [dockerRecreateRefusal]) —
+  /// before anything is pulled or stopped, with the reason as the message.
+  void _requireRecreatable(Map<String, dynamic> inspect) {
+    final refusal = dockerRecreateRefusal(inspect);
+    if (refusal != null) {
+      throw EvccUpdateException(UpdateErrorKind.unknown, refusal);
+    }
+  }
+
+  /// What [dockerRunRecreateScript] reported in [out] when the pull brought no
+  /// new image for [image] — logged, the container was left alone — or null
+  /// when it recreated the container. [image] is null on the compose path,
+  /// which has no such report.
+  DockerUpdateOutcome? _tagCurrentOutcome(
+      void Function(String) log, String out, String? image) {
+    if (image == null || !isDockerImageUnchanged(out)) return null;
+    final pinned = isVersionPinnedImage(image);
+    log('Kein neueres Image für „$image“ – der Container läuft bereits '
+        'damit, nichts geändert.');
+    if (pinned) {
+      log('Das Tag ist versionsfest: Eine neuere Version gibt es erst mit '
+          'einem anderen Tag.');
+    }
+    return pinned
+        ? DockerUpdateOutcome.pinnedTagCurrent
+        : DockerUpdateOutcome.tagCurrent;
+  }
+
   /// Runs a multi-line root [script] via `bash -s` (or `sudo -S bash -s`),
   /// streaming output and mapping a rejected sudo password / non-zero exit to a
-  /// clear error. Shared by the compose and `docker run` update paths.
-  Future<void> _runRootScript(
+  /// clear error. Shared by the compose and `docker run` update paths. Returns
+  /// the script's output (stdout and stderr).
+  Future<String> _runRootScript(
     SshRunner runner,
     void Function(String) log,
     SshConfig config, {
@@ -2596,6 +2661,7 @@ class EvccUpdater {
         '$failMsg (Exit ${result.exitCode}). Details im Log.',
       );
     }
+    return combined;
   }
 
   /// Runs a DESTRUCTIVE root [script] that must print [successMarker] to count
@@ -3041,9 +3107,12 @@ class EvccUpdater {
   /// ones via `docker compose pull` + `up -d` of just that service, plain ones
   /// via image-pull + recreate with the same rollback net as the evcc path
   /// (old container renamed, restored on a crashing start). Refused: Pi-Tool's
-  /// own rollback containers and digest-pinned images. Experimental — the
-  /// recreate reconstructs `docker run` from `docker inspect` (whitelist).
-  Future<void> updateDockerContainer({
+  /// own rollback containers, digest-pinned images and plain containers the
+  /// recreate could not rebuild faithfully ([dockerRecreateRefusal]). A tag
+  /// that brought no new image leaves the container untouched (see
+  /// [DockerUpdateOutcome]). Experimental — the recreate reconstructs
+  /// `docker run` from `docker inspect` (whitelist).
+  Future<DockerUpdateOutcome> updateDockerContainer({
     required SshConfig config,
     required String name,
     required void Function(String line) onLog,
@@ -3055,7 +3124,7 @@ class EvccUpdater {
         'des letzten Updates und wird nicht selbst aktualisiert.',
       );
     }
-    return _withConnection<void>(
+    return _withConnection<DockerUpdateOutcome>(
       config: config,
       onLog: onLog,
       body: (runner, log) async {
@@ -3075,6 +3144,7 @@ class EvccUpdater {
 
         final compose = composeInfoFromInspect(obj);
         final String script;
+        String? recreated;
         if (compose != null) {
           log('Aktualisiere via docker compose in ${compose.workingDir} '
               '(Dienst ${compose.service}) …');
@@ -3096,6 +3166,8 @@ class EvccUpdater {
               'Definition ein Image-Tag setzen und manuell neu ziehen.',
             );
           }
+          _requireRecreatable(obj);
+          recreated = image;
           log('Container ohne docker compose – aktualisiere per Image-Pull + '
               'Neuanlage. Der alte Container bleibt als Backup erhalten.');
           script = dockerRunRecreateScript(
@@ -3105,10 +3177,12 @@ class EvccUpdater {
           );
         }
 
-        await _runRootScript(runner, log, config,
+        final out = await _runRootScript(runner, log, config,
             sudo: true,
             script: script,
             failMsg: 'Container-Update fehlgeschlagen');
+        final current = _tagCurrentOutcome(log, out, recreated);
+        if (current != null) return current;
 
         // The recreate script verifies internally; the compose path doesn't —
         // probe either way so "fertig" always means "läuft".
@@ -3124,7 +3198,7 @@ class EvccUpdater {
             log('Hinweis: Container "$name" ist unter diesem Namen nicht mehr '
                 'zu finden — docker compose benennt ihn beim Neuanlegen '
                 'gelegentlich um. Bitte in der Übersicht nachsehen.');
-            return;
+            return DockerUpdateOutcome.updated;
           }
           throw EvccUpdateException(
             UpdateErrorKind.serviceInactive,
@@ -3132,6 +3206,7 @@ class EvccUpdater {
           );
         }
         log('Container "$name" aktualisiert und läuft.');
+        return DockerUpdateOutcome.updated;
       },
     );
   }

@@ -447,6 +447,8 @@
   "dialogUpdateContainerTitle": "Container „{name}“ aktualisieren?",
   "dialogUpdateContainerBody": "Zieht das neue Image und legt den Container neu an; Compose-Container werden über docker compose aktualisiert. Der alte Container bleibt als Rollback erhalten. Experimentell — Daten in Volumes bleiben unberührt.",
   "statusContainerUpdated": "Container aktualisiert und läuft.",
+  "statusImageTagCurrent": "Kein neueres Image für dieses Tag – der Container läuft bereits mit dem aktuellen. Nichts geändert.",
+  "statusImageTagPinnedCurrent": "Kein neueres Image für dieses Tag – nichts geändert. Das Tag ist versionsfest: Eine neuere Version gibt es erst mit einem anderen Tag.",
   "busyUpdatingContainer": "Aktualisiere Container „{name}“ …",
   "actionWireStack": "Mit evcc verdrahten (Dashboard)",
   "dialogWireStackTitle": "Monitoring-Stack verdrahten?",

@@ -1946,17 +1946,18 @@ class _UpdaterPageState extends State<UpdaterPage>
             });
             return;
           }
-          await _updater.updateDocker(
+          final outcome = await _updater.updateDocker(
             config: config,
             detection: detection,
             onLog: _appendLog,
           );
           if (!mounted) return;
+          final tagCurrent = _tagCurrentText(outcome);
           setState(() {
-            _statusMessage = l10n.statusEvccContainerUpdated;
+            _statusMessage = tagCurrent ?? l10n.statusEvccContainerUpdated;
             _statusOk = true;
           });
-          _addHistory(l10n.historyEvccDockerUpdated);
+          if (tagCurrent == null) _addHistory(l10n.historyEvccDockerUpdated);
           await _refreshServices(config);
         case InstallKind.apt:
           // Back up config + DB first (opt-out). A backup failure throws here
@@ -2480,16 +2481,29 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastAction = () => _updateContainer(name);
     final busyMsg = context.l10n.busyUpdatingContainer(name);
     await _guard(() async {
-      await _updater.updateDockerContainer(
+      final outcome = await _updater.updateDockerContainer(
           config: config, name: name, onLog: _appendLog);
       if (!mounted) return;
+      final tagCurrent = _tagCurrentText(outcome);
       setState(() {
-        _statusMessage = context.l10n.statusContainerUpdated;
+        _statusMessage = tagCurrent ?? context.l10n.statusContainerUpdated;
         _statusOk = true;
       });
-      _addHistory('${context.l10n.statusContainerUpdated} ($name)');
+      if (tagCurrent == null) {
+        _addHistory('${context.l10n.statusContainerUpdated} ($name)');
+      }
     }, backgroundMessage: busyMsg);
   }
+
+  /// The status text when a container update found no new image behind the
+  /// tag (nothing was recreated, so no history entry either), or null when
+  /// the container was updated.
+  String? _tagCurrentText(DockerUpdateOutcome outcome) => switch (outcome) {
+        DockerUpdateOutcome.updated => null,
+        DockerUpdateOutcome.tagCurrent => context.l10n.statusImageTagCurrent,
+        DockerUpdateOutcome.pinnedTagCurrent =>
+          context.l10n.statusImageTagPinnedCurrent,
+      };
 
   Future<void> _storageExplorer() async {
     if (_busy) return;
@@ -4185,13 +4199,17 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = _updateHomeAssistant;
     await _guard(() async {
-      await _updater.updateHomeAssistant(config: config, onLog: _appendLog);
+      final outcome = await _updater.updateHomeAssistant(
+          config: config, onLog: _appendLog);
       if (!mounted) return;
+      final tagCurrent = _tagCurrentText(outcome);
       setState(() {
-        _statusMessage = context.l10n.statusHomeAssistantUpdated;
+        _statusMessage = tagCurrent ?? context.l10n.statusHomeAssistantUpdated;
         _statusOk = true;
       });
-      _addHistory(context.l10n.statusHomeAssistantUpdated);
+      if (tagCurrent == null) {
+        _addHistory(context.l10n.statusHomeAssistantUpdated);
+      }
       await _refreshServices(config);
     }, backgroundMessage: context.l10n.busyUpdatingHomeAssistant);
   }

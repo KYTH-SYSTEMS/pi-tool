@@ -268,13 +268,18 @@ class FakeEvccUpdater extends EvccUpdater {
   final restartedContainers = <String>[];
   final updatedContainers = <String>[];
 
+  /// What the three container updates report back.
+  DockerUpdateOutcome dockerOutcome = DockerUpdateOutcome.updated;
+
   @override
-  Future<void> updateDockerContainer({
+  Future<DockerUpdateOutcome> updateDockerContainer({
     required SshConfig config,
     required String name,
     required void Function(String line) onLog,
-  }) async =>
-      updatedContainers.add(name);
+  }) async {
+    updatedContainers.add(name);
+    return dockerOutcome;
+  }
   @override
   Future<List<DockerContainer>> dockerContainers({
     required SshConfig config,
@@ -851,12 +856,13 @@ class FakeEvccUpdater extends EvccUpdater {
   }
 
   @override
-  Future<void> updateDocker({
+  Future<DockerUpdateOutcome> updateDocker({
     required SshConfig config,
     required InstallDetection detection,
     required void Function(String line) onLog,
   }) async {
     dockerCalls++;
+    return dockerOutcome;
   }
 
   @override
@@ -986,11 +992,13 @@ class FakeEvccUpdater extends EvccUpdater {
       haInstallCalls++;
 
   @override
-  Future<void> updateHomeAssistant({
+  Future<DockerUpdateOutcome> updateHomeAssistant({
     required SshConfig config,
     required void Function(String line) onLog,
-  }) async =>
-      haUpdateCalls++;
+  }) async {
+    haUpdateCalls++;
+    return dockerOutcome;
+  }
 }
 
 /// Records keep-alive start/stop so tests can assert a long action runs behind
@@ -2054,6 +2062,66 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(u.haUpdateCalls, 1);
+  });
+
+  // The pull brought no new image: the banner says so instead of claiming an
+  // update, and the history gets no entry.
+  testWidgets('Home Assistant card: a tag without a new image is no update',
+      (tester) async {
+    useTallScreen(tester);
+    final history = _RecordingHistory();
+    final u = FakeEvccUpdater()
+      ..dockerOutcome = DockerUpdateOutcome.pinnedTagCurrent
+      ..services = const [
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            version: '2026.5.1',
+            active: true,
+            detail: 'Docker · homeassistant'),
+      ];
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(_ready),
+        updater: u,
+        updateChecker: _noUpdateChecker,
+        historyStore: history,
+        apiClient: EvccApiClient(
+            getJson: (_) async =>
+                throw const EvccApiException('kein Netz im Test')),
+        evccReleaseFetcher: () async => null,
+        haVersionFetcher: () async => null,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.haUpdateCalls, 1);
+    expect(find.textContaining('Das Tag ist versionsfest'), findsOneWidget);
+    expect(find.textContaining('Home Assistant aktualisiert'), findsNothing);
+    expect(history.added, isEmpty);
+
+    u.dockerOutcome = DockerUpdateOutcome.tagCurrent;
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('läuft bereits mit dem aktuellen'),
+        findsOneWidget);
+    expect(find.textContaining('versionsfest'), findsNothing);
+    expect(history.added, isEmpty);
+
+    // Counter-check: a real update still says so and is recorded.
+    u.dockerOutcome = DockerUpdateOutcome.updated;
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Home Assistant aktualisiert'), findsOneWidget);
+    expect(history.added, ['Home Assistant aktualisiert.']);
   });
 
   testWidgets('an absent service is offered under „Dienst hinzufügen", not a card',

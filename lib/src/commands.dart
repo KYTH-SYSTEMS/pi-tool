@@ -273,10 +273,119 @@ const _infraLabelPrefixes = [
   'org.label-schema.',
 ];
 
+/// The /dev/shm size the daemon fills in when none was given (64 MiB).
+const int _defaultShmSize = 67108864;
+
+/// `HostConfig.NanoCpus` as the decimal `--cpus` takes (1500000000 → `1.5`).
+String _cpusFromNano(int nano) {
+  final frac = (nano % 1000000000)
+      .toString()
+      .padLeft(9, '0')
+      .replaceFirst(RegExp(r'0+$'), '');
+  final whole = nano ~/ 1000000000;
+  return frac.isEmpty ? '$whole' : '$whole.$frac';
+}
+
+/// Why a plain `docker run` container cannot be recreated by
+/// [buildDockerRunCommand] without losing something — the German reason, or
+/// null when it can. Asked before anything is pulled or stopped, like the
+/// digest-pin check; never for compose-managed containers (compose recreates
+/// those itself).
+///
+/// Refused: `--rm` (the daemon deletes the container the moment it stops, so
+/// no rollback copy would be left), `--mount` entries, more than one network,
+/// a fixed IP address, a network alias the user set, and a seccomp profile the
+/// docker CLI inlined from a file.
+String? dockerRecreateRefusal(Map<String, dynamic> container) {
+  const tail = ' Pi-Tool kann das bei der Neuanlage nicht sicher übernehmen – '
+      'bitte den Container von Hand aktualisieren. Nichts geändert.';
+  final config = (container['Config'] is Map)
+      ? Map<String, dynamic>.from(container['Config'] as Map)
+      : <String, dynamic>{};
+  final host = (container['HostConfig'] is Map)
+      ? Map<String, dynamic>.from(container['HostConfig'] as Map)
+      : <String, dynamic>{};
+
+  if (host['AutoRemove'] == true) {
+    return 'Der Container wurde mit --rm gestartet: Docker löscht ihn, sobald '
+        'er stoppt – ein Rollback gäbe es dann nicht. Bitte den Container von '
+        'Hand aktualisieren. Nichts geändert.';
+  }
+
+  final mounts = host['Mounts'];
+  if (mounts is List && mounts.isNotEmpty) {
+    final targets = [
+      for (final m in mounts)
+        if (m is Map) (m['Target'] ?? '').toString()
+    ].where((t) => t.isNotEmpty).join(', ');
+    return 'Der Container nutzt --mount-Einträge'
+        '${targets.isEmpty ? '' : ' ($targets)'}.$tail';
+  }
+
+  // `--security-opt seccomp=<file>` is stored as the profile's JSON; passed
+  // back, the docker CLI would look for a file of that name.
+  final secOpts = host['SecurityOpt'];
+  for (final o in (secOpts is List ? secOpts : [])) {
+    final m = RegExp(r'^seccomp[=:](.*)$', dotAll: true).firstMatch('$o');
+    if (m != null && m[1] != 'unconfined' && m[1] != 'builtin') {
+      return 'Der Container nutzt ein eigenes seccomp-Profil.$tail';
+    }
+  }
+
+  final settings = container['NetworkSettings'];
+  final networks = (settings is Map && settings['Networks'] is Map)
+      ? Map<String, dynamic>.from(settings['Networks'] as Map)
+      : <String, dynamic>{};
+  if (networks.length > 1) {
+    return 'Der Container hängt an mehreren Netzwerken '
+        '(${networks.keys.join(', ')}).$tail';
+  }
+  // Older daemons list the container's short id and its hostname as aliases
+  // themselves, and tools that recreate containers carry a previous short id
+  // along: none of these was set by the user.
+  final shortId = RegExp(r'^[0-9a-f]{12}$');
+  final own = {
+    (config['Hostname'] ?? '').toString(),
+    (container['Name'] ?? '').toString().replaceFirst(RegExp(r'^/'), ''),
+  };
+  for (final entry in networks.entries) {
+    final endpoint = entry.value;
+    if (endpoint is! Map) continue;
+    final ipam = endpoint['IPAMConfig'];
+    if (ipam is Map) {
+      final fixed = [
+        ipam['IPv4Address'],
+        ipam['IPv6Address'],
+        if (ipam['LinkLocalIPs'] is List) ...ipam['LinkLocalIPs'] as List,
+      ].map((a) => (a ?? '').toString()).where((a) => a.isNotEmpty).join(', ');
+      if (fixed.isNotEmpty) {
+        return 'Der Container hat eine feste IP-Adresse ($fixed im Netzwerk '
+            '„${entry.key}“).$tail';
+      }
+    }
+    final aliases = endpoint['Aliases'];
+    if (aliases is List) {
+      final userSet = aliases
+          .map((a) => a.toString())
+          .where((a) =>
+              a.isNotEmpty && !own.contains(a) && !shortId.hasMatch(a))
+          .join(', ');
+      if (userSet.isNotEmpty) {
+        return 'Der Container hat einen Netzwerk-Alias ($userSet im Netzwerk '
+            '„${entry.key}“).$tail';
+      }
+    }
+  }
+  return null;
+}
+
 /// Reconstructs an equivalent `docker run -d …` command from a full
 /// `docker inspect` object, preserving name, restart policy, privileges/devices
 /// /capabilities/groups (serial-meter setups), port bindings, bind/volume
-/// mounts, log options, user env, user labels and a non-default network.
+/// mounts, log options, user env, user labels and a non-default network, plus
+/// dropped capabilities, security options, tmpfs mounts, /dev/shm size,
+/// sysctls, memory/CPU/pids limits and the pid mode. Ask
+/// [dockerRecreateRefusal] first: it names what this command cannot carry.
 /// [image] overrides the image reference (e.g. to pin a freshly-pulled tag).
 String buildDockerRunCommand(Map<String, dynamic> container, {String? image}) {
   final config = (container['Config'] is Map)
@@ -402,6 +511,77 @@ String buildDockerRunCommand(Map<String, dynamic> container, {String? image}) {
     args.addAll(['--network', shSingleQuote(networkMode)]);
   }
 
+  // --- isolation and resource settings --------------------------------------
+  // Each maps one-to-one to a flag and is only passed when it differs from
+  // what the daemon fills in by itself. What cannot be mapped safely is not
+  // dropped either: [dockerRecreateRefusal] refuses the update for it.
+  int intOf(Object? v) => v is int ? v : 0;
+  final pidMode = (host['PidMode'] ?? '').toString();
+
+  for (final c in (host['CapDrop'] is List ? host['CapDrop'] as List : [])) {
+    args.addAll(['--cap-drop', shSingleQuote(c.toString())]);
+  }
+  // For --privileged, --pid=host and --ipc=host the daemon appends
+  // label=disable itself; that one is not the user's.
+  final daemonLabel = host['Privileged'] == true ||
+      pidMode == 'host' ||
+      (host['IpcMode'] ?? '').toString() == 'host';
+  final secOpts = host['SecurityOpt'];
+  for (final o in (secOpts is List ? secOpts : [])) {
+    final s = o.toString();
+    if (s.isEmpty || (daemonLabel && s == 'label=disable')) continue;
+    args.addAll(['--security-opt', shSingleQuote(s)]);
+  }
+  final tmpfs = host['Tmpfs'];
+  if (tmpfs is Map) {
+    tmpfs.forEach((path, opts) {
+      final o = (opts ?? '').toString();
+      args.addAll(['--tmpfs', shSingleQuote(o.isEmpty ? '$path' : '$path:$o')]);
+    });
+  }
+  final shm = intOf(host['ShmSize']);
+  if (shm > 0 && shm != _defaultShmSize) args.addAll(['--shm-size', '$shm']);
+  final sysctls = host['Sysctls'];
+  if (sysctls is Map) {
+    sysctls.forEach(
+        (k, v) => args.addAll(['--sysctl', shSingleQuote('$k=$v')]));
+  }
+
+  final memory = intOf(host['Memory']);
+  if (memory > 0) {
+    args.addAll(['--memory', '$memory']);
+    // Without --memory-swap the daemon stores twice the memory limit.
+    final swap = intOf(host['MemorySwap']);
+    if (swap != 0 && swap != memory * 2) {
+      args.addAll(['--memory-swap', '$swap']);
+    }
+  }
+  final reservation = intOf(host['MemoryReservation']);
+  if (reservation > 0) args.addAll(['--memory-reservation', '$reservation']);
+  final nanoCpus = intOf(host['NanoCpus']);
+  if (nanoCpus > 0) {
+    args.addAll(['--cpus', _cpusFromNano(nanoCpus)]);
+  } else {
+    // docker refuses --cpus together with a quota or a period.
+    final quota = intOf(host['CpuQuota']);
+    if (quota > 0) args.addAll(['--cpu-quota', '$quota']);
+    final period = intOf(host['CpuPeriod']);
+    if (period > 0) args.addAll(['--cpu-period', '$period']);
+  }
+  final shares = intOf(host['CpuShares']);
+  if (shares > 0) args.addAll(['--cpu-shares', '$shares']);
+  final cpuset = (host['CpusetCpus'] ?? '').toString();
+  if (cpuset.isNotEmpty) args.addAll(['--cpuset-cpus', shSingleQuote(cpuset)]);
+  final mems = (host['CpusetMems'] ?? '').toString();
+  if (mems.isNotEmpty) args.addAll(['--cpuset-mems', shSingleQuote(mems)]);
+  final pids = intOf(host['PidsLimit']);
+  if (pids > 0) args.addAll(['--pids-limit', '$pids']);
+
+  // Only the two modes docker run knows; an empty one is the default.
+  if (pidMode == 'host' || pidMode.startsWith('container:')) {
+    args.addAll(['--pid', shSingleQuote(pidMode)]);
+  }
+
   // --- identity/runtime settings that are NOT re-supplied by the image ------
   // Dropping these used to silently change behaviour on recreate and still
   // report success (audit 2026-08-15): a container running as root instead of
@@ -451,10 +631,35 @@ String buildDockerRunCommand(Map<String, dynamic> container, {String? image}) {
   return args.join(' ');
 }
 
+/// Printed as the last line (exit 0) by [dockerRunRecreateScript] when the
+/// pull brought nothing new: the container already runs the image its tag
+/// points to and was not touched.
+const String dockerImageUnchangedMarker = 'PITOOL_IMAGE_UNCHANGED';
+
+/// Whether [out] carries [dockerImageUnchangedMarker] on a line of its own.
+bool isDockerImageUnchanged(String out) =>
+    out.split('\n').any((l) => l.trim() == dockerImageUnchangedMarker);
+
+/// Whether [image]'s tag names a version (`:2026.6.3`, `:v1.27`,
+/// `:16-alpine`) rather than a moving channel (`:stable`, `:latest`, no tag).
+/// Such a tag only ever gets rebuilds of that version: a newer one needs
+/// another tag.
+bool isVersionPinnedImage(String image) {
+  final i = image.lastIndexOf(':');
+  if (i < 0) return false;
+  final tag = image.substring(i + 1);
+  // A '/' after the last ':' means it was a registry port, not a tag.
+  return !tag.contains('/') && RegExp(r'^v?\d').hasMatch(tag);
+}
+
 /// The root/bash script that updates a plain `docker run` container: pull the
 /// new image, keep the old container as a rollback by renaming it (never
 /// deleting data), then start the recreated container. [runCommand] is the
 /// reconstructed `docker run` from [buildDockerRunCommand].
+///
+/// When the tag still points to the image the container was created from,
+/// nothing is stopped or recreated: the script prints
+/// [dockerImageUnchangedMarker] and ends with exit 0.
 String dockerRunRecreateScript({
   required String name,
   required String image,
@@ -463,7 +668,11 @@ String dockerRunRecreateScript({
   final n = shSingleQuote(name);
   final backup = shSingleQuote('$name-evccpitool-old');
   final img = shSingleQuote(image);
-  // Pull first (a failed pull aborts before anything is touched). Then keep the
+  // Pull first (a failed pull aborts before anything is touched). Then compare
+  // the image the container was created from with the one the tag points to
+  // now — the container's own image, not the tag before the pull: an image
+  // pulled by hand, or by an update that was rolled back, is still new to the
+  // container. Ids that cannot be read never count as equal. Then keep the
   // old container as a rollback by renaming it (never `-v`, so no data loss),
   // create the new one, and if creation fails restore + restart the old one and
   // report failure. `docker run -d` returns 0 the moment the daemon ACCEPTS the
@@ -483,6 +692,12 @@ String dockerRunRecreateScript({
   return '''
 set -e
 docker pull $img
+cur=\$(docker container inspect -f '{{.Image}}' $n 2>/dev/null || true)
+new=\$(docker image inspect -f '{{.Id}}' $img 2>/dev/null || true)
+if [ -n "\$new" ] && [ "\$cur" = "\$new" ]; then
+  echo $dockerImageUnchangedMarker
+  exit 0
+fi
 rp=\$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}:{{.HostConfig.RestartPolicy.MaximumRetryCount}}' $n)
 case "\$rp" in
   always:*|unless-stopped:*|on-failure:0) rp=\${rp%%:*} ;;

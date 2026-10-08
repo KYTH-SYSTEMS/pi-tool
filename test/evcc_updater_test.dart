@@ -5736,6 +5736,146 @@ void main() {
       expect(script, contains('/home/pi/ha'));
     });
 
+    // The container as buildHomeAssistantInstallScript creates it, the way
+    // `docker inspect` reports it (privileged: the daemon adds label=disable).
+    String appHaInspect({
+      String image = homeAssistantImage,
+      Map<String, dynamic> host = const {},
+    }) =>
+        jsonEncode([
+          {
+            'Id': '4f2c9d1e8a7b${'0' * 52}',
+            'Name': '/homeassistant',
+            'Config': {
+              'Hostname': 'raspberrypi',
+              'Image': image,
+              'Env': [
+                'TZ=Europe/Berlin',
+                'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin',
+                'LANG=C.UTF-8',
+              ],
+              'Cmd': null,
+              'Entrypoint': ['/init'],
+              'Labels': {
+                'io.hass.type': 'core',
+                'org.opencontainers.image.version': '2026.6.3',
+              },
+            },
+            'HostConfig': {
+              'Binds': [
+                '/opt/homeassistant/config:/config',
+                '/run/dbus:/run/dbus:ro',
+              ],
+              'NetworkMode': 'host',
+              'RestartPolicy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0},
+              'AutoRemove': false,
+              'Privileged': true,
+              'SecurityOpt': ['label=disable'],
+              'ShmSize': 67108864,
+              'CapAdd': null,
+              'CapDrop': null,
+              'Memory': 0,
+              'MemorySwap': 0,
+              'NanoCpus': 0,
+              'PidMode': '',
+              'IpcMode': 'private',
+              'LogConfig': {'Type': 'json-file', 'Config': <String, dynamic>{}},
+              ...host,
+            },
+            'NetworkSettings': {
+              'Networks': {
+                'host': {'IPAMConfig': null, 'Aliases': null},
+              },
+            },
+          }
+        ]);
+
+    test('updateHomeAssistant rebuilds the app\'s own container with the same '
+        'flags as before', () async {
+      final runner = FakeSshRunner({
+        dockerListCommand: [_r('homeassistant|$homeAssistantImage\n')],
+        dockerListRunningCommand: [_r('homeassistant|$homeAssistantImage\n')],
+        dockerInspectJsonCommand('homeassistant'): [_r(appHaInspect())],
+        'bash -s': [_r('')],
+      });
+      final outcome = await _updaterWith(runner)
+          .updateHomeAssistant(config: _config, onLog: (_) {});
+      expect(outcome, DockerUpdateOutcome.updated);
+      expect(
+          runner.stdinByCommand['bash -s'],
+          contains("\ndocker run -d --name 'homeassistant' "
+              "--restart unless-stopped --privileged "
+              "-v '/opt/homeassistant/config:/config' "
+              "-v '/run/dbus:/run/dbus:ro' -e 'TZ=Europe/Berlin' "
+              "-e 'LANG=C.UTF-8' -l 'io.hass.type=core' --network 'host' "
+              "--hostname 'raspberrypi' --entrypoint '/init' "
+              "'$homeAssistantImage' || {"));
+      expect(runner.commandsRun, contains(dockerListRunningCommand));
+    });
+
+    test('updateHomeAssistant: a tag without a new image is reported, not '
+        'passed off as an update', () async {
+      for (final (image, expected) in [
+        (homeAssistantImage, DockerUpdateOutcome.tagCurrent),
+        (
+          'ghcr.io/home-assistant/home-assistant:2026.5.1',
+          DockerUpdateOutcome.pinnedTagCurrent
+        ),
+      ]) {
+        final runner = FakeSshRunner({
+          dockerListCommand: [_r('homeassistant|$image\n')],
+          dockerInspectJsonCommand('homeassistant'): [
+            _r(appHaInspect(image: image))
+          ],
+          'bash -s': [
+            _r('Status: Image is up to date for $image\n'
+                '$dockerImageUnchangedMarker\n')
+          ],
+        });
+        final logs = <String>[];
+        final outcome = await _updaterWith(runner)
+            .updateHomeAssistant(config: _config, onLog: logs.add);
+        final log = logs.join('\n');
+        expect(outcome, expected, reason: image);
+        expect(log, contains('Kein neueres Image für „$image“'));
+        expect(log.contains('versionsfest'),
+            expected == DockerUpdateOutcome.pinnedTagCurrent,
+            reason: image);
+        // Nothing was recreated, so there is nothing to verify or to claim.
+        expect(runner.commandsRun, isNot(contains(dockerListRunningCommand)));
+        expect(log, isNot(contains('läuft wieder')));
+      }
+    });
+
+    test('updateHomeAssistant refuses a hand-made container it cannot rebuild, '
+        'before anything is pulled', () async {
+      for (final (host, needle) in [
+        (<String, dynamic>{'AutoRemove': true}, '--rm'),
+        (
+          <String, dynamic>{
+            'Mounts': [
+              {'Type': 'volume', 'Source': 'ha', 'Target': '/config'}
+            ]
+          },
+          '--mount'
+        ),
+      ]) {
+        final runner = FakeSshRunner({
+          dockerListCommand: [_r('homeassistant|$homeAssistantImage\n')],
+          dockerInspectJsonCommand('homeassistant'): [
+            _r(appHaInspect(host: host))
+          ],
+        });
+        await expectLater(
+          _updaterWith(runner)
+              .updateHomeAssistant(config: _config, onLog: (_) {}),
+          throwsA(isA<EvccUpdateException>()
+              .having((e) => e.message, 'message', contains(needle))),
+        );
+        expect(runner.commandsRun, isNot(contains('bash -s')), reason: needle);
+      }
+    });
+
     test('updateHomeAssistant fails clearly when no HA container exists',
         () async {
       final runner = FakeSshRunner({
@@ -5891,7 +6031,10 @@ void main() {
   });
 
   group('EvccUpdater.updateDockerContainer (generic overview update)', () {
-    String plainInspect(String name, {String image = 'nginx:latest'}) =>
+    String plainInspect(String name,
+            {String image = 'nginx:latest',
+            Map<String, dynamic> host = const {},
+            Map<String, dynamic>? networks}) =>
         jsonEncode([
           {
             'Name': '/$name',
@@ -5901,7 +6044,9 @@ void main() {
             },
             'HostConfig': {
               'RestartPolicy': {'Name': 'unless-stopped'},
+              ...host,
             },
+            if (networks != null) 'NetworkSettings': {'Networks': networks},
           }
         ]);
 
@@ -5913,12 +6058,148 @@ void main() {
         installShellCommand: [_r('done')],
         buildDockerRunningProbe('web'): [_r('true\n')],
       });
-      await _updaterWith(runner).updateDockerContainer(
+      final outcome = await _updaterWith(runner).updateDockerContainer(
           config: _config, name: 'web', onLog: (_) {});
+      expect(outcome, DockerUpdateOutcome.updated);
       final stdin = runner.stdinByCommand[installShellCommand]!;
       expect(stdin, contains('docker pull'));
       expect(stdin, contains("'nginx:latest'"));
       expect(stdin, contains('web-evccpitool-old')); // rollback net
+    });
+
+    test('a tag without a new image is reported, not passed off as an update',
+        () async {
+      for (final (image, expected) in [
+        ('nginx:latest', DockerUpdateOutcome.tagCurrent),
+        ('nginx:1.27.0', DockerUpdateOutcome.pinnedTagCurrent),
+      ]) {
+        final runner = FakeSshRunner({
+          dockerInspectJsonSudoCommand('web'): [
+            _r(plainInspect('web', image: image))
+          ],
+          sudoNoPasswordProbe: [_r('', exitCode: 1)],
+          installShellCommand: [
+            _r('Status: Image is up to date for $image\n'
+                '$dockerImageUnchangedMarker\n')
+          ],
+          // Would be a failure if it were asked: nothing was recreated.
+          buildDockerRunningProbe('web'): [_r('false\n')],
+        });
+        final logs = <String>[];
+        final outcome = await _updaterWith(runner).updateDockerContainer(
+            config: _config, name: 'web', onLog: logs.add);
+        final log = logs.join('\n');
+        expect(outcome, expected, reason: image);
+        expect(log, contains('Kein neueres Image für „$image“'));
+        expect(log.contains('versionsfest'),
+            expected == DockerUpdateOutcome.pinnedTagCurrent,
+            reason: image);
+        expect(runner.commandsRun,
+            isNot(contains(buildDockerRunningProbe('web'))));
+        expect(log, isNot(contains('aktualisiert und läuft')));
+      }
+    });
+
+    test('refuses what the recreate would lose, before the root shell runs',
+        () async {
+      for (final (inspect, needle) in [
+        (plainInspect('web', host: {'AutoRemove': true}), '--rm'),
+        (
+          plainInspect('web', host: {
+            'Mounts': [
+              {'Type': 'volume', 'Source': 'data', 'Target': '/data'}
+            ]
+          }),
+          '--mount'
+        ),
+        (
+          plainInspect('web', networks: {
+            'iot': {'IPAMConfig': null, 'Aliases': null},
+            'proxy': {'IPAMConfig': null, 'Aliases': null},
+          }),
+          'mehreren Netzwerken'
+        ),
+        (
+          plainInspect('web', networks: {
+            'iot': {
+              'IPAMConfig': {'IPv4Address': '172.30.0.10'},
+              'Aliases': null
+            },
+          }),
+          'feste IP-Adresse'
+        ),
+        (
+          plainInspect('web', networks: {
+            'iot': {
+              'IPAMConfig': null,
+              'Aliases': ['db']
+            },
+          }),
+          'Netzwerk-Alias'
+        ),
+      ]) {
+        final runner = FakeSshRunner({
+          dockerInspectJsonSudoCommand('web'): [_r(inspect)],
+        });
+        await expectLater(
+          _updaterWith(runner).updateDockerContainer(
+              config: _config, name: 'web', onLog: (_) {}),
+          throwsA(isA<EvccUpdateException>()
+              .having((e) => e.message, 'message', contains(needle))),
+        );
+        expect(runner.commandsRun, [dockerInspectJsonSudoCommand('web')],
+            reason: needle);
+      }
+    });
+
+    test('a compose-managed container is updated by compose, whatever it '
+        'mounts or joins', () async {
+      // Compose always reports its volumes in HostConfig.Mounts and gives the
+      // service aliases; none of that is this app's to rebuild.
+      final composeInspect = jsonEncode([
+        {
+          'Name': '/proj-web-1',
+          'Config': {
+            'Image': 'nginx:latest',
+            'Labels': {
+              'com.docker.compose.project.working_dir': '/srv/proj',
+              'com.docker.compose.project.config_files':
+                  '/srv/proj/docker-compose.yml',
+              'com.docker.compose.service': 'web',
+              'com.docker.compose.project': 'proj',
+            },
+          },
+          'HostConfig': {
+            'AutoRemove': false,
+            'Mounts': [
+              {'Type': 'volume', 'Source': 'proj_data', 'Target': '/data'}
+            ],
+          },
+          'NetworkSettings': {
+            'Networks': {
+              'proj_default': {
+                'IPAMConfig': {'IPv4Address': '172.30.0.10'},
+                'Aliases': ['proj-web-1', 'web'],
+              },
+              'proxy': {'IPAMConfig': null, 'Aliases': ['web']},
+            },
+          },
+        }
+      ]);
+      final runner = FakeSshRunner({
+        dockerInspectJsonSudoCommand('proj-web-1'): [_r(composeInspect)],
+        sudoNoPasswordProbe: [_r('', exitCode: 1)],
+        // Not the recreate script's report: compose never prints it for us.
+        installShellCommand: [_r('$dockerImageUnchangedMarker\n')],
+        buildDockerRunningProbe('proj-web-1'): [_r('true\n')],
+      });
+      final outcome = await _updaterWith(runner).updateDockerContainer(
+          config: _config, name: 'proj-web-1', onLog: (_) {});
+      expect(outcome, DockerUpdateOutcome.updated);
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, contains("up -d 'web'"));
+      expect(stdin, isNot(contains('docker run')));
+      expect(runner.commandsRun, contains(buildDockerRunningProbe('proj-web-1')));
     });
 
     test('not running after the update → serviceInactive error', () async {
@@ -6112,6 +6393,76 @@ void main() {
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.message, 'm', contains('Digest'))),
       );
+    });
+
+    test('a recreate reports updated; compose does too', () async {
+      for (final inspect in [runInspect(), composeInspect()]) {
+        final runner = FakeSshRunner({
+          jsonCmd: [_r(inspect)],
+          shell: [_r('done', exitCode: 0)],
+          dockerListRunningCommand: [_r('evcc|evcc/evcc:latest\n')],
+        });
+        expect(
+            await _updaterWith(runner).updateDocker(
+                config: _config, detection: detection, onLog: (_) {}),
+            DockerUpdateOutcome.updated);
+      }
+    });
+
+    test('a tag without a new image is reported, not passed off as an update',
+        () async {
+      final runner = FakeSshRunner({
+        jsonCmd: [_r(runInspect())],
+        shell: [
+          _r('Status: Image is up to date for evcc/evcc:latest\n'
+              '$dockerImageUnchangedMarker\n')
+        ],
+        // Would be a failure if it were asked: nothing was recreated.
+        dockerListRunningCommand: [_r('')],
+      });
+      final logs = <String>[];
+      final outcome = await _updaterWith(runner).updateDocker(
+          config: _config, detection: detection, onLog: logs.add);
+      expect(outcome, DockerUpdateOutcome.tagCurrent);
+      expect(logs.join('\n'),
+          contains('Kein neueres Image für „evcc/evcc:latest“'));
+      expect(logs.join('\n'), isNot(contains('läuft wieder')));
+      expect(runner.commandsRun, isNot(contains(dockerListRunningCommand)));
+    });
+
+    test('the report only counts when the script ended with exit 0', () async {
+      // A connection that dropped after the line was printed proves nothing.
+      final runner = FakeSshRunner({
+        jsonCmd: [_r(runInspect())],
+        shell: [_r('$dockerImageUnchangedMarker\n', exitCode: null)],
+      });
+      await expectLater(
+        _updaterWith(runner).updateDocker(
+            config: _config, detection: detection, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('a --rm container is refused before anything is pulled or stopped',
+        () async {
+      final rmInspect = jsonEncode([
+        {
+          'Name': '/evcc',
+          'Config': {
+            'Image': 'evcc/evcc:latest',
+            'Labels': <String, dynamic>{}
+          },
+          'HostConfig': {'NetworkMode': 'default', 'AutoRemove': true},
+        }
+      ]);
+      final runner = FakeSshRunner({jsonCmd: [_r(rmInspect)]});
+      await expectLater(
+        _updaterWith(runner).updateDocker(
+            config: _config, detection: detection, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'm', contains('--rm'))),
+      );
+      expect(runner.commandsRun, [jsonCmd]);
     });
 
     test('ein Container in der Neustart-Schleife gilt nicht als gelaufen',

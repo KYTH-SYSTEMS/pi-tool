@@ -876,6 +876,396 @@ exit 0''', drainStdin: true);
     });
   });
 
+  // A `docker inspect` object the way the daemon reports a hand-made
+  // `docker run` container; [host], [config] and [networks] override it.
+  Map<String, dynamic> inspectOf({
+    Map<String, dynamic> host = const {},
+    Map<String, dynamic> config = const {},
+    Map<String, dynamic>? networks,
+  }) =>
+      {
+        'Id': 'abc123def456${'0' * 52}',
+        'Name': '/web',
+        'Config': {
+          'Hostname': 'abc123def456',
+          'Image': 'nginx:1.27',
+          'Labels': <String, dynamic>{},
+          ...config,
+        },
+        'HostConfig': {
+          'NetworkMode': 'bridge',
+          'RestartPolicy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0},
+          'AutoRemove': false,
+          'Privileged': false,
+          'CapAdd': null,
+          'CapDrop': null,
+          'SecurityOpt': null,
+          'ShmSize': 67108864,
+          'Memory': 0,
+          'MemorySwap': 0,
+          'MemoryReservation': 0,
+          'NanoCpus': 0,
+          'CpuShares': 0,
+          'CpuQuota': 0,
+          'CpuPeriod': 0,
+          'CpusetCpus': '',
+          'CpusetMems': '',
+          'PidsLimit': null,
+          'PidMode': '',
+          'IpcMode': 'private',
+          ...host,
+        },
+        'NetworkSettings': {
+          'Networks': networks ??
+              {
+                'bridge': {
+                  'IPAMConfig': null,
+                  'Aliases': null,
+                  'IPAddress': '172.17.0.2',
+                }
+              },
+        },
+      };
+
+  group('buildDockerRunCommand: isolation and resource settings', () {
+    const head = "docker run -d --name 'web' --restart unless-stopped";
+
+    test('the daemon\'s defaults turn into no flag at all', () {
+      expect(buildDockerRunCommand(inspectOf()), "$head 'nginx:1.27'");
+    });
+
+    test('carries cap-drop, security-opt, tmpfs, shm-size, sysctls, limits '
+        'and the pid mode', () {
+      final cmd = buildDockerRunCommand(inspectOf(host: {
+        'CapDrop': ['ALL'],
+        'SecurityOpt': ['no-new-privileges:true', 'apparmor=unconfined'],
+        'Tmpfs': {'/run': 'rw,noexec,nosuid,size=65536k', '/scratch': ''},
+        'ShmSize': 268435456,
+        'Sysctls': {'net.core.somaxconn': '1024'},
+        'Memory': 536870912,
+        'MemorySwap': 1073741824,
+        'MemoryReservation': 268435456,
+        'NanoCpus': 1500000000,
+        'CpuShares': 512,
+        'CpusetCpus': '0-2',
+        'CpusetMems': '0',
+        'PidsLimit': 200,
+        'PidMode': 'host',
+      }));
+      expect(
+          cmd,
+          "$head --cap-drop 'ALL' --security-opt 'no-new-privileges:true' "
+          "--security-opt 'apparmor=unconfined' "
+          "--tmpfs '/run:rw,noexec,nosuid,size=65536k' --tmpfs '/scratch' "
+          "--shm-size 268435456 --sysctl 'net.core.somaxconn=1024' "
+          '--memory 536870912 --memory-reservation 268435456 --cpus 1.5 '
+          "--cpu-shares 512 --cpuset-cpus '0-2' --cpuset-mems '0' "
+          "--pids-limit 200 --pid 'host' 'nginx:1.27'");
+    });
+
+    test('memory-swap only when it is not the daemon\'s own doubling', () {
+      String run(Map<String, dynamic> host) =>
+          buildDockerRunCommand(inspectOf(host: host));
+      // No --memory-swap given: the daemon stores twice the memory.
+      expect(run({'Memory': 536870912, 'MemorySwap': 1073741824}),
+          "$head --memory 536870912 'nginx:1.27'");
+      expect(run({'Memory': 536870912, 'MemorySwap': 805306368}),
+          "$head --memory 536870912 --memory-swap 805306368 'nginx:1.27'");
+      // Unlimited swap, also what a kernel without swap accounting leaves.
+      expect(run({'Memory': 536870912, 'MemorySwap': -1}),
+          "$head --memory 536870912 --memory-swap -1 'nginx:1.27'");
+      // A kernel without the memory cgroup discards the limit: 0 and -1.
+      expect(run({'Memory': 0, 'MemorySwap': -1}), "$head 'nginx:1.27'");
+    });
+
+    test('--cpus is the exact decimal of NanoCpus', () {
+      String cpus(int nano) => RegExp(r'--cpus (\S+)')
+          .firstMatch(buildDockerRunCommand(inspectOf(host: {'NanoCpus': nano})))!
+          .group(1)!;
+      expect(cpus(500000000), '0.5');
+      expect(cpus(2000000000), '2');
+      expect(cpus(1250000000), '1.25');
+      expect(cpus(1), '0.000000001');
+    });
+
+    test('cpu quota and period, unless --cpus already says it', () {
+      expect(
+          buildDockerRunCommand(
+              inspectOf(host: {'CpuQuota': 50000, 'CpuPeriod': 100000})),
+          "$head --cpu-quota 50000 --cpu-period 100000 'nginx:1.27'");
+      // docker refuses --cpus together with a period or a quota.
+      expect(
+          buildDockerRunCommand(inspectOf(host: {
+            'NanoCpus': 1000000000,
+            'CpuQuota': 50000,
+            'CpuPeriod': 100000,
+          })),
+          "$head --cpus 1 'nginx:1.27'");
+    });
+
+    test('pid mode: host and another container, nothing else', () {
+      expect(buildDockerRunCommand(inspectOf(host: {'PidMode': 'container:f00'})),
+          "$head --pid 'container:f00' 'nginx:1.27'");
+      expect(buildDockerRunCommand(inspectOf(host: {'PidMode': 'private'})),
+          "$head 'nginx:1.27'");
+    });
+
+    test('label=disable the daemon added itself is not passed back', () {
+      // For --privileged, --pid=host and --ipc=host the daemon appends it.
+      for (final own in [
+        {'Privileged': true},
+        {'PidMode': 'host'},
+        {'IpcMode': 'host'},
+      ]) {
+        final cmd = buildDockerRunCommand(inspectOf(host: {
+          ...own,
+          'SecurityOpt': ['seccomp=unconfined', 'label=disable'],
+        }));
+        expect(cmd, contains("--security-opt 'seccomp=unconfined'"));
+        expect(cmd, isNot(contains('label=disable')), reason: '$own');
+      }
+      // Set by hand on an ordinary container, it is the user's.
+      expect(
+          buildDockerRunCommand(inspectOf(host: {
+            'SecurityOpt': ['label=disable'],
+          })),
+          "$head --security-opt 'label=disable' 'nginx:1.27'");
+    });
+
+    test('hostile values in the new fields cannot break out', () {
+      const evil = "x';reboot;'";
+      final cmd = buildDockerRunCommand(inspectOf(host: {
+        'CapDrop': [evil],
+        'SecurityOpt': [evil],
+        'Tmpfs': {evil: evil},
+        'Sysctls': {evil: evil},
+        'CpusetCpus': evil,
+        'CpusetMems': evil,
+        'PidMode': 'container:$evil',
+        // Not numbers: never interpolated.
+        'Memory': evil,
+        'ShmSize': evil,
+        'NanoCpus': evil,
+        'PidsLimit': evil,
+      }));
+      expect(cmd, isNot(contains("x';reboot")));
+      expect(cmd, isNot(contains('--memory')));
+      expect(cmd, isNot(contains('--shm-size')));
+      expect(cmd, isNot(contains('--cpus ')));
+      expect(cmd, isNot(contains('--pids-limit')));
+      // Every `'` of the values is escaped: what is left parses as one word
+      // per flag value.
+      expect(RegExp(r"x'\\'';reboot;'\\''").allMatches(cmd), hasLength(9));
+    });
+  });
+
+  group('dockerRecreateRefusal', () {
+    test('ordinary containers are recreated, not refused', () {
+      for (final c in [
+        inspectOf(),
+        // A user-defined network: older daemons list the short id and a
+        // custom hostname as aliases themselves, newer ones an empty config.
+        inspectOf(host: {
+          'NetworkMode': 'iot'
+        }, networks: {
+          'iot': {
+            'IPAMConfig': null,
+            'Aliases': ['abc123def456'],
+          }
+        }),
+        // … and a tool that recreated the container (Portainer) may have
+        // carried the previous container's short id along.
+        inspectOf(config: {
+          'Hostname': 'web-1'
+        }, host: {
+          'NetworkMode': 'iot'
+        }, networks: {
+          'iot': {
+            'IPAMConfig': <String, dynamic>{},
+            'Aliases': ['abc123def456', 'web-1', '0f1e2d3c4b5a', 'web'],
+          }
+        }),
+        inspectOf(host: {
+          'NetworkMode': 'iot'
+        }, networks: {
+          'iot': {
+            'IPAMConfig': {'IPv4Address': '', 'IPv6Address': ''},
+            'Aliases': <String>[],
+          }
+        }),
+        inspectOf(
+            host: {'NetworkMode': 'host'},
+            networks: {
+              'host': {'IPAMConfig': null, 'Aliases': null}
+            }),
+        inspectOf(
+            host: {'NetworkMode': 'container:f00'},
+            networks: <String, dynamic>{}),
+        // Settings that are carried over are no reason to refuse.
+        inspectOf(host: {
+          'CapDrop': ['ALL'],
+          'SecurityOpt': ['seccomp=unconfined', 'no-new-privileges'],
+          'Tmpfs': {'/run': ''},
+          'Memory': 536870912,
+          'PidMode': 'host',
+          'Mounts': <dynamic>[],
+        }),
+        // An inspect object without the sections at all.
+        <String, dynamic>{
+          'Name': '/web',
+          'Config': {'Image': 'nginx'},
+        },
+      ]) {
+        expect(dockerRecreateRefusal(c), isNull, reason: '$c');
+      }
+    });
+
+    test('--rm: the daemon deletes the container on stop, no rollback', () {
+      final reason = dockerRecreateRefusal(inspectOf(host: {'AutoRemove': true}));
+      expect(reason, contains('--rm'));
+      expect(reason, contains('Rollback'));
+      expect(reason, endsWith('Nichts geändert.'));
+    });
+
+    test('--mount entries are not rebuilt from HostConfig.Mounts', () {
+      final reason = dockerRecreateRefusal(inspectOf(host: {
+        'Mounts': [
+          {'Type': 'volume', 'Source': 'data', 'Target': '/var/lib/data'},
+          {'Type': 'bind', 'Source': '/srv/conf', 'Target': '/conf'},
+        ],
+      }));
+      expect(reason, contains('--mount'));
+      expect(reason, contains('/var/lib/data, /conf'));
+      expect(reason, endsWith('Nichts geändert.'));
+    });
+
+    test('more than one network', () {
+      final reason = dockerRecreateRefusal(inspectOf(host: {
+        'NetworkMode': 'iot'
+      }, networks: {
+        'iot': {'IPAMConfig': null, 'Aliases': null},
+        'proxy': {'IPAMConfig': null, 'Aliases': null},
+      }));
+      expect(reason, contains('mehreren Netzwerken (iot, proxy)'));
+      expect(reason, endsWith('Nichts geändert.'));
+    });
+
+    test('a fixed IP address, v4 or v6', () {
+      for (final ipam in [
+        {'IPv4Address': '172.30.0.10'},
+        {'IPv4Address': '', 'IPv6Address': 'fd00::10'},
+        {
+          'LinkLocalIPs': ['169.254.10.10']
+        },
+      ]) {
+        final reason = dockerRecreateRefusal(inspectOf(host: {
+          'NetworkMode': 'iot'
+        }, networks: {
+          'iot': {'IPAMConfig': ipam, 'Aliases': null}
+        }));
+        expect(reason, contains('feste IP-Adresse'), reason: '$ipam');
+        expect(reason, contains('„iot“'));
+        expect(reason, endsWith('Nichts geändert.'));
+      }
+      expect(
+          dockerRecreateRefusal(inspectOf(host: {
+            'NetworkMode': 'iot'
+          }, networks: {
+            'iot': {
+              'IPAMConfig': {'IPv4Address': '172.30.0.10'},
+              'Aliases': null
+            }
+          })),
+          contains('172.30.0.10'));
+    });
+
+    test('a network alias the user set', () {
+      final reason = dockerRecreateRefusal(inspectOf(host: {
+        'NetworkMode': 'iot'
+      }, networks: {
+        'iot': {
+          'IPAMConfig': null,
+          'Aliases': ['db', 'abc123def456'],
+        }
+      }));
+      expect(reason, contains('Netzwerk-Alias'));
+      expect(reason, contains('db'));
+      expect(reason, isNot(contains('abc123def456')));
+      expect(reason, endsWith('Nichts geändert.'));
+    });
+
+    test('a seccomp profile the docker CLI inlined from a file', () {
+      // `--security-opt seccomp=profile.json` is stored as the JSON itself;
+      // passed back, the CLI would look for a file of that name.
+      final reason = dockerRecreateRefusal(inspectOf(host: {
+        'SecurityOpt': ['seccomp={"defaultAction":"SCMP_ACT_ERRNO"}'],
+      }));
+      expect(reason, contains('seccomp'));
+      expect(reason, endsWith('Nichts geändert.'));
+      for (final ok in ['seccomp=unconfined', 'seccomp=builtin']) {
+        expect(
+            dockerRecreateRefusal(inspectOf(host: {
+              'SecurityOpt': [ok]
+            })),
+            isNull,
+            reason: ok);
+      }
+    });
+
+    test('--rm is named first: it decides whether a rollback exists', () {
+      final reason = dockerRecreateRefusal(inspectOf(host: {
+        'AutoRemove': true,
+        'Mounts': [
+          {'Type': 'volume', 'Source': 'data', 'Target': '/data'}
+        ],
+      }));
+      expect(reason, contains('--rm'));
+      expect(reason, isNot(contains('--mount')));
+    });
+  });
+
+  group('isVersionPinnedImage', () {
+    test('a tag that names a version is pinned', () {
+      for (final image in [
+        'ghcr.io/home-assistant/home-assistant:2026.6.3',
+        'ghcr.io/home-assistant/home-assistant:2026.6',
+        'evcc/evcc:0.203.2',
+        'nginx:v1.27',
+        'postgres:16-alpine',
+        'registry.local:5000/app:1.2',
+      ]) {
+        expect(isVersionPinnedImage(image), isTrue, reason: image);
+      }
+    });
+
+    test('a moving tag, or none, is not', () {
+      for (final image in [
+        'ghcr.io/home-assistant/home-assistant:stable',
+        'evcc/evcc:latest',
+        'evcc/evcc:nightly',
+        'nginx',
+        'registry.local:5000/app',
+        'debian:bookworm-slim',
+        '',
+      ]) {
+        expect(isVersionPinnedImage(image), isFalse, reason: image);
+      }
+    });
+  });
+
+  group('isDockerImageUnchanged', () {
+    test('only the marker on a line of its own counts', () {
+      expect(
+          isDockerImageUnchanged('stable: Pulling from home-assistant\n'
+              'Status: Image is up to date\n$dockerImageUnchangedMarker\n'),
+          isTrue);
+      expect(isDockerImageUnchanged('  $dockerImageUnchangedMarker\r\n'), isTrue);
+      expect(isDockerImageUnchanged(''), isFalse);
+      expect(isDockerImageUnchanged('Status: Image is up to date'), isFalse);
+      expect(isDockerImageUnchanged('x $dockerImageUnchangedMarker y'), isFalse);
+    });
+  });
+
   group('dockerRunRecreateScript restart policy', () {
     final s = dockerRunRecreateScript(
       name: 'evcc',
@@ -966,6 +1356,11 @@ case "$1" in
             s = rep(s, "{{.State.Running}}", run); s = rep(s, "{{.State.Restarting}}", rs)
             print s }' ;;
     esac ;;
+  # The image a container was created from (state `cimg`) and the one a tag
+  # points to now (state `timg`); without the state file: no such object.
+  container) [ -e "@S@/cimg" ] && cat "@S@/cimg" ;;
+  image) [ -e "@S@/timg" ] && cat "@S@/timg" ;;
+  pull) [ ! -e "@S@/pull_fail" ] ;;
   run) [ ! -e "@S@/run_fail" ] ;;
 esac'''
           .replaceAll('@S@', sb.stateDir));
@@ -977,6 +1372,68 @@ esac'''
           image: 'evcc/evcc:latest',
           runCommand: "docker run -d --name 'evcc' 'evcc/evcc:latest'",
         ));
+
+    // The two questions the script asks after the pull, as the stub logs them.
+    const askContainer = 'docker container inspect -f {{.Image}} evcc';
+    const askTag = 'docker image inspect -f {{.Id}} evcc/evcc:latest';
+
+    test('nothing new behind the tag: the container is left alone', () async {
+      sb.setState('rp', 'unless-stopped:0');
+      sb.setState('cimg', 'sha256:aaa\n');
+      sb.setState('timg', 'sha256:aaa\n');
+      final r = await recreate();
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      expect(r.lines.last, dockerImageUnchangedMarker);
+      expect(isDockerImageUnchanged(r.out), isTrue);
+      // Pulled and asked, nothing else: not stopped, renamed or recreated.
+      expect(sb.calls, ['docker pull evcc/evcc:latest', askContainer, askTag]);
+    });
+
+    test('a new image behind the tag: recreated as before', () async {
+      sb.setState('rp', 'unless-stopped:0');
+      sb.setState('state', 'running|0');
+      sb.setState('cimg', 'sha256:aaa\n');
+      sb.setState('timg', 'sha256:bbb\n');
+      final r = await recreate();
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      expect(isDockerImageUnchanged(r.out), isFalse);
+      final c = sb.calls;
+      expect(c.sublist(0, 3),
+          ['docker pull evcc/evcc:latest', askContainer, askTag]);
+      final stop = c.indexOf('docker stop evcc');
+      expect(stop, greaterThan(2));
+      expect(c.indexOf('docker rename evcc evcc-evccpitool-old'),
+          greaterThan(stop));
+      expect(c, contains('docker run -d --name evcc evcc/evcc:latest'));
+    });
+
+    test('image ids that cannot be read never count as unchanged', () async {
+      for (final known in ['cimg', 'timg', null]) {
+        sb.clearState('cimg');
+        sb.clearState('timg');
+        sb.clearState('calls');
+        if (known != null) sb.setState(known, 'sha256:aaa\n');
+        sb.setState('rp', 'unless-stopped:0');
+        sb.setState('state', 'running|0');
+        final r = await recreate();
+        expect(r.code, 0, reason: '$known: ${r.out}\n${r.err}');
+        expect(isDockerImageUnchanged(r.out), isFalse, reason: '$known');
+        expect(sb.calls, contains('docker stop evcc'), reason: '$known');
+        expect(sb.calls, contains('docker run -d --name evcc evcc/evcc:latest'),
+            reason: '$known');
+      }
+    });
+
+    test('a failing pull ends the script before anything is asked or changed',
+        () async {
+      sb.setState('pull_fail');
+      sb.setState('cimg', 'sha256:aaa\n');
+      sb.setState('timg', 'sha256:aaa\n');
+      final r = await recreate();
+      expect(r.code, isNot(0));
+      expect(isDockerImageUnchanged(r.out), isFalse);
+      expect(sb.calls, ['docker pull evcc/evcc:latest']);
+    });
 
     List<String> updates() =>
         sb.calls.where((c) => c.startsWith('docker update')).toList();
