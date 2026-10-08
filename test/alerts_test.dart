@@ -232,6 +232,31 @@ void main() {
             reason: bad);
       }
     });
+
+    test('the refusal does not repeat the value: the error text is logged, '
+        'and the field may hold credentials or a pasted ntfy:// link with '
+        'the topic', () {
+      for (final bad in [
+        'ntfy://ntfy.example/pi-tool-k7m2q9x4vb3dwz',
+        'htps://anna:geheim@ntfy.example',
+      ]) {
+        for (final build in [
+          () => buildAlertsInstallScript(ntfyServer: bad, ntfyTopic: 't'),
+          () => buildTestAlertCommand(ntfyServer: bad, ntfyTopic: 't'),
+        ]) {
+          Object? error;
+          try {
+            build();
+          } on ArgumentError catch (e) {
+            error = e;
+          }
+          expect('$error', contains('kein http(s)-Server'), reason: bad);
+          for (final part in ['ntfy.example', 'k7m2q9x4vb3dwz', 'geheim']) {
+            expect('$error', isNot(contains(part)), reason: bad);
+          }
+        }
+      }
+    });
   });
 
   // The real command in a real bash; `curl` is a stub that records its

@@ -77,8 +77,10 @@ String _ntfyServer(String server) {
   final s = server.replaceAll(RegExp(r'\s'), '');
   if (_httpRe.hasMatch(s)) return s;
   if (s.isEmpty || _schemeRe.hasMatch(s)) {
-    throw ArgumentError.value(
-        server, 'ntfyServer', 'kein http(s)-Server für ntfy');
+    // Without the value: the text of this error is logged, and the field may
+    // hold credentials (user:password@…) or a pasted ntfy:// link — which
+    // names the topic.
+    throw ArgumentError('kein http(s)-Server für ntfy', 'ntfyServer');
   }
   return 'http://$s';
 }
