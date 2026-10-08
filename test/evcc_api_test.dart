@@ -43,17 +43,214 @@ void main() {
       expect(state.loadpoints.first.mode, 'pv');
     });
 
-    test('reads the new unwrapped shape (no result key)', () {
+    test('reads flat keys without the result wrapper', () {
       final state = parseEvccState({
-        'version': '0.200.0',
+        'version': '0.130.0',
         'siteTitle': 'Haus',
         'gridPower': 50,
         'loadpoints': [],
       });
-      expect(state.version, '0.200.0');
+      expect(state.version, '0.130.0');
       expect(state.siteTitle, 'Haus');
       expect(state.gridPower, 50);
       expect(state.loadpoints, isEmpty);
+    });
+
+    // The three shapes of grid and battery in /api/state, each derived from
+    // evcc's source at that tag (github.com/evcc-io/evcc): core/site.go
+    // (site.publish calls), core/keys/site.go (key names), core/types/types.go
+    // (JSON field names) and server/http_site_handler.go (stateHandler).
+    test('evcc 0.124.0: flat keys inside the result wrapper', () {
+      // core/site.go: retryMeter publishes name+"Power" ("gridPower");
+      // updateMeters publishes batterySoc, batteryPower and `battery` as the
+      // list of device measurements; prepare publishes batteryConfigured.
+      // stateHandler answers via jsonResult → {"result": …}.
+      final state = parseEvccState({
+        'result': {
+          'version': '0.124.0',
+          'siteTitle': 'Zuhause',
+          'gridConfigured': true,
+          'gridPower': -1240.5,
+          'homePower': 480.2,
+          'pvConfigured': true,
+          'pvPower': 2100,
+          'batteryConfigured': true,
+          'batteryCapacity': 10.2,
+          'batterySoc': 76,
+          'batteryPower': -380,
+          'battery': [
+            {'power': -380, 'soc': 76, 'capacity': 10.2, 'controllable': false},
+          ],
+          'loadpoints': [],
+        },
+      });
+      expect(state.gridPower, -1240.5);
+      expect(state.homePower, 480.2);
+      expect(state.pvPower, 2100);
+      expect(state.batteryConfigured, isTrue);
+      expect(state.batterySoc, 76);
+      expect(state.batteryPower, -380);
+    });
+
+    test('evcc 0.133.0–0.300.x: grid nested, battery values still flat', () {
+      // 0.133.0 "Align grid measurements structure with pv and battery (BC)":
+      // site.publish(keys.Grid, mm) with measurement{power, energy, powers,
+      // currents}; the gridPower key is gone. batteryConfigured was removed in
+      // 0.125.0 — evcc's own UI then reads `battery?.length > 0`
+      // (assets/js/components/Site/Site.vue at 0.207.0).
+      final state = parseEvccState({
+        'version': '0.207.0',
+        'gridConfigured': true,
+        'grid': {
+          'power': 312.4,
+          'energy': 8123.4,
+          'powers': [104.1, 104.1, 104.2],
+          'currents': [0.5, 0.5, 0.5],
+        },
+        'homePower': 512.4,
+        'pvPower': 0,
+        'batteryCapacity': 10.2,
+        'batterySoc': 41.5,
+        'batteryPower': 200,
+        'batteryEnergy': 0,
+        'battery': [
+          {'power': 200, 'capacity': 10.2, 'soc': 41.5, 'controllable': true},
+        ],
+        'loadpoints': [],
+      });
+      expect(state.gridPower, 312.4);
+      expect(state.batteryConfigured, isTrue);
+      expect(state.batterySoc, 41.5);
+      expect(state.batteryPower, 200);
+    });
+
+    test('evcc 0.301.0+ (checked up to 0.316.2): grid and battery nested', () {
+      // 0.301.0 "Batteries: consolidate measurements api (BC)":
+      // site.publish(keys.Battery, battery) with types.BatteryState{power,
+      // energy, capacity, soc, devices}; batterySoc / batteryPower are gone
+      // from core/keys/site.go. Site.vue: `this.battery?.soc`,
+      // `(this.battery?.devices?.length ?? 0) > 0`, `this.grid?.power`.
+      final state = parseEvccState({
+        'version': '0.316.2',
+        'siteTitle': 'Zuhause',
+        'gridConfigured': true,
+        'grid': {
+          'power': -1240.5,
+          'energy': 8123.4,
+          'returnEnergy': 5120.9,
+          'powers': [-413.5, -413.5, -413.5],
+          'currents': [-1.8, -1.8, -1.8],
+        },
+        'homePower': 480.2,
+        'pvPower': 2100,
+        'pv': [
+          {'power': 2100, 'energy': 12345.6},
+        ],
+        'battery': {
+          'power': -380,
+          'energy': 1200.5,
+          'capacity': 10.2,
+          'soc': 76,
+          'devices': [
+            {
+              'name': 'battery1',
+              'power': -380,
+              'capacity': 10.2,
+              'soc': 76,
+              'controllable': true,
+            },
+          ],
+        },
+        'batteryMode': 'unknown',
+        'loadpoints': [],
+      });
+      expect(state.version, '0.316.2');
+      expect(state.gridPower, -1240.5);
+      expect(state.homePower, 480.2);
+      expect(state.pvPower, 2100);
+      expect(state.batteryConfigured, isTrue);
+      expect(state.batterySoc, 76);
+      expect(state.batteryPower, -380);
+      expect(evccCardLines(state), [
+        'PV 2,1 kW · Netz -1,2 kW · Haus 480 W',
+        'Batterie 76 %',
+      ]);
+    });
+
+    test('no battery: null (0.301.0+) or an empty list (0.125.0–0.300.x)', () {
+      // prepare(): site.publish(keys.Battery, nil) resp. []api.Meter{}, and
+      // site.publish(keys.Grid, api.Meter(nil)) until the first reading.
+      for (final battery in [null, <Object>[]]) {
+        final state = parseEvccState({
+          'version': '0.316.2',
+          'grid': null,
+          'battery': battery,
+          'loadpoints': [],
+        });
+        expect(state.batteryConfigured, isFalse, reason: '$battery');
+        expect(state.batterySoc, isNull, reason: '$battery');
+        expect(state.batteryPower, isNull, reason: '$battery');
+        expect(state.gridPower, isNull, reason: '$battery');
+      }
+    });
+
+    test('nested values win over flat ones; a missing one falls back', () {
+      final both = parseEvccState({
+        'grid': {'power': 100},
+        'gridPower': 1,
+        'battery': {
+          'soc': 50,
+          'power': 20,
+          'devices': [
+            {'power': 20},
+          ],
+        },
+        'batterySoc': 2,
+        'batteryPower': 3,
+      });
+      expect(both.gridPower, 100);
+      expect(both.batterySoc, 50);
+      expect(both.batteryPower, 20);
+
+      final partial = parseEvccState({
+        'grid': {'energy': 5},
+        'gridPower': 1,
+        'battery': {'devices': <Object>[]},
+        'batterySoc': 2,
+        'batteryPower': 3,
+      });
+      expect(partial.gridPower, 1);
+      expect(partial.batterySoc, 2);
+      expect(partial.batteryPower, 3);
+      expect(partial.batteryConfigured, isFalse);
+    });
+
+    test('nested values tolerate strings, null and wrong types', () {
+      final strings = parseEvccState({
+        'grid': {'power': '1500'},
+        'battery': {
+          'soc': ' 76.5 ',
+          'power': '-380',
+          'devices': [
+            {'power': -380},
+          ],
+        },
+      });
+      expect(strings.gridPower, 1500);
+      expect(strings.batterySoc, 76.5);
+      expect(strings.batteryPower, -380);
+      expect(strings.batteryConfigured, isTrue);
+
+      final broken = parseEvccState({
+        'grid': 'n/a',
+        'battery': {'soc': null, 'power': 'x', 'devices': 'none'},
+      });
+      expect(broken.gridPower, isNull);
+      expect(broken.batterySoc, isNull);
+      expect(broken.batteryPower, isNull);
+      expect(broken.batteryConfigured, isFalse);
+
+      expect(parseEvccState({'grid': 7, 'battery': true}).gridPower, isNull);
     });
 
     test('tolerates the alternate batterySoC / vehicleSoC casing', () {

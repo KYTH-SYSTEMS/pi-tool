@@ -3,8 +3,9 @@
 /// Pure parsing + formatting are unit-tested; the HTTP fetch is a thin
 /// injectable adapter. Everything is defensive: evcc dropped the legacy
 /// `{"result": …}` wrapper in a later version, field casing has drifted
-/// (`batterySoc` vs `batterySoC`), and any field may be missing — so the parser
-/// never throws on shape and the UI degrades to em dashes.
+/// (`batterySoc` vs `batterySoC`), grid and battery values moved from flat
+/// keys into objects, and any field may be missing — so the parser never
+/// throws on shape and the UI degrades to em dashes.
 library;
 
 import 'dart:async';
@@ -57,10 +58,22 @@ class EvccState {
 
 /// Parses evcc's `/api/state` JSON, unwrapping the legacy `result` envelope if
 /// present and tolerating missing fields / casing drift / string numbers.
+///
+/// Grid and battery moved into objects over time; the nested value is read
+/// first, the flat key of older versions is the fallback:
+///  - grid power: `grid.power` since 0.133.0, `gridPower` before.
+///  - battery SoC / power: `battery.soc` / `battery.power` since 0.301.0,
+///    `batterySoc` / `batteryPower` before.
+///  - battery configured: `batteryConfigured` up to 0.124.x; from 0.125.0 a
+///    non-empty `battery` list, since 0.301.0 a non-empty `battery.devices` —
+///    the same rule evcc's own UI applies.
 EvccState parseEvccState(Map<String, dynamic> json) {
   final root = (json['result'] is Map)
       ? Map<String, dynamic>.from(json['result'] as Map)
       : json;
+  final grid = root['grid'];
+  final battery = root['battery'];
+  final batteryDevices = battery is Map ? battery['devices'] : battery;
 
   final lps = <EvccLoadpoint>[];
   final rawLps = root['loadpoints'];
@@ -83,12 +96,16 @@ EvccState parseEvccState(Map<String, dynamic> json) {
   return EvccState(
     version: _str(root['version']),
     siteTitle: _str(root['siteTitle']),
-    gridPower: _num(root['gridPower']),
+    gridPower: _num(grid is Map ? grid['power'] : null) ??
+        _num(root['gridPower']),
     homePower: _num(root['homePower']),
     pvPower: _num(root['pvPower']),
-    batteryConfigured: root['batteryConfigured'] == true,
-    batterySoc: _num(root['batterySoc'] ?? root['batterySoC']),
-    batteryPower: _num(root['batteryPower']),
+    batteryConfigured: root['batteryConfigured'] == true ||
+        (batteryDevices is List && batteryDevices.isNotEmpty),
+    batterySoc: _num(battery is Map ? battery['soc'] : null) ??
+        _num(root['batterySoc'] ?? root['batterySoC']),
+    batteryPower: _num(battery is Map ? battery['power'] : null) ??
+        _num(root['batteryPower']),
     loadpoints: lps,
   );
 }
