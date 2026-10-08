@@ -79,9 +79,13 @@ android {
             // — too important to leave to a plugin default that a Flutter
             // upgrade could quietly change. Our DEX is ~2.7 MB and the rule
             // only bites above 10 MB, so this is a guard rail, not a fix.
-            // isShrinkResources stays off on purpose: it buys a little size at
-            // the price of resources that are only referenced by name at
-            // runtime, and nothing requires it.
+            // isShrinkResources is not set here — which does NOT mean it is off.
+            // The Flutter Gradle Plugin (3.44.4) also switches resource
+            // shrinking on for an app's release build (unless Gradle runs with
+            // -Pshrink=false), and nothing below resets it. So a resource that
+            // is only looked up by name at runtime is dropped from the release
+            // build alone; such a resource needs a tools:keep entry
+            // (res/raw/keep.xml — the app has no such file today).
             isMinifyEnabled = true
         }
     }
