@@ -389,13 +389,15 @@ class _SilentRunner implements SshRunner {
 
 /// A [FakeSshRunner] whose detection batch comes back the way a channel
 /// delivered it: [output] in place of the synthesized text (what a real bash
-/// printed), cut off where [cutAt] begins, with [exitCode] as its status.
+/// printed), cut off where [cutAt] begins, with [exitCode] as its status and
+/// [stderr] as what the shell itself said.
 class _DetectOutputRunner extends FakeSshRunner {
   _DetectOutputRunner(super.responses,
-      {this.output, this.cutAt, this.exitCode = 0});
+      {this.output, this.cutAt, this.exitCode = 0, this.stderr = ''});
   final String? output;
   final String? cutAt;
   final int? exitCode;
+  final String stderr;
 
   @override
   Future<CommandResult> run(String command,
@@ -404,7 +406,7 @@ class _DetectOutputRunner extends FakeSshRunner {
     if (command != detectShellCommand) return r;
     var out = output ?? r.stdout;
     if (cutAt != null) out = out.substring(0, out.indexOf(cutAt!));
-    return _r(out, exitCode: exitCode);
+    return _r(out, stderr: stderr, exitCode: exitCode);
   }
 }
 
@@ -2968,7 +2970,8 @@ void main() {
     test('closes the connection and surfaces a cancelled error', () async {
       final runner = _HangingRunner();
       final updater = EvccUpdater(runnerFactory: (_) => runner);
-      final f = updater.detectServices(config: _config, onLog: (_) {});
+      final log = <String>[];
+      final f = updater.detectServices(config: _config, onLog: log.add);
       await runner.runStarted.future; // a command is now in flight
       await updater.cancel();
       await expectLater(
@@ -2977,6 +2980,9 @@ void main() {
             .having((e) => e.kind, 'kind', UpdateErrorKind.cancelled)),
       );
       expect(runner.closed, isTrue);
+      // The batch came back without its end marker because the user stopped
+      // it: nothing to diagnose, so nothing about it in the log.
+      expect(log, ['Erkenne Dienste …']);
     });
 
     test('cancel during connect stops before the (destructive) body runs',
@@ -4490,7 +4496,8 @@ void main() {
         'unbekannt. Details im Log.';
     const endMarker = '@@PT@@$detectEndKey@@PT@@';
 
-    _DetectOutputRunner pi({String? cutAt, int? exitCode = 0}) =>
+    _DetectOutputRunner pi(
+            {String? cutAt, int? exitCode = 0, String stderr = ''}) =>
         _DetectOutputRunner({
           _vQuery: [_r('installed 0.310.0\n')],
           _svc: [_r('active\n')],
@@ -4506,7 +4513,7 @@ void main() {
             _r('0 upgraded, 0 newly installed, 0 to remove.')
           ],
           systemAptAgeCommand: [_r('3600')],
-        }, cutAt: cutAt, exitCode: exitCode);
+        }, cutAt: cutAt, exitCode: exitCode, stderr: stderr);
 
     test('the end marker is the last thing the batch the updater sends prints',
         () async {
@@ -4551,6 +4558,53 @@ void main() {
             .detectServices(config: _config, onLog: (_) {}),
         _err(UpdateErrorKind.unknown, unknown),
       );
+    });
+
+    // The message ends in "Details im Log": the log has to hold them. How far
+    // the batch came is also what tells a cut connection from a batch the
+    // shell on the Pi did not take.
+    test('the log says how far the batch came', () async {
+      final runner = pi(cutAt: '@@PT@@PIHOLE_V@@PT@@', exitCode: null);
+      final log = <String>[];
+      await expectLater(
+        _updaterWith(runner).detectServices(config: _config, onLog: log.add),
+        _err(UpdateErrorKind.unknown, unknown),
+      );
+      // Every probe the batch carries, the end marker not counted.
+      final sent = RegExp(r'^echo @@PT@@(.+)@@PT@@$', multiLine: true)
+              .allMatches(runner.stdinByCommand[detectShellCommand]!)
+              .length -
+          1;
+      expect(sent, greaterThan(20));
+      expect(log, [
+        'Erkenne Dienste …',
+        'Erkennung unvollständig: 5 von $sent Abschnitten angekommen (zuletzt '
+            'EVCC_SVC), Exit-Status fehlt.',
+      ]);
+    });
+
+    test('nothing arrived, but the shell said why: that is in the log',
+        () async {
+      const refused = 'bash: line 87: syntax error: unexpected end of file';
+      final runner = pi(
+          cutAt: '@@PT@@DOCKER@@PT@@', exitCode: 2, stderr: '$refused\n');
+      final log = <String>[];
+      await expectLater(
+        _updaterWith(runner).detectServices(config: _config, onLog: log.add),
+        _err(UpdateErrorKind.unknown, unknown),
+      );
+      expect(log[1], startsWith('Erkennung unvollständig: 0 von '));
+      expect(log[1], endsWith(' Abschnitten angekommen, Exit-Status 2.'));
+      expect(log[2], 'Meldung der Shell: $refused');
+      expect(log, hasLength(3));
+    });
+
+    test('a complete batch logs nothing about it', () async {
+      final log = <String>[];
+      await _updaterWith(pi(stderr: 'noise from a login script\n'))
+          .detectServices(config: _config, onLog: log.add);
+      expect(log.join('\n'), isNot(contains('unvollständig')));
+      expect(log.join('\n'), isNot(contains('Meldung der Shell')));
     });
 
     test('a batch with its end marker counts, whatever the exit status',
@@ -4632,6 +4686,37 @@ void main() {
       }));
       expect(byId['evcc']!.active, isFalse);
       expect(byId['evcc']!.health, '⚠ Container-Zustand: paused');
+    });
+
+    test('a third column that is not one of Docker\'s states: no claim, '
+        'active as before', () async {
+      // `docker` can be another tool's stand-in whose {{.State}} is the human
+      // status line. Only Docker's own words for "not running" may turn a
+      // card red; anything else says nothing about the container.
+      final byId = await detect(FakeSshRunner({
+        dockerListStateCommand: [
+          _r('evcc|evcc/evcc:latest|Up 2 hours\n'
+              'homeassistant|ghcr.io/home-assistant/home-assistant:stable|'
+              'Up 3 days (healthy)\n')
+        ],
+      }));
+      for (final id in ['evcc', 'homeassistant']) {
+        expect(byId[id]!.installed, isTrue, reason: id);
+        expect(byId[id]!.active, isTrue, reason: id);
+        expect(byId[id]!.health, isEmpty, reason: id);
+        expect(byId[id]!.healthWarning, isFalse, reason: id);
+      }
+    });
+
+    test('every state Docker has for "not running" is named', () async {
+      for (final state in ['created', 'removing', 'exited', 'dead']) {
+        final byId = await detect(FakeSshRunner({
+          dockerListStateCommand: [_r('evcc|evcc/evcc:latest|$state\n')],
+        }));
+        expect(byId['evcc']!.active, isFalse, reason: state);
+        expect(byId['evcc']!.health, '⚠ Container-Zustand: $state',
+            reason: state);
+      }
     });
 
     test('a Docker too old to report the state: active, as before', () async {

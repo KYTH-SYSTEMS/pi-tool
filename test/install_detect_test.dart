@@ -103,6 +103,22 @@ void main() {
       expect(r.sec, isNot(contains('C')));
       expect(r.sec, isNot(contains(detectEndKey)));
     });
+
+    test('a script that arrives without its closing brace runs no probe at all',
+        () async {
+      // The price of the group: bash runs none of it before it has read the
+      // closing brace. A script cut off on the way in leaves no section, and
+      // what bash has to say about it is on stderr — which detection logs.
+      final script = buildDetectBatch([('A', 'echo a'), ('B', 'echo b')]);
+      final p = await Process.start(_bash!, ['-s']);
+      final out = p.stdout.transform(utf8.decoder).join();
+      final err = p.stderr.transform(utf8.decoder).join();
+      p.stdin.write(script.substring(0, script.indexOf('echo @@PT@@B@@PT@@')));
+      await p.stdin.close();
+      expect(await p.exitCode, isNot(0));
+      expect(splitDetectSections(await out), isEmpty);
+      expect(await err, contains('syntax error'));
+    });
   }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
 
   group('dockerListStateCommand', () {

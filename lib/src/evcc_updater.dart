@@ -608,6 +608,23 @@ class EvccUpdater {
         // decides: the exit status travels after the output and can get lost
         // behind a batch that did finish.
         if (!sec.containsKey(detectEndKey)) {
+          // The message points to the log, so the log says how far the batch
+          // came and what the shell itself printed (the probes' own stderr is
+          // in their sections) — a cut connection and a batch bash did not
+          // take look the same otherwise. Not after "Abbrechen": that ends as
+          // "Abgebrochen." and there is nothing to diagnose.
+          if (!_cancelRequested(runner)) {
+            log('Erkennung unvollständig: ${sec.length} von ${probes.length} '
+                'Abschnitten angekommen'
+                '${sec.isEmpty ? '' : ' (zuletzt ${sec.keys.last})'}, '
+                'Exit-Status ${batch.exitCode ?? 'fehlt'}.');
+            final shell = batch.stderr.trim();
+            if (shell.isNotEmpty) {
+              final said =
+                  shell.length > 300 ? '${shell.substring(0, 300)} …' : shell;
+              log('Meldung der Shell: $said');
+            }
+          }
           throw const EvccUpdateException(
               UpdateErrorKind.unknown, _resultUnknown);
         }
@@ -848,14 +865,27 @@ class EvccUpdater {
   /// when [dockerPs] lists it in a state other than running — `docker ps`
   /// shows a container in its restart loop too. Null for a running one, and
   /// for a listing without states (a Docker before 20.10): then the card
-  /// stays what it was, "aktiv". It is the card's second line, not part of
-  /// its detail: the log action reads the container name out of that.
+  /// stays what it was, "aktiv". The same for a third column that is none of
+  /// Docker's states — where `docker` is another tool's stand-in, `{{.State}}`
+  /// can be its human status line ("Up 2 hours"), which says nothing here. It
+  /// is the card's second line, not part of its detail: the log action reads
+  /// the container name out of that.
   static String? _dockerNote(String dockerPs, String name) =>
       switch (dockerContainerState(dockerPs, name)) {
-        null || 'running' => null,
         'restarting' => '⚠ Container startet neu',
-        final state => '⚠ Container-Zustand: $state',
+        final state? when _dockerNotRunning.contains(state) =>
+          '⚠ Container-Zustand: $state',
+        _ => null,
       };
+
+  /// Docker's container states other than `running` and `restarting`.
+  static const _dockerNotRunning = {
+    'created',
+    'paused',
+    'removing',
+    'exited',
+    'dead',
+  };
 
   /// Runs one sudo command, streaming output; maps a rejected password / non-zero
   /// exit to a clear [EvccUpdateException]. Used by the Pi-hole + System actions.
