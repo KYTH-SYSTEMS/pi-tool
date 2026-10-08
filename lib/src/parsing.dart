@@ -55,10 +55,29 @@ bool isServiceActive(String systemctlOutput) {
   return systemctlOutput.trim() == 'active';
 }
 
-/// Whether the output indicates that sudo rejected the password.
+/// sudo's count of failed attempts as a line of its own — or behind sudo's
+/// prompt, which ends without a line break (`sudo -S` after the last attempt).
+final _sudoAttemptsLine = RegExp(
+    r'^(?:\[sudo\] password for [^:]+: )?sudo: \d+ incorrect password attempts?$',
+    caseSensitive: false);
+
+/// Whether the output indicates that sudo rejected the password (C locale).
+///
+/// Matched per line, not as a substring of the whole output: a line that ENDS
+/// with "Sorry, try again." (behind the prompt of `sudo -S` there is no line
+/// break) or that IS "sudo: N incorrect password attempt(s)". The words alone
+/// also occur in what a command prints — sudo's journal entry reads
+/// "pi : 3 incorrect password attempts ; TTY=…" — and that is not a rejection.
+/// Where stdout carries a payload (a file, a listing), hand in stderr only.
 bool isSudoPasswordFailure(String output) {
-  final out = output.toLowerCase();
-  return out.contains('incorrect password') || out.contains('sorry, try again');
+  for (final raw in output.split('\n')) {
+    final line = raw.trimRight();
+    if (line.toLowerCase().endsWith('sorry, try again.') ||
+        _sudoAttemptsLine.hasMatch(line)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// dpkg's "(Reading database ... 45%" painting — matched without relying on the

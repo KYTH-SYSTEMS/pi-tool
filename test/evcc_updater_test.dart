@@ -1716,6 +1716,36 @@ void main() {
       );
     });
 
+    test('readConfigFile: a rejected sudo password is a sudo error', () async {
+      final cmd = buildConfigReadCommand('/etc/evcc.yaml');
+      final runner = FakeSshRunner({
+        cmd: [
+          _r('',
+              stderr: 'Sorry, try again.\n\nsudo: no password was provided\n'
+                  'sudo: 1 incorrect password attempt\n',
+              exitCode: 1)
+        ]
+      });
+      await expectLater(
+          _updaterWith(runner).readConfigFile(
+              config: _config, path: '/etc/evcc.yaml', onLog: (_) {}),
+          _err(UpdateErrorKind.sudo, contains('Passwort')));
+    });
+
+    test('readConfigFile: a file that contains sudo\'s messages opens',
+        () async {
+      // The content is on stdout; only stderr can carry sudo's verdict.
+      const content = '# Notizen zum Pi\n'
+          'Sorry, try again.\n'
+          'sudo: 3 incorrect password attempts\n';
+      final cmd = buildConfigReadCommand('/home/pi/notizen.txt');
+      final runner = FakeSshRunner({cmd: [_r(content)]});
+      expect(
+          await _updaterWith(runner).readConfigFile(
+              config: _config, path: '/home/pi/notizen.txt', onLog: (_) {}),
+          content);
+    });
+
     test('saveConfigFile base64-transfers the content + backs up', () async {
       final runner =
           FakeSshRunner({installShellCommand: [_r('CONFIG_SAVED\n')]});
@@ -2606,6 +2636,42 @@ void main() {
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
       );
+    });
+
+    test('journal lines about earlier sudo failures are output, not a '
+        'rejection', () async {
+      // The wrapper merges stderr into the output, so sudo's verdict can only
+      // be told by its own lines — not by words a command prints.
+      const journal = 'Oct 09 10:15:01 raspberrypi sudo[1234]:       pi : '
+          '3 incorrect password attempts ; TTY=pts/0 ; PWD=/home/pi ; '
+          'USER=root ; COMMAND=/usr/bin/apt update\n'
+          'Oct 09 10:16:40 raspberrypi sudo[1301]:       pi : TTY=pts/0 ; '
+          'PWD=/home/pi ; USER=root ; COMMAND=/usr/bin/journalctl -n 50\n';
+      final exec = capped("sudo -S -p '' journalctl -n 50 --no-pager");
+      final runner = FakeSshRunner({exec: [_r(journal)]});
+      expect(
+          await _updaterWith(runner).runConsoleCommand(
+              config: _config,
+              command: 'sudo journalctl -n 50 --no-pager',
+              onLog: (_) {}),
+          journal);
+    });
+
+    test('passwordless sudo: no password went in, so none was rejected',
+        () async {
+      // Raspberry Pi OS ships the first user with NOPASSWD.
+      const notes = 'Fehlerbild von gestern:\nSorry, try again.\n';
+      final exec = capped("sudo -S -p '' cat /root/notizen.txt");
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('')], // exit 0 → sudo asks nothing
+        exec: [_r(notes)],
+      });
+      expect(
+          await _updaterWith(runner).runConsoleCommand(
+              config: _config,
+              command: 'sudo cat /root/notizen.txt',
+              onLog: (_) {}),
+          notes);
     });
 
     // The wrapper the updater really sends, parsed and run by a real bash.

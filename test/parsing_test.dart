@@ -77,6 +77,62 @@ void main() {
     test('false for normal apt output', () {
       expect(isSudoPasswordFailure('Reading package lists...'), isFalse);
     });
+
+    test('sudo -S with its prompt: the message follows it on the same line',
+        () {
+      // The prompt ends without a line break, so nothing sudo prints after a
+      // wrong password starts a line of its own.
+      expect(
+          isSudoPasswordFailure('[sudo] password for pi: Sorry, try again.\n'
+              '[sudo] password for pi: \n'
+              'sudo: no password was provided\n'
+              'sudo: 1 incorrect password attempt\n'),
+          isTrue);
+      // A root script behind the password: sudo takes its first lines for
+      // further attempts, and the count ends up behind the third prompt.
+      expect(
+          isSudoPasswordFailure(
+              '[sudo] password for pi: sudo: 3 incorrect password attempts\n'),
+          isTrue);
+    });
+
+    test('sudo -S -p \'\': the bare lines', () {
+      expect(
+          isSudoPasswordFailure('Sorry, try again.\n\n'
+              'sudo: no password was provided\n'
+              'sudo: 1 incorrect password attempt\n'),
+          isTrue);
+      expect(isSudoPasswordFailure('sudo: 3 incorrect password attempts'),
+          isTrue);
+      expect(isSudoPasswordFailure('Sorry, try again.\r\n'), isTrue);
+    });
+
+    test('behind output that ended without a line break', () {
+      // Callers that join stdout and stderr without a separator.
+      expect(isSudoPasswordFailure('partSorry, try again.\n'), isTrue);
+    });
+
+    test('journal lines about earlier sudo failures are not a rejection', () {
+      // `sudo journalctl` after someone mistyped a password: sudo's own log
+      // entries carry the words in the middle of the line.
+      const journal = 'Oct 09 10:15:01 raspberrypi sudo[1234]:       pi : '
+          '3 incorrect password attempts ; TTY=pts/0 ; PWD=/home/pi ; '
+          'USER=root ; COMMAND=/usr/bin/apt update\n'
+          'Oct 09 10:15:01 raspberrypi sudo[1234]: pam_unix(sudo:auth): '
+          'authentication failure; logname=pi uid=1000 euid=0 tty=/dev/pts/0 '
+          'ruser=pi rhost=  user=pi\n'
+          'Oct 09 10:15:09 raspberrypi sshd[1300]: error: incorrect password '
+          'for pi from 192.168.178.20\n';
+      expect(isSudoPasswordFailure(journal), isFalse);
+    });
+
+    test('a file that quotes the messages is not a rejection', () {
+      const config = '# sudo answers "Sorry, try again." to a wrong password\n'
+          '# and "sudo: 1 incorrect password attempt" once it gives up.\n'
+          'hint: incorrect password\n'
+          'note: sudo: 2 incorrect password attempts were logged\n';
+      expect(isSudoPasswordFailure(config), isFalse);
+    });
   });
 
   group('parseBackupPath', () {

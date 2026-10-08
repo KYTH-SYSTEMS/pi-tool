@@ -1806,8 +1806,9 @@ class EvccUpdater {
         body: (runner, log) async {
           final r = await runner.run(buildConfigReadCommand(path),
               stdin: '${config.password}\n');
-          final combined = '${r.stdout}\n${r.stderr}';
-          if (isSudoPasswordFailure(combined)) {
+          // stderr only: stdout is the file, and a file may contain the very
+          // lines sudo prints.
+          if (isSudoPasswordFailure(r.stderr)) {
             throw const EvccUpdateException(UpdateErrorKind.sudo,
                 'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
           }
@@ -2780,7 +2781,11 @@ class EvccUpdater {
               if (t.isNotEmpty) log(t);
             },
           );
-          if (prep.sudo &&
+          // Only a password that went in can have been rejected. The wrapper
+          // merges stderr into the output, so sudo's verdict shares a stream
+          // with whatever the command printed: it is told by its own lines
+          // (see [isSudoPasswordFailure]), not by words in that output.
+          if (pipePassword &&
               isSudoPasswordFailure('${result.stdout}\n${result.stderr}')) {
             throw const EvccUpdateException(UpdateErrorKind.sudo,
                 'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
