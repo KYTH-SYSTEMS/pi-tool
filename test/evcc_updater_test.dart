@@ -3765,16 +3765,53 @@ void main() {
           _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
     });
 
-    test('_sudoCommand without checkExit stays tolerant', () async {
-      for (final exitCode in [null, 100]) {
-        final runner = FakeSshRunner({
-          systemAptRefreshCommand: [_r('', exitCode: exitCode)],
-        });
-        await _updaterWith(runner)
-            .refreshAptIndex(config: _config, onLog: (_) {});
-        expect(runner.commandsRun, contains(systemAptRefreshCommand));
-        expect(runner.stdinByCommand[systemAptRefreshCommand], 'sekret\n');
-      }
+    test('refreshAptIndex tolerates sources that failed', () async {
+      // One dead third-party repository: apt exits 100, everything else was
+      // refreshed.
+      final runner = FakeSshRunner({
+        systemAptRefreshCommand: [
+          _r(
+              "E: The repository 'http://repo.example.org/debian bookworm "
+              "Release' does not have a Release file.\n",
+              exitCode: 100)
+        ],
+      });
+      final log = <String>[];
+      await _updaterWith(runner).refreshAptIndex(config: _config, onLog: log.add);
+      expect(runner.stdinByCommand[systemAptRefreshCommand], 'sekret\n');
+      expect(log, contains('Paketlisten aktualisiert.'));
+    });
+
+    test('refreshAptIndex without an exit status is not a success', () async {
+      final log = <String>[];
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            systemAptRefreshCommand: [_r('', exitCode: null)],
+          })).refreshAptIndex(config: _config, onLog: log.add),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+      expect(log, isNot(contains('Paketlisten aktualisiert.')));
+    });
+
+    test('refreshAptIndex: a held apt lock is a failure, with the remedy',
+        () async {
+      // The daily apt timer or unattended-upgrades got there first: apt-get
+      // update did not run at all.
+      final log = <String>[];
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            systemAptRefreshCommand: [
+              _r(
+                  'E: Could not get lock /var/lib/apt/lists/lock. It is held '
+                  'by process 1234 (apt-get)\n'
+                  'E: Unable to lock directory /var/lib/apt/lists/\n',
+                  exitCode: 100)
+            ],
+          })).refreshAptIndex(config: _config, onLog: log.add),
+          _err(
+              UpdateErrorKind.unknown,
+              allOf(contains('Paketlisten nicht aktualisiert'),
+                  contains('erneut versuchen'))));
+      expect(log, isNot(contains('Paketlisten aktualisiert.')));
     });
 
     test('refreshAptIndex: a rejected sudo password is still an error',

@@ -889,7 +889,8 @@ class EvccUpdater {
 
   /// Runs one sudo command, streaming output; maps a rejected password / non-zero
   /// exit to a clear [EvccUpdateException]. Used by the Pi-hole + System actions.
-  Future<void> _sudoCommand(
+  /// Returns the result — with [checkExit] off its exit status is the caller's.
+  Future<CommandResult> _sudoCommand(
     SshRunner runner,
     void Function(String) log,
     SshConfig config,
@@ -933,6 +934,7 @@ class EvccUpdater {
             : '$failMsg (Exit ${r.exitCode}). Details im Log.',
       );
     }
+    return r;
   }
 
   static const String _dpkgInterrupted = dpkgInterruptedMessage;
@@ -2303,7 +2305,8 @@ class EvccUpdater {
   /// Refreshes the package index only (`apt-get update`) — installs nothing.
   /// Detection simulates against that index and never refreshes it, so once it
   /// ages past [kAptIndexMaxAge] the app stops claiming to know a service's
-  /// currency; this is the one-tap remedy behind that hint.
+  /// currency; this is the one-tap remedy behind that hint. Single sources
+  /// that fail are tolerated; a missing exit status or a held apt lock is not.
   Future<void> refreshAptIndex({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -2318,9 +2321,22 @@ class EvccUpdater {
           // not sink a refresh that updated everything else. After a clean run
           // the command stamps the lists directory, so the age the detection
           // measures is reset even when no index file changed.
-          await _sudoCommand(
+          final r = await _sudoCommand(
               runner, log, config, systemAptRefreshCommand, 'apt-get update',
               checkExit: false);
+          // Not covered by that tolerance: a run nobody saw the end of, and
+          // one that never started because another apt holds the lock.
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          if (r.exitCode != 0 && isAptLocked('${r.stdout}\n${r.stderr}')) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'Paketlisten nicht aktualisiert – auf dem Pi läuft gerade eine '
+                'andere Paketinstallation (z. B. die automatischen Updates). '
+                'In ein paar Minuten erneut versuchen.');
+          }
           log('Paketlisten aktualisiert.');
         },
       );
