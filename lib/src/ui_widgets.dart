@@ -891,6 +891,11 @@ typedef PiSnapshot = ({
   String detail,
 });
 
+/// How a system update on one Pi ended in the multi-Pi overview. A [note]
+/// means neither success nor failure — the Pi-Job runs on without the app, or
+/// the Pi is busy with another one — and is shown as the row's text.
+typedef PiUpdateOutcome = ({bool ok, String? note});
+
 /// Multi-Pi overview: a traffic-light row per profile. Probes each Pi
 /// sequentially (fail-soft) so one unreachable Pi doesn't block the rest.
 class _MultiPiDashboardPage extends StatefulWidget {
@@ -902,9 +907,9 @@ class _MultiPiDashboardPage extends StatefulWidget {
   final List<Profile> profiles;
   final Future<PiSnapshot> Function(Profile) probe;
 
-  /// Runs a system update on one Pi; returns true on success. Sequenced by the
+  /// Runs a system update on one Pi and reports how it ended. Sequenced by the
   /// page across all reachable Pis with pending updates (fail-soft).
-  final Future<bool> Function(Profile) update;
+  final Future<PiUpdateOutcome> Function(Profile) update;
 
   @override
   State<_MultiPiDashboardPage> createState() => _MultiPiDashboardPageState();
@@ -912,7 +917,7 @@ class _MultiPiDashboardPage extends StatefulWidget {
 
 class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
   final Map<int, PiSnapshot> _results = {};
-  final Map<int, bool> _updateResult = {}; // index → succeeded?
+  final Map<int, PiUpdateOutcome> _updateResult = {}; // index → how it ended
   int _probing = -1;
   int _updating = -1;
   bool _bulkRunning = false;
@@ -971,15 +976,15 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
     for (final i in _updatable) {
       if (_cancelled || !mounted) break;
       setState(() => _updating = i);
-      bool ok;
+      PiUpdateOutcome outcome;
       try {
-        ok = await widget.update(widget.profiles[i]);
+        outcome = await widget.update(widget.profiles[i]);
       } catch (_) {
-        ok = false;
+        outcome = (ok: false, note: null);
       }
       if (!mounted) return;
       setState(() {
-        _updateResult[i] = ok;
+        _updateResult[i] = outcome;
         _updating = -1;
       });
     }
@@ -987,6 +992,14 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
     setState(() => _bulkRunning = false);
     // Re-probe so the traffic lights reflect the new state.
     if (!_cancelled) await _run();
+  }
+
+  /// "Neu prüfen": a fresh look at every Pi. The outcome rows of an earlier
+  /// bulk update go with it — they take precedence over the probe result and
+  /// would keep the re-check invisible for exactly those Pis.
+  void _recheck() {
+    setState(_updateResult.clear);
+    _run();
   }
 
   @override
@@ -1008,7 +1021,7 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
             ),
           IconButton(
             tooltip: context.l10n.wRecheck,
-            onPressed: idle ? _run : null,
+            onPressed: idle ? _recheck : null,
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -1025,14 +1038,23 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                 final upd = _updateResult[i];
                 Widget leading;
                 String subtitle;
+                var subtitleLines = 2;
                 if (_updating == i) {
                   leading = spinner;
                   subtitle = ctx.l10n.wUpdating;
+                } else if (upd?.note != null) {
+                  // A Pi-Job that runs on, or a busy Pi: amber like in the
+                  // main view, never the red "fehlgeschlagen". The sentence
+                  // says what to do next, so it gets the room to be read.
+                  leading =
+                      Icon(Icons.info_outline, color: Colors.amber.shade700);
+                  subtitle = upd!.note!;
+                  subtitleLines = 5;
                 } else if (upd != null) {
-                  leading = Icon(upd ? Icons.check_circle : Icons.error,
-                      color: upd ? kGreen : cs.error);
+                  leading = Icon(upd.ok ? Icons.check_circle : Icons.error,
+                      color: upd.ok ? kGreen : cs.error);
                   subtitle =
-                      upd ? ctx.l10n.wUpdated : ctx.l10n.wUpdateFailed;
+                      upd.ok ? ctx.l10n.wUpdated : ctx.l10n.wUpdateFailed;
                 } else if (snap == null) {
                   leading = i == _probing
                       ? spinner
@@ -1050,8 +1072,8 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                 return ListTile(
                   leading: leading,
                   title: Text(p.name),
-                  subtitle:
-                      Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(subtitle,
+                      maxLines: subtitleLines, overflow: TextOverflow.ellipsis),
                   trailing: (_updating != i &&
                           upd == null &&
                           (snap?.updates ?? false))
@@ -1185,7 +1207,8 @@ class _SetupGuidePage extends StatelessWidget {
 }
 
 /// Full-screen editor for a remote config file. Pops the edited text on save,
-/// or null when the user backs out (cancel).
+/// or null when the user backs out (cancel) — with unsaved changes only after
+/// they confirmed that those may go.
 class _ConfigEditorPage extends StatefulWidget {
   const _ConfigEditorPage({required this.title, required this.initial});
   final String title;
@@ -1198,38 +1221,86 @@ class _ConfigEditorPageState extends State<_ConfigEditorPage> {
   late final TextEditingController _c = TextEditingController(
     text: widget.initial,
   );
+  bool _dirty = false; // the text differs from what was loaded
+
+  @override
+  void initState() {
+    super.initState();
+    _c.addListener(_trackDirty);
+  }
+
+  void _trackDirty() {
+    final dirty = _c.text != widget.initial;
+    if (dirty != _dirty) setState(() => _dirty = dirty);
+  }
+
   @override
   void dispose() {
     _c.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
+  /// Back (gesture, system key or the app-bar arrow) with unsaved changes:
+  /// ask before they are gone. Dismissing the dialog means "keep editing".
+  Future<void> _confirmDiscard() async {
+    final cs = Theme.of(context).colorScheme;
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(ctx.l10n.dialogDiscardEditsTitle),
+        content: Text(ctx.l10n.dialogDiscardEditsBody(widget.title)),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.save),
-            tooltip: context.l10n.actionSave,
-            onPressed: () => Navigator.pop(context, _c.text),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(ctx.l10n.actionKeepEditing),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+                backgroundColor: cs.error, foregroundColor: cs.onError),
+            child: Text(ctx.l10n.actionDiscard),
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(12),
-        child: TextField(
-          controller: _c,
-          maxLines: null,
-          expands: true,
-          textAlignVertical: TextAlignVertical.top,
-          autocorrect: false,
-          enableSuggestions: false,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            isDense: true,
+    );
+    if (discard == true && mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Saving pops with the text directly (Navigator.pop is not held back by
+    // the PopScope); only backing out of a changed text goes through the
+    // question.
+    return PopScope<String>(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmDiscard();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.title),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.save),
+              tooltip: context.l10n.actionSave,
+              onPressed: () => Navigator.pop(context, _c.text),
+            ),
+          ],
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(12),
+          child: TextField(
+            controller: _c,
+            maxLines: null,
+            expands: true,
+            textAlignVertical: TextAlignVertical.top,
+            autocorrect: false,
+            enableSuggestions: false,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
           ),
         ),
       ),
@@ -1349,6 +1420,7 @@ class _ServiceCard extends StatelessWidget {
     required this.primaryLabel,
     required this.onPrimary,
     required this.enabled,
+    this.primaryIsUpdate = true,
     this.onOpenWeb,
     this.actions = const [],
     this.isPro = true,
@@ -1361,6 +1433,12 @@ class _ServiceCard extends StatelessWidget {
   final String primaryLabel; // "Aktualisieren" | "Installieren"
   final VoidCallback onPrimary;
   final bool enabled;
+
+  /// Whether the primary button is the update. Only then may a known
+  /// up-to-date state replace it with the disabled "Aktuell". False where the
+  /// primary follows the service's state (Pi Connect: Anmelden / Web öffnen,
+  /// Tailscale: Verbinden / Trennen) — that action must stay reachable.
+  final bool primaryIsUpdate;
   final VoidCallback? onOpenWeb;
   final List<_CardAction> actions;
   final bool isPro; // false → Pro actions show a lock badge
@@ -1385,8 +1463,11 @@ class _ServiceCard extends StatelessWidget {
     // Known up to date → show a disabled "Aktuell ✓" instead of "Aktualisieren"
     // (a forced update stays available via the ⋮ menu). When currency is
     // unknown (Docker evcc / Home Assistant) we keep offering "Aktualisieren".
-    final upToDate =
-        status.installed && status.updateKnown && !status.updateAvailable;
+    // Never in place of a primary that is not the update (see primaryIsUpdate).
+    final upToDate = primaryIsUpdate &&
+        status.installed &&
+        status.updateKnown &&
+        !status.updateAvailable;
 
     // Bright accents read fine on the dark card but wash out on the light card,
     // so text/icons use a darkened variant in light mode (the small decorative

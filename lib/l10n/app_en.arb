@@ -634,6 +634,20 @@
       }
     }
   },
+  "dialogDiscardEditsTitle": "Discard changes?",
+  "@dialogDiscardEditsTitle": {
+    "description": "Title of the dialog shown when the config editor is left with unsaved changes"
+  },
+  "dialogDiscardEditsBody": "Your changes to {title} have not been saved yet.",
+  "@dialogDiscardEditsBody": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "actionDiscard": "Discard",
+  "actionKeepEditing": "Keep editing",
   "statusFileSaved": "{title} saved (backup made).",
   "@statusFileSaved": {
     "placeholders": {

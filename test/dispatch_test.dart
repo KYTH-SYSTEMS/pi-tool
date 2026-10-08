@@ -16,7 +16,9 @@ import 'package:evcc_updater/src/history.dart';
 import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/pi_job.dart';
+import 'package:evcc_updater/src/profile_transfer.dart';
 import 'package:evcc_updater/src/profiles.dart';
+import 'package:evcc_updater/src/secure_screen.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/app_launcher.dart';
 import 'package:evcc_updater/src/docker_containers.dart';
@@ -31,6 +33,7 @@ import 'package:evcc_updater/src/settings_store.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeFilePicker implements FilePickerService {
@@ -38,6 +41,23 @@ class _FakeFilePicker implements FilePickerService {
   final PickedFile? file;
   @override
   Future<PickedFile?> pick() async => file;
+}
+
+/// Picker that fails the way the native side does (a PlatformException with
+/// its error code, e.g. `too_large` for a file over the upload limit).
+class _ThrowingPicker implements FilePickerService {
+  _ThrowingPicker(this.error);
+  final Object error;
+  @override
+  Future<PickedFile?> pick() async => throw error;
+}
+
+/// Records every FLAG_SECURE request, so tests can see whether screenshots are
+/// blocked right now ([calls].last) without a platform channel.
+class _RecordingSecureScreen implements SecureScreen {
+  final calls = <bool>[];
+  @override
+  Future<void> setSecure(bool secure) async => calls.add(secure);
 }
 
 /// Picker that runs [duringPick] before returning — used to simulate the system
@@ -486,6 +506,7 @@ class FakeEvccUpdater extends EvccUpdater {
   int tailscaleInstallCalls = 0;
   int tailscaleUpCalls = 0;
   String? tailscaleUpUrl;
+  Object? tailscaleUpError; // thrown by tailscaleUp (sudo refused, cancelled …)
   bool? tailscaleLoggedOut;
 
   @override
@@ -503,6 +524,7 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async {
     tailscaleUpCalls++;
+    if (tailscaleUpError != null) throw tailscaleUpError!;
     return tailscaleUpUrl;
   }
 
@@ -1207,14 +1229,17 @@ void main() {
           KeepAliveService? keepAlive,
           FilePickerService? filePicker,
           AppConfig? config,
+          AppConfigStore? store,
           AppLauncher? appLauncher,
+          Authenticator? authenticator,
+          SecureScreen? secureScreen,
           Future<void> Function(String name, Uint8List bytes)? fileSaver}) =>
       MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       locale: const Locale('de'),
         home: UpdaterPage(
-          store: _FakeStore(config ?? _ready),
+          store: store ?? _FakeStore(config ?? _ready),
           updater: updater,
           updateChecker: _noUpdateChecker,
           // Default: an API that answers "unreachable" immediately. Since the
@@ -1231,6 +1256,8 @@ void main() {
           keepAlive: keepAlive,
           filePicker: filePicker,
           appLauncher: appLauncher,
+          authenticator: authenticator,
+          secureScreen: secureScreen,
           fileSaver: fileSaver,
         ),
       );
@@ -3576,7 +3603,7 @@ void main() {
     final u = FakeEvccUpdater()
       ..services = const [
         // updateKnown: false = Stand unbekannt (z. B. veralteter apt-Index).
-        // Bei bekanntem „aktuell" zeigt die Karte stattdessen „Aktuell ✓".
+        // Der Fall „bekannt aktuell" steht weiter unten („Karten-Regel").
         ServiceStatus(
             id: 'piconnect',
             name: 'Raspberry Pi Connect',
@@ -5222,6 +5249,702 @@ void main() {
     await tester.tap(find.text('notes.txt'));
     await tester.pumpAndSettle();
     expect(find.text('Bearbeiten'), findsNothing);
+  });
+
+  // ---- Karten-Regel: „Aktuell" nur, wo der Primär-Knopf das Update ist ----
+
+  // updateKnown: true ohne offenes Update = frischer apt-Index. Das ist der
+  // Zustand direkt nach der Installation über die App (das Installationsskript
+  // führt apt-get update aus). Auf Pi Connect und Tailscale hängt der
+  // Primär-Knopf am Anmelde-/Verbindungszustand — ein deaktiviertes „Aktuell"
+  // an seiner Stelle macht „Anmelden" bzw. „Trennen" unerreichbar.
+  testWidgets(
+      'Pi Connect, aktuell und nicht angemeldet: „Anmelden" bleibt der '
+      'Primär-Knopf und startet die Anmeldung', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: true,
+            active: false, // nicht angemeldet
+            updateAvailable: false,
+            updateKnown: true,
+            aptPackage: 'rpi-connect-lite'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.widgetWithText(OutlinedButton, 'Aktuell'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Anmelden'));
+    await tester.pumpAndSettle();
+    expect(u.piConnectSigninCalls, 1);
+  });
+
+  testWidgets(
+      'Pi Connect, aktuell und angemeldet: „Web öffnen" bleibt bedienbar; '
+      'Karten mit Update als Primär-Aktion zeigen weiter „Aktuell"',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        grafana, // updateKnown: true, kein Update offen
+        ServiceStatus(
+            id: 'piconnect',
+            name: 'Raspberry Pi Connect',
+            installed: true,
+            active: true, // angemeldet
+            updateAvailable: false,
+            updateKnown: true,
+            aptPackage: 'rpi-connect-lite'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    final openWeb = find.widgetWithText(OutlinedButton, 'Web öffnen');
+    expect(openWeb, findsOneWidget);
+    expect(tester.widget<OutlinedButton>(openWeb).onPressed, isNotNull);
+    // Grafana: der Primär-Knopf IST das Update → dort bleibt „Aktuell".
+    expect(find.widgetWithText(OutlinedButton, 'Aktuell'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Tailscale, aktuell und getrennt: „Verbinden" bleibt der Primär-Knopf',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: false,
+            updateAvailable: false,
+            updateKnown: true,
+            detail: 'Getrennt',
+            aptPackage: 'tailscale'),
+      ]
+      ..tailscaleUpUrl = null;
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.widgetWithText(OutlinedButton, 'Aktuell'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Verbinden'));
+    await tester.pumpAndSettle();
+    expect(u.tailscaleUpCalls, 1);
+  });
+
+  testWidgets(
+      'Tailscale, aktuell und verbunden: „Trennen" bleibt der Primär-Knopf',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5',
+            updateAvailable: false,
+            updateKnown: true,
+            aptPackage: 'tailscale'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(find.widgetWithText(OutlinedButton, 'Aktuell'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Trennen'));
+    await tester.pumpAndSettle();
+    expect(u.tailscaleLoggedOut, isFalse); // tailscale down, kein Logout
+    expect(find.text('Tailscale getrennt.'), findsOneWidget);
+  });
+
+  // ---- Fernzugriff / Tailscale: Erfolg kommt aus dem Ablauf selbst ----
+
+  testWidgets(
+      'Fernzugriff einrichten läuft auch nach einer zuvor gescheiterten Aktion '
+      'bis in die Prüfung', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..backupError = const EvccUpdateException(
+          UpdateErrorKind.unknown, 'Backup fehlgeschlagen')
+      ..tailscaleUpUrl = null; // schon angemeldet → kein Browser nötig
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Irgendeine Aktion scheitert — kein Verbindungsfehler, die Sitzung bleibt.
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(find.text('Backup fehlgeschlagen'), findsOneWidget);
+
+    await tester.tap(find.text('Fernzugriff einrichten'));
+    await tester.pumpAndSettle();
+
+    expect(u.tailscaleInstallCalls, 1);
+    expect(u.tailscaleUpCalls, 1);
+    // Der Ablauf endet nicht stumm am alten Fehler: er geht in die Prüfung
+    // (noch keine Tailnet-IP → „im Browser bestätigen" mit „Jetzt prüfen").
+    expect(find.text('Jetzt prüfen'), findsOneWidget);
+  });
+
+  const tailscaleDown = ServiceStatus(
+      id: 'tailscale',
+      name: 'Tailscale',
+      installed: true,
+      active: false,
+      detail: 'Getrennt');
+
+  testWidgets(
+      'Tailscale „Verbinden" scheitert: keine Meldung „Tailscale verbunden." '
+      'und kein Neu-Erkennen hinter dem Fehler', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [tailscaleDown]
+      ..tailscaleUpError =
+          const EvccUpdateException(UpdateErrorKind.sudo, 'sudo abgelehnt');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    final detectsBefore = u.detectCalls;
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Verbinden'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('sudo abgelehnt'), findsOneWidget);
+    expect(find.text('Tailscale verbunden.'), findsNothing);
+    expect(u.detectCalls, detectsBefore);
+  });
+
+  testWidgets(
+      'Tailscale „Verbinden" gelingt: das Neu-Erkennen läuft noch als Teil '
+      'der Aktion, erst danach kommt die Meldung', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [tailscaleDown]
+      ..tailscaleUpUrl = null; // schon angemeldet
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    final detectsBefore = u.detectCalls;
+
+    final gate = Completer<void>();
+    u.detectGate = gate; // das Neu-Erkennen hängt
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Verbinden'));
+    await tester.pump();
+    await tester.pump();
+
+    // Solange es läuft, ist die App belegt: Laufleiste da, Profilwechsel
+    // gesperrt — sonst landeten die Karten dieses Pi im nächsten Profil.
+    expect(u.detectCalls, detectsBefore + 1);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(
+        tester
+            .widget<InkWell>(find.byKey(const Key('profileSwitcher')))
+            .onTap,
+        isNull);
+    expect(find.text('Tailscale verbunden.'), findsNothing);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text('Tailscale verbunden.'), findsOneWidget);
+  });
+
+  // ---- Profil-Import ----
+
+  testWidgets(
+      'Profil-Import: was nur in den Feldern des aktiven Profils steht, geht '
+      'nicht verloren', (tester) async {
+    useTallScreen(tester);
+    final envelope = (await tester.runAsync(() => encryptProfileExport(
+        encodeAppConfig(const AppConfig(
+          profiles: [Profile(name: 'Neu', host: '10.0.0.9', password: 'x')],
+          activeIndex: 0,
+        )),
+        'geheim1',
+        iterations: 10)))!;
+    final store = _FakeStore(_ready);
+    final picker = _FakeFilePicker((
+      name: 'pi-tool-profile.pitool',
+      bytes: Uint8List.fromList(utf8.encode(envelope)),
+    ));
+    await tester.pumpWidget(
+        page(FakeEvccUpdater(), store: store, filePicker: picker));
+    await tester.pumpAndSettle();
+
+    // Eine Eingabe, die bisher nur in den Feldern steht.
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Host / IP'), '192.168.178.99');
+    await tester.pump();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile importieren'));
+    await tester.tap(find.text('Profile importieren'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Passphrase'), 'geheim1');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'OK'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    expect(store.saved.profiles.map((p) => p.name), ['S', 'Neu']);
+    expect(store.saved.activeIndex, 1); // das erste importierte Profil
+    expect(store.saved.profiles.first.host, '192.168.178.99');
+  });
+
+  // ---- Datei-Auswahl: Fehlercode der nativen Seite ----
+
+  testWidgets(
+      'Upload: lehnt die native Auswahl eine zu große Datei ab, nennt die '
+      'Meldung das Limit', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
+    await tester.pumpWidget(page(u,
+        filePicker: _ThrowingPicker(PlatformException(
+            code: 'too_large', message: 'Datei zu groß (max 8 MB).'))));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(u.uploadedTo, isEmpty);
+    expect(find.text('Datei zu groß (max 8 MB).'), findsOneWidget);
+    expect(find.text('Dateiauswahl fehlgeschlagen.'), findsNothing);
+  });
+
+  testWidgets('Upload: jeder andere Fehler der Auswahl bleibt „fehlgeschlagen"',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
+    await tester.pumpWidget(page(u,
+        filePicker: _ThrowingPicker(
+            PlatformException(code: 'read_failed', message: 'I/O'))));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dateiauswahl fehlgeschlagen.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Profil-Import: eine zu große Datei wird ebenfalls mit dem Limit gemeldet',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater(),
+        filePicker: _ThrowingPicker(PlatformException(
+            code: 'too_large', message: 'Datei zu groß (max 8 MB).'))));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile importieren'));
+    await tester.tap(find.text('Profile importieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Datei zu groß (max 8 MB).'), findsOneWidget);
+    expect(find.text('Dateiauswahl fehlgeschlagen.'), findsNothing);
+  });
+
+  // ---- Screenshot-Sperre folgt der Zugangsdaten-Karte ----
+
+  // FLAG_SECURE gehört an, solange Zugangsdaten auf dem Bildschirm stehen
+  // können (aufgeklappte Karte, Sperrbildschirm), und sonst aus. Auch dann,
+  // wenn die App die Karte von sich aus auf- oder zuklappt.
+  testWidgets(
+      'Screenshot-Sperre: „Diese IP als Host übernehmen" klappt die Karte auf '
+      '→ gesperrt', (tester) async {
+    useTallScreen(tester);
+    final secure = _RecordingSecureScreen();
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.101.102.103',
+            detail: 'Verbunden · 100.101.102.103'),
+      ];
+    await tester.pumpWidget(page(u, secureScreen: secure));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(secure.calls.last, isFalse); // eingeklappt: Karten dürfen aufs Bild
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Diese IP als Host übernehmen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Host / IP'), findsOneWidget); // aufgeklappt
+    expect(secure.calls.last, isTrue);
+  });
+
+  testWidgets(
+      'Screenshot-Sperre: das Verbinden klappt die Karte zu → wieder erlaubt',
+      (tester) async {
+    useTallScreen(tester);
+    final secure = _RecordingSecureScreen();
+    await tester.pumpWidget(page(FakeEvccUpdater(), secureScreen: secure));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    expect(secure.calls.last, isTrue); // von Hand aufgeklappt
+
+    await detect(tester);
+
+    expect(find.text('Host / IP'), findsNothing); // zugeklappt
+    expect(secure.calls.last, isFalse);
+  });
+
+  testWidgets(
+      'Screenshot-Sperre: Profilwechsel auf ein leeres Profil klappt auf '
+      '→ gesperrt', (tester) async {
+    useTallScreen(tester);
+    final secure = _RecordingSecureScreen();
+    await tester.pumpWidget(page(FakeEvccUpdater(),
+        secureScreen: secure,
+        config: const AppConfig(
+          profiles: [
+            Profile(name: 'A', host: '1.1.1.1', password: 'pw'),
+            Profile(name: 'B'), // noch nichts eingetragen
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    expect(secure.calls.last, isFalse);
+
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('B'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Host / IP'), findsOneWidget);
+    expect(secure.calls.last, isTrue);
+  });
+
+  testWidgets(
+      'Screenshot-Sperre: Demo-Start gibt frei, Demo-Ende sperrt wieder',
+      (tester) async {
+    useTallScreen(tester);
+    final secure = _RecordingSecureScreen();
+    await tester.pumpWidget(page(FakeEvccUpdater(),
+        secureScreen: secure,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S')], // leer → Karte aufgeklappt
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    expect(secure.calls.last, isTrue);
+
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    expect(secure.calls.last, isFalse); // Beispielkarten sind vorzeigbar
+
+    await tester.tap(find.text('Beenden'));
+    await tester.pumpAndSettle();
+    expect(secure.calls.last, isTrue);
+  });
+
+  testWidgets(
+      'Screenshot-Sperre: gesperrt → an; nach dem Entsperren folgt sie wieder '
+      'der (eingeklappten) Karte', (tester) async {
+    useTallScreen(tester);
+    final secure = _RecordingSecureScreen();
+    await tester.pumpWidget(page(FakeEvccUpdater(),
+        secureScreen: secure,
+        authenticator: _AllowAuth(),
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: '1.1.1.1', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          lockEnabled: true,
+        )));
+    await tester.pumpAndSettle(); // lädt + entsperrt von allein
+    expect(find.text('Entsperren'), findsNothing);
+    expect(secure.calls.last, isFalse);
+
+    // In den Hintergrund: die App sperrt.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    expect(secure.calls.last, isTrue);
+
+    // Zurück: entsperrt, die Karte ist weiter eingeklappt.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.text('Entsperren'), findsNothing);
+    expect(secure.calls.last, isFalse);
+  });
+
+  // ---- evcc-Update: Abbrechen während des Release-Abrufs ----
+
+  testWidgets(
+      '„Abbrechen" während „evcc-Release wird geladen …" beendet den Ablauf – '
+      'danach startet kein Update', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    Completer<EvccRelease?>? gate;
+    await tester.pumpWidget(page(u,
+        rel: () => gate?.future ?? Future<EvccRelease?>.value()));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    gate = Completer<EvccRelease?>(); // ab jetzt hängt der Abruf
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pump();
+    expect(find.text('evcc-Release wird geladen …'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Abbrechen'));
+    await tester.pump();
+
+    // Der Abruf scheitert erst jetzt (Timeout). Ohne Release-Notes gibt es
+    // keinen Bestätigungsdialog — das Update liefe ohne Rückfrage los.
+    gate.complete(null);
+    await tester.pumpAndSettle();
+
+    expect(u.backupCalls, 0);
+    expect(u.runCalls, 0);
+    expect(find.text('Abgebrochen.'), findsOneWidget);
+    // … und die App ist wieder frei.
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(
+        tester
+            .widget<InkWell>(find.byKey(const Key('profileSwitcher')))
+            .onTap,
+        isNotNull);
+  });
+
+  testWidgets(
+      'ein früherer Abbruch bricht das nächste evcc-Update nicht ab',
+      (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()..detectGate = gate;
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+
+    // „Abbrechen" beim Verbinden — der Fake verbindet danach trotzdem.
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Abbrechen'));
+    await tester.pump();
+    gate.complete();
+    u.detectGate = null;
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(u.runCalls, 1);
+  });
+
+  // ---- Config-Editor: ungespeicherte Änderungen ----
+
+  testWidgets(
+      'Config-Editor: Zurück mit ungespeicherten Änderungen fragt nach — '
+      '„Weiter bearbeiten" behält sie, „Verwerfen" schließt ohne zu speichern',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'evcc',
+            name: 'evcc',
+            installed: true,
+            version: '0.310.0',
+            active: true,
+            detail: 'apt · Dienst aktiv'),
+      ]
+      ..configText = 'network:\n  schema: http';
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Konfiguration bearbeiten'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byType(TextField).first, 'network:\n  schema: https');
+    await tester.pump();
+
+    // System-Zurück (Geste/Taste).
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Änderungen verwerfen?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Weiter bearbeiten'));
+    await tester.pumpAndSettle();
+
+    // Noch im Editor, die Eingabe steht.
+    expect(find.text('evcc.yaml'), findsOneWidget);
+    expect(find.text('network:\n  schema: https'), findsOneWidget);
+
+    // Zurück-Pfeil der App-Leiste.
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.text('Änderungen verwerfen?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Verwerfen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('evcc.yaml'), findsNothing); // Editor zu
+    expect(find.text('Speichern?'), findsNothing);
+    expect(u.savedConfig, isNull);
+  });
+
+  testWidgets('Config-Editor: ohne Änderung schließt Zurück ohne Rückfrage',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'evcc',
+            name: 'evcc',
+            installed: true,
+            version: '0.310.0',
+            active: true,
+            detail: 'apt · Dienst aktiv'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Konfiguration bearbeiten'));
+    await tester.pumpAndSettle();
+    // Getippt und wieder zurückgenommen: der Inhalt ist der geladene.
+    await tester.enterText(find.byType(TextField).first, 'x');
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).first, u.configText);
+    await tester.pump();
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Änderungen verwerfen?'), findsNothing);
+    expect(find.text('evcc.yaml'), findsNothing); // Editor zu
+  });
+
+  // ---- Multi-Pi: ein Pi-Job ist kein „fehlgeschlagen" ----
+
+  const twoPisWithUpdates = AppConfig(
+    profiles: [
+      Profile(name: 'A', host: '1.1.1.1', password: 'pw'),
+      Profile(name: 'B', host: '2.2.2.2', password: 'pw'),
+    ],
+    activeIndex: 0,
+    disclaimerAccepted: true,
+  );
+  const systemWithUpdates = [
+    ServiceStatus(
+        id: 'system',
+        name: 'System (Pi)',
+        installed: true,
+        active: true,
+        updateAvailable: true,
+        updateKnown: true),
+  ];
+
+  Future<void> openMultiPi(WidgetTester tester) async {
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alle Pis (Überblick)'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'Multi-Pi: reißt die Verbindung ab, läuft der Pi-Job weiter — die Zeile '
+      'sagt das statt „Update fehlgeschlagen"; „Neu prüfen" räumt sie ab',
+      (tester) async {
+    useTallScreen(tester);
+    const ref = JobRef(id: 'aaaaaaaaaaaaaaaa', kind: jobKindSystemUpgrade);
+    final u = FakeEvccUpdater()
+      ..services = systemWithUpdates
+      ..startedJob = ref
+      ..jobError = const JobException(UpdateErrorKind.jobDetached, 'x',
+          ref: ref,
+          jobKind: jobKindSystemUpgrade,
+          reason: JobDetachReason.connectionLost);
+    await tester.pumpWidget(page(u, config: twoPisWithUpdates));
+    await tester.pumpAndSettle();
+    await openMultiPi(tester);
+
+    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.systemUpgradeCalls, 2); // fail-soft: beide Pis kommen dran
+    expect(find.text('Update fehlgeschlagen'), findsNothing);
+    expect(find.textContaining('läuft auf dem Pi weiter'), findsNWidgets(2));
+
+    // „Neu prüfen" zeigt wieder den gemessenen Stand, nicht das alte Ergebnis.
+    u.jobError = null;
+    await tester.tap(find.byTooltip('Neu prüfen'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('läuft auf dem Pi weiter'), findsNothing);
+    expect(find.textContaining('Updates verfügbar'), findsNWidgets(2));
+  });
+
+  testWidgets(
+      'Multi-Pi: ein belegter Pi wird als belegt gemeldet, nicht als '
+      'fehlgeschlagen', (tester) async {
+    // Handy-Breite: der Hinweis ist ein ganzer Satz und muss in der Zeile
+    // umbrechen können, ohne das Layout zu sprengen.
+    tester.view.physicalSize = const Size(360, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final u = FakeEvccUpdater()
+      ..services = systemWithUpdates
+      ..jobError = const JobException(UpdateErrorKind.jobBusy, 'x',
+          jobKind: 'autoupdate');
+    await tester.pumpWidget(page(u, config: twoPisWithUpdates));
+    await tester.pumpAndSettle();
+    await openMultiPi(tester);
+
+    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update fehlgeschlagen'), findsNothing);
+    expect(find.textContaining('automatischen Updates'), findsNWidgets(2));
+  });
+
+  testWidgets('Multi-Pi: ein echter Fehler bleibt „Update fehlgeschlagen"',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = systemWithUpdates
+      ..jobError =
+          const EvccUpdateException(UpdateErrorKind.unknown, 'apt kaputt');
+    await tester.pumpWidget(page(u, config: twoPisWithUpdates));
+    await tester.pumpAndSettle();
+    await openMultiPi(tester);
+
+    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update fehlgeschlagen'), findsNWidgets(2));
   });
 
   group('Pi-Jobs in der Oberfläche', () {

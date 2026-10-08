@@ -7,6 +7,7 @@ import 'package:evcc_updater/src/early_adopter.dart';
 import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:evcc_updater/src/kyth_wordmark.dart';
 import 'package:evcc_updater/src/profiles.dart';
+import 'package:evcc_updater/src/secure_screen.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
@@ -74,6 +75,14 @@ class _DenyAuth implements Authenticator {
 
   @override
   Future<bool> authenticate(String reason) async => false;
+}
+
+/// Records every FLAG_SECURE request instead of calling the platform channel.
+class _RecordingSecureScreen implements SecureScreen {
+  final calls = <bool>[];
+
+  @override
+  Future<void> setSecure(bool secure) async => calls.add(secure);
 }
 
 /// Update checker that never hits the network in tests.
@@ -717,6 +726,36 @@ void main() {
 
     final ctx = tester.element(find.byKey(const Key('promptMark')));
     expect(Theme.of(ctx).brightness, Brightness.dark);
+  });
+
+  testWidgets(
+      'a locked app never asks to allow screenshots — not even on the way to '
+      'the lock screen', (tester) async {
+    useTallScreen(tester);
+    final secure = _RecordingSecureScreen();
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        // A set-up profile: its connection card starts collapsed, which on its
+        // own would mean "screenshots allowed".
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'Standard', host: '1.2.3.4', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          lockEnabled: true,
+        )),
+        updateChecker: _noUpdateChecker,
+        authenticator: _DenyAuth(),
+        secureScreen: secure,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Gesperrt'), findsOneWidget);
+    expect(secure.calls, isNotEmpty);
+    expect(secure.calls, everyElement(isTrue));
   });
 
   // ---- Startpfad: vor dem Laden wird nichts geschrieben ----

@@ -7,7 +7,12 @@ import 'package:flutter/foundation.dart'
     show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show Clipboard, ClipboardData, SystemNavigator, rootBundle;
+    show
+        Clipboard,
+        ClipboardData,
+        PlatformException,
+        SystemNavigator,
+        rootBundle;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -274,6 +279,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// screen, and the expanded connection card with its password and key fields.
   /// Everything else — service cards, logs (passwords are redacted), terminal,
   /// files — is fair game, so users can show the app to other people.
+  ///
+  /// Called from the setters of [_locked] and [_connExpanded] and nowhere
+  /// else: every write moves the flag, also the ones the app makes on its own
+  /// (profile switch, connect, demo, a host it swaps into the form).
   void _applyScreenshotPolicy() {
     _secureScreen.setSecure(_locked || _connExpanded);
   }
@@ -299,12 +308,26 @@ class _UpdaterPageState extends State<UpdaterPage>
   _RemoteAccessPhase _remoteAccessPhase = _RemoteAccessPhase.idle;
   bool _remoteAccessProven = false; // this phone reached the tailnet once
   bool _obscure = true;
-  bool _connExpanded = true; // connection form collapses once creds are set
+  // Connection form: collapses once creds are set. Like [_locked] it is
+  // written through a setter, so the screenshot policy follows every change.
+  bool _connExpandedValue = true;
+  bool get _connExpanded => _connExpandedValue;
+  set _connExpanded(bool value) {
+    _connExpandedValue = value;
+    _applyScreenshotPolicy();
+  }
+
   bool _busy = false;
   AuthMode _authMode = AuthMode.password;
   String _uiScheme = 'http';
   bool _lockEnabled = false;
-  bool _locked = false;
+  bool _lockedValue = false;
+  bool get _locked => _lockedValue;
+  set _locked(bool value) {
+    _lockedValue = value;
+    _applyScreenshotPolicy();
+  }
+
   bool _booting = true; // true until settings load, so the shell isn't shown
   // The stored settings are in memory. Until then the state here is only the
   // built-in default — and saving that would overwrite the real profiles.
@@ -439,7 +462,6 @@ class _UpdaterPageState extends State<UpdaterPage>
         Navigator.of(context, rootNavigator: true)
             .popUntil((r) => r.isFirst);
         setState(() => _locked = true);
-        _applyScreenshotPolicy();
       }
     } else if (state == AppLifecycleState.resumed && _locked && !_unlocking) {
       _tryUnlock();
@@ -484,11 +506,13 @@ class _UpdaterPageState extends State<UpdaterPage>
       _customCommands = List.of(cfg.customCommands);
       _alertsServer = cfg.alertsNtfyServer;
       _alertsTopic = cfg.alertsNtfyTopic;
-      _applyProfile(cfg.active);
+      // The lock first: both writes apply the screenshot policy, and a set-up
+      // profile collapses the connection card — on its own that would allow
+      // screenshots for a moment on the way to the lock screen.
       if (_lockEnabled) _locked = true;
+      _applyProfile(cfg.active);
       _booting = false; // settings + lock state resolved → reveal the UI
     });
-    _applyScreenshotPolicy();
     themeModeNotifier.value = parseThemeMode(_themeMode);
     localeNotifier.value = localeForLanguageMode(_languageMode);
     // Attach auto-save listeners after initial values are set.
@@ -780,8 +804,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     PickedFile? picked;
     try {
       picked = await _filePicker.pick();
-    } catch (_) {
-      if (mounted) _snack(l10n.snackFilePickFailed);
+    } catch (e) {
+      if (mounted) _snack(_pickFailureText(e));
       return;
     } finally {
       _suppressLock = false;
@@ -802,6 +826,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           l10n.dialogImportBody(cfg.profiles.length))) {
         return;
       }
+      // Capture the outgoing profile's live edits (see _switchProfile): the
+      // save below rebuilds only the then-active — imported — profile from the
+      // fields, the one we leave is written as it stands in the list.
+      _profiles[_activeIndex] = _currentProfile();
       setState(() {
         _profiles = [..._profiles, ...cfg.profiles];
         _activeIndex = _profiles.length - cfg.profiles.length; // first imported
@@ -1200,7 +1228,6 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _tryUnlock() async {
     if (!_lockEnabled) {
       if (mounted) setState(() => _locked = false);
-      _applyScreenshotPolicy();
       return;
     }
     if (_unlocking) return; // re-entrancy guard: avoid overlapping prompts
@@ -1208,7 +1235,6 @@ class _UpdaterPageState extends State<UpdaterPage>
     try {
       final ok = await _authenticator.authenticate(context.l10n.authUnlockReason);
       if (ok && mounted) setState(() => _locked = false);
-      if (mounted) _applyScreenshotPolicy();
     } finally {
       _unlocking = false;
     }
@@ -1285,13 +1311,17 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   /// Runs a system update (apt full-upgrade) on one profile's Pi. Fail-soft:
-  /// returns false on any error so the multi-Pi bulk update can carry on.
-  Future<bool> _updatePiSystem(Profile p) async {
+  /// never throws, so the multi-Pi bulk update can carry on.
+  Future<PiUpdateOutcome> _updatePiSystem(Profile p) async {
     try {
       await _updater.upgradeSystem(config: _configForProfile(p), onLog: (_) {});
-      return true;
+      return (ok: true, note: null);
+    } on JobException catch (e) {
+      // The Pi-Job runs on, or the Pi is busy with another one: not a failure
+      // (see _guard) — the row gets the same sentence the banner would show.
+      return (ok: false, note: mounted ? _jobExceptionText(e) : null);
     } catch (_) {
-      return false;
+      return (ok: false, note: null);
     }
   }
 
@@ -1580,12 +1610,27 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (!dryRun) {
       // Show the running bar during the (network) fetch so the disabled UI has
       // feedback; clear it again before the confirm dialog opens.
+      _cancelRequested = false; // not one left over from an earlier action
       setState(() {
         _busy = true;
         _busyMessage = l10n.busyLoadingEvccRelease;
       });
       final rel = await _fetchEvccRelease();
       if (!mounted) return;
+      // The running bar offers "Abbrechen" during the fetch too, but there is
+      // no connection yet that it could close. Honour it here: a failed fetch
+      // leaves nothing to confirm below, and the update would start unasked.
+      if (_cancelRequested) {
+        _appendLog(l10n.logCancelled);
+        setState(() {
+          _busy = false;
+          _busyMessage = null;
+          _statusMessage = l10n.logCancelled;
+          _statusOk = false;
+          _statusWarn = false;
+        });
+        return;
+      }
       setState(() => _busyMessage = null);
       // Always warn when full-upgrade is on (it touches ALL packages, not just
       // evcc) — even if the release-notes fetch failed.
@@ -2847,6 +2892,14 @@ class _UpdaterPageState extends State<UpdaterPage>
     await _openRemoteFile(c, path);
   }
 
+  /// What to tell the user when the file picker threw. The native side turns
+  /// down a file over the upload limit with the error code `too_large` — that
+  /// gets the message naming the limit instead of a bare "failed".
+  String _pickFailureText(Object error) =>
+      error is PlatformException && error.code == 'too_large'
+          ? context.l10n.snackFileTooLarge(kFileUploadLimit ~/ (1024 * 1024))
+          : context.l10n.snackFilePickFailed;
+
   Future<bool> _filesUpload(String dir) async {
     final c = _filesConfig();
     if (c == null) {
@@ -2859,8 +2912,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     _suppressLock = true;
     try {
       picked = await _filePicker.pick();
-    } catch (_) {
-      if (mounted) _snack(context.l10n.snackFilePickFailed);
+    } catch (e) {
+      if (mounted) _snack(_pickFailureText(e));
       return false;
     } finally {
       _suppressLock = false;
@@ -4956,6 +5009,10 @@ class _UpdaterPageState extends State<UpdaterPage>
             // other card — the amber LED alone was too quiet, and "Web öffnen"
             // sat there while 2.12.2 was waiting. The displaced action moves
             // into ⋮ and comes back once the update is done.
+            // Without a pending update the primary is the sign-in state, so a
+            // known "up to date" must not replace it with the disabled
+            // "Aktuell" — "Anmelden" would be reachable nowhere.
+            primaryIsUpdate: s.updateAvailable,
             primaryLabel: s.updateAvailable
                 ? context.l10n.actionUpdate
                 : signedIn
@@ -4996,7 +5053,9 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: Icons.vpn_key,
             enabled: !_busy,
-            // Same rule as Pi Connect: the button shows what is next in line.
+            // Same rule as Pi Connect: the button shows what is next in line —
+            // "Verbinden"/"Trennen" unless an update is pending.
+            primaryIsUpdate: s.updateAvailable,
             primaryLabel: s.updateAvailable
                 ? context.l10n.actionUpdate
                 : up
@@ -5107,6 +5166,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             status: s,
             icon: _serviceIcon(s.id),
             enabled: !_busy,
+            primaryIsUpdate: false,
             primaryLabel: context.l10n.actionRestart,
             onPrimary: () => _restartSystemdService(s),
             onOpenWeb:
@@ -5465,6 +5525,9 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = _setupRemoteAccess;
     String? url;
+    // This run's own outcome. _statusOk would not do: it still carries the
+    // result of whatever ran before, and nothing in here sets it to true.
+    var ok = false;
     await _guard(() async {
       final installed =
           _services.any((s) => s.id == 'tailscale' && s.installed);
@@ -5472,8 +5535,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         await _updater.installTailscale(config: config, onLog: _appendLog);
       }
       url = await _updater.tailscaleUp(config: config, onLog: _appendLog);
+      ok = true;
     }, backgroundMessage: l10n.busySettingUpRemoteAccess);
-    if (!mounted || !_statusOk) return;
+    if (!mounted || !ok) return;
     if (url == null) {
       await _checkRemoteAccess(); // already signed in — no browser detour
       return;
@@ -5544,8 +5608,16 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = _tailscaleUp;
     String? url;
+    // "No login URL" alone is not "connected": a failed run leaves url null
+    // too (_guard has already reported the error).
+    var connected = false;
     await _guard(() async {
       url = await _updater.tailscaleUp(config: config, onLog: _appendLog);
+      if (url != null) return;
+      // Already authenticated → just re-detect to show the new state. Inside
+      // _guard, so the app stays busy until the cards are this Pi's again.
+      await _refreshServices(config);
+      connected = true;
     }, backgroundMessage: context.l10n.busyConnectingTailscale);
     if (!mounted) return;
     if (url != null) {
@@ -5553,10 +5625,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (mounted) {
         _snack(context.l10n.snackTailscaleSignin);
       }
-    } else {
-      // Already authenticated → just re-detect to show the new state.
-      await _refreshServices(config);
-      if (mounted) _snack(context.l10n.snackTailscaleConnected);
+    } else if (connected) {
+      _snack(context.l10n.snackTailscaleConnected);
     }
   }
 
@@ -6321,10 +6391,8 @@ class _UpdaterPageState extends State<UpdaterPage>
               onAutoConnect: _setAutoConnect,
               onSetupKey: _setupSshKey,
               expanded: _connExpanded,
-              onToggleExpanded: () {
-                setState(() => _connExpanded = !_connExpanded);
-                _applyScreenshotPolicy();
-              },
+              onToggleExpanded: () =>
+                  setState(() => _connExpanded = !_connExpanded),
             ),
             const SizedBox(height: 8),
             // Connect. The cancel affordance lives in the shared running bar
