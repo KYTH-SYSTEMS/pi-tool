@@ -1,4 +1,5 @@
 import 'package:evcc_updater/src/profile_transfer.dart';
+import 'package:evcc_updater/src/profiles.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -75,6 +76,36 @@ void main() {
       final a = await encryptProfileExport('x', 'pw', iterations: fastIters);
       final b = await encryptProfileExport('x', 'pw', iterations: fastIters);
       expect(a, isNot(b)); // deterministic output would leak via comparison
+    });
+
+    // The ntfy topic is kept per profile and works like a password: it has to
+    // come along on a phone change, and only inside the sealed part.
+    test('each profile\'s ntfy destination comes along, sealed', () async {
+      const cfg = AppConfig(
+        profiles: [
+          Profile(
+              name: 'Zuhause',
+              host: '10.0.0.5',
+              alertsNtfyServer: 'https://ntfy.example.org',
+              alertsNtfyTopic: 'pi-tool-k7m2q9x4vb3dwz'),
+          Profile(name: 'Eltern', host: '10.0.0.6'),
+        ],
+        activeIndex: 0,
+        alertsNtfyTopic: 'app-weit-9999999999',
+      );
+      final envelope = await encryptProfileExport(
+          encodeAppConfig(cfg), 'korrekt batterie',
+          iterations: fastIters);
+      expect(envelope, isNot(contains('pi-tool-k7m2q9x4vb3dwz')));
+      expect(envelope, isNot(contains('app-weit-9999999999')));
+
+      final imported = profilesForImport(parseAppConfig(
+          await decryptProfileExport(envelope, 'korrekt batterie')));
+      expect(imported.map((p) => p.name), ['Zuhause', 'Eltern']);
+      expect(imported[0].alertsNtfyServer, 'https://ntfy.example.org');
+      expect(imported[0].alertsNtfyTopic, 'pi-tool-k7m2q9x4vb3dwz');
+      // No destination of its own: what the exporting app showed for it.
+      expect(imported[1].alertsNtfyTopic, 'app-weit-9999999999');
     });
   });
 }

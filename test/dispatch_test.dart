@@ -608,6 +608,8 @@ class FakeEvccUpdater extends EvccUpdater {
   final uploadedTo = <String>[];
   final deletedPaths = <String>[];
   int listDirCalls = 0; // every listing is an SSH login with the sudo password
+  // Thrown by the file operations of the Dateien tab.
+  Object? listDirError, deleteError, readFileError;
 
   @override
   Future<List<DirEntry>> listDir({
@@ -616,10 +618,12 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async {
     listDirCalls++;
+    if (listDirError != null) throw listDirError!;
     return dirEntries;
   }
 
   bool uploadThrows = false;
+  Object? uploadError; // thrown before anything reaches the Pi
 
   @override
   Future<void> uploadFile({
@@ -628,6 +632,7 @@ class FakeEvccUpdater extends EvccUpdater {
     required Uint8List bytes,
     required void Function(String line) onLog,
   }) async {
+    if (uploadError != null) throw uploadError!;
     uploadedTo.add(path);
     // Simulate the file now existing on the Pi (a reload should surface it).
     dirEntries = [...dirEntries, (name: path.split('/').last, isDir: false)];
@@ -643,8 +648,10 @@ class FakeEvccUpdater extends EvccUpdater {
     required String path,
     required bool isDir,
     required void Function(String line) onLog,
-  }) async =>
-      deletedPaths.add(path);
+  }) async {
+    if (deleteError != null) throw deleteError!;
+    deletedPaths.add(path);
+  }
 
   final downloadedPaths = <String>[];
   Uint8List downloadBytes = Uint8List(0);
@@ -664,8 +671,10 @@ class FakeEvccUpdater extends EvccUpdater {
     required SshConfig config,
     required String path,
     required void Function(String line) onLog,
-  }) async =>
-      fileBytes;
+  }) async {
+    if (readFileError != null) throw readFileError!;
+    return fileBytes;
+  }
 
   String configText = 'network:\n  schema: http\n';
   String? savedConfig;
@@ -701,11 +710,15 @@ class FakeEvccUpdater extends EvccUpdater {
     return serviceLogs;
   }
 
-  String? alertsTopic;
+  String? alertsTopic, alertsServer;
   bool alertsDisabled = false;
   int testAlertCalls = 0;
   AlertsStatus alertsStatus =
       (enabled: false, lastCheck: null, wrapperOutdated: false);
+  Completer<void>? testAlertGate; // if set, sendTestAlert awaits it (in flight)
+  // What sendTestAlert logs / throws, given the topic it was called with.
+  String Function(String topic)? testAlertLog;
+  Object Function(String topic)? testAlertError;
 
   @override
   Future<void> enableAlerts({
@@ -713,8 +726,10 @@ class FakeEvccUpdater extends EvccUpdater {
     required String ntfyServer,
     required String ntfyTopic,
     required void Function(String line) onLog,
-  }) async =>
-      alertsTopic = ntfyTopic;
+  }) async {
+    alertsServer = ntfyServer;
+    alertsTopic = ntfyTopic;
+  }
 
   @override
   Future<void> disableAlerts({
@@ -736,8 +751,12 @@ class FakeEvccUpdater extends EvccUpdater {
     required String ntfyServer,
     required String ntfyTopic,
     required void Function(String line) onLog,
-  }) async =>
-      testAlertCalls++;
+  }) async {
+    testAlertCalls++;
+    if (testAlertGate != null) await testAlertGate!.future;
+    if (testAlertLog != null) onLog(testAlertLog!(ntfyTopic));
+    if (testAlertError != null) throw testAlertError!(ntfyTopic);
+  }
 
   final consoleCommands = <String>[];
 
@@ -1415,6 +1434,285 @@ void main() {
 
     // The reload still surfaces the written file (the reported failure aside).
     expect(find.text('new.txt'), findsOneWidget);
+  });
+
+  // ---- Dateien: why an operation failed is told and logged ----
+
+  // The terminal log as the Terminal tab holds it — the IndexedStack builds
+  // that tab even while another one is shown.
+  String logText(WidgetTester tester) => tester
+      .widgetList<SelectableText>(
+          find.byType(SelectableText, skipOffstage: false))
+      .map((w) => w.data ?? '')
+      .join('\n');
+
+  // The file operations run outside _guard and used to swallow the cause:
+  // `catch (_)` and a fixed text, nothing in the log.
+  testWidgets(
+      'Dateien: scheitert das Listing, steht der Grund in der Ansicht und im '
+      'Log', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'projects', isDir: true)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    u.listDirError = const EvccUpdateException(UpdateErrorKind.connection,
+        'Zeitüberschreitung – Pi nicht erreichbar.');
+    await tester.tap(find.text('projects'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Zeitüberschreitung – Pi nicht erreichbar.'),
+        findsOneWidget);
+    expect(find.text('Verzeichnis konnte nicht geladen werden.'), findsNothing);
+    expect(logText(tester),
+        contains('FEHLER: Zeitüberschreitung – Pi nicht erreichbar.'));
+    // One failed listing does not end the session, and no key is in doubt.
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+    expect(find.textContaining('neuen Key vertrauen'), findsNothing);
+  });
+
+  testWidgets(
+      'Dateien: ein Fehler ohne Meldung der Logik-Schicht behält den festen '
+      'Text, die Ursache steht im Log', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'projects', isDir: true)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    u.listDirError = const FormatException('kaputte Antwort');
+    await tester.tap(find.text('projects'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Verzeichnis konnte nicht geladen werden.'),
+        findsOneWidget);
+    expect(logText(tester), contains('kaputte Antwort'));
+  });
+
+  testWidgets('Dateien: ein gescheiterter Upload nennt den Grund, auch im Log',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'old.txt', isDir: false)]
+      ..uploadThrows = true; // throws 'Marker verpasst'
+    final picker = _FakeFilePicker(
+        (name: 'new.txt', bytes: Uint8List.fromList([1])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Marker verpasst'), findsOneWidget);
+    expect(find.text('Hochladen fehlgeschlagen (Rechte?).'), findsNothing);
+    expect(logText(tester), contains('FEHLER: Marker verpasst'));
+  });
+
+  testWidgets('Dateien: ein gescheitertes Löschen nennt den Grund, auch im Log',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'notes.txt', isDir: false)]
+      ..deleteError = const EvccUpdateException(
+          UpdateErrorKind.sudo, 'sudo-Passwort abgelehnt.');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, 'notes.txt'),
+        matching: find.byIcon(Icons.more_vert)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Löschen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('sudo-Passwort abgelehnt.'), findsOneWidget);
+    expect(find.text('Löschen fehlgeschlagen (Rechte?).'), findsNothing);
+    expect(logText(tester), contains('FEHLER: sudo-Passwort abgelehnt.'));
+    expect(find.text('notes.txt'), findsOneWidget); // still listed
+  });
+
+  testWidgets(
+      'Dateien: lässt sich eine Datei nicht öffnen, nennt die Meldung den '
+      'Grund, auch im Log', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'notes.txt', isDir: false)]
+      ..readFileError = const EvccUpdateException(UpdateErrorKind.unknown,
+          'Datei konnte nicht gelesen werden (Rechte? Binärdatei?).');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.text('notes.txt'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Datei konnte nicht gelesen werden (Rechte? Binärdatei?).'),
+        findsOneWidget);
+    expect(find.text('Datei konnte nicht geladen werden.'), findsNothing);
+    expect(logText(tester),
+        contains('FEHLER: Datei konnte nicht gelesen werden'));
+  });
+
+  // A changed host key used to end as "fehlgeschlagen" here: no banner, no
+  // way to trust the new key from where it was noticed.
+  testWidgets(
+      'Dateien: ein geänderter Host-Key beendet die Sitzung, zeigt Banner und '
+      '„neuen Key vertrauen" — das verbindet neu', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'projects', isDir: true)];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+    expect(u.detectCalls, 1);
+
+    u.listDirError = const EvccUpdateException(
+        UpdateErrorKind.hostKeyChanged, 'Host-Key geändert!');
+    await tester.tap(find.text('projects'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Host-Key geändert!'), findsOneWidget); // the banner
+    expect(find.textContaining('neuen Key vertrauen'), findsOneWidget);
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    // Back on Verwaltung, and the connect button no longer claims a session.
+    expect(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'),
+        findsOneWidget);
+    expect(logText(tester), contains('FEHLER: Host-Key geändert!'));
+
+    // Trusting the key forgets the old one and connects again — it does not
+    // replay whatever action happened to run last.
+    u.listDirError = null;
+    await tester.tap(find.byIcon(Icons.verified_user_outlined));
+    await tester.pumpAndSettle();
+
+    expect(u.forgetCalls, 1);
+    expect(u.forgotConfig!.host, '192.168.178.64');
+    expect(u.detectCalls, 2);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+    expect(find.textContaining('neuen Key vertrauen'), findsNothing);
+  });
+
+  testWidgets(
+      'Dateien: ein geänderter Host-Key beim Upload — „neuen Key vertrauen" '
+      'wiederholt nicht die zuletzt gelaufene Aktion', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'old.txt', isDir: false)];
+    final picker = _FakeFilePicker(
+        (name: 'new.txt', bytes: Uint8List.fromList([1])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    // The last action that ran through _guard: restart evcc.
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dienst neu starten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.restartServiceCalls, 1);
+    await goDateien(tester);
+    final listed = u.listDirCalls;
+
+    u.uploadError = const EvccUpdateException(
+        UpdateErrorKind.hostKeyChanged, 'Host-Key geändert!');
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Host-Key geändert!'), findsOneWidget);
+    expect(find.textContaining('neuen Key vertrauen'), findsOneWidget);
+    // The session is gone — no listing goes to a Pi whose key is in doubt.
+    expect(u.listDirCalls, listed);
+
+    u.uploadError = null;
+    await tester.tap(find.byIcon(Icons.verified_user_outlined));
+    await tester.pumpAndSettle();
+
+    expect(u.forgetCalls, 1);
+    expect(u.restartServiceCalls, 1, reason: 'kein zweiter Neustart von evcc');
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+  });
+
+  // ---- Dateien: an upload asks before it replaces a file ----
+
+  testWidgets(
+      'Dateien: liegt eine Datei gleichen Namens im Ordner, fragt der Upload '
+      'vorher nach — Abbrechen lädt nichts hoch', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: '.env', isDir: false)];
+    final picker =
+        _FakeFilePicker((name: '.env', bytes: Uint8List.fromList([1, 2])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(find.text('„.env" überschreiben?'), findsOneWidget);
+    expect(u.uploadedTo, isEmpty, reason: 'vor der Bestätigung geht nichts raus');
+
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.uploadedTo, isEmpty);
+    expect(find.text('„.env" überschreiben?'), findsNothing);
+
+    // Confirmed, it uploads.
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Überschreiben'));
+    await tester.pumpAndSettle();
+    expect(u.uploadedTo, ['/home/.env']);
+  });
+
+  testWidgets('Dateien: ein neuer Dateiname lädt ohne Rückfrage hoch',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      // Same letters, other case: on the Pi that is another file.
+      ..dirEntries = const [(name: 'Config.yaml', isDir: false)];
+    final picker = _FakeFilePicker(
+        (name: 'config.yaml', bytes: Uint8List.fromList([1])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('überschreiben?'), findsNothing);
+    expect(u.uploadedTo, ['/home/config.yaml']);
+  });
+
+  testWidgets(
+      'Dateien: heißt ein Ordner wie die gewählte Datei, wird nichts '
+      'hochgeladen', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'backup', isDir: true)];
+    final picker =
+        _FakeFilePicker((name: 'backup', bytes: Uint8List.fromList([1])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(u.uploadedTo, isEmpty);
+    expect(find.textContaining('überschreiben?'), findsNothing);
+    expect(
+        find.text('Hier gibt es bereits einen Ordner „backup" — eine Datei '
+            'kann ihn nicht ersetzen.'),
+        findsOneWidget);
   });
 
   testWidgets('Dateien tab: upload does not trip the app lock', (tester) async {
@@ -2696,6 +2994,377 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Ausschalten'));
     await tester.pumpAndSettle();
     expect(u.alertsDisabled, isTrue);
+  });
+
+  // ---- Health-Alerts: what happens in the sheet is shown in the sheet ----
+
+  Future<void> openAlertsSheet(WidgetTester tester) async {
+    await goAutomatik(tester);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+  }
+
+  String topicField(WidgetTester tester) =>
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text;
+
+  Finder inSheet(Finder what) =>
+      find.descendant(of: find.byType(BottomSheet), matching: what);
+
+  // A snack is drawn by the page's Scaffold, beneath the modal sheet.
+  testWidgets(
+      'Health-Alerts: das Ergebnis des Tests steht im Sheet, nicht als Snack '
+      'darunter', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pumpAndSettle();
+
+    expect(u.testAlertCalls, 1);
+    expect(
+        inSheet(find.text('Test-Benachrichtigung gesendet — prüf dein ntfy.')),
+        findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets(
+      'Health-Alerts: ein gescheiterter Test nennt den Grund im Sheet und im '
+      'Log', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..testAlertError = (_) => const EvccUpdateException(
+          UpdateErrorKind.unknown,
+          'Test-Benachrichtigung fehlgeschlagen: curl: (6) Could not resolve '
+          'host: ntfy.example');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester.widget<Text>(find.byKey(const Key('alertsTestResult'))).data,
+        'Test-Benachrichtigung fehlgeschlagen: curl: (6) Could not resolve '
+        'host: ntfy.example');
+    expect(find.byType(SnackBar), findsNothing);
+    expect(logText(tester),
+        contains('FEHLER: Test-Benachrichtigung fehlgeschlagen: curl: (6)'));
+  });
+
+  testWidgets(
+      'Health-Alerts: solange ein Test läuft, ist der Test-Knopf gesperrt',
+      (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()..testAlertGate = gate;
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    OutlinedButton testButton() => tester.widget<OutlinedButton>(
+        inSheet(find.byType(OutlinedButton)));
+
+    await tester.tap(inSheet(find.byType(OutlinedButton)));
+    await tester.pump();
+    expect(u.testAlertCalls, 1);
+    expect(testButton().onPressed, isNull);
+
+    // Impatient taps start no further SSH connection.
+    await tester.tap(inSheet(find.byType(OutlinedButton)), warnIfMissed: false);
+    await tester.tap(inSheet(find.byType(OutlinedButton)), warnIfMissed: false);
+    await tester.pump();
+    expect(u.testAlertCalls, 1);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(testButton().onPressed, isNotNull);
+    expect(find.byKey(const Key('alertsTestResult')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Health-Alerts: wird das Sheet während des Tests geschlossen, kommt das '
+      'Ergebnis als Snack', (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()..testAlertGate = gate;
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pump();
+    await tester.tapAt(const Offset(10, 10)); // the scrim closes the sheet
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(BottomSheet), findsNothing);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(
+        find.descendant(
+            of: find.byType(SnackBar),
+            matching:
+                find.text('Test-Benachrichtigung gesendet — prüf dein ntfy.')),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'Health-Alerts: ohne Thema meldet das Feld selbst den Fehler — nichts '
+      'wird eingerichtet oder gesendet', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.enterText(find.byType(TextField).first, '  ');
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    expect(inSheet(find.text('Bitte ein ntfy-Thema eingeben.')), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(u.alertsTopic, isNull);
+
+    // Typing clears the error; an empty field marks it again for "Test".
+    await tester.enterText(find.byType(TextField).first, 'pi-tool-abc');
+    await tester.pumpAndSettle(); // the error line fades out
+    expect(find.text('Bitte ein ntfy-Thema eingeben.'), findsNothing);
+    await tester.enterText(find.byType(TextField).first, '');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pumpAndSettle();
+    expect(inSheet(find.text('Bitte ein ntfy-Thema eingeben.')), findsOneWidget);
+    expect(u.testAlertCalls, 0);
+  });
+
+  // The topic is the password: whatever the logic layer reports about a test
+  // or an install, the topic itself stays out of the log.
+  testWidgets('Health-Alerts: das Thema steht in keiner Log-Zeile',
+      (tester) async {
+    useTallScreen(tester);
+    const topic = 'pi-tool-k7m2q9x4vb3dwz';
+    final u = FakeEvccUpdater()
+      ..testAlertLog = ((t) => 'curl: (22) https://ntfy.sh/$t returned 404')
+      ..testAlertError = (t) => EvccUpdateException(UpdateErrorKind.unknown,
+          'Test-Benachrichtigung fehlgeschlagen: https://ntfy.sh/$t');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.enterText(find.byType(TextField).first, topic);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pumpAndSettle();
+
+    final log = logText(tester);
+    expect(log, contains('curl: (22) https://ntfy.sh/'));
+    expect(log, contains('FEHLER: Test-Benachrichtigung fehlgeschlagen'));
+    expect(log, isNot(contains(topic)));
+    expect(
+        tester.widget<Text>(find.byKey(const Key('alertsTestResult'))).data,
+        isNot(contains(topic)));
+  });
+
+  // ---- Health-Alerts: the ntfy destination belongs to the Pi ----
+
+  const topicA = 'pi-tool-aaaa2222bbbb33';
+  const topicB = 'pi-tool-cccc4444dddd55';
+  const topicAppWide = 'pi-tool-eeee6666ffff77';
+
+  AppConfig twoPis(
+          {String a = '',
+          String b = '',
+          String appWide = '',
+          int activeIndex = 0}) =>
+      AppConfig(
+        profiles: [
+          Profile(
+              name: 'A',
+              host: '192.168.178.64',
+              password: 'pw',
+              alertsNtfyTopic: a,
+              alertsNtfyServer: a.isEmpty ? '' : 'https://ntfy.example.org'),
+          Profile(
+              name: 'B',
+              host: '192.168.178.65',
+              password: 'pw',
+              alertsNtfyTopic: b,
+              alertsNtfyServer: b.isEmpty ? '' : 'https://ntfy.sh'),
+        ],
+        activeIndex: activeIndex,
+        disclaimerAccepted: true,
+        alertsNtfyTopic: appWide,
+      );
+
+  testWidgets(
+      'Health-Alerts: jedes Profil zeigt sein eigenes Thema, nicht das '
+      'app-weite', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..alertsStatus =
+          (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
+    await tester.pumpWidget(page(u,
+        config: twoPis(a: topicA, b: topicB, appWide: topicAppWide)));
+    await tester.pumpAndSettle();
+
+    await openAlertsSheet(tester);
+    expect(topicField(tester), topicA);
+    expect(find.text('https://ntfy.example.org'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10)); // close the sheet
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('B'));
+    await tester.pumpAndSettle();
+
+    await openAlertsSheet(tester);
+    expect(topicField(tester), topicB);
+    expect(find.text('https://ntfy.sh'), findsOneWidget);
+  });
+
+  // Whoever set alerts up before the destination was kept per profile still
+  // sees that topic.
+  testWidgets(
+      'Health-Alerts: ein Profil ohne eigenes Thema zeigt das app-weite von '
+      'früher', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..alertsStatus =
+          (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
+    await tester.pumpWidget(page(u,
+        config: twoPis(b: topicB, appWide: topicAppWide)));
+    await tester.pumpAndSettle();
+
+    await openAlertsSheet(tester);
+    expect(topicField(tester), topicAppWide);
+    expect(find.textContaining('nicht gespeichert'), findsNothing);
+  });
+
+  testWidgets(
+      'Health-Alerts: Einschalten merkt das Thema beim aktiven Profil — das '
+      'andere und der app-weite Wert bleiben', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    final store = _FakeStore(twoPis(b: topicB, appWide: topicAppWide));
+    await tester.pumpWidget(page(u, store: store));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.enterText(find.byType(TextField).first, topicA);
+    await tester.enterText(find.byType(TextField).at(1), 'https://ntfy.example.org');
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    expect(u.alertsTopic, topicA);
+    expect(u.alertsServer, 'https://ntfy.example.org');
+    expect(store.saved.profiles[0].alertsNtfyTopic, topicA);
+    expect(store.saved.profiles[0].alertsNtfyServer, 'https://ntfy.example.org');
+    expect(store.saved.profiles[1].alertsNtfyTopic, topicB);
+    expect(store.saved.alertsNtfyTopic, topicAppWide);
+
+    // And the sheet shows it from then on.
+    u.alertsStatus = (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+    expect(topicField(tester), topicA);
+  });
+
+  // Alerts set up from another device, or before a reinstall: the Pi pushes
+  // to a topic this app never saw. A freshly rolled one next to "active" would
+  // pass for it.
+  testWidgets(
+      'Health-Alerts: aktiv auf dem Pi, aber kein Thema bekannt — das Feld '
+      'bleibt leer und ein Hinweis sagt warum', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..alertsStatus =
+          (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    expect(topicField(tester), '');
+    expect(
+        inSheet(find.textContaining(
+            'Das ntfy-Thema dieses Pi ist in der App nicht gespeichert')),
+        findsOneWidget);
+
+    // Nothing is written to the Pi from the empty field.
+    await tester.tap(find.widgetWithText(FilledButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(u.alertsTopic, isNull);
+    expect(inSheet(find.text('Bitte ein ntfy-Thema eingeben.')), findsOneWidget);
+
+    // The dice still hands out a strong one.
+    await tester.tap(find.byIcon(Icons.casino_outlined));
+    await tester.pumpAndSettle();
+    expect(topicField(tester), startsWith('pi-tool-'));
+  });
+
+  testWidgets(
+      'Health-Alerts: nicht aktiv und nichts bekannt — wie bisher ein '
+      'Zufallsthema, ohne Hinweis', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    expect(topicField(tester), startsWith('pi-tool-'));
+    expect(find.textContaining('nicht gespeichert'), findsNothing);
+  });
+
+  testWidgets(
+      'Automatik-Karte bewertet das Thema des aktiven Profils, nicht das '
+      'app-weite', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater(),
+        config: twoPis(a: topicA, appWide: 'mein-pi')));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    expect(find.textContaining('leicht erratbar'), findsNothing);
+
+    // B has none of its own: the weak app-wide one stands in.
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('B'));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    expect(find.textContaining('leicht erratbar'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Demo: ein dort eingerichtetes Thema landet nicht beim echten Profil',
+      (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(_ready);
+    await tester.pumpWidget(page(FakeEvccUpdater(), store: store));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.bolt_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    // Leave the demo and let the profile be saved.
+    await tester.tap(find.text('Beenden'));
+    await tester.pumpAndSettle();
+    final hostField = find.widgetWithText(TextField, 'Host / IP');
+    if (!tester.any(hostField)) {
+      await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+      await tester.pumpAndSettle();
+    }
+    await tester.enterText(hostField, '192.168.178.99');
+    await tester.pump(const Duration(seconds: 1)); // past the save debounce
+
+    expect(store.saved.active.host, '192.168.178.99');
+    expect(store.saved.active.alertsNtfyTopic, '');
+    expect(store.saved.alertsNtfyTopic, '');
   });
 
   testWidgets('System ⋮ → Aufräumen frees space after a confirm',
@@ -6692,6 +7361,70 @@ void main() {
     expect(store.saved.profiles.map((p) => p.name), ['S', 'Neu']);
     expect(store.saved.activeIndex, 1); // das erste importierte Profil
     expect(store.saved.profiles.first.host, '192.168.178.99');
+  });
+
+  testWidgets(
+      'Profil-Import: das ntfy-Thema kommt mit — das eigene des Profils, sonst '
+      'das app-weite der exportierenden App', (tester) async {
+    useTallScreen(tester);
+    final envelope = (await tester.runAsync(() => encryptProfileExport(
+        encodeAppConfig(const AppConfig(
+          profiles: [
+            Profile(
+                name: 'Garage',
+                host: '10.0.0.9',
+                password: 'x',
+                alertsNtfyServer: 'https://ntfy.example.org',
+                alertsNtfyTopic: 'pi-tool-aaaa2222bbbb33'),
+            Profile(name: 'Keller', host: '10.0.0.10', password: 'x'),
+          ],
+          activeIndex: 0,
+          alertsNtfyTopic: 'pi-tool-eeee6666ffff77',
+        )),
+        'geheim1',
+        iterations: 10)))!;
+    final store = _FakeStore(_ready);
+    final u = FakeEvccUpdater()
+      ..alertsStatus =
+          (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
+    await tester.pumpWidget(page(u,
+        store: store,
+        filePicker: _FakeFilePicker((
+          name: 'pi-tool-profile.pitool',
+          bytes: Uint8List.fromList(utf8.encode(envelope)),
+        ))));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile importieren'));
+    await tester.tap(find.text('Profile importieren'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Passphrase'), 'geheim1');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'OK'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    final saved = store.saved.profiles;
+    expect(saved.map((p) => p.name), ['S', 'Garage', 'Keller']);
+    expect(saved[0].alertsNtfyTopic, ''); // the profile that was here
+    expect(saved[1].alertsNtfyTopic, 'pi-tool-aaaa2222bbbb33');
+    expect(saved[1].alertsNtfyServer, 'https://ntfy.example.org');
+    expect(saved[2].alertsNtfyTopic, 'pi-tool-eeee6666ffff77');
+
+    // The imported Pi (now active) shows its topic in the sheet.
+    await goAutomatik(tester);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+    expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+        'pi-tool-aaaa2222bbbb33');
   });
 
   // ---- Datei-Auswahl: Fehlercode der nativen Seite ----

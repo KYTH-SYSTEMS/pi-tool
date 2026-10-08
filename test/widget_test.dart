@@ -78,6 +78,15 @@ class _DenyAuth implements Authenticator {
   Future<bool> authenticate(String reason) async => false;
 }
 
+/// A device with no biometrics and no PIN set up.
+class _NoAuth implements Authenticator {
+  @override
+  Future<bool> canAuthenticate() async => false;
+
+  @override
+  Future<bool> authenticate(String reason) async => false;
+}
+
 /// Authenticator whose answer the test sets.
 class _SwitchAuth implements Authenticator {
   bool allow = true;
@@ -518,6 +527,47 @@ void main() {
     await tester.tap(find.byIcon(Icons.close));
     await tester.pumpAndSettle();
     expect(find.text('Support kontaktieren'), findsNothing);
+  });
+
+  // A snack is drawn by the page's Scaffold — beneath the open settings sheet.
+  testWidgets(
+      'the lock switch says inside the sheet why it stays off without '
+      'biometrics/PIN', (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore();
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: store,
+        updateChecker: _noUpdateChecker,
+        authenticator: _NoAuth(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.widgetWithText(PopupMenuItem<String>, 'Einstellungen'));
+    await tester.pumpAndSettle();
+
+    final lockSwitch =
+        find.widgetWithText(SwitchListTile, 'App mit Biometrie/PIN sperren');
+    await tester.tap(lockSwitch);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // past the save debounce
+
+    expect(
+        find.descendant(
+            of: lockSwitch,
+            matching:
+                find.text('Keine Biometrie/PIN auf dem Gerät eingerichtet.')),
+        findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(tester.widget<SwitchListTile>(lockSwitch).value, isFalse);
+    expect(store.saved.lockEnabled, isFalse);
   });
 
   testWidgets('the ⋮ menu opens the Pi setup guide', (tester) async {

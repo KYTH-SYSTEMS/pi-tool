@@ -48,6 +48,13 @@ class Profile {
   /// disappear for good instead of becoming permanent furniture.
   final bool remoteAccessProven;
 
+  /// ntfy destination of this Pi's Health-Alerts, as last set up from this
+  /// app. Empty = none of its own: the app-wide one on [AppConfig] then stands
+  /// in (see [effectiveNtfyDestination]). The topic works like a password
+  /// (alerts.dart) — it must never reach a log line.
+  final String alertsNtfyServer;
+  final String alertsNtfyTopic;
+
   const Profile({
     required this.name,
     this.host = '',
@@ -64,6 +71,8 @@ class Profile {
     this.remoteAccessProven = false,
     this.autoConnect = false,
     this.cachedServices = const [],
+    this.alertsNtfyServer = '',
+    this.alertsNtfyTopic = '',
   });
 
   Profile copyWith(
@@ -73,7 +82,9 @@ class Profile {
           String? lastGoodHost,
           bool? remoteAccessProven,
           bool? autoConnect,
-          List<Map<String, dynamic>>? cachedServices}) =>
+          List<Map<String, dynamic>>? cachedServices,
+          String? alertsNtfyServer,
+          String? alertsNtfyTopic}) =>
       Profile(
         name: name ?? this.name,
         host: host,
@@ -90,6 +101,8 @@ class Profile {
         remoteAccessProven: remoteAccessProven ?? this.remoteAccessProven,
         autoConnect: autoConnect ?? this.autoConnect,
         cachedServices: cachedServices ?? this.cachedServices,
+        alertsNtfyServer: alertsNtfyServer ?? this.alertsNtfyServer,
+        alertsNtfyTopic: alertsNtfyTopic ?? this.alertsNtfyTopic,
       );
 
   Map<String, dynamic> toJson() => {
@@ -108,6 +121,8 @@ class Profile {
         'remoteAccessProven': remoteAccessProven,
         'autoConnect': autoConnect,
         'cachedServices': cachedServices,
+        'alertsNtfyServer': alertsNtfyServer,
+        'alertsNtfyTopic': alertsNtfyTopic,
       };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -131,8 +146,36 @@ class Profile {
                   if (e is Map) Map<String, dynamic>.from(e)
               ]
             : const [],
+        alertsNtfyServer: (j['alertsNtfyServer'] ?? '').toString(),
+        alertsNtfyTopic: (j['alertsNtfyTopic'] ?? '').toString(),
       );
 }
+
+/// The ntfy destination the Health-Alerts sheet starts with for a Pi: the
+/// profile's own when it has one, else the app-wide one from before the
+/// destination was kept per profile. A blank topic means neither is known.
+({String server, String topic}) effectiveNtfyDestination({
+  required String profileServer,
+  required String profileTopic,
+  required String fallbackServer,
+  required String fallbackTopic,
+}) =>
+    profileTopic.trim().isNotEmpty
+        ? (server: profileServer, topic: profileTopic)
+        : (server: fallbackServer, topic: fallbackTopic);
+
+/// The profiles of an export file as an import takes them over. One without
+/// an ntfy destination of its own showed the exporting app's app-wide one —
+/// that comes along, since the importing app's fallback is a different one.
+List<Profile> profilesForImport(AppConfig exported) => [
+      for (final p in exported.profiles)
+        p.alertsNtfyTopic.trim().isEmpty &&
+                exported.alertsNtfyTopic.trim().isNotEmpty
+            ? p.copyWith(
+                alertsNtfyServer: exported.alertsNtfyServer,
+                alertsNtfyTopic: exported.alertsNtfyTopic)
+            : p,
+    ];
 
 /// The whole persisted app config: a list of profiles + the active one, plus
 /// the global (not per-profile) settings.
@@ -147,13 +190,9 @@ class AppConfig {
   /// UI language: 'system' (follow the device), 'de' or 'en'.
   final String languageMode;
   final String channel;
-  final bool autoCheck;
 
   /// Snapshot evcc config + DB on the Pi before each update.
   final bool backupBeforeUpdate;
-
-  /// Daily background check that notifies when a Pi has pending updates.
-  final bool notifyUpdates;
 
   /// Whether the user accepted the first-run disclaimer/terms.
   final bool disclaimerAccepted;
@@ -167,7 +206,10 @@ class AppConfig {
   /// User-defined console quick commands (shown above the history).
   final List<String> customCommands;
 
-  /// Health-Alerts ntfy destination (prefilled in the config sheet).
+  /// Health-Alerts ntfy destination from before it was kept per profile: the
+  /// fallback for a profile that has none of its own ([Profile.alertsNtfyTopic]),
+  /// so a Pi set up back then still shows its topic. Loaded and saved as it
+  /// is — a new destination goes to the profile.
   final String alertsNtfyServer;
   final String alertsNtfyTopic;
 
@@ -201,9 +243,7 @@ class AppConfig {
     this.themeMode = 'system',
     this.languageMode = 'system',
     this.channel = 'stable',
-    this.autoCheck = false,
     this.backupBeforeUpdate = true,
-    this.notifyUpdates = false,
     this.disclaimerAccepted = false,
     this.lastSeenVersion = '',
     this.consoleHistory = const [],
@@ -234,9 +274,7 @@ class AppConfig {
     String? themeMode,
     String? languageMode,
     String? channel,
-    bool? autoCheck,
     bool? backupBeforeUpdate,
-    bool? notifyUpdates,
     bool? disclaimerAccepted,
     String? lastSeenVersion,
     List<String>? consoleHistory,
@@ -257,9 +295,7 @@ class AppConfig {
         themeMode: themeMode ?? this.themeMode,
         languageMode: languageMode ?? this.languageMode,
         channel: channel ?? this.channel,
-        autoCheck: autoCheck ?? this.autoCheck,
         backupBeforeUpdate: backupBeforeUpdate ?? this.backupBeforeUpdate,
-        notifyUpdates: notifyUpdates ?? this.notifyUpdates,
         disclaimerAccepted: disclaimerAccepted ?? this.disclaimerAccepted,
         lastSeenVersion: lastSeenVersion ?? this.lastSeenVersion,
         consoleHistory: consoleHistory ?? this.consoleHistory,
@@ -283,9 +319,7 @@ class AppConfig {
         'themeMode': themeMode,
         'languageMode': languageMode,
         'channel': channel,
-        'autoCheck': autoCheck,
         'backupBeforeUpdate': backupBeforeUpdate,
-        'notifyUpdates': notifyUpdates,
         'disclaimerAccepted': disclaimerAccepted,
         'lastSeenVersion': lastSeenVersion,
         'consoleHistory': consoleHistory,
@@ -315,10 +349,8 @@ class AppConfig {
       themeMode: (j['themeMode'] ?? 'system').toString(),
       languageMode: (j['languageMode'] ?? 'system').toString(),
       channel: (j['channel'] ?? 'stable').toString(),
-      autoCheck: j['autoCheck'] == true,
       // Default ON; only an explicit false disables it.
       backupBeforeUpdate: j['backupBeforeUpdate'] != false,
-      notifyUpdates: j['notifyUpdates'] == true,
       disclaimerAccepted: j['disclaimerAccepted'] == true,
       lastSeenVersion: (j['lastSeenVersion'] ?? '').toString(),
       consoleHistory: (j['consoleHistory'] is List)
@@ -375,7 +407,6 @@ AppConfig migrateFromSettings(Settings s) => AppConfig(
       lockEnabled: s.lockEnabled,
       themeMode: s.themeMode,
       channel: s.channel,
-      autoCheck: s.autoCheck,
     );
 
 /// Persists [AppConfig] in secure storage, migrating from the legacy flat keys

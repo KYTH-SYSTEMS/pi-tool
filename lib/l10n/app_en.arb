@@ -16,6 +16,14 @@
   },
   "wAlertsExplain": "The Pi notifies you via push (through ntfy) when the disk fills up, a service goes down, it gets too hot or updates are due — checked every 30 min. Free and no account needed.",
   "wAlertsNtfyLink": "How ntfy works (install the app, subscribe to the topic) →",
+  "wAlertsTopicUnknown": "This Pi's ntfy topic is not stored in the app — for example because the alerts were set up from another device or before a reinstall. Enter the existing topic or roll a new one; \"{action}\" writes it to the Pi.",
+  "@wAlertsTopicUnknown": {
+    "placeholders": {
+      "action": {
+        "type": "String"
+      }
+    }
+  },
   "wAllPis": "All Pis",
   "wAutoConnect": "Connect automatically on start",
   "wCachedState": "Remembered state — connect to refresh it.",
@@ -579,6 +587,24 @@
     }
   },
   "snackUploadFailed": "Upload failed (permissions?).",
+  "dialogOverwriteFileTitle": "Overwrite \"{name}\"?",
+  "@dialogOverwriteFileTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogOverwriteFileBody": "This folder already contains a file with this name. It will be replaced. This cannot be undone.",
+  "actionOverwrite": "Overwrite",
+  "snackUploadNameIsFolder": "A folder named \"{name}\" already exists here — a file cannot replace it.",
+  "@snackUploadNameIsFolder": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "dialogDeleteFileTitle": "Delete \"{name}\"?",
   "@dialogDeleteFileTitle": {
     "placeholders": {

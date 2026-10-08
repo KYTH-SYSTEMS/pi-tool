@@ -100,8 +100,9 @@ class _FilesView extends StatefulWidget {
   final Future<void> Function(String path) onOpenFile;
 
   /// Picks + uploads a local file into [dir]. Returns true if something was
-  /// uploaded (→ the view reloads).
-  final Future<bool> Function(String dir) onUpload;
+  /// uploaded (→ the view reloads). [entries] is the listing on screen, so a
+  /// file that would be replaced can be asked about first.
+  final Future<bool> Function(String dir, List<DirEntry> entries) onUpload;
 
   /// Deletes [entry] inside [dir]. Returns true if deleted (→ the view reloads).
   final Future<bool> Function(DirEntry entry, String dir) onDelete;
@@ -136,11 +137,14 @@ class _FilesViewState extends State<_FilesView> {
         _entries = e;
         _loading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = context.l10n.wDirLoadFailed;
+        // The logic layer says why (Pi unreachable, login refused, …).
+        _error = e is EvccUpdateException
+            ? e.message
+            : context.l10n.wDirLoadFailed;
       });
     }
   }
@@ -182,7 +186,9 @@ class _FilesViewState extends State<_FilesView> {
                 onPressed: busy
                     ? null
                     : () => _work(() async {
-                        if (await widget.onUpload(_path)) await _load(_path);
+                        if (await widget.onUpload(_path, entries)) {
+                          await _load(_path);
+                        }
                       }),
                 icon: const Icon(Icons.upload_file),
               ),
@@ -194,7 +200,12 @@ class _FilesViewState extends State<_FilesView> {
           child: _loading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
-              ? Center(child: Text(_error!))
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(_error!, textAlign: TextAlign.center),
+                  ),
+                )
               : ListView(
                   children: [
                     if (!atRoot)
@@ -262,15 +273,19 @@ class _AlertsSheet extends StatefulWidget {
     required this.initialServer,
     required this.initialTopic,
     required this.onOpenNtfy,
-    required this.onSnack,
     required this.onTest,
   });
   final AlertsStatus status;
+
+  /// The ntfy destination the app knows for this Pi; an empty topic = none.
   final String initialServer;
   final String initialTopic;
   final VoidCallback onOpenNtfy;
-  final void Function(String message) onSnack;
-  final void Function(String server, String topic) onTest;
+
+  /// Sends a test push and resolves to what to tell the user about it. Shown
+  /// in the sheet itself — a snack would lie beneath it.
+  final Future<({bool ok, String text})> Function(String server, String topic)
+      onTest;
 
   @override
   State<_AlertsSheet> createState() => _AlertsSheetState();
@@ -281,14 +296,26 @@ class _AlertsSheetState extends State<_AlertsSheet> {
     text: widget.initialServer,
   );
 
+  /// The Pi runs alerts, but the app knows no topic for it (set up from
+  /// another device, or before a reinstall). The field then starts empty, with
+  /// a hint: a made-up topic next to "active" would pass for the Pi's own.
+  late final bool _topicUnknown =
+      widget.status.enabled && widget.initialTopic.trim().isEmpty;
+
   /// On first setup the field starts on a generated topic: an ntfy topic IS the
   /// password (no account, no auth), so the default path has to be the safe one
   /// — a hand-typed "pi" publishes the Pi's health to whoever guesses it.
   late final TextEditingController _topicCtrl = TextEditingController(
-    text: widget.initialTopic.trim().isEmpty
-        ? generateNtfyTopic()
-        : widget.initialTopic,
+    text: widget.initialTopic.trim().isNotEmpty
+        ? widget.initialTopic
+        : _topicUnknown
+        ? ''
+        : generateNtfyTopic(),
   );
+
+  bool _topicMissing = false; // "turn on"/"test" was tapped with an empty topic
+  bool _testing = false; // a test push is in flight → its button is off
+  ({bool ok, String text})? _testResult; // of the last test, under the buttons
 
   @override
   void initState() {
@@ -297,7 +324,37 @@ class _AlertsSheetState extends State<_AlertsSheet> {
     _topicCtrl.addListener(_onTopicChanged);
   }
 
-  void _onTopicChanged() => setState(() {});
+  void _onTopicChanged() => setState(() {
+    if (_topicCtrl.text.trim().isNotEmpty) _topicMissing = false;
+  });
+
+  /// The trimmed topic — or null, with the field marked, when there is none.
+  String? _requireTopic() {
+    final topic = _topicCtrl.text.trim();
+    if (topic.isNotEmpty) return topic;
+    setState(() => _topicMissing = true);
+    return null;
+  }
+
+  Future<void> _runTest() async {
+    final topic = _requireTopic();
+    if (topic == null) return;
+    setState(() {
+      _testing = true;
+      _testResult = null;
+    });
+    ({bool ok, String text})? result;
+    try {
+      result = await widget.onTest(_server, topic);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _testing = false;
+          _testResult = result;
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -399,6 +456,11 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                           color: Theme.of(context).colorScheme.error),
                   ),
                 ),
+              if (_topicUnknown)
+                _warnRow(
+                  context.l10n.wAlertsTopicUnknown(context.l10n.actionUpdate),
+                  strong: false,
+                ),
               const SizedBox(height: 12),
               _warnRow(context.l10n.wNtfyTopicPublicWarning, strong: false),
               const SizedBox(height: 14),
@@ -410,6 +472,9 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                   labelText: context.l10n.wNtfyTopicLabel,
                   hintText: context.l10n.wNtfyTopicHint,
                   helperText: context.l10n.wNtfyTopicHelper,
+                  errorText: _topicMissing
+                      ? context.l10n.wEnterNtfyTopic
+                      : null,
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.casino_outlined),
@@ -436,11 +501,8 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                   Expanded(
                     child: FilledButton(
                       onPressed: () {
-                        final topic = _topicCtrl.text.trim();
-                        if (topic.isEmpty) {
-                          widget.onSnack(context.l10n.wEnterNtfyTopic);
-                          return;
-                        }
+                        final topic = _requireTopic();
+                        if (topic == null) return;
                         Navigator.pop(context, (
                           enable: true,
                           server: _server,
@@ -456,18 +518,32 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton(
-                    onPressed: () {
-                      final topic = _topicCtrl.text.trim();
-                      if (topic.isEmpty) {
-                        widget.onSnack(context.l10n.wEnterNtfyTopic);
-                        return;
-                      }
-                      widget.onTest(_server, topic);
-                    },
-                    child: Text(context.l10n.wTest),
+                    // Off while a test runs: every tap is an SSH connection.
+                    onPressed: _testing ? null : _runTest,
+                    child: _testing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(context.l10n.wTest),
                   ),
                 ],
               ),
+              if (_testResult != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    _testResult!.text,
+                    key: const Key('alertsTestResult'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: _testResult!.ok
+                          ? _themeGreen(theme.brightness == Brightness.dark)
+                          : theme.colorScheme.error,
+                    ),
+                  ),
+                ),
               if (status.enabled)
                 Align(
                   alignment: Alignment.centerLeft,

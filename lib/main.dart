@@ -443,8 +443,14 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _whatsNewChecked = false; // one-shot guard for the popup
   List<String> _consoleHistory = []; // recent console commands, newest first
   List<String> _customCommands = []; // user-defined quick commands
-  String _alertsServer = 'https://ntfy.sh'; // Health-Alerts ntfy destination
+  // Health-Alerts ntfy destination from before it was kept per Pi: the
+  // fallback for a profile without one of its own. Loaded and saved as it is.
+  String _alertsServer = 'https://ntfy.sh';
   String _alertsTopic = '';
+  // The active Pi's own ntfy destination (empty = none, the fallback stands
+  // in). The topic works like a password — it never goes into a log line.
+  String _piAlertsServer = '';
+  String _piAlertsTopic = '';
   // The app build (versionCode) first seen by this install — Pro grandfathering
   // marker; null until stamped once at startup. See early_adopter.dart.
   int? _firstSeenVersionCode;
@@ -755,6 +761,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     _lastGoodHost = p.lastGoodHost;
     _remoteAccessProven = p.remoteAccessProven;
     _autoConnect = p.autoConnect;
+    _piAlertsServer = p.alertsNtfyServer;
+    _piAlertsTopic = p.alertsNtfyTopic;
     // Sofort etwas zeigen statt eines leeren Bildschirms: der zuletzt bekannte
     // Stand dieses Pi. Er wird ersetzt, sobald eine echte Erkennung landet.
     _services = [for (final j in p.cachedServices) ServiceStatus.fromJson(j)];
@@ -830,6 +838,18 @@ class _UpdaterPageState extends State<UpdaterPage>
         cachedServices: _demoMode
             ? _storedCards
             : [for (final s in _services) s.toJson()],
+        alertsNtfyServer: _piAlertsServer,
+        alertsNtfyTopic: _piAlertsTopic,
+      );
+
+  /// The ntfy destination of the active Pi's Health-Alerts as far as the app
+  /// knows it: its own, else the app-wide one of older releases.
+  ({String server, String topic}) get _alertsDestination =>
+      effectiveNtfyDestination(
+        profileServer: _piAlertsServer,
+        profileTopic: _piAlertsTopic,
+        fallbackServer: _alertsServer,
+        fallbackTopic: _alertsTopic,
       );
 
   /// The cards the active profile has remembered in [_profiles] — what it had
@@ -973,7 +993,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       // fields, the one we leave is written as it stands in the list.
       _profiles[_activeIndex] = _currentProfile();
       setState(() {
-        _profiles = [..._profiles, ...cfg.profiles];
+        // With the ntfy destination each one showed in the exporting app.
+        _profiles = [..._profiles, ...profilesForImport(cfg)];
         _activeIndex = _profiles.length - cfg.profiles.length; // first imported
         // Reset first: _applyProfile loads the new Pi's remembered cards, and
         // a reset after it would wipe them (and the save below their cache).
@@ -3085,13 +3106,53 @@ class _UpdaterPageState extends State<UpdaterPage>
     return _configFor(port);
   }
 
-  Future<List<DirEntry>> _filesList(String path) {
+  /// The Dateien tab's share of the error handling — its operations run
+  /// outside [_guard]. The logic layer's message goes into the log and, with
+  /// [snackFallback] given, into a snack ([snackFallback] itself for any other
+  /// error; the listing shows its error in place and passes none). A changed
+  /// host key is treated as [_guard] treats it: banner, session ended, and the
+  /// "trust new key" bar — which reconnects, whatever the operation was.
+  void _fileOpFailed(SshConfig config, Object error, AppLocalizations l10n,
+      {String? snackFallback}) {
+    if (!mounted) return;
+    if (error is! EvccUpdateException) {
+      _appendLog(l10n.logError('$error')); // _appendLog redacts the password
+      if (snackFallback != null) _snack(snackFallback);
+      return;
+    }
+    _appendLog(error.kind == UpdateErrorKind.cancelled
+        ? l10n.logCancelled
+        : l10n.logError(error.message));
+    if (error.kind != UpdateErrorKind.hostKeyChanged) {
+      if (snackFallback != null) _snack(error.message);
+      return;
+    }
+    _lastConfig = config;
+    _lastAction = _testConnection;
+    setState(() {
+      _statusMessage = error.message;
+      _statusOk = false;
+      _statusWarn = false;
+      _hostKeyIssue = true;
+      _connected = false;
+      _connectionOk = null;
+      if (isGatedTab(_tab)) _tab = kTabVerwaltung;
+    });
+  }
+
+  Future<List<DirEntry>> _filesList(String path) async {
     final c = _filesConfig();
     if (c == null) {
       throw EvccUpdateException(
           UpdateErrorKind.connection, context.l10n.errorNoPiConnected);
     }
-    return _updater.listDir(config: c, path: path, onLog: _appendLog);
+    final l10n = context.l10n; // captured: the listing awaits
+    try {
+      return await _updater.listDir(config: c, path: path, onLog: _appendLog);
+    } catch (e) {
+      _fileOpFailed(c, e, l10n);
+      rethrow;
+    }
   }
 
   Future<void> _filesOpen(String path) async {
@@ -3108,7 +3169,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           ? context.l10n.snackFileTooLarge(kFileUploadLimit ~/ (1024 * 1024))
           : context.l10n.snackFilePickFailed;
 
-  Future<bool> _filesUpload(String dir) async {
+  /// [entries] is the listing of [dir] as the tab shows it: an entry of the
+  /// picked file's name is asked about (a file) or refused (a folder) before
+  /// anything goes to the Pi.
+  Future<bool> _filesUpload(String dir, List<DirEntry> entries) async {
     final c = _filesConfig();
     if (c == null) {
       _snack(context.l10n.snackConnectPiFirst);
@@ -3142,24 +3206,45 @@ class _UpdaterPageState extends State<UpdaterPage>
       _snack(context.l10n.snackInvalidFilename);
       return false;
     }
+    final l10n = context.l10n; // captured: dialog and upload await
+    // The upload replaces a file of the same name, as root and without a way
+    // back — so it asks first. A folder of that name cannot be replaced by a
+    // file at all.
+    final existing = entries.where((e) => e.name == safeName).firstOrNull;
+    if (existing != null) {
+      if (existing.isDir) {
+        _snack(l10n.snackUploadNameIsFolder(safeName));
+        return false;
+      }
+      if (!await _confirm(
+        l10n.dialogOverwriteFileTitle(safeName),
+        l10n.dialogOverwriteFileBody,
+        confirmLabel: l10n.actionOverwrite,
+        destructive: true,
+      )) {
+        return false;
+      }
+    }
     final target = joinRemotePath(dir, safeName);
     try {
-      _snack(context.l10n.snackUploading(safeName));
+      _snack(l10n.snackUploading(safeName));
       await _updater.uploadFile(
           config: c, path: target, bytes: picked.bytes, onLog: _appendLog);
-      if (mounted) _snack(context.l10n.snackUploaded(safeName));
-    } catch (_) {
-      if (mounted) _snack(context.l10n.snackUploadFailed);
+      if (mounted) _snack(l10n.snackUploaded(safeName));
+    } catch (e) {
+      _fileOpFailed(c, e, l10n, snackFallback: l10n.snackUploadFailed);
     }
     // Reload after any upload ATTEMPT, not only on success: if the app was
     // backgrounded by the picker the success marker can be missed even though
-    // the file was written — a reload then still surfaces it.
-    return true;
+    // the file was written — a reload then still surfaces it. Not once the
+    // session has ended (changed host key): there is nothing to list then.
+    return mounted && _connected;
   }
 
   Future<bool> _filesDelete(DirEntry entry, String dir) async {
     final c = _filesConfig();
     if (c == null) return false;
+    final l10n = context.l10n; // captured: dialog and delete await
     if (!await _confirm(
       context.l10n.dialogDeleteFileTitle(entry.name),
       entry.isDir
@@ -3175,15 +3260,16 @@ class _UpdaterPageState extends State<UpdaterPage>
           path: joinRemotePath(dir, entry.name),
           isDir: entry.isDir,
           onLog: _appendLog);
-      if (mounted) _snack(context.l10n.snackDeleted(entry.name));
+      if (mounted) _snack(l10n.snackDeleted(entry.name));
       return true;
-    } catch (_) {
-      if (mounted) _snack(context.l10n.snackDeleteFailed);
+    } catch (e) {
+      _fileOpFailed(c, e, l10n, snackFallback: l10n.snackDeleteFailed);
       return false;
     }
   }
 
   Future<void> _openRemoteFile(SshConfig config, String path) async {
+    final l10n = context.l10n; // captured: the read awaits
     try {
       final bytes = await _updater.readFileBytes(
           config: config, path: path, onLog: _appendLog);
@@ -3198,8 +3284,8 @@ class _UpdaterPageState extends State<UpdaterPage>
           text.length > 100000 ? '${text.substring(0, 100000)}\n…' : text,
           editable: editable);
       if (edit == true && mounted) await _editConfig(path, name);
-    } catch (_) {
-      if (mounted) _snack(context.l10n.snackFileLoadFailed);
+    } catch (e) {
+      _fileOpFailed(config, e, l10n, snackFallback: l10n.snackFileLoadFailed);
     }
   }
 
@@ -3335,16 +3421,21 @@ class _UpdaterPageState extends State<UpdaterPage>
     _beginBusy();
     await _guard(() async {
       if (choice.enable) {
-        // Plain field writes (not rendered directly) — no setState needed, so no
-        // setState-after-unmount risk across the awaits below.
-        _alertsServer = choice.server;
-        _alertsTopic = choice.topic;
-        _persistSettings();
+        // Remembered with THIS Pi, and before the install: the topic the Pi
+        // pushes to from here on must not be lost if the app goes away
+        // midway. Plain field writes — no setState needed, so no
+        // setState-after-unmount risk across the awaits below. Not in the
+        // demo: its sample Pi is not the profile's.
+        if (!_demoMode) {
+          _piAlertsServer = choice.server;
+          _piAlertsTopic = choice.topic;
+          _persistSettings();
+        }
         await _updater.enableAlerts(
             config: config,
             ntfyServer: choice.server,
             ntfyTopic: choice.topic,
-            onLog: _appendLog);
+            onLog: (line) => _appendLog(_maskNtfyTopic(line, choice.topic)));
         if (!mounted) return;
         setState(() {
           _statusMessage = context.l10n.statusAlertsActive(choice.topic);
@@ -3366,25 +3457,40 @@ class _UpdaterPageState extends State<UpdaterPage>
             : context.l10n.busyDisablingAlerts);
   }
 
-  /// Fires a one-off test push (best-effort) so the user can confirm ntfy works.
-  Future<void> _sendTestAlert(
+  /// The ntfy topic is the password (alerts.dart): masked in whatever goes to
+  /// the log, also in the form the commands use (whitespace stripped).
+  String _maskNtfyTopic(String text, String topic) => redactPassword(
+      redactPassword(text, topic), topic.replaceAll(RegExp(r'\s'), ''));
+
+  /// Fires a one-off test push so the user can confirm ntfy works, and returns
+  /// what to tell them — the Health-Alerts sheet is open meanwhile and shows
+  /// it itself, a snack would lie beneath it. A failure carries the logic
+  /// layer's reason and goes into the log.
+  Future<({bool ok, String text})> _sendTestAlert(
       SshConfig config, String server, String topic) async {
+    final l10n = context.l10n; // captured: the body awaits
     try {
       await _updater.sendTestAlert(
           config: config,
           ntfyServer: server,
           ntfyTopic: topic,
-          onLog: _appendLog);
-      if (!mounted) return;
-      _snack(context.l10n.snackTestAlertSent);
-    } catch (_) {
-      if (!mounted) return;
-      _snack(context.l10n.snackTestFailed);
+          onLog: (line) => _appendLog(_maskNtfyTopic(line, topic)));
+      return (ok: true, text: l10n.snackTestAlertSent);
+    } on EvccUpdateException catch (e) {
+      final message = _maskNtfyTopic(e.message, topic);
+      _appendLog(l10n.logError(message));
+      return (ok: false, text: message);
+    } catch (e) {
+      _appendLog(l10n.logError(_maskNtfyTopic('$e', topic)));
+      return (ok: false, text: l10n.snackTestFailed);
     }
   }
 
   Future<({bool enable, String server, String topic})?> _showAlertsSheet(
       AlertsStatus status, SshConfig config) {
+    final known = _alertsDestination;
+    // Whether the sheet is still there to show a test's result itself.
+    var sheetOpen = true;
     return showModalBottomSheet<({bool enable, String server, String topic})>(
       context: context,
       showDragHandle: true,
@@ -3394,13 +3500,19 @@ class _UpdaterPageState extends State<UpdaterPage>
       // the future resolves used them during the dismiss animation).
       builder: (ctx) => _AlertsSheet(
         status: status,
-        initialServer: _alertsServer,
-        initialTopic: _alertsTopic,
+        initialServer: known.server,
+        initialTopic: known.topic,
         onOpenNtfy: () => _openUrl('https://ntfy.sh'),
-        onSnack: _snack,
-        onTest: (server, topic) => _sendTestAlert(config, server, topic),
+        onTest: (server, topic) async {
+          final result = await _sendTestAlert(config, server, topic);
+          // Closed meanwhile: nothing covers a snack any more.
+          if (!sheetOpen && mounted) _snack(result.text);
+          return result;
+        },
       ),
-    );
+    ).whenComplete(() {
+      sheetOpen = false;
+    });
   }
 
   // ---- scheduled automatic updates (on-Pi systemd timer) ----
@@ -4779,6 +4891,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _openSettings() {
+    // Why the lock switch did not turn on — shown at the switch: a snack would
+    // lie beneath this sheet.
+    String? lockError;
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -4824,16 +4939,28 @@ class _UpdaterPageState extends State<UpdaterPage>
                           SwitchListTile(
                             contentPadding: EdgeInsets.zero,
                             title: Text(ctx.l10n.settingsLockTitle),
-                            subtitle: Text(ctx.l10n.settingsLockSubtitle),
+                            subtitle: lockError != null
+                                ? Text(lockError!,
+                                    key: const Key('lockSwitchError'),
+                                    style: TextStyle(
+                                        color:
+                                            Theme.of(ctx).colorScheme.error))
+                                : Text(ctx.l10n.settingsLockSubtitle),
                             value: _lockEnabled,
                             onChanged: (v) async {
                               final l10n = ctx.l10n;
                               if (v && !await _authenticator.canAuthenticate()) {
-                                _snack(l10n.snackNoBiometrics);
+                                if (ctx.mounted) {
+                                  setSheet(() =>
+                                      lockError = l10n.snackNoBiometrics);
+                                } else if (mounted) {
+                                  // Closed meanwhile: nothing covers a snack.
+                                  _snack(l10n.snackNoBiometrics);
+                                }
                                 return;
                               }
                               setState(() => _lockEnabled = v);
-                              setSheet(() {});
+                              setSheet(() => lockError = null);
                               _scheduleSave();
                             },
                           ),
@@ -7034,8 +7161,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             locked: !_unlocked,
             // The topic is the only protection on ntfy (no account, no auth), so
             // flag a guessable one here too — someone who set alerts up once may
-            // never open the sheet again.
-            warning: isWeakNtfyTopic(_alertsTopic)
+            // never open the sheet again. Judged by the active Pi's topic.
+            warning: isWeakNtfyTopic(_alertsDestination.topic)
                 ? context.l10n.alertsWeakTopicCardHint
                 : null,
             onTap: () => _proGate(_configureAlerts),

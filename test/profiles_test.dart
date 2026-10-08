@@ -32,6 +32,117 @@ void main() {
       expect(renamed.cachedServices, hasLength(1));
       expect(p.copyWith(autoConnect: false).autoConnect, isFalse);
     });
+
+    test('keeps the ntfy destination, and sets it when told to', () {
+      const p = Profile(
+          name: 'Pi',
+          alertsNtfyServer: 'https://ntfy.example.org',
+          alertsNtfyTopic: 'pi-tool-k7m2q9x4vb3dwz');
+      final renamed = p.copyWith(name: 'Garage');
+      expect(renamed.alertsNtfyServer, 'https://ntfy.example.org');
+      expect(renamed.alertsNtfyTopic, 'pi-tool-k7m2q9x4vb3dwz');
+      final moved = p.copyWith(
+          alertsNtfyServer: 'https://ntfy.sh', alertsNtfyTopic: 'anderes-thema');
+      expect(moved.alertsNtfyServer, 'https://ntfy.sh');
+      expect(moved.alertsNtfyTopic, 'anderes-thema');
+      expect(moved.name, 'Pi');
+    });
+  });
+
+  group('Profile ntfy destination', () {
+    test('survives the JSON round-trip', () {
+      const p = Profile(
+          name: 'Pi',
+          alertsNtfyServer: 'https://ntfy.example.org',
+          alertsNtfyTopic: 'pi-tool-k7m2q9x4vb3dwz');
+      final back = Profile.fromJson(p.toJson());
+      expect(back.alertsNtfyServer, 'https://ntfy.example.org');
+      expect(back.alertsNtfyTopic, 'pi-tool-k7m2q9x4vb3dwz');
+    });
+
+    test('a profile written before these fields has none of its own', () {
+      final p = Profile.fromJson(const {'name': 'Pi', 'host': '10.0.0.5'});
+      expect(p.alertsNtfyServer, '');
+      expect(p.alertsNtfyTopic, '');
+    });
+
+    test('each profile of a config keeps its own', () {
+      const cfg = AppConfig(profiles: [
+        Profile(name: 'A', alertsNtfyTopic: 'thema-von-a-1234567'),
+        Profile(name: 'B', alertsNtfyTopic: 'thema-von-b-7654321'),
+        Profile(name: 'C'),
+      ], activeIndex: 0, alertsNtfyTopic: 'app-weit-9999999999');
+      final back = parseAppConfig(encodeAppConfig(cfg));
+      expect(back.profiles.map((p) => p.alertsNtfyTopic),
+          ['thema-von-a-1234567', 'thema-von-b-7654321', '']);
+      expect(back.alertsNtfyTopic, 'app-weit-9999999999');
+    });
+  });
+
+  group('effectiveNtfyDestination', () {
+    test('the profile\'s own destination wins over the app-wide one', () {
+      final d = effectiveNtfyDestination(
+          profileServer: 'https://ntfy.example.org',
+          profileTopic: 'eigenes-thema-123456',
+          fallbackServer: 'https://ntfy.sh',
+          fallbackTopic: 'app-weit-9999999999');
+      expect(d.server, 'https://ntfy.example.org');
+      expect(d.topic, 'eigenes-thema-123456');
+    });
+
+    test('a profile without one falls back to the app-wide destination', () {
+      final d = effectiveNtfyDestination(
+          profileServer: '',
+          profileTopic: '',
+          fallbackServer: 'https://ntfy.example.org',
+          fallbackTopic: 'app-weit-9999999999');
+      expect(d.server, 'https://ntfy.example.org');
+      expect(d.topic, 'app-weit-9999999999');
+    });
+
+    test('neither known: the topic is empty, not made up', () {
+      final d = effectiveNtfyDestination(
+          profileServer: '',
+          profileTopic: ' ',
+          fallbackServer: 'https://ntfy.sh',
+          fallbackTopic: '');
+      expect(d.server, 'https://ntfy.sh');
+      expect(d.topic, '');
+    });
+  });
+
+  group('profilesForImport', () {
+    test(
+        'a profile without a destination of its own takes the exporting '
+        'app\'s app-wide one along', () {
+      const exported = AppConfig(
+        profiles: [
+          Profile(name: 'A'),
+          Profile(
+              name: 'B',
+              alertsNtfyServer: 'https://ntfy.example.org',
+              alertsNtfyTopic: 'thema-von-b-7654321'),
+        ],
+        activeIndex: 0,
+        alertsNtfyServer: 'https://ntfy.sh',
+        alertsNtfyTopic: 'app-weit-9999999999',
+      );
+      final imported = profilesForImport(exported);
+      expect(imported.map((p) => p.name), ['A', 'B']);
+      expect(imported[0].alertsNtfyServer, 'https://ntfy.sh');
+      expect(imported[0].alertsNtfyTopic, 'app-weit-9999999999');
+      expect(imported[1].alertsNtfyServer, 'https://ntfy.example.org');
+      expect(imported[1].alertsNtfyTopic, 'thema-von-b-7654321');
+    });
+
+    test('an export without any topic leaves the profiles as they are', () {
+      const exported = AppConfig(
+          profiles: [Profile(name: 'A', host: '10.0.0.5')], activeIndex: 0);
+      final imported = profilesForImport(exported);
+      expect(imported.single.host, '10.0.0.5');
+      expect(imported.single.alertsNtfyServer, '');
+      expect(imported.single.alertsNtfyTopic, '');
+    });
   });
 
   group('AppConfig encode/parse', () {
@@ -53,9 +164,7 @@ void main() {
         lockEnabled: true,
         themeMode: 'dark',
         channel: 'unstable',
-        autoCheck: true,
         backupBeforeUpdate: false,
-        notifyUpdates: true,
         disclaimerAccepted: true,
         lastSeenVersion: '0.20.0',
         consoleHistory: ['df -h', 'docker ps'],
@@ -64,7 +173,6 @@ void main() {
 
       final back = parseAppConfig(encodeAppConfig(cfg));
       expect(back.backupBeforeUpdate, isFalse);
-      expect(back.notifyUpdates, isTrue);
       expect(back.disclaimerAccepted, isTrue);
       expect(back.lastSeenVersion, '0.20.0');
       expect(back.consoleHistory, ['df -h', 'docker ps']);
@@ -83,7 +191,6 @@ void main() {
       expect(back.lockEnabled, isTrue);
       expect(back.themeMode, 'dark');
       expect(back.channel, 'unstable');
-      expect(back.autoCheck, isTrue);
     });
 
     test('parse tolerates junk and falls back to initial', () {
@@ -92,9 +199,22 @@ void main() {
       expect(parseAppConfig('[]').profiles.single.name, 'Standard');
     });
 
-    test('notifyUpdates defaults OFF when the key is absent', () {
-      expect(parseAppConfig('{"profiles":[],"activeIndex":0}').notifyUpdates,
-          isFalse);
+    // autoCheck and notifyUpdates were stored but never read or set. A config
+    // written by an older release still carries the keys.
+    test('a stored config with the removed keys loads, and drops them', () {
+      final cfg = parseAppConfig('{"activeIndex":1,'
+          '"profiles":[{"name":"A","host":"10.0.0.5"},{"name":"B"}],'
+          '"autoCheck":true,"notifyUpdates":true,'
+          '"uiPort":"8080","backupBeforeUpdate":false}');
+      expect(cfg.profiles.map((p) => p.name), ['A', 'B']);
+      expect(cfg.profiles.first.host, '10.0.0.5');
+      expect(cfg.activeIndex, 1);
+      expect(cfg.uiPort, '8080');
+      expect(cfg.backupBeforeUpdate, isFalse);
+
+      final keys = cfg.toJson().keys;
+      expect(keys, isNot(contains('autoCheck')));
+      expect(keys, isNot(contains('notifyUpdates')));
     });
 
     test('disclaimerAccepted defaults OFF when the key is absent', () {
@@ -188,7 +308,6 @@ void main() {
       expect(cfg.lockEnabled, isTrue);
       expect(cfg.themeMode, 'dark');
       expect(cfg.channel, 'unstable');
-      expect(cfg.autoCheck, isTrue);
     });
   });
 }
