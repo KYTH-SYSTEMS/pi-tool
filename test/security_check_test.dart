@@ -1,5 +1,21 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// The shell for the real-bash group: `bash` on Linux/macOS (CI). On Windows
+/// `bash` may be the WSL launcher, so it only runs with an explicit Git Bash
+/// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
+final String? _bash =
+    Platform.isWindows ? Platform.environment['PITOOL_TEST_BASH'] : 'bash';
+
+/// A path the sandbox bash understands (Git Bash wants /c/... on Windows).
+String _posix(String p) {
+  final s = p.replaceAll(r'\', '/');
+  final m = RegExp(r'^([A-Za-z]):/').firstMatch(s);
+  return m == null ? s : '/${m.group(1)!.toLowerCase()}/${s.substring(3)}';
+}
 
 void main() {
   group('buildSecurityProbe', () {
@@ -246,6 +262,36 @@ __SEC_PORTS__
       }
     });
 
+    // The script arrives on stdin (`sudo -S bash -s`). A conffile question
+    // from dpkg would read the rest of it as the answer and abort — so apt
+    // never gets the script's stdin and never asks.
+    test('no apt call can read the script from stdin', () {
+      for (final fix in [SecurityFix.fail2ban, SecurityFix.autoUpdates]) {
+        final lines = buildSecurityFixScript(fix)
+            .split('\n')
+            .where((l) => l.contains('apt-get'))
+            .toList();
+        expect(lines, hasLength(2), reason: '$fix');
+        for (final line in lines) {
+          expect(line, contains('</dev/null'), reason: '$fix: "$line"');
+        }
+      }
+    });
+
+    test('apt installs keep changed conffiles without asking', () {
+      for (final fix in [SecurityFix.fail2ban, SecurityFix.autoUpdates]) {
+        for (final line in buildSecurityFixScript(fix).split('\n')) {
+          if (!line.contains('apt-get') || !line.contains(' install ')) {
+            continue;
+          }
+          expect(line, contains('-o Dpkg::Options::=--force-confdef'),
+              reason: '$fix: "$line"');
+          expect(line, contains('-o Dpkg::Options::=--force-confold'),
+              reason: '$fix: "$line"');
+        }
+      }
+    });
+
     test('fail2ban: install + enable now', () {
       final s = buildSecurityFixScript(SecurityFix.fail2ban);
       expect(s, contains('install -y fail2ban'));
@@ -276,4 +322,75 @@ __SEC_PORTS__
       expect(s.split('\n').first.trim(), isNot('set -e'));
     });
   });
+
+  // The real fix scripts, fed to `bash -s` on stdin exactly like the sudo
+  // shell does. `apt-get` and `systemctl` are logging stubs, and PATH is the
+  // stub directory alone; the apt stub drains its stdin the way dpkg's
+  // conffile prompt would — a call without its own </dev/null swallows the
+  // rest of the script, and the marker never comes.
+  group('buildSecurityFixScript in bash', () {
+    late Directory tmp;
+    late String root; // posix form of tmp
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('secfix');
+      root = _posix(tmp.path);
+      Directory('${tmp.path}/bin').createSync();
+      Directory('${tmp.path}/etc/apt/apt.conf.d').createSync(recursive: true);
+      File('${tmp.path}/bin/apt-get').writeAsStringSync('#!/bin/sh\n'
+          'echo "apt-get \$*" >> "\$STUB/calls"\n'
+          '/bin/cat >/dev/null\n');
+      File('${tmp.path}/bin/systemctl').writeAsStringSync(
+          '#!/bin/sh\necho "systemctl \$*" >> "\$STUB/calls"\n');
+      if (!Platform.isWindows) {
+        Process.runSync('chmod',
+            ['+x', '${tmp.path}/bin/apt-get', '${tmp.path}/bin/systemctl']);
+      }
+    });
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    Future<({int code, String out})> run(SecurityFix fix) async {
+      final script =
+          buildSecurityFixScript(fix).replaceAll('/etc/apt/', '$root/etc/apt/');
+      final p = await Process.start(_bash!, ['-s']);
+      final out = p.stdout.transform(utf8.decoder).join();
+      final err = p.stderr.transform(utf8.decoder).join();
+      p.stdin.add(
+          utf8.encode("export PATH='$root/bin' STUB='$root'\n$script"));
+      await p.stdin.close();
+      final code = await p.exitCode;
+      return (code: code, out: '${await out}${await err}');
+    }
+
+    List<String> calls() => File('${tmp.path}/calls').readAsLinesSync();
+
+    for (final (fix, pkg) in [
+      (SecurityFix.fail2ban, 'fail2ban'),
+      (SecurityFix.autoUpdates, 'unattended-upgrades'),
+    ]) {
+      test('$pkg: apt reading stdin cannot eat the rest of the script',
+          () async {
+        final r = await run(fix);
+        expect(r.code, 0, reason: r.out);
+        expect(r.out.trimRight().split('\n').last, 'SECFIX_OK', reason: r.out);
+        final c = calls();
+        expect(c.last, 'systemctl enable --now $pkg', reason: c.join('\n'));
+        final install = c.singleWhere((l) => l.contains(' install '));
+        expect(install, endsWith('install -y $pkg'));
+        expect(install, contains('-o Dpkg::Options::=--force-confdef'));
+        expect(install, contains('-o Dpkg::Options::=--force-confold'));
+        expect(install, contains('-o Dpkg::Use-Pty=0'));
+      });
+    }
+
+    test('auto updates: the two periodic switches are written', () async {
+      final r = await run(SecurityFix.autoUpdates);
+      expect(r.code, 0, reason: r.out);
+      expect(
+          File('${tmp.path}/etc/apt/apt.conf.d/20auto-upgrades')
+              .readAsStringSync(),
+          'APT::Periodic::Update-Package-Lists "1";\n'
+          'APT::Periodic::Unattended-Upgrade "1";\n');
+    });
+  }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
 }

@@ -84,13 +84,17 @@ String buildSecurityFixScript(SecurityFix fix) {
     case SecurityFix.piholePassword:
       throw ArgumentError.value(
           fix, 'fix', 'braucht ein Passwort – buildPiholeSetPasswordScript');
+    // The script arrives on stdin (`sudo -S bash -s`): every apt-get gets its
+    // own </dev/null, and --force-confdef/--force-confold keep a changed
+    // conffile without asking — dpkg's question would otherwise read the rest
+    // of the script as its answer and abort.
     case SecurityFix.fail2ban:
       return '''
 set -e
 export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C
-apt-get update -qq 2>&1 || true
-apt-get -o Dpkg::Use-Pty=0 install -y fail2ban
+apt-get update -qq </dev/null 2>&1 || true
+apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y fail2ban </dev/null
 systemctl enable --now fail2ban
 echo SECFIX_OK
 ''';
@@ -99,8 +103,8 @@ echo SECFIX_OK
 set -e
 export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C
-apt-get update -qq 2>&1 || true
-apt-get -o Dpkg::Use-Pty=0 install -y unattended-upgrades
+apt-get update -qq </dev/null 2>&1 || true
+apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y unattended-upgrades </dev/null
 printf 'APT::Periodic::Update-Package-Lists "1";\\nAPT::Periodic::Unattended-Upgrade "1";\\n' > /etc/apt/apt.conf.d/20auto-upgrades
 systemctl enable --now unattended-upgrades
 echo SECFIX_OK
