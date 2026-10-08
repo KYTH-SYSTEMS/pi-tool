@@ -719,6 +719,8 @@ class FakeEvccUpdater extends EvccUpdater {
   // What sendTestAlert logs / throws, given the topic it was called with.
   String Function(String topic)? testAlertLog;
   Object Function(String topic)? testAlertError;
+  // What enableAlerts logs, given the topic it was called with.
+  String Function(String topic)? enableAlertsLog;
 
   @override
   Future<void> enableAlerts({
@@ -729,6 +731,7 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async {
     alertsServer = ntfyServer;
     alertsTopic = ntfyTopic;
+    if (enableAlertsLog != null) onLog(enableAlertsLog!(ntfyTopic));
   }
 
   @override
@@ -3112,6 +3115,42 @@ void main() {
         findsOneWidget);
   });
 
+  // With the keyboard up the sheet scrolls. The result line is added below
+  // the buttons — past the end of what was visible when "Test" was tapped.
+  testWidgets(
+      'Health-Alerts: bei offener Tastatur rollt das Ergebnis des Tests in den '
+      'sichtbaren Teil des Sheets', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 2600);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+    final scroller = inSheet(find.byType(SingleChildScrollView));
+    final testButton = find.widgetWithText(OutlinedButton, 'Test');
+    await tester.ensureVisible(testButton);
+    await tester.pumpAndSettle();
+    // The premise: the sheet does scroll, and is at its end.
+    final position = tester
+        .state<ScrollableState>(find
+            .descendant(of: scroller, matching: find.byType(Scrollable))
+            .first)
+        .position;
+    expect(position.maxScrollExtent, greaterThan(0));
+    expect(position.pixels, position.maxScrollExtent);
+
+    await tester.tap(testButton);
+    await tester.pumpAndSettle();
+
+    expect(u.testAlertCalls, 1);
+    final line = tester.getRect(find.byKey(const Key('alertsTestResult')));
+    expect(line.bottom, lessThanOrEqualTo(tester.getRect(scroller).bottom));
+    expect(line.top, greaterThanOrEqualTo(tester.getRect(scroller).top));
+  });
+
   testWidgets(
       'Health-Alerts: ohne Thema meldet das Feld selbst den Fehler — nichts '
       'wird eingerichtet oder gesendet', (tester) async {
@@ -3165,6 +3204,27 @@ void main() {
     expect(
         tester.widget<Text>(find.byKey(const Key('alertsTestResult'))).data,
         isNot(contains(topic)));
+  });
+
+  testWidgets(
+      'Health-Alerts: auch beim Einrichten steht das Thema in keiner Log-Zeile',
+      (tester) async {
+    useTallScreen(tester);
+    const topic = 'pi-tool-k7m2q9x4vb3dwz';
+    final u = FakeEvccUpdater()
+      ..enableAlertsLog = ((t) => 'bash: line 9: TOPIC=$t: command not found');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.enterText(find.byType(TextField).first, topic);
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    expect(u.alertsTopic, topic);
+    final log = logText(tester);
+    expect(log, contains('bash: line 9: TOPIC='));
+    expect(log, isNot(contains(topic)));
   });
 
   // ---- Health-Alerts: the ntfy destination belongs to the Pi ----

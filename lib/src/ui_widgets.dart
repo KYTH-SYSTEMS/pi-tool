@@ -316,6 +316,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   bool _topicMissing = false; // "turn on"/"test" was tapped with an empty topic
   bool _testing = false; // a test push is in flight → its button is off
   ({bool ok, String text})? _testResult; // of the last test, under the buttons
+  final _testResultKey = GlobalKey(); // to scroll that line into view
 
   @override
   void initState() {
@@ -351,6 +352,16 @@ class _AlertsSheetState extends State<_AlertsSheet> {
         setState(() {
           _testing = false;
           _testResult = result;
+        });
+        // The line is added below the buttons. With the keyboard up the sheet
+        // scrolls, and that is past the end of what is visible.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final line = _testResultKey.currentContext;
+          if (line == null) return;
+          Scrollable.ensureVisible(
+            line,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+          );
         });
       }
     }
@@ -532,6 +543,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
               ),
               if (_testResult != null)
                 Padding(
+                  key: _testResultKey,
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
                     _testResult!.text,
