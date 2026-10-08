@@ -182,6 +182,18 @@ EvccUpdater _updaterWith(SshRunner runner,
         jobIdGenerator: () => _jobId,
         jobWatchdog: jobWatchdog);
 
+/// A runner whose connection is already dead when it is closed: after a socket
+/// error dart:io's close() completes with that very error.
+class _CloseThrowsRunner extends FakeSshRunner {
+  _CloseThrowsRunner(super.responses, {super.connectError});
+
+  @override
+  Future<void> close() async {
+    await super.close();
+    throw const SocketException('Software caused connection abort');
+  }
+}
+
 /// A runner whose [run] hangs until [close] is called — mirroring dartssh2:
 /// closing the connection ends the channel stream NORMALLY, so the in-flight
 /// run() RETURNS a partial result (exitCode null) rather than throwing, and a
@@ -1337,6 +1349,46 @@ void main() {
           .readConfigFile(config: _config, path: '/etc/evcc.yaml', onLog: (_) {});
       expect(text, contains('schema: http'));
       expect(runner.stdinByCommand[cmd], 'sekret\n');
+    });
+
+    // Whatever the editor shows gets written back on save. A read that did not
+    // demonstrably deliver the whole file must therefore never open it.
+    test('readConfigFile refuses a read without an exit status', () async {
+      final cmd = buildConfigReadCommand('/etc/evcc.yaml');
+      final runner = FakeSshRunner({
+        cmd: [_r('network:\n  sche', exitCode: null)] // connection ended
+      });
+      await expectLater(
+        _updaterWith(runner).readConfigFile(
+            config: _config, path: '/etc/evcc.yaml', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('vollständig'))),
+      );
+    });
+
+    test('readConfigFile refuses a read that ended with an error', () async {
+      final cmd = buildConfigReadCommand('/etc/evcc.yaml');
+      final runner = FakeSshRunner({
+        cmd: [_r('network:\n', stderr: 'cat: read error', exitCode: 1)]
+      });
+      await expectLater(
+        _updaterWith(runner).readConfigFile(
+            config: _config, path: '/etc/evcc.yaml', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()),
+      );
+    });
+
+    test('readConfigFile refuses a file that is not UTF-8', () async {
+      // ISO-8859-1 "grün": the invalid byte arrives as U+FFFD, and saving would
+      // write that replacement character into the file for good.
+      final cmd = buildConfigReadCommand('/etc/evcc.yaml');
+      final runner = FakeSshRunner({cmd: [_r('title: gr�n\n')]});
+      await expectLater(
+        _updaterWith(runner).readConfigFile(
+            config: _config, path: '/etc/evcc.yaml', onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', contains('UTF-8'))),
+      );
     });
 
     test('saveConfigFile base64-transfers the content + backs up', () async {
@@ -3110,6 +3162,74 @@ void main() {
         () => _updaterWith(runner).probeConnection(config: _config),
         throwsA(isA<EvccUpdateException>().having(
             (e) => e.kind, 'kind', UpdateErrorKind.hostKeyChanged)),
+      );
+    });
+  });
+
+  group('EvccUpdater: closing the connection never decides the outcome', () {
+    test('a close() that throws does not replace a result', () async {
+      final runner = _CloseThrowsRunner({'true': [_r('')]});
+      expect(
+          await _updaterWith(runner).probeConnection(config: _config), isTrue);
+      expect(runner.closed, isTrue);
+    });
+
+    test('a close() that throws does not replace the typed error', () async {
+      final runner = _CloseThrowsRunner(const {},
+          connectError: const HostKeyChangedException(
+              host: '192.168.178.64',
+              port: 22,
+              presented: 'SHA256:new',
+              stored: 'SHA256:old'));
+      await expectLater(
+        _updaterWith(runner).probeConnection(config: _config),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.kind, 'kind', UpdateErrorKind.hostKeyChanged)),
+      );
+    });
+
+    test('cancel() closes every open connection, not just the newest',
+        () async {
+      // The Dateien tab lists alongside a running action. With one handle the
+      // connection that opened last was the only one "Abbrechen" could reach.
+      final first = _HangingRunner();
+      final second = _HangingRunner();
+      final queue = [first, second];
+      final updater = EvccUpdater(
+          runnerFactory: (_) => queue.removeAt(0),
+          jobIdGenerator: () => _jobId);
+      final a = updater.probeConnection(config: _config);
+      await first.runStarted.future;
+      final b = updater.probeConnection(config: _config);
+      await second.runStarted.future;
+
+      await updater.cancel();
+      await Future.wait([a, b]);
+
+      expect(first.closed, isTrue);
+      expect(second.closed, isTrue);
+    });
+  });
+
+  group('EvccUpdater: a connection that ends before authentication', () {
+    test('is a connection error, not "check your password"', () async {
+      final runner = FakeSshRunner(const {},
+          connectError:
+              SSHAuthAbortError('Connection closed before authentication'));
+      await expectLater(
+        _updaterWith(runner).detectServices(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.connection)),
+      );
+    });
+
+    test('a rejected login stays an auth error', () async {
+      final runner = FakeSshRunner(const {},
+          connectError: SSHAuthFailError('no auth methods'));
+      await expectLater(
+        _updaterWith(runner).detectServices(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.auth)),
       );
     });
   });

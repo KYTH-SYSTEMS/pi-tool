@@ -36,6 +36,25 @@ class Dartssh2Runner implements SshRunner {
   String? _changedFingerprint;
   String? _storedAtCheck;
   bool _firstUseDeclined = false;
+  // Measures the handshake for its timeout. Stopped while the user reads the
+  // first-use fingerprint dialog — that is their time, not the Pi's.
+  final Stopwatch _handshakeClock = Stopwatch();
+
+  /// Cipher preference. Not dartssh2's default order on purpose: its AES-GCM is
+  /// pure Dart and moved 6.9 MB in 31 s in the integration test, against under
+  /// 2 s for ChaCha20-Poly1305 or AES-CTR — that is the difference between a
+  /// backup download taking seconds or minutes. ChaCha20 is an AEAD cipher
+  /// every OpenSSH since 6.5 offers; CTR (with the library's ETM MACs) covers
+  /// what is older, GCM stays as the last resort.
+  static const _algorithms = SSHAlgorithms(
+    cipher: [
+      SSHCipherType.chacha20poly1305,
+      SSHCipherType.aes256ctr,
+      SSHCipherType.aes128ctr,
+      SSHCipherType.aes256gcm,
+      SSHCipherType.aes128gcm,
+    ],
+  );
 
   Dartssh2Runner(this.config, {HostKeyStore? hostKeyStore, this.confirmFirstUse})
       : _hostKeyStore = hostKeyStore ?? SecureHostKeyStore();
@@ -54,7 +73,14 @@ class Dartssh2Runner implements SshRunner {
     switch (verifyHostKey(stored: stored, presented: presented)) {
       case HostKeyVerdict.firstUse:
         if (confirmFirstUse != null) {
-          final trust = await confirmFirstUse!(config.host, presented);
+          final wasRunning = _handshakeClock.isRunning;
+          _handshakeClock.stop();
+          final bool trust;
+          try {
+            trust = await confirmFirstUse!(config.host, presented);
+          } finally {
+            if (wasRunning) _handshakeClock.start();
+          }
           if (!trust) {
             _firstUseDeclined = true;
             return false; // abort the handshake — never trust or send a password
@@ -132,6 +158,7 @@ class Dartssh2Runner implements SshRunner {
       // unpacking a large package) so a NAT/router doesn't drop the idle TCP
       // session mid-upgrade.
       keepAliveInterval: const Duration(seconds: 20),
+      algorithms: _algorithms,
       // Key auth when a private key is provided; otherwise password auth.
       identities: identities,
       onPasswordRequest: config.usesKeyAuth ? null : () => config.password,
@@ -142,14 +169,21 @@ class Dartssh2Runner implements SshRunner {
     );
     // Store BEFORE awaiting auth so a cancel during the handshake can close it.
     _client = client;
+    _handshakeClock
+      ..reset()
+      ..start();
     try {
-      // Force authentication now so wrong-password errors surface here.
-      await untilClosed(client.authenticated.timeout(config.timeout));
+      // Force authentication now so wrong-password errors surface here. The
+      // deadline counts handshake time only: the first-use dialog stops the
+      // clock, or a user who actually compares the fingerprint would be told
+      // "Pi nicht erreichbar" for a Pi that answered at once.
+      await untilClosed(withinActiveTime(
+          client.authenticated, config.timeout, _handshakeClock));
     } on _ConnectAborted {
-      client.close();
+      _closeQuietly(client);
       return; // cancelled during the handshake
     } catch (e) {
-      client.close();
+      _closeQuietly(client);
       // The user declined to trust a first-seen key — abort with a clear error.
       if (_firstUseDeclined) {
         throw const HostKeyDeclinedException();
@@ -165,7 +199,16 @@ class Dartssh2Runner implements SshRunner {
         );
       }
       rethrow;
+    } finally {
+      _handshakeClock.stop();
     }
+  }
+
+  /// Closes [client] without waiting and without letting a failure surface:
+  /// dartssh2's close() is asynchronous and can complete with the socket's
+  /// error, which nobody would be listening for.
+  void _closeQuietly(SSHClient client) {
+    unawaited(client.close().catchError((Object _) {}));
   }
 
   @override
@@ -197,18 +240,26 @@ class Dartssh2Runner implements SshRunner {
     // so no trailing chunk (e.g. a short version string) can be lost. Awaiting
     // the streams (rather than session.done + cancel) is what guarantees this.
     // Every chunk also refreshes [lastActivity] for the inactivity timeout.
+    // Decoded as a stream, not packet by packet: SSH cuts the output at byte
+    // boundaries, so a multi-byte character can straddle two packets — decoded
+    // separately both halves became U+FFFD, and the config editor wrote that
+    // back into the file.
     var lastActivity = DateTime.now();
-    final outSub = session.stdout.listen((data) {
-      lastActivity = DateTime.now();
-      final s = utf8.decode(data, allowMalformed: true);
+    final outText = Utf8ChunkDecoder((s) {
       stdoutBuf.write(s);
       outLines?.add(s);
     });
-    final errSub = session.stderr.listen((data) {
-      lastActivity = DateTime.now();
-      final s = utf8.decode(data, allowMalformed: true);
+    final errText = Utf8ChunkDecoder((s) {
       stderrBuf.write(s);
       errLines?.add(s);
+    });
+    final outSub = session.stdout.listen((data) {
+      lastActivity = DateTime.now();
+      outText.add(data);
+    });
+    final errSub = session.stderr.listen((data) {
+      lastActivity = DateTime.now();
+      errText.add(data);
     });
 
     if (stdin != null) {
@@ -244,6 +295,9 @@ class Dartssh2Runner implements SshRunner {
       ticker.cancel();
     }
 
+    // End of stream: a character cut off by it is reported, not dropped.
+    outText.close();
+    errText.close();
     // Flush any trailing partial line (output without a final newline).
     outLines?.flush();
     errLines?.flush();
@@ -274,11 +328,80 @@ class Dartssh2Runner implements SshRunner {
     if (_closeSignal != null && !_closeSignal!.isCompleted) {
       _closeSignal!.complete();
     }
-    _client?.close();
+    final client = _client;
+    final socket = _socket;
     _client = null;
-    await _socket?.close();
     _socket = null;
+    // Best-effort and bounded. After a socket error (Wi-Fi gone, connection
+    // reset) dart:io completes Socket.done with that error and close() hands
+    // back the very same future — so closing a dead connection would throw,
+    // from the `finally` of the action that just ran on it, and replace its
+    // result ("Pi-Job läuft weiter", "Ergebnis unbekannt") with a raw socket
+    // error. Closing must never have a say in what the action reports.
+    for (final close in [
+      if (client != null) client.close,
+      if (socket != null) socket.close,
+    ]) {
+      try {
+        await close().timeout(closeWait);
+      } catch (_) {}
+    }
   }
+
+  /// How long [close] waits for either side of the connection to shut down.
+  static const Duration closeWait = Duration(seconds: 3);
+}
+
+/// Completes with [work], or with a [TimeoutException] once [clock] has RUN
+/// for [limit]. Time during which the clock is stopped does not count — the
+/// caller stops it while waiting on the user.
+Future<T> withinActiveTime<T>(
+  Future<T> work,
+  Duration limit,
+  Stopwatch clock, {
+  Duration tick = const Duration(milliseconds: 200),
+}) {
+  final result = Completer<T>();
+  final timer = Timer.periodic(tick, (_) {
+    if (clock.elapsed >= limit && !result.isCompleted) {
+      result.completeError(TimeoutException('handshake', limit));
+    }
+  });
+  work.then((value) {
+    if (!result.isCompleted) result.complete(value);
+  }, onError: (Object e, StackTrace st) {
+    if (!result.isCompleted) result.completeError(e, st);
+  });
+  return result.future.whenComplete(timer.cancel);
+}
+
+/// Decodes UTF-8 that arrives in arbitrary byte chunks. A character whose bytes
+/// are split across two chunks is held back until it is complete; bytes that
+/// are not UTF-8 at all become U+FFFD instead of throwing.
+class Utf8ChunkDecoder {
+  Utf8ChunkDecoder(void Function(String text) onText)
+      : _sink = const Utf8Decoder(allowMalformed: true)
+            .startChunkedConversion(_TextSink(onText));
+
+  final ByteConversionSink _sink;
+
+  void add(List<int> bytes) => _sink.add(bytes);
+
+  /// Call once at the end of the stream to flush an incomplete tail.
+  void close() => _sink.close();
+}
+
+class _TextSink implements Sink<String> {
+  _TextSink(this._onText);
+  final void Function(String text) _onText;
+
+  @override
+  void add(String text) {
+    if (text.isNotEmpty) _onText(text);
+  }
+
+  @override
+  void close() {}
 }
 
 /// The exit code of a command whose output is fully drained: [waitForExit]
@@ -312,25 +435,37 @@ class LineBuffer {
   LineBuffer(this.onLine);
 
   final void Function(String line) onLine;
-  String _partial = '';
+  final StringBuffer _partial = StringBuffer();
 
   /// Feed a raw chunk; emits every complete line it now contains.
+  ///
+  /// One pass over the chunk. Cutting the emitted line off the front of the
+  /// remaining text copied that remainder once per line — quadratic in the
+  /// packet size, 16 s for an output of 940,000 short lines.
   void add(String chunk) {
-    var buf = _partial + chunk;
-    var nl = buf.indexOf('\n');
+    var start = 0;
+    var nl = chunk.indexOf('\n');
     while (nl != -1) {
-      onLine(buf.substring(0, nl + 1));
-      buf = buf.substring(nl + 1);
-      nl = buf.indexOf('\n');
+      if (_partial.isEmpty) {
+        onLine(chunk.substring(start, nl + 1));
+      } else {
+        _partial.write(chunk.substring(start, nl + 1));
+        final line = _partial.toString();
+        _partial.clear();
+        onLine(line);
+      }
+      start = nl + 1;
+      nl = chunk.indexOf('\n', start);
     }
-    _partial = buf;
+    if (start < chunk.length) _partial.write(chunk.substring(start));
   }
 
   /// Emit any trailing output that had no final newline.
   void flush() {
     if (_partial.isNotEmpty) {
-      onLine(_partial);
-      _partial = '';
+      final line = _partial.toString();
+      _partial.clear();
+      onLine(line);
     }
   }
 }

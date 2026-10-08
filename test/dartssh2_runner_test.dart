@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -126,6 +127,113 @@ void main() {
       expect(lines, ['a\n', 'b\n']);
       lb.flush();
       expect(lines, ['a\n', 'b\n', 'c']);
+    });
+
+    test('a partial line spread over many chunks is emitted once, whole', () {
+      final lines = <String>[];
+      final lb = LineBuffer(lines.add);
+      for (final part in ['a', 'b', 'c', 'd']) {
+        lb.add(part);
+      }
+      expect(lines, isEmpty);
+      lb.add('e\nf');
+      expect(lines, ['abcde\n']);
+      lb.flush();
+      expect(lines, ['abcde\n', 'f']);
+      lb.flush(); // nothing left
+      expect(lines, ['abcde\n', 'f']);
+    });
+
+    test('cost grows with the output, not with its square', () {
+      // An apt run or a journal dump is hundreds of thousands of short lines
+      // arriving in 32 KiB packets. Re-slicing the rest of the packet after
+      // every line took 16 s for this input; a single pass takes milliseconds.
+      final chunk = '${List.generate(4700, (i) => '$i').join('\n')}\n';
+      var lines = 0;
+      final lb = LineBuffer((_) => lines++);
+      final watch = Stopwatch()..start();
+      for (var i = 0; i < 200; i++) {
+        lb.add(chunk);
+      }
+      watch.stop();
+      expect(lines, 200 * 4700);
+      expect(watch.elapsed, lessThan(const Duration(seconds: 3)));
+    });
+  });
+
+  group('Utf8ChunkDecoder (characters across SSH packets)', () {
+    test('a multi-byte character split across two chunks stays intact', () {
+      final out = <String>[];
+      final d = Utf8ChunkDecoder(out.add);
+      final bytes = utf8.encode('grün\n');
+      final cut = bytes.indexOf(0xc3) + 1; // between the two bytes of "ü"
+      d.add(bytes.sublist(0, cut));
+      d.add(bytes.sublist(cut));
+      d.close();
+      expect(out.join(), 'grün\n');
+      expect(out.join(), isNot(contains('�')));
+    });
+
+    test('a four-byte character fed one byte at a time stays intact', () {
+      final out = <String>[];
+      final d = Utf8ChunkDecoder(out.add);
+      for (final b in utf8.encode('a😀b')) {
+        d.add([b]);
+      }
+      d.close();
+      expect(out.join(), 'a😀b');
+    });
+
+    test('bytes that are not UTF-8 become U+FFFD instead of throwing', () {
+      final out = <String>[];
+      final d = Utf8ChunkDecoder(out.add);
+      d.add([0x67, 0x72, 0xfc, 0x6e]); // "grün" in ISO-8859-1
+      d.close();
+      expect(out.join(), 'gr�n');
+    });
+
+    test('a sequence cut off by the end of the stream is flushed on close', () {
+      final out = <String>[];
+      final d = Utf8ChunkDecoder(out.add);
+      d.add([0x61, 0xc3]); // "a" + first half of "ü", then nothing
+      expect(out.join(), 'a');
+      d.close();
+      expect(out.join(), 'a�');
+    });
+  });
+
+  group('withinActiveTime (handshake deadline)', () {
+    test('time the clock was stopped does not count', () async {
+      final clock = Stopwatch()..start();
+      final work = Future<String>.delayed(
+          const Duration(milliseconds: 700), () => 'done');
+      // The user reads a dialog for 500 ms: the clock stands still meanwhile.
+      clock.stop();
+      Timer(const Duration(milliseconds: 500), clock.start);
+      final result = await withinActiveTime(
+          work, const Duration(milliseconds: 400), clock,
+          tick: const Duration(milliseconds: 20));
+      expect(result, 'done');
+    });
+
+    test('running time beyond the limit is a TimeoutException', () async {
+      final clock = Stopwatch()..start();
+      final work = Future<String>.delayed(
+          const Duration(milliseconds: 700), () => 'done');
+      await expectLater(
+        withinActiveTime(work, const Duration(milliseconds: 200), clock,
+            tick: const Duration(milliseconds: 20)),
+        throwsA(isA<TimeoutException>()),
+      );
+    });
+
+    test('an error of the work itself passes through', () async {
+      final clock = Stopwatch()..start();
+      await expectLater(
+        withinActiveTime(Future<void>.error(StateError('boom')),
+            const Duration(seconds: 5), clock),
+        throwsStateError,
+      );
     });
   });
 

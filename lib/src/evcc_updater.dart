@@ -180,20 +180,25 @@ class EvccUpdater {
   /// a flag on the instance) so a concurrent action cannot reset it.
   final Expando<bool> _jobTouched = Expando<bool>('pi-job');
 
-  /// The connection of the action currently in flight, so [cancel] can close
-  /// it. Set in [_withConnection]; null between actions. Actions are serialized
-  /// by the UI (one at a time), so a single handle is enough.
-  SshRunner? _active;
+  /// Every connection currently open, so [cancel] can close them. Filled in
+  /// [_withConnection]; empty between actions. A set, not a single handle: the
+  /// UI serializes the actions behind `_busy`, but the Dateien tab lists and
+  /// previews alongside them — with one handle, whichever connection opened
+  /// last was the only one "Abbrechen" could reach, and whichever closed first
+  /// took the handle with it.
+  final Set<SshRunner> _open = {};
   bool _cancelRequested = false;
 
   /// Cancels the in-flight SSH action by closing its connection. The running
   /// action then completes with [UpdateErrorKind.cancelled]. No-op when idle.
   Future<void> cancel() async {
     _cancelRequested = true;
-    try {
-      await _active?.close();
-    } catch (_) {
-      // Best-effort: closing a half-open connection may itself throw.
+    for (final runner in _open.toList()) {
+      try {
+        await runner.close();
+      } catch (_) {
+        // Best-effort: closing a half-open connection may itself throw.
+      }
     }
   }
 
@@ -1693,6 +1698,19 @@ class EvccUpdater {
             throw const EvccUpdateException(UpdateErrorKind.unknown,
                 'Datei konnte nicht gelesen werden (fehlt, leer oder keine '
                 'Rechte).');
+          }
+          // The editor writes back what it was given. Without proof that `cat`
+          // delivered the whole file (exit 0) a save would truncate it.
+          if (r.exitCode != 0) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Datei wurde nicht vollständig gelesen – bitte erneut öffnen.');
+          }
+          // U+FFFD marks bytes that are not UTF-8 (e.g. an ISO-8859-1 file).
+          // Saving would write the replacement character over them for good.
+          if (r.stdout.contains('�')) {
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Datei ist nicht UTF-8-kodiert – in der App nicht bearbeitbar '
+                '(Speichern würde Zeichen beschädigen).');
           }
           return r.stdout;
         },
@@ -3397,7 +3415,7 @@ class EvccUpdater {
         body,
   }) async {
     final runner = runnerFactory(config);
-    _active = runner;
+    _open.add(runner);
     _cancelRequested = false;
     _sudoNeedsPw = null; // a fresh connection re-asks
     // The one seam every log line passes through — so the pty progress painting
@@ -3460,6 +3478,16 @@ class EvccUpdater {
           'wurde KEIN Passwort gesendet.\nNeuer Fingerprint: ${e.presented}',
         );
       }
+      // The connection ended before the Pi judged any credentials (sshd
+      // dropped it, the link broke mid-handshake). dartssh2 files that under
+      // its auth errors, but "check your password" would send the user after
+      // the wrong thing.
+      if (e is SSHAuthAbortError) {
+        throw const EvccUpdateException(
+          UpdateErrorKind.connection,
+          'Verbindung vor der Anmeldung getrennt – Pi erreichbar, SSH aktiv?',
+        );
+      }
       if (e is SSHAuthError) {
         throw const EvccUpdateException(
           UpdateErrorKind.auth,
@@ -3495,8 +3523,13 @@ class EvccUpdater {
       throw const EvccUpdateException(UpdateErrorKind.unknown,
           'Unerwarteter Fehler – Details im Terminal-Log.');
     } finally {
-      _active = null;
-      await runner.close();
+      _open.remove(runner);
+      // Best-effort: closing a connection that is already dead may throw, and
+      // from a `finally` that would replace whatever this action reported —
+      // a job that runs on, a result that is unknown, even a finished one.
+      try {
+        await runner.close();
+      } catch (_) {}
     }
   }
 }
