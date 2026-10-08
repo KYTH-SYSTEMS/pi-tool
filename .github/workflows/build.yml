@@ -7,8 +7,13 @@ on:
   # Dependency PRs (Dependabot) used to arrive with NO check at all, so the only
   # way to judge them was to merge and see. A PR now gets analyze + test + a
   # debug APK build — the APK matters because plugin bumps break at the
-  # Gradle/native layer, not in the Dart analyzer. Nothing is signed, uploaded
-  # or published on this path: releasing stays tied to a v* tag.
+  # Gradle/native layer, not in the Dart analyzer. Nothing is published on this
+  # path: releasing stays tied to a v* tag. Whether anything is SIGNED depends
+  # on where the PR comes from. Fork and Dependabot PRs get no secrets, so
+  # HAS_KEYSTORE is false and nothing is signed or uploaded as an AAB. A PR
+  # from a branch of this repository does get them: the keystore is
+  # materialized, a signed release AAB is built from the PR's code and uploaded
+  # as a workflow artifact (the steps gated on HAS_KEYSTORE alone).
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -42,6 +47,28 @@ jobs:
       # be hijacked to run with workspace/token access). Update the SHA + the
       # trailing version comment together when bumping.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The GitHub release is named after the TAG, while the APK/AAB version,
+      # the versionCode and the changelog file all come from pubspec.yaml —
+      # nothing else ties the two together. A tag on a commit without the
+      # version bump would publish a mislabelled release, the Play upload would
+      # then fail on the already-used versionCode, and sideload installs (whose
+      # update check compares the tag name) would be offered that "update" for
+      # good. So: tag must be v<pubspec version before the +>, checked before
+      # anything is set up or built.
+      - name: Require tag to match the pubspec version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION="$(grep -m1 '^version:' pubspec.yaml | sed -e 's/^version:[[:space:]]*//' -e 's/+.*//' | tr -d '[:space:]')"
+          echo "tag: ${GITHUB_REF_NAME} / pubspec version: ${VERSION}"
+          if [ -z "$VERSION" ]; then
+            echo "::error::No version found in pubspec.yaml — refusing to publish."
+            exit 1
+          fi
+          if [ "$GITHUB_REF_NAME" != "v${VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match the pubspec.yaml version (expected v${VERSION}) — refusing to publish."
+            exit 1
+          fi
 
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
@@ -180,8 +207,13 @@ jobs:
           } > RELEASE_NOTES.md
           echo "---- release notes (versionCode ${CODE}) ----"; cat RELEASE_NOTES.md
 
+      # play_dry_run means "publish nothing" — also when the workflow is started
+      # by hand ON a tag ref (gh workflow run --ref v…), where github.ref is a
+      # tag as well. Without the extra clause such a run would rewrite the
+      # GitHub release and roll out to Play for real. On a tag push `inputs` is
+      # empty, so the clause is true and nothing changes there.
       - name: Publish Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/') && env.HAS_KEYSTORE == 'true'
+        if: startsWith(github.ref, 'refs/tags/') && env.HAS_KEYSTORE == 'true' && !inputs.play_dry_run
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: build/app/outputs/flutter-apk/app-release.apk
@@ -212,7 +244,7 @@ jobs:
         run: gem install fastlane -N -v 2.237.0
 
       - name: Publish to Play Store (production, 100 % rollout)
-        if: startsWith(github.ref, 'refs/tags/') && env.CAN_PUBLISH_PLAY == 'true'
+        if: startsWith(github.ref, 'refs/tags/') && env.CAN_PUBLISH_PLAY == 'true' && !inputs.play_dry_run
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           FASTLANE_SKIP_UPDATE_CHECK: '1'
@@ -221,7 +253,8 @@ jobs:
 
       # Manual smoke test for the whole publish chain (credentials, permissions,
       # metadata) without releasing anything: run the workflow via
-      # "Run workflow" with play_dry_run = true.
+      # "Run workflow" with play_dry_run = true. The two publish steps above
+      # are skipped for such a run on every ref, tags included.
       - name: Validate Play upload only (dry run)
         if: inputs.play_dry_run && env.CAN_PUBLISH_PLAY == 'true'
         env:
