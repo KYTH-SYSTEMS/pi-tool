@@ -14,9 +14,13 @@
         android:label="Pi-Tool"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <!-- allowBackup=false: keystore-wrapped credentials + the TOFU host-key
-             trust store must never be copied off-device by Auto Backup / adb. -->
+             trust store must never be copied off-device by Auto Backup / adb.
+             dataExtractionRules (read from Android 12 on, ignored below): the
+             same for a device-to-device transfer, which allowBackup=false does
+             not switch off on every manufacturer's devices. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
