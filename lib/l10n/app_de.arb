@@ -312,6 +312,7 @@
   "timeOClock": "{hour}:00 Uhr",
   "labelDay": "Tag:  ",
   "changeSchedule": "Zeitplan ändern",
+  "wrapperOutdatedHint": "Auf dem Pi läuft noch das Skript einer älteren App-Version. „{action}“ erneuert es – erst dann gelten die Korrekturen dieser Version.",
   "turnOn": "Einschalten",
   "turnOff": "Ausschalten",
   "scheduledBackupsTitle": "Geplante Backups",

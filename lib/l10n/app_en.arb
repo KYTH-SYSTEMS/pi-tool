@@ -738,6 +738,14 @@
   },
   "labelDay": "Day:  ",
   "changeSchedule": "Change schedule",
+  "wrapperOutdatedHint": "The Pi still runs the script an older app version installed. \"{action}\" renews it — only then do this version's fixes apply.",
+  "@wrapperOutdatedHint": {
+    "placeholders": {
+      "action": {
+        "type": "String"
+      }
+    }
+  },
   "turnOn": "Turn on",
   "turnOff": "Turn off",
   "scheduledBackupsTitle": "Scheduled backups",

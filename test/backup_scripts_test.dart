@@ -492,11 +492,30 @@ void main() {
       expect(m, unorderedEquals(['etc/evcc.yaml', 'root/.evcc/evcc.db']));
     });
 
-    test('a database in a home directory comes before the legacy /root one',
+    test('without a service database, /root comes before a home directory',
+        () async {
+      // An old install that still runs as root keeps its data in /root; a
+      // database in a home directory is then the leftover of a manual run.
+      pi.put('/home/pi/.evcc/evcc.db', 'HOME');
+      pi.put('/root/.evcc/evcc.db', 'ROOT');
+      expect(await pi.members(await backup()), ['root/.evcc/evcc.db']);
+    });
+
+    test('only a database in a home directory: that one is archived',
         () async {
       pi.put('/home/pi/.evcc/evcc.db', 'HOME');
-      pi.put('/root/.evcc/evcc.db', 'LEGACY');
       expect(await pi.members(await backup()), ['home/pi/.evcc/evcc.db']);
+    });
+
+    test('a rollback journal next to the database is archived with it',
+        () async {
+      pi.put('/var/lib/evcc/evcc.db', 'LIVE');
+      pi.put('/var/lib/evcc/evcc.db-journal', 'JOURNAL');
+      final m = await pi.members(await backup());
+      expect(
+          m,
+          unorderedEquals(
+              ['var/lib/evcc/evcc.db', 'var/lib/evcc/evcc.db-journal']));
     });
 
     for (final (label, line) in [
@@ -532,6 +551,19 @@ void main() {
       pi.put('/var/lib/evcc/evcc.db', 'LIVE');
       final m = await pi.members(await backup());
       expect(m, unorderedEquals(['etc/evcc.yaml', 'var/lib/evcc/evcc.db']));
+    });
+
+    test('a dsn that names no file is mentioned, but never printed',
+        () async {
+      // A MySQL/Postgres dsn carries credentials; the log is shared in bug
+      // reports.
+      pi.put('/etc/evcc.yaml',
+          'database:\n  dsn: evcc:geheim123@tcp(db:3306)/evcc\n');
+      pi.put('/var/lib/evcc/evcc.db', 'LIVE');
+      final r = await pi.run(buildBackupScript());
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.out, contains('Hinweis:'));
+      expect('${r.out}${r.err}', isNot(contains('geheim123')));
     });
 
     test('tar exit 2: EVCC_BACKUP_FAIL, and no half archive is left to restore',
@@ -670,6 +702,7 @@ exec "$REAL_TAR" "$@"''');
       pi.put('/var/lib/evcc/evcc.db', 'LIVEDB');
       pi.put('/var/lib/evcc/evcc.db-wal', 'LIVEWAL');
       pi.put('/var/lib/evcc/evcc.db-shm', 'LIVESHM');
+      pi.put('/var/lib/evcc/evcc.db-journal', 'LIVEJOURNAL');
       pi.put('/var/lib/evcc/other.db-wal', 'OTHER'); // not in the archive
       final r = await restore();
       expect(r.code, 0, reason: '${r.out}${r.err}');
@@ -678,6 +711,7 @@ exec "$REAL_TAR" "$@"''');
       expect(pi.read('/var/lib/evcc/evcc.db'), 'ADB');
       expect(pi.exists('/var/lib/evcc/evcc.db-wal'), isFalse);
       expect(pi.exists('/var/lib/evcc/evcc.db-shm'), isFalse);
+      expect(pi.exists('/var/lib/evcc/evcc.db-journal'), isFalse);
       expect(pi.read('/var/lib/evcc/other.db-wal'), 'OTHER');
       expect(pi.calls.where((c) => c.startsWith('systemctl ')),
           ['systemctl stop evcc', 'systemctl start evcc']);
@@ -993,8 +1027,8 @@ exit 0''');
       final s = buildBackupScript();
       expectOrder(s, [
         'for c in /var/lib/evcc/evcc.db',
-        '/home/*/.evcc/evcc.db',
-        '/root/.evcc/evcc.db; do',
+        '/root/.evcc/evcc.db',
+        '/home/*/.evcc/evcc.db; do',
         r'tar -czf "$out.part" --warning=no-file-changed -- "$@"',
         r'mv -f "$out.part" "$out"',
         'EVCC_BACKUP_OK',

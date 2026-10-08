@@ -140,12 +140,17 @@ void main() {
       expect(s.needsLogin, isTrue);
     });
 
+    test('Starting counts as up, like the up-script already says', () {
+      final s = parseTailscaleStatus('100.101.102.103', self: self('Starting'));
+      expect(s.up, isTrue);
+      expect(s.needsLogin, isFalse);
+    });
+
     test('every other state is not up — even with an address', () {
       for (final state in [
         'NoState',
         'InUseOtherUser',
         'NeedsMachineAuth',
-        'Starting',
       ]) {
         final s = parseTailscaleStatus('100.101.102.103', self: self(state));
         expect(s.up, isFalse, reason: state);
@@ -215,6 +220,9 @@ void main() {
       });
       final out = p.stdout.transform(utf8.decoder).join();
       p.stderr.drain<void>();
+      // The stubs first, set inside the shell: Git Bash's launcher puts its own
+      // directories in front of an inherited PATH.
+      p.stdin.write("export PATH='${_posixArg(tmp.path)}/bin':\"\$PATH\"\n");
       p.stdin.write('${buildDetectBatch([
             ('TAILSCALE', tailscaleStatusCommand),
             ('TS_SELF', tailscaleSelfCommand),

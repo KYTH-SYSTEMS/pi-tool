@@ -9,6 +9,8 @@
 /// numeric/calendar values. Success requires the BACKUP_TIMER_INSTALLED marker.
 library;
 
+import 'on_pi_wrapper.dart';
+
 const String scheduledBackupUnit = 'pi-tool-backup';
 
 /// Daily `OnCalendar` at [hour] (0–23).
@@ -27,6 +29,7 @@ set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 cat > /usr/local/lib/$scheduledBackupUnit.sh <<'WRAP'
 #!/bin/sh
+$wrapperStampLine
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 ts=\$(date '+%Y-%m-%d %H:%M:%S')
 stamp=\$(date +%Y%m%d-%H%M%S)
@@ -131,15 +134,20 @@ echo BACKUP_TIMER_REMOVED
 const String scheduledBackupStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $scheduledBackupUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "NEXT \$(systemctl list-timers --all $scheduledBackupUnit.timer --no-legend 2>/dev/null | awk \'{print \$1, \$2, \$3}\')"; '
-    'echo "STATUS \$(cat /var/lib/pi-tool/backup.status 2>/dev/null)"';
+    'echo "STATUS \$(cat /var/lib/pi-tool/backup.status 2>/dev/null)"; '
+    '$wrapperProbeHead$scheduledBackupUnit$wrapperProbeTail';
 
 /// [lastResult] is the wrapper's status line as written, shown to the user
 /// unchanged: `<time> ok: evcc pihole`, `<time> ok: nichts` (nothing to back
 /// up) or, failures first, `<time> fehler: evcc(tar-rc=2); ok: pihole`.
+///
+/// [wrapperOutdated]: the wrapper on the Pi is from an older app release, so
+/// fixes made since only apply once the timer is set up again.
 typedef ScheduledBackupStatus = ({
   bool enabled,
   String? nextRun,
   String? lastResult,
+  bool wrapperOutdated,
 });
 
 ScheduledBackupStatus parseScheduledBackupStatus(String out) {
@@ -158,5 +166,10 @@ ScheduledBackupStatus parseScheduledBackupStatus(String out) {
       lastResult = v.isEmpty ? null : v;
     }
   }
-  return (enabled: enabled, nextRun: nextRun, lastResult: lastResult);
+  return (
+    enabled: enabled,
+    nextRun: nextRun,
+    lastResult: lastResult,
+    wrapperOutdated: parseWrapperOutdated(out),
+  );
 }

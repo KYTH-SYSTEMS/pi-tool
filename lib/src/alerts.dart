@@ -8,6 +8,7 @@ library;
 import 'dart:math';
 
 import 'commands.dart' show shSingleQuote;
+import 'on_pi_wrapper.dart';
 
 const String alertsUnit = 'pi-tool-alerts';
 
@@ -80,6 +81,7 @@ mkdir -p /var/lib/pi-tool
 rm -f /var/lib/pi-tool/alerts.last
 cat > /usr/local/lib/$alertsUnit.sh <<'WRAP'
 #!/bin/sh
+$wrapperStampLine
 mkdir -p /var/lib/pi-tool
 WRAP
 # URL/TOPIC are Dart-substituted (shell-quoted) BEFORE the shell sees them, so a
@@ -182,9 +184,16 @@ String buildTestAlertCommand({
 /// No-sudo status command parsed by [parseAlertsStatus].
 const String alertsStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $alertsUnit.timer 2>/dev/null || echo disabled)"; '
-    'echo "LAST \$(cat /var/lib/pi-tool/alerts.status 2>/dev/null)"';
+    'echo "LAST \$(cat /var/lib/pi-tool/alerts.status 2>/dev/null)"; '
+    '$wrapperProbeHead$alertsUnit$wrapperProbeTail';
 
-typedef AlertsStatus = ({bool enabled, String? lastCheck});
+/// [wrapperOutdated]: the wrapper on the Pi is from an older app release (see
+/// on_pi_wrapper.dart).
+typedef AlertsStatus = ({
+  bool enabled,
+  String? lastCheck,
+  bool wrapperOutdated,
+});
 
 AlertsStatus parseAlertsStatus(String out) {
   var enabled = false;
@@ -198,5 +207,9 @@ AlertsStatus parseAlertsStatus(String out) {
       lastCheck = v.isEmpty ? null : v;
     }
   }
-  return (enabled: enabled, lastCheck: lastCheck);
+  return (
+    enabled: enabled,
+    lastCheck: lastCheck,
+    wrapperOutdated: parseWrapperOutdated(out),
+  );
 }

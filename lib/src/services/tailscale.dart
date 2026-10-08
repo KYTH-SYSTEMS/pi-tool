@@ -127,7 +127,10 @@ typedef TailscaleStatus = ({
 });
 
 /// Parses [tailscaleStatusCommand] output together with the node's own status
-/// ([tailscaleSelfCommand], [self]). "up" = the backend state is `Running`.
+/// ([tailscaleSelfCommand], [self]). "up" = the backend state is `Running`, or
+/// `Starting`: that is `tailscale up` taking effect, the state the up-script
+/// already reports as connected — the card must not contradict it a moment
+/// later (and a Pi without internet stays there while it keeps trying).
 ///
 /// The tailnet IP alone does not say so: `tailscale ip` prints the address
 /// from the last network map, and `tailscale down` keeps that map — a stopped
@@ -145,7 +148,9 @@ TailscaleStatus parseTailscaleStatus(String out, {String self = ''}) {
   final state = _jsonObject(self)?['BackendState'];
   return (
     installed: true,
-    up: state is String ? state == 'Running' : ip != null,
+    up: state is String
+        ? state == 'Running' || state == 'Starting'
+        : ip != null,
     ip: ip,
     needsLogin: state == 'NeedsLogin',
   );

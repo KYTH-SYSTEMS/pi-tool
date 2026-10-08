@@ -5,6 +5,7 @@
 library;
 
 import 'eol_sources.dart';
+import 'on_pi_wrapper.dart';
 
 const String autoUpdateUnit = 'pi-tool-autoupdate';
 
@@ -32,6 +33,7 @@ set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 cat > /usr/local/lib/$autoUpdateUnit.sh <<'WRAP'
 #!/bin/bash
+$wrapperStampLine
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 ts=\$(date '+%Y-%m-%d %H:%M:%S')
@@ -116,10 +118,17 @@ echo AUTOUPDATE_REMOVED
 const String autoUpdateStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $autoUpdateUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "NEXT \$(systemctl list-timers --all $autoUpdateUnit.timer --no-legend 2>/dev/null | awk \'{print \$1, \$2, \$3}\')"; '
-    'echo "STATUS \$(cat /var/lib/pi-tool/autoupdate.status 2>/dev/null)"';
+    'echo "STATUS \$(cat /var/lib/pi-tool/autoupdate.status 2>/dev/null)"; '
+    '$wrapperProbeHead$autoUpdateUnit$wrapperProbeTail';
 
-/// Parsed auto-update status.
-typedef AutoUpdateStatus = ({bool enabled, String? nextRun, String? lastResult});
+/// Parsed auto-update status. [wrapperOutdated]: the wrapper on the Pi is from
+/// an older app release (see on_pi_wrapper.dart).
+typedef AutoUpdateStatus = ({
+  bool enabled,
+  String? nextRun,
+  String? lastResult,
+  bool wrapperOutdated,
+});
 
 /// Parses [autoUpdateStatusCommand] output.
 AutoUpdateStatus parseAutoUpdateStatus(String out) {
@@ -138,5 +147,10 @@ AutoUpdateStatus parseAutoUpdateStatus(String out) {
       lastResult = v.isEmpty ? null : v;
     }
   }
-  return (enabled: enabled, nextRun: nextRun, lastResult: lastResult);
+  return (
+    enabled: enabled,
+    nextRun: nextRun,
+    lastResult: lastResult,
+    wrapperOutdated: parseWrapperOutdated(out),
+  );
 }

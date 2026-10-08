@@ -388,6 +388,17 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              if (status.enabled && status.wrapperOutdated)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    context.l10n
+                        .wrapperOutdatedHint(context.l10n.actionUpdate),
+                    key: const Key('wrapperOutdatedHint'),
+                    style: TextStyle(
+                          color: Theme.of(context).colorScheme.error),
+                  ),
+                ),
               const SizedBox(height: 12),
               _warnRow(context.l10n.wNtfyTopicPublicWarning, strong: false),
               const SizedBox(height: 14),
@@ -1038,7 +1049,7 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                 final upd = _updateResult[i];
                 Widget leading;
                 String subtitle;
-                var subtitleLines = 2;
+                int? subtitleLines = 2;
                 if (_updating == i) {
                   leading = spinner;
                   subtitle = ctx.l10n.wUpdating;
@@ -1049,7 +1060,9 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                   leading =
                       Icon(Icons.info_outline, color: Colors.amber.shade700);
                   subtitle = upd!.note!;
-                  subtitleLines = 5;
+                  // In full, at any font size: the end of this text is the
+                  // instruction (where to follow the job).
+                  subtitleLines = null;
                 } else if (upd != null) {
                   leading = Icon(upd.ok ? Icons.check_circle : Icons.error,
                       color: upd.ok ? kGreen : cs.error);
@@ -1073,7 +1086,10 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                   leading: leading,
                   title: Text(p.name),
                   subtitle: Text(subtitle,
-                      maxLines: subtitleLines, overflow: TextOverflow.ellipsis),
+                      maxLines: subtitleLines,
+                      overflow: subtitleLines == null
+                          ? null
+                          : TextOverflow.ellipsis),
                   trailing: (_updating != i &&
                           upd == null &&
                           (snap?.updates ?? false))

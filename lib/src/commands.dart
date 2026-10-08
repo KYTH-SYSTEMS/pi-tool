@@ -884,18 +884,21 @@ if [ -z "$db" ] || [ ! -f "$db" ]; then
   if [ -n "$db" ]; then echo "Hinweis: Der dsn-Eintrag in /etc/evcc.yaml nennt keine vorhandene Datei – suche die Datenbank an den Standardorten."; fi
   db=""
   # The service's database first (the package runs evcc as user evcc on
-  # /var/lib/evcc/evcc.db). /root/.evcc comes LAST: the package's migration
-  # copies that database and leaves the original behind, so next to a live one
-  # it is a stale leftover.
-  for c in /var/lib/evcc/evcc.db /var/lib/evcc/.evcc/evcc.db /home/*/.evcc/evcc.db /root/.evcc/evcc.db; do
+  # /var/lib/evcc/evcc.db): the package's migration copies /root/.evcc there
+  # and leaves the original behind, so next to a live one /root is a stale
+  # leftover. Without one, /root is where an old install that still runs as
+  # root keeps its data — before a home directory, where a manual run may
+  # have left a database of its own.
+  for c in /var/lib/evcc/evcc.db /var/lib/evcc/.evcc/evcc.db /root/.evcc/evcc.db /home/*/.evcc/evcc.db; do
     if [ -f "$c" ]; then db="$c"; break; fi
   done
 fi
 if [ -n "$db" ]; then
   set -- "$@" "$db"
   # evcc keeps running: with SQLite's WAL mode, committed writes sit in
-  # <db>-wal until the next checkpoint, so the files belong together.
-  for s in -wal -shm; do
+  # <db>-wal until the next checkpoint, in rollback mode an open transaction
+  # sits in <db>-journal — either way the files belong together.
+  for s in -wal -shm -journal; do
     if [ -f "$db$s" ]; then set -- "$@" "$db$s"; fi
   done
 fi
@@ -1236,14 +1239,14 @@ echo "Archiv in Ordnung – spiele es ein …"
 # closed channel), evcc is started again.
 trap 'systemctl start evcc >/dev/null 2>&1 || true' EXIT
 systemctl stop evcc 2>/dev/null || true
-# A live <db>-wal/-shm belongs to the database that is being replaced: left
-# next to the restored file, SQLite would apply it to the wrong database. An
-# archive that carries its own pair overwrites them below.
+# A live <db>-wal/-shm/-journal belongs to the database that is being
+# replaced: left next to the restored file, SQLite would apply it to the wrong
+# database. An archive that carries its own overwrites them below.
 printf '%s\\n' "\$members" | while IFS= read -r m; do
   case "\$m" in
     ../*|*/../*) ;;
     *.db)
-      for s in -wal -shm; do
+      for s in -wal -shm -journal; do
         printf '%s\\n' "\$members" | grep -qxF -- "\$m\$s" || rm -f -- "/\$m\$s"
       done ;;
   esac

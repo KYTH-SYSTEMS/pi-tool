@@ -2047,37 +2047,29 @@ void main() {
       expect(runner.stdinByCommand[piConnectOnCommand], isNull);
     });
 
-    test('piConnectSet: a failing rpi-connect is not "aktiviert"', () async {
+    // Not a failure yet: which exit codes rpi-connect gives for a harmless
+    // repeat (already on, not signed in) has not been measured on a Pi. Until
+    // then a non-zero exit is named in the log, and only a missing exit status
+    // (next test) stops the action.
+    test('piConnectSet / piConnectSignout: a non-zero exit is logged', () async {
       for (final (on, cmd) in [
         (true, piConnectOnCommand),
         (false, piConnectOffCommand),
       ]) {
+        final log = <String>[];
         final runner = FakeSshRunner({
-          cmd: [_r('Failed to connect to bus: No medium found\n', exitCode: 1)],
+          cmd: [_r('already ${on ? 'on' : 'off'}\n', exitCode: 1)],
         });
-        await expectLater(
-          _updaterWith(runner)
-              .piConnectSet(config: _config, on: on, onLog: (_) {}),
-          throwsA(isA<EvccUpdateException>()
-              .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)
-              .having((e) => e.message, 'message',
-                  contains('rpi-connect ${on ? 'on' : 'off'}'))
-              .having((e) => e.message, 'message', contains('Exit 1'))),
-          reason: cmd,
-        );
+        await _updaterWith(runner)
+            .piConnectSet(config: _config, on: on, onLog: log.add);
+        expect(log.join('\n'),
+            contains('rpi-connect ${on ? 'on' : 'off'} endete mit Exit 1'));
       }
-    });
-
-    test('piConnectSignout: a failing rpi-connect is not "abgemeldet"',
-        () async {
-      final runner = FakeSshRunner({
+      final log = <String>[];
+      await _updaterWith(FakeSshRunner({
         piConnectSignoutCommand: [_r('not signed in\n', exitCode: 1)],
-      });
-      await expectLater(
-        _updaterWith(runner).piConnectSignout(config: _config, onLog: (_) {}),
-        throwsA(isA<EvccUpdateException>().having((e) => e.message, 'message',
-            contains('rpi-connect signout'))),
-      );
+      })).piConnectSignout(config: _config, onLog: log.add);
+      expect(log.join('\n'), contains('rpi-connect signout endete mit Exit 1'));
     });
 
     test('piConnectSet / piConnectSignout: no exit status is never a success',

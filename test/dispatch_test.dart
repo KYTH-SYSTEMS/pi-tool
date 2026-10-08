@@ -208,7 +208,12 @@ class FakeEvccUpdater extends EvccUpdater {
       shutdownCalls++;
 
   ScheduledBackupStatus scheduledBackupStatus =
-      (enabled: false, nextRun: null, lastResult: null);
+      (
+        enabled: false,
+        nextRun: null,
+        lastResult: null,
+        wrapperOutdated: false
+      );
   String? scheduledBackupOnCal;
   int? scheduledBackupKeep;
   bool scheduledBackupDisabled = false;
@@ -441,7 +446,12 @@ class FakeEvccUpdater extends EvccUpdater {
   String? enabledOnCalendar;
   bool autoUpdateDisabled = false;
   AutoUpdateStatus autoStatus =
-      (enabled: false, nextRun: null, lastResult: null);
+      (
+        enabled: false,
+        nextRun: null,
+        lastResult: null,
+        wrapperOutdated: false
+      );
 
   @override
   Future<void> enableAutoUpdate({
@@ -674,7 +684,8 @@ class FakeEvccUpdater extends EvccUpdater {
   String? alertsTopic;
   bool alertsDisabled = false;
   int testAlertCalls = 0;
-  AlertsStatus alertsStatus = (enabled: false, lastCheck: null);
+  AlertsStatus alertsStatus =
+      (enabled: false, lastCheck: null, wrapperOutdated: false);
 
   @override
   Future<void> enableAlerts({
@@ -2402,7 +2413,12 @@ void main() {
       (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
-      ..autoStatus = (enabled: true, nextRun: 'So 04:00', lastResult: 'ok');
+      ..autoStatus = (
+        enabled: true,
+        nextRun: 'So 04:00',
+        lastResult: 'ok',
+        wrapperOutdated: false
+      );
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
     await goAutomatik(tester);
@@ -2419,7 +2435,8 @@ void main() {
       (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
-      ..alertsStatus = (enabled: true, lastCheck: '12:00');
+      ..alertsStatus =
+          (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
     await goAutomatik(tester);
@@ -3230,6 +3247,81 @@ void main() {
     expect(u.scheduledBackupOnCal, isNotNull);
     expect(u.scheduledBackupOnCal, contains(':00:00'));
     expect(u.scheduledBackupKeep, 7);
+  });
+
+  // A wrapper lives on the Pi: fixes in the app reach it only when the timer
+  // is set up again, so an active timer with an older wrapper has to say so.
+  testWidgets(
+      'Automatik: ein aktiver Timer mit älterem Skript auf dem Pi sagt, wie '
+      'es erneuert wird', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..scheduledBackupStatus = (
+        enabled: true,
+        nextRun: 'Mo 03:00',
+        lastResult: '2026-10-07 03:00:01 ok: nichts',
+        wrapperOutdated: true
+      )
+      ..autoStatus = (
+        enabled: true,
+        nextRun: 'So 04:00',
+        lastResult: 'ok',
+        wrapperOutdated: true
+      )
+      ..alertsStatus =
+          (enabled: true, lastCheck: '12:00', wrapperOutdated: true);
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    for (final (tile, action) in [
+      ('Geplante Backups', 'Zeitplan ändern'),
+      ('Automatische Updates', 'Zeitplan ändern'),
+      ('Health-Alerts', 'Aktualisieren'),
+    ]) {
+      await tester.tap(find.text(tile));
+      await tester.pumpAndSettle();
+      final hint = find.byKey(const Key('wrapperOutdatedHint'));
+      expect(hint, findsOneWidget, reason: tile);
+      expect(tester.widget<Text>(hint).data, contains('„$action“'),
+          reason: tile);
+      // The button the hint names is the one in this sheet.
+      expect(find.widgetWithText(FilledButton, action), findsOneWidget,
+          reason: tile);
+      Navigator.of(tester.element(hint)).pop();
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets('Automatik: aktuelles Skript oder ausgeschalteter Timer – kein '
+      'Hinweis', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..scheduledBackupStatus = (
+        enabled: true,
+        nextRun: 'Mo 03:00',
+        lastResult: null,
+        wrapperOutdated: false
+      )
+      // Switched off with the old file still lying around: nothing to renew.
+      ..autoStatus = (
+        enabled: false,
+        nextRun: null,
+        lastResult: null,
+        wrapperOutdated: true
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    for (final tile in ['Geplante Backups', 'Automatische Updates']) {
+      await tester.tap(find.text(tile));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('wrapperOutdatedHint')), findsNothing,
+          reason: tile);
+      Navigator.of(tester.element(find.text(tile).last)).pop();
+      await tester.pumpAndSettle();
+    }
   });
 
   testWidgets(

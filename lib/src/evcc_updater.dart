@@ -1523,11 +1523,12 @@ class EvccUpdater {
             throw const EvccUpdateException(
                 UpdateErrorKind.unknown, _resultUnknown);
           }
+          // Which exit codes `rpi-connect on/off` gives for a harmless repeat
+          // (already on, already off) is not measured yet; failing the tap on
+          // them could turn a no-op into an error. Named in the log instead.
           if (r.exitCode != 0) {
-            throw EvccUpdateException(
-                UpdateErrorKind.unknown,
-                'rpi-connect ${on ? 'on' : 'off'} fehlgeschlagen '
-                '(Exit ${r.exitCode}). Details im Log.');
+            log('Hinweis: rpi-connect ${on ? 'on' : 'off'} endete mit Exit '
+                '${r.exitCode}.');
           }
           final out = '${r.stdout}${r.stderr}'.trim();
           log(out.isEmpty
@@ -1556,10 +1557,7 @@ class EvccUpdater {
                 UpdateErrorKind.unknown, _resultUnknown);
           }
           if (r.exitCode != 0) {
-            throw EvccUpdateException(
-                UpdateErrorKind.unknown,
-                'rpi-connect signout fehlgeschlagen (Exit ${r.exitCode}). '
-                'Details im Log.');
+            log('Hinweis: rpi-connect signout endete mit Exit ${r.exitCode}.');
           }
           final out = '${r.stdout}${r.stderr}'.trim();
           if (out.isNotEmpty) log(out);

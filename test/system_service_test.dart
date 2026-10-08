@@ -71,6 +71,13 @@ exit 0''');
   String _rebased(String command) =>
       command.replaceAll('/var/lib/apt/lists', lists);
 
+  /// Puts the stub directory first from INSIDE the shell. The environment
+  /// alone is not enough on Windows: Git Bash's launcher puts its own
+  /// directories in front of an inherited PATH, so a real binary of the same
+  /// name would win over the stub.
+  String _stubsFirst(String command) =>
+      "export PATH='$root/bin':\"\$PATH\"; $command";
+
   /// Whether the apt-get stub was called at all.
   bool get aptRan => File('$root/calls').existsSync();
 
@@ -79,7 +86,7 @@ exit 0''');
   Future<({int code, String out})> refresh(String mode,
       {String password = 'sekret'}) async {
     final p = await Process.start(
-        _bash!, ['-c', _rebased(systemAptRefreshCommand)],
+        _bash!, ['-c', _stubsFirst(_rebased(systemAptRefreshCommand))],
         environment: {'PATH': '$root/bin', 'APT_MODE': mode, 'BOX': root});
     final out = p.stdout.transform(utf8.decoder).join();
     final err = p.stderr.transform(utf8.decoder).join();
@@ -91,7 +98,8 @@ exit 0''');
   /// What detection concludes from the age its probe measures here: whether
   /// the lists are recent enough to trust "nothing pending".
   Future<bool> indexFresh() async {
-    final r = await Process.run(_bash!, ['-c', _rebased(systemAptAgeCommand)],
+    final r = await Process.run(
+        _bash!, ['-c', _stubsFirst(_rebased(systemAptAgeCommand))],
         environment: {'PATH': '$root/bin'});
     final seconds = parseAptListsAgeSeconds(r.stdout as String);
     expect(seconds, isNotNull, reason: '${r.stdout}${r.stderr}');

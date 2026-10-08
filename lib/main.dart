@@ -826,6 +826,15 @@ class _UpdaterPageState extends State<UpdaterPage>
           l10n.dialogImportBody(cfg.profiles.length))) {
         return;
       }
+      // The file dialog, the passphrase and the decryption all let the main
+      // view through: an action started meanwhile owns the session now, and
+      // switching profiles under it would file its results under the imported
+      // Pi.
+      if (!mounted) return;
+      if (_busy) {
+        _snack(l10n.snackImportFailed);
+        return;
+      }
       // Capture the outgoing profile's live edits (see _switchProfile): the
       // save below rebuilds only the then-active — imported — profile from the
       // fields, the one we leave is written as it stands in the list.
@@ -3286,6 +3295,16 @@ class _UpdaterPageState extends State<UpdaterPage>
                         style: const TextStyle(
                             fontFamily: 'monospace', fontSize: 12)),
                   ),
+                if (status.enabled && status.wrapperOutdated)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      ctx.l10n.wrapperOutdatedHint(ctx.l10n.changeSchedule),
+                      key: const Key('wrapperOutdatedHint'),
+                      style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.error),
+                    ),
+                  ),
                 const Divider(height: 24),
                 SegmentedButton<bool>(
                   segments: [
@@ -3440,6 +3459,16 @@ class _UpdaterPageState extends State<UpdaterPage>
                     child: Text(ctx.l10n.labelLast(status.lastResult!),
                         style: const TextStyle(
                             fontFamily: 'monospace', fontSize: 12)),
+                  ),
+                if (status.enabled && status.wrapperOutdated)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      ctx.l10n.wrapperOutdatedHint(ctx.l10n.changeSchedule),
+                      key: const Key('wrapperOutdatedHint'),
+                      style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.error),
+                    ),
                   ),
                 const Divider(height: 24),
                 Row(

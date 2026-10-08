@@ -101,9 +101,11 @@ mkdir -p /var/backups/pi-tool
 chmod 0755 /var/backups/pi-tool 2>/dev/null || true
 d=$(mktemp -d)
 cd "$d"
-pihole -a -t >/dev/null 2>&1 || true
+# Both get their own stdin: this script arrives on bash's stdin, and a CLI
+# that read from it would swallow the lines that follow.
+pihole -a -t </dev/null >/dev/null 2>&1 || true
 if ! ls *.tar.gz >/dev/null 2>&1; then
-  pihole-FTL --teleporter >/dev/null 2>&1 || true
+  pihole-FTL --teleporter </dev/null >/dev/null 2>&1 || true
 fi
 f=$(ls -1t *.tar.gz *.zip 2>/dev/null | head -n1)
 if [ -z "$f" ]; then echo "BACKUP_FAIL"; cd /; rm -rf "$d"; exit 1; fi
