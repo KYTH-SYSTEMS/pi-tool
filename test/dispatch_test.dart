@@ -3407,6 +3407,124 @@ void main() {
   });
 
   testWidgets(
+      'Host geändert, nachdem die Sitzung schon beendet war (Pi '
+      'heruntergefahren): die Karten stehen genauso als „Stand von vorhin" da',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pi herunterfahren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Herunterfahren'));
+    await tester.pumpAndSettle();
+    expect(u.shutdownCalls, 1);
+    // No session any more, the cards of that Pi are still on screen.
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    expect(find.byKey(const ValueKey('menu-system')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Host / IP'), '192.168.178.99');
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    expect(find.byKey(const ValueKey('menu-system')), findsOneWidget);
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+  });
+
+  testWidgets(
+      'gemerkte Karten, Aktion ohne Verbinden: die danach neu gelesenen Karten '
+      'sind kein „Stand von vorhin" mehr — bis der Host geändert wird',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    const system = ServiceStatus(
+        id: 'system',
+        name: 'System (Pi)',
+        installed: true,
+        version: 'Debian 12',
+        active: true,
+        detail: 'aktuell');
+    await tester.pumpWidget(page(u,
+        config: AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                cachedServices: [system.toJson()]),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+
+    // A card action connects by itself and re-reads the cards afterwards.
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paketlisten aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(u.aptRefreshCalls, 1);
+    expect(find.text('Paketlisten aktualisiert.'), findsOneWidget);
+    // Measured just now: not a remembered state — and still no session.
+    expect(find.textContaining('Stand von vorhin'), findsNothing);
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+
+    // Another address in the host field: they are the previous one's again.
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Host / IP'), '192.168.178.99');
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+  });
+
+  testWidgets(
+      'gemerkte Karten, „Fernzugriff einrichten" ohne Verbinden: die dabei neu '
+      'gelesenen Karten sind kein „Stand von vorhin" mehr', (tester) async {
+    useTallScreen(tester);
+    const tailscale = ServiceStatus(
+        id: 'tailscale',
+        name: 'Tailscale',
+        installed: true,
+        active: true,
+        version: '100.64.0.5');
+    final u = FakeEvccUpdater()
+      ..services = const [tailscale]
+      ..tailscaleUpUrl = null // already signed in → straight to the check
+      ..reachableHosts = {}; // this phone is not in the tailnet
+    await tester.pumpWidget(page(u,
+        config: AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                cachedServices: [tailscale.toJson()]),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fernzugriff einrichten'));
+    await tester.pumpAndSettle();
+    expect(u.tailscaleUpCalls, 1);
+    expect(u.probedHosts, ['100.64.0.5']); // the check ran, on fresh cards
+    expect(find.textContaining('Stand von vorhin'), findsNothing);
+  });
+
+  testWidgets(
       'Zugangsdaten-Karte startet eingeklappt, wenn die Zugangsdaten vollständig '
       'sind (spart Platz, v. a. das SSH-Key-Feld)', (tester) async {
     useTallScreen(tester);

@@ -733,6 +733,10 @@ class _UpdaterPageState extends State<UpdaterPage>
         _servicesFromCache = _services.isNotEmpty;
         if (isGatedTab(_tab)) _tab = tabAfterDisconnect(_tab);
       });
+    } else if (_services.isNotEmpty && !_servicesFromCache && mounted) {
+      // No session left to end (connection lost, Pi shut down) — but its
+      // cards are still on screen, and after an edit just as remembered.
+      setState(() => _servicesFromCache = true);
     }
   }
 
@@ -4379,6 +4383,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (mounted) {
         setState(() {
           _services = reconciled;
+          _servicesFromCache = false; // read just now, also without a session
           _rememberTailscaleIp(reconciled);
           _rememberLanHost();
           _connectionOk = true; // a successful detect proves the Pi is reachable
@@ -5878,6 +5883,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       if (!mounted) return;
       setState(() {
         _services = services;
+        _servicesFromCache = false;
         _rememberTailscaleIp(services);
       });
       if (_tailscaleIp.isEmpty) {
