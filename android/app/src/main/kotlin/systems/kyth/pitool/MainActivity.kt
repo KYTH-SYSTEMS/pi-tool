@@ -12,6 +12,8 @@ import com.google.android.play.core.review.ReviewManagerFactory
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 // FlutterFragmentActivity (not FlutterActivity) is required by local_auth so
 // the biometric/credential prompt can attach to the activity.
@@ -20,8 +22,9 @@ class MainActivity : FlutterFragmentActivity() {
     // lives in the app — not a plugin — so it uses the project's own Kotlin/AGP
     // and avoids the plugin version/KGP incompatibilities that broke file_picker.
     private val channelName = "pi_tool/filepicker"
-    // Reject oversized files natively BEFORE reading them into memory, so a huge
-    // pick can't OOM/ANR the app (Dart's kFileUploadLimit is 8 MB too).
+    // Upload limit, enforced natively so a huge pick can't OOM the app (Dart's
+    // kFileUploadLimit is 8 MB too): by the size the provider reports and —
+    // a provider may report none — again while reading (readBounded).
     private val maxUploadBytes = 8L * 1024 * 1024
     private var pending: MethodChannel.Result? = null
     private lateinit var picker: ActivityResultLauncher<Array<String>>
@@ -38,25 +41,36 @@ class MainActivity : FlutterFragmentActivity() {
         // Must be registered before the activity is started.
         picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             val res = pending
-            pending = null
-            if (uri == null) {
+            if (uri == null || res == null) {
+                pending = null
                 res?.success(null) // user cancelled
                 return@registerForActivityResult
             }
+            // The file is read on a thread of its own: a cloud provider
+            // downloads while its stream is read, and on the main thread that
+            // freezes the app (ANR). `pending` stays set until the answer is
+            // out, so a pick started meanwhile is turned down with "busy".
             try {
-                val size = querySize(uri)
-                if (size != null && size > maxUploadBytes) {
-                    res?.error("too_large", "Datei zu groß (max 8 MB).", null)
-                    return@registerForActivityResult
-                }
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                if (bytes == null) {
-                    res?.success(null)
-                } else {
-                    res?.success(mapOf("name" to queryName(uri), "bytes" to bytes))
-                }
-            } catch (e: Exception) {
-                res?.error("read_failed", e.message, null)
+                Thread {
+                    val answer = readPicked(uri)
+                    runOnUiThread {
+                        pending = null
+                        try {
+                            answer(res)
+                        } catch (e: Throwable) {
+                            // Encoding the bytes for Dart can run out of memory
+                            // too. Should the answer be out already, a second
+                            // one throws ("Reply already submitted"): ignored.
+                            try {
+                                res.error("read_failed", e.message, null)
+                            } catch (_: Throwable) {
+                            }
+                        }
+                    }
+                }.start()
+            } catch (e: Throwable) {
+                pending = null
+                res.error("read_failed", e.message, null)
             }
         }
     }
@@ -181,6 +195,41 @@ class MainActivity : FlutterFragmentActivity() {
                     result.notImplemented()
                 }
             }
+    }
+
+    // Works out the answer for a picked file. Runs on the reader thread: the
+    // size query, opening the stream and the read each take as long as the
+    // provider likes. Throwable, because an OutOfMemoryError is no Exception.
+    private fun readPicked(uri: Uri): (MethodChannel.Result) -> Unit {
+        try {
+            val tooLarge: (MethodChannel.Result) -> Unit =
+                { it.error("too_large", "Datei zu groß (max 8 MB).", null) }
+            val size = querySize(uri)
+            if (size != null && size > maxUploadBytes) return tooLarge
+            val input = contentResolver.openInputStream(uri) ?: return { it.success(null) }
+            val bytes = input.use { readBounded(it) } ?: return tooLarge
+            val name = queryName(uri)
+            return { it.success(mapOf("name" to name, "bytes" to bytes)) }
+        } catch (e: Throwable) {
+            val message = e.message
+            return { it.error("read_failed", message, null) }
+        }
+    }
+
+    // Reads the stream to its end, but never more than one byte past the
+    // upload limit; null = the file is larger than the limit.
+    private fun readBounded(input: InputStream): ByteArray? {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(64 * 1024)
+        var total = 0L
+        while (total <= maxUploadBytes) {
+            val want = minOf(buf.size.toLong(), maxUploadBytes + 1 - total).toInt()
+            val n = input.read(buf, 0, want)
+            if (n < 0) return out.toByteArray()
+            total += n
+            if (total <= maxUploadBytes) out.write(buf, 0, n)
+        }
+        return null
     }
 
     private fun queryName(uri: Uri): String {
