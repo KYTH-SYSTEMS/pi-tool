@@ -11,6 +11,7 @@ import 'package:evcc_updater/src/authenticator.dart';
 import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/file_pick.dart';
+import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/history.dart';
 import 'package:evcc_updater/src/l10n.dart';
 import 'package:evcc_updater/src/profiles.dart';
@@ -71,12 +72,15 @@ class _History extends HistoryStore {
   Future<void> clear() async {}
 }
 
-/// Just enough updater for "connect, then open evcc.yaml in the editor".
+/// Just enough updater for "connect, then open evcc.yaml in the editor", a
+/// service log and the Dateien tab.
 class _Updater extends EvccUpdater {
   _Updater() : super(runnerFactory: _noRunner);
   static SshRunner _noRunner(SshConfig c) => throw UnimplementedError();
 
   int detectCalls = 0;
+  int logFetches = 0; // each one is an SSH login on a real Pi
+  final uploadedTo = <String>[];
 
   @override
   Future<List<ServiceStatus>> detectServices({
@@ -105,6 +109,34 @@ class _Updater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async =>
       'network:\n  schema: http';
+
+  @override
+  Future<String> fetchServiceLogs({
+    required SshConfig config,
+    required String id,
+    required String detail,
+    required void Function(String line) onLog,
+  }) async {
+    logFetches++;
+    return 'evcc[1]: charging started';
+  }
+
+  @override
+  Future<List<DirEntry>> listDir({
+    required SshConfig config,
+    required String path,
+    required void Function(String line) onLog,
+  }) async =>
+      const [];
+
+  @override
+  Future<void> uploadFile({
+    required SshConfig config,
+    required String path,
+    required Uint8List bytes,
+    required void Function(String line) onLog,
+  }) async =>
+      uploadedTo.add(path);
 }
 
 class _Secure implements SecureScreen {
@@ -113,17 +145,32 @@ class _Secure implements SecureScreen {
   Future<void> setSecure(bool secure) async => calls.add(secure);
 }
 
+/// A screenshot seam that fails right in the call — the shipped one cannot,
+/// it catches whatever the platform does.
+class _FailingSecure implements SecureScreen {
+  bool failNext = false;
+  @override
+  Future<void> setSecure(bool secure) {
+    if (failNext) {
+      failNext = false;
+      throw StateError('setSecure');
+    }
+    return Future<void>.value();
+  }
+}
+
 class _Recents implements RecentsPreview {
   final calls = <bool>[];
   @override
   Future<void> setRecentsHidden(bool hidden) async => calls.add(hidden);
 }
 
-/// The system file picker, left open until the test closes it.
+/// The system file picker, left open until the test closes it — a new one
+/// with every pick.
 class _OpenPicker implements FilePickerService {
-  final closed = Completer<PickedFile?>();
+  var closed = Completer<PickedFile?>();
   @override
-  Future<PickedFile?> pick() => closed.future;
+  Future<PickedFile?> pick() => (closed = Completer<PickedFile?>()).future;
 }
 
 /// A set-up Pi (the connection card starts collapsed). The address is from
@@ -173,13 +220,14 @@ void main() {
     SecureScreen? secureScreen,
     RecentsPreview? recentsPreview,
     DateTime Function()? clock,
+    bool splash = false,
   }) async {
     tester.view.physicalSize = const Size(1080, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(EvccPiToolApp(
-      splash: false,
+      splash: splash,
       home: UpdaterPage(
         store: store ?? _Store(config ?? _config()),
         updater: updater ?? _Updater(),
@@ -199,7 +247,8 @@ void main() {
         clock: clock,
       ),
     ));
-    await tester.pumpAndSettle();
+    // With the splash the test pumps by itself, to see what it covers.
+    if (!splash) await tester.pumpAndSettle();
   }
 
   // Valid lifecycle transitions only. The app locks in the background
@@ -263,6 +312,19 @@ void main() {
     addTearDown(() => tester.binding.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, null));
     return calls;
+  }
+
+  /// Whether the keyboard focus is on something inside the Navigator — a
+  /// route or one of its controls.
+  bool focusBeneathTheLock(WidgetTester tester) {
+    final navigator =
+        tester.element(find.byType(Navigator, skipOffstage: false));
+    var inside = false;
+    FocusManager.instance.primaryFocus?.context?.visitAncestorElements((e) {
+      inside = identical(e, navigator);
+      return !inside;
+    });
+    return inside;
   }
 
   group('the lock covers the Navigator', () {
@@ -486,7 +548,7 @@ void main() {
       // Closed with the lock itself — in the background, before any frame.
       auth.allow = false;
       toBackground(tester);
-      await tester.pump();
+      await tester.idle(); // no frame
       expect(tester.testTextInput.isVisible, isFalse);
       toForeground(tester);
       await tester.pumpAndSettle();
@@ -511,6 +573,222 @@ void main() {
       await tester.tap(find.byKey(const Key('beneath')));
       await tester.pump();
       expect(tester.testTextInput.isVisible, isTrue);
+    });
+
+    testWidgets(
+        'keys from a hardware keyboard reach nothing beneath the lock — from '
+        'the lock itself on, not only from the next frame', (tester) async {
+      final auth = _Auth();
+      final recents = _Recents();
+      await pumpApp(tester, auth: auth, recentsPreview: recents);
+      await openMenu(tester, 'Einstellungen');
+      expect(recents.calls, [true]);
+
+      // Locked in the background and in front again, the prompt turned down
+      // — and no frame drawn yet.
+      auth.allow = false;
+      toBackground(tester);
+      toForeground(tester);
+      await tester.idle();
+      expect(auth.prompts, 2);
+
+      // Tab walks the controls of the open sheet, the app-lock switch among
+      // the first of them, and Space presses what has the focus.
+      for (var i = 1; i <= 6; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.idle();
+        expect(focusBeneathTheLock(tester), isFalse, reason: 'Tab no. $i');
+        await tester.sendKeyEvent(LogicalKeyboardKey.space);
+        await tester.idle();
+      }
+      expect(recents.calls, [true]); // the app lock was not switched off
+
+      // Nor does a field beneath get the focus when it asks for it itself.
+      tester
+          .widget<EditableText>(find
+              .descendant(
+                  of: find.byType(BottomSheet, skipOffstage: false),
+                  matching: find.byType(EditableText, skipOffstage: false))
+              .first)
+          .focusNode
+          .requestFocus();
+      await tester.idle();
+      expect(focusBeneathTheLock(tester), isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+
+      await tester.pumpAndSettle();
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(find.text(lockSwitch, skipOffstage: false), findsOneWidget);
+      // Still a lock that asks: the button goes to the authenticator.
+      await tester.tap(unlock);
+      await tester.pumpAndSettle();
+      expect(auth.prompts, 3);
+      expect(unlock.hitTestable(), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1)); // drain the save debounce
+    });
+
+    testWidgets(
+        'the button on the lock screen is in reach of a hardware keyboard, '
+        'at a locked start and after a lock from the background',
+        (tester) async {
+      final auth = _Auth()..allow = false;
+      await pumpApp(tester, auth: auth);
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(auth.prompts, 1);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(auth.prompts, 2); // Enter pressed the button
+      expect(unlock.hitTestable(), findsOneWidget);
+
+      await tapUnlock(tester, auth);
+      await openMenu(tester, 'Einstellungen');
+      final before = auth.prompts;
+      await lockByLeaving(tester, auth);
+      expect(auth.prompts, before + 1); // the prompt on return
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(auth.prompts, before + 2);
+      expect(find.text(lockSwitch, skipOffstage: false), findsOneWidget);
+    });
+
+    testWidgets(
+        'with the unlock the keyboard is back on the route that is open: '
+        'Escape closes the sheet, and the on-screen keyboard stays down',
+        (tester) async {
+      final auth = _Auth();
+      await pumpApp(tester, auth: auth);
+
+      // A sheet nothing was tapped in.
+      await openMenu(tester, 'Einstellungen');
+      await lockByLeaving(tester, auth);
+      expect(focusBeneathTheLock(tester), isFalse);
+      await tapUnlock(tester, auth);
+      expect(find.text(lockSwitch).hitTestable(), findsOneWidget);
+      expect(focusBeneathTheLock(tester), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text(lockSwitch, skipOffstage: false), findsNothing);
+
+      // A sheet with the cursor in a field.
+      await openMenu(tester, 'Einstellungen');
+      final port = find.descendant(
+          of: find.byType(BottomSheet), matching: find.byType(TextField));
+      await tester.ensureVisible(port.first);
+      await tester.tap(port.first);
+      await tester.pump();
+      expect(tester.testTextInput.isVisible, isTrue);
+      await lockByLeaving(tester, auth);
+      await tapUnlock(tester, auth);
+      expect(find.text(lockSwitch).hitTestable(), findsOneWidget);
+      // The field the lock took the focus from does not take it back.
+      expect(tester.testTextInput.isVisible, isFalse);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text(lockSwitch, skipOffstage: false), findsNothing);
+      await tester.pump(const Duration(seconds: 1)); // drain the save debounce
+    });
+
+    testWidgets(
+        'a sheet opened beneath the lock takes the keyboard from neither '
+        'side: the button stays in reach, and after the unlock Escape closes '
+        'that sheet', (tester) async {
+      final auth = _Auth();
+      final history = _History();
+      await pumpApp(tester, auth: auth, history: history);
+
+      history.gate = Completer<void>();
+      await openMenu(tester, 'Verlauf');
+      auth.allow = false;
+      toBackground(tester);
+      history.gate!.complete();
+      await tester.pump(); // the sheet is pushed — in the background
+      toForeground(tester);
+      await tester.pumpAndSettle();
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(focusBeneathTheLock(tester), isFalse);
+      final before = auth.prompts;
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(auth.prompts, before + 1);
+
+      await tapUnlock(tester, auth);
+      expect(find.text('Noch kein Verlauf.').hitTestable(), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('Noch kein Verlauf.', skipOffstage: false),
+          findsNothing);
+    });
+
+    testWidgets(
+        'a live log does not go on polling the Pi beneath the lock, and '
+        'picks up again with the unlock', (tester) async {
+      final auth = _Auth();
+      final updater = _Updater();
+      await pumpApp(tester, auth: auth, updater: updater);
+      await tester
+          .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Logs anzeigen'));
+      await tester.pumpAndSettle();
+      final live = find.descendant(
+          of: find.byType(BottomSheet), matching: find.byType(Switch));
+      await tester.tap(live);
+      await tester.pump();
+      final atStart = updater.logFetches;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(updater.logFetches, greaterThan(atStart)); // it polls
+
+      await lockByLeaving(tester, auth);
+      expect(unlock.hitTestable(), findsOneWidget);
+      final atLock = updater.logFetches;
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pump();
+      expect(updater.logFetches, atLock);
+
+      await tapUnlock(tester, auth);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(updater.logFetches, greaterThan(atLock));
+
+      await tester.tap(live); // Live off: no timer left behind
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'page and lock layer do not part when the screenshot seam fails in '
+        'the call: the lock is up although the seam threw', (tester) async {
+      final auth = _Auth();
+      final secure = _FailingSecure();
+      await pumpApp(tester, auth: auth, secureScreen: secure);
+      expect(unlock, findsNothing);
+
+      // The page locks on `hidden`; the seam fails in that very call.
+      auth.allow = false;
+      secure.failNext = true;
+      tester.binding
+          .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      expect(tester.takeException(), isStateError);
+      tester.binding
+          .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(auth.prompts, 2); // the page is locked and asks …
+      expect(unlock.hitTestable(), findsOneWidget); // … and the lock is drawn
+      expect(
+          find.widgetWithText(OutlinedButton, 'Verbindung herstellen'),
+          findsNothing);
     });
 
     testWidgets(
@@ -727,6 +1005,86 @@ void main() {
       await tester.pumpAndSettle();
       expect(unlock.hitTestable(), findsOneWidget);
     });
+
+    testWidgets(
+        'a file picked after the time limit locked the app is not uploaded — '
+        'nothing reaches the Pi beneath the lock', (tester) async {
+      var now = DateTime(2026, 10, 8, 12);
+      final auth = _Auth();
+      final updater = _Updater();
+      final picker = _OpenPicker();
+      PickedFile file() => (name: 'evcc.yaml', bytes: Uint8List.fromList([1]));
+      await pumpApp(tester,
+          auth: auth, updater: updater, filePicker: picker, clock: () => now);
+      await tester
+          .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.folder_outlined)); // Dateien
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.upload_file));
+      await tester.pump(); // the picker is open
+      auth.allow = false;
+
+      // Back after seven minutes. The lifecycle arrives before the picker's
+      // answer: the limit locks, then the file comes in.
+      toBackground(tester);
+      now = now.add(const Duration(minutes: 7));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding
+          .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      picker.closed.complete(file());
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(updater.uploadedTo, isEmpty);
+
+      // Dropped, not postponed — and after the unlock the upload works again.
+      await tapUnlock(tester, auth);
+      expect(updater.uploadedTo, isEmpty);
+      await tester.tap(find.byIcon(Icons.upload_file));
+      await tester.pump();
+      picker.closed.complete(file());
+      await tester.pumpAndSettle();
+      expect(updater.uploadedTo, ['/home/evcc.yaml']);
+      await tester.pump(const Duration(seconds: 5)); // let the snackbar expire
+      await tester.pumpAndSettle();
+    });
+
+    // The order above is the one the engine source gives (a lifecycle message
+    // is handed to Dart at once, a method-call reply is posted). Should a
+    // device deliver the answer first, the hold-off is over before the app
+    // is in front: it then locks on the way back, and what follows the pick
+    // waits beneath the lock.
+    testWidgets(
+        'the picker answers before the app is in front again: the app locks '
+        'and the passphrase dialog is there after the unlock', (tester) async {
+      var now = DateTime(2026, 10, 8, 12);
+      final auth = _Auth();
+      final picker = _OpenPicker();
+      await pumpApp(tester, auth: auth, filePicker: picker, clock: () => now);
+      await openMenu(tester, 'Einstellungen');
+      await tester.ensureVisible(find.text('Profile importieren'));
+      await tester.tap(find.text('Profile importieren'));
+      await tester.pumpAndSettle();
+      auth.allow = false;
+
+      toBackground(tester);
+      now = now.add(const Duration(seconds: 20));
+      picker.closed.complete((name: 'p.pitool', bytes: Uint8List(0)));
+      await tester.pump(); // the answer, in the background
+      toForeground(tester);
+      await tester.pumpAndSettle();
+
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(auth.prompts, 2);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(AlertDialog, skipOffstage: false), findsOneWidget);
+
+      await tapUnlock(tester, auth);
+      expect(find.byType(AlertDialog).hitTestable(), findsOneWidget);
+    });
   });
 
   group('recent-apps overview', () {
@@ -800,5 +1158,42 @@ void main() {
         await const ChannelSecureScreen().setRecentsHidden(true);
       });
     });
+  });
+
+  // Last in this file: the splash is the only test here that creates a video
+  // controller. Without the video plugin, as in every widget test, the clip
+  // never loads and the gate takes its fail-safe way out — what is covered is
+  // the wiring every user starts with (splash above lock above Navigator),
+  // not the video.
+  testWidgets(
+      'as shipped, with the splash in the builder: lock screen and Navigator '
+      'fill the screen, the splash covers the lock first, then the prompt '
+      'has come once and the unlock works', (tester) async {
+    final auth = _Auth()..allow = false;
+    await pumpApp(tester, auth: auth, splash: true);
+    await tester.pump(); // settings read, the lock is up — beneath the splash
+
+    expect(unlock, findsOneWidget);
+    expect(unlock.hitTestable(), findsNothing);
+
+    await tester.pump(const Duration(seconds: 5)); // past the cap and the fade
+    await tester.pumpAndSettle();
+
+    expect(unlock.hitTestable(), findsOneWidget);
+    expect(auth.prompts, 1);
+    const screen = Size(1080, 2600);
+    expect(tester.getSize(find.byType(Navigator, skipOffstage: false)), screen);
+    expect(
+        tester.getSize(
+            find.ancestor(of: unlock, matching: find.byType(Scaffold))),
+        screen);
+
+    await tapUnlock(tester, auth);
+    expect(unlock, findsNothing);
+    expect(
+        find
+            .widgetWithText(OutlinedButton, 'Verbindung herstellen')
+            .hitTestable(),
+        findsOneWidget);
   });
 }

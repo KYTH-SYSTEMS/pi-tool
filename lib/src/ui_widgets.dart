@@ -765,7 +765,12 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
     setState(() => _live = on);
     _timer?.cancel();
     if (on) {
-      _timer = Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
+      _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+        // Not beneath the app lock: every refresh is an SSH login. The sheet
+        // stays open there, the polling picks up again with the unlock.
+        if (AppLockLayer.maybeOf(context)?.locked ?? false) return;
+        _refresh();
+      });
       _refresh();
     }
   }

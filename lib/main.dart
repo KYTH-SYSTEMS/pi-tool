@@ -405,8 +405,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool get _locked => _lockedValue;
   set _locked(bool value) {
     _lockedValue = value;
-    _applyScreenshotPolicy();
+    // The lock layer first: it follows this value whatever the platform seam
+    // below does.
     _appLock?.locked = value;
+    _applyScreenshotPolicy();
   }
 
   bool _booting = true; // true until settings load, so the shell isn't shown
@@ -3056,6 +3058,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       _suppressLock = false;
     }
     if (picked == null || !mounted) return false; // cancelled
+    // The picker stayed open past the time limit and the app locked on the
+    // way back (see _kSuppressLockLimit): nothing goes to the Pi beneath the
+    // lock. The pick is dropped; after the unlock the user picks again.
+    if (_locked) return false;
     if (picked.bytes.length > kFileUploadLimit) {
       _snack(context.l10n.snackFileTooLarge(kFileUploadLimit ~/ (1024 * 1024)));
       return false;

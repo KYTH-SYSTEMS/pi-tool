@@ -30,6 +30,20 @@ class AppLockController extends ChangeNotifier {
   // pop. Held back from the platform while locked, see [_AppLockScopeState].
   bool _canHandlePop = false;
 
+  // The two places the keyboard focus can be in: the Navigator and the lock
+  // screen. [AppLockLayer] puts them into the tree, [_AppLockScopeState] opens
+  // the one and closes the other with the lock.
+  final _navigatorFocus = FocusScopeNode(debugLabel: 'App lock: Navigator');
+  final _lockScreenFocus = FocusScopeNode(
+      debugLabel: 'App lock: lock screen', canRequestFocus: false);
+
+  @override
+  void dispose() {
+    _navigatorFocus.dispose();
+    _lockScreenFocus.dispose();
+    super.dispose();
+  }
+
   /// True while the lock covers the app.
   bool get locked => _locked;
   set locked(bool value) {
@@ -96,11 +110,33 @@ class _AppLockScopeState extends State<AppLockScope>
   }
 
   void _onLockChanged() {
+    final navigator = _controller._navigatorFocus;
+    final lockScreen = _controller._lockScreenFocus;
     if (_controller.locked) {
       // Close the keyboard with the lock, not with the next frame: the app
-      // locks in the background, where no frame is drawn. [AppLockLayer] then
-      // keeps the focus away from everything beneath.
-      FocusManager.instance.primaryFocus?.unfocus();
+      // locks in the background, where no frame is drawn. A field or control
+      // that had the focus gives it to its route and is not remembered — the
+      // keyboard does not come up by itself after the unlock. A route that
+      // has the focus itself is left alone: unfocusing a scope makes the
+      // scope around it forget its children, and the unlock could not return
+      // to that route.
+      final focus = FocusManager.instance.primaryFocus;
+      if (focus is! FocusScopeNode) focus?.unfocus();
+      // Out of the Navigator with the focus, in this call as well. A widget
+      // could only do that with its next build, and until then Tab and Space
+      // from a hardware keyboard still reached the route on top — with the
+      // settings open they switched the app lock off.
+      navigator.canRequestFocus = false;
+      lockScreen
+        ..canRequestFocus = true
+        ..requestFocus();
+    } else {
+      // Back to the route on top. Left where the lock screen had it, the
+      // focus would be on nothing: no Tab and no Escape until a tap.
+      lockScreen.canRequestFocus = false;
+      navigator
+        ..canRequestFocus = true
+        ..requestFocus();
     }
     // System back. On the lock screen it has always been the platform's: with
     // the home route alone the framework tells it "nothing to pop here", and
@@ -211,14 +247,25 @@ class AppLockLayer extends StatelessWidget {
         return Stack(
           fit: StackFit.expand,
           children: [
-            ExcludeFocus(
-              excluding: locked,
+            // Each side in a focus scope the lock opens and closes from
+            // outside — in the call that locks, not with this build (see
+            // [_AppLockScopeState._onLockChanged]). Both stay in the tree, so
+            // the focus can go to either one at any time.
+            FocusScope.withExternalFocusNode(
+              focusScopeNode: controller._navigatorFocus,
+              includeSemantics: false,
               child: Offstage(offstage: locked, child: navigator),
             ),
-            // A ScaffoldMessenger of its own: on the app's, the lock screen
-            // would show a snackbar raised beneath it, action included.
-            if (locked)
-              ScaffoldMessenger(child: lockScreen(controller.requestUnlock)),
+            FocusScope.withExternalFocusNode(
+              focusScopeNode: controller._lockScreenFocus,
+              includeSemantics: false,
+              // A ScaffoldMessenger of its own: on the app's, the lock screen
+              // would show a snackbar raised beneath it, action included.
+              child: locked
+                  ? ScaffoldMessenger(
+                      child: lockScreen(controller.requestUnlock))
+                  : const SizedBox.shrink(),
+            ),
           ],
         );
       },
