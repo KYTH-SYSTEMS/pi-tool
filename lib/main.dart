@@ -185,6 +185,7 @@ class UpdaterPage extends StatefulWidget {
     this.fileSaver,
     this.appLauncher,
     this.secureScreen,
+    this.historyStore,
   });
 
   final AppConfigStore? store;
@@ -224,6 +225,10 @@ class UpdaterPage extends StatefulWidget {
   /// widget tests don't hit the native channel.
   final AppLauncher? appLauncher;
   final SecureScreen? secureScreen;
+
+  /// Where the action history is kept. Injectable so widget tests can see what
+  /// is recorded without secure storage.
+  final HistoryStore? historyStore;
 
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
@@ -272,7 +277,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _applyScreenshotPolicy() {
     _secureScreen.setSecure(_locked || _connExpanded);
   }
-  final HistoryStore _historyStore = HistoryStore();
+  late final HistoryStore _historyStore =
+      widget.historyStore ?? HistoryStore();
 
   final _host = TextEditingController();
   final _port = TextEditingController(text: '22');
@@ -300,6 +306,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _lockEnabled = false;
   bool _locked = false;
   bool _booting = true; // true until settings load, so the shell isn't shown
+  // The stored settings are in memory. Until then the state here is only the
+  // built-in default — and saving that would overwrite the real profiles.
+  bool _loaded = false;
+  bool _loadFailed = false; // reading the settings threw → error state + retry
   bool _unlocking = false;
   // Suppress the auto-lock for an in-app modal that backgrounds us (e.g. the
   // system file picker) — otherwise you return from picking a file to the lock
@@ -331,8 +341,16 @@ class _UpdaterPageState extends State<UpdaterPage>
   // Demo mode: canned data via the demo updater/API, everything unlocked, no
   // real Pi. In-memory only (like _connected); never persisted.
   bool _demoMode = false;
+  // What every demo action "connects" to. The connection fields play no part
+  // in a demo — on a fresh install they are empty.
+  static const _demoConfig =
+      SshConfig(host: 'demo', port: 22, username: 'pi', password: 'demo');
   int _tab = kTabVerwaltung; // Verwaltung · Automatik · Terminal · Dateien
   String? _busyMessage; // shown in the shared running bar while _busy
+  // "Abbrechen" was tapped during the running action. The updater keeps its
+  // own flag per connection; this one covers an action that opens several
+  // (see _pickReachableHost). Cleared in _beginBusy.
+  bool _cancelRequested = false;
   // The Pi-Job the running action follows, set once the Pi confirmed its
   // start: the running bar then offers "Nicht mehr mitlesen" — stopping to
   // follow never stops the job. Cleared in _guard's finally.
@@ -429,9 +447,25 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   Future<void> _loadSettings() async {
-    final cfg = await _store.load();
+    final AppConfig cfg;
+    try {
+      cfg = await _store.load();
+    } catch (_) {
+      // Secure storage can throw (keystore errors reach Dart as a
+      // PlatformException). Nothing is written from here — what is stored may
+      // be intact and merely unreadable right now — and the boot mark gives
+      // way to an error state with a retry instead of staying up forever.
+      if (!mounted) return;
+      setState(() {
+        _booting = false;
+        _loadFailed = true;
+      });
+      return;
+    }
     if (!mounted) return;
     setState(() {
+      _loaded = true; // from here on saving is safe (see _persistSettings)
+      _loadFailed = false;
       _profiles = List.of(cfg.profiles); // always growable, never the const fallback
       _activeIndex = cfg.safeIndex;
       _uiScheme = cfg.uiScheme;
@@ -483,6 +517,16 @@ class _UpdaterPageState extends State<UpdaterPage>
     unawaited(_stampFirstSeenMarker(cfg));
   }
 
+  /// "Erneut versuchen" on the load-error state: back to the boot mark and
+  /// read the settings again.
+  void _retryLoadSettings() {
+    setState(() {
+      _loadFailed = false;
+      _booting = true;
+    });
+    _loadSettings();
+  }
+
   /// Records `firstSeenVersionCode` once (if not yet set) for future Pro
   /// grandfathering. Best-effort and decoupled from startup/lock; no setState
   /// (the field is never shown in the UI).
@@ -524,7 +568,15 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _invalidateConnTest() {
     if ((_connectionOk != null || _connected) && mounted) {
       setState(() {
-        if (_demoMode) _restoreRealBackend();
+        if (_demoMode) {
+          // A keystroke ends the demo like "Beenden" does — its sample cards
+          // must not stay behind without the demo banner, now wired to the
+          // real backend.
+          _leaveDemo();
+          _statusMessage = null;
+          _lastConfig = null;
+          _lastAction = null;
+        }
         _connectionOk = null;
         _connected = false; // editing creds invalidates the session
         if (isGatedTab(_tab)) _tab = tabAfterDisconnect(_tab);
@@ -572,6 +624,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _resetDetectionForNewPi() {
     _restoreRealBackend(); // a profile switch also leaves any demo session
     _services = [];
+    _evccLive = null;
+    // In memory only, and about the previous Pi: a flow that never started on
+    // the new one must not show up there.
+    _remoteAccessPhase = _RemoteAccessPhase.idle;
     _connectionOk = null;
     _connected = false; // end the session — the new Pi must be connected anew
     if (isGatedTab(_tab)) _tab = kTabVerwaltung; // snap back off a gated tab
@@ -588,7 +644,12 @@ class _UpdaterPageState extends State<UpdaterPage>
     _saveDebounce = Timer(const Duration(milliseconds: 800), _persistSettings);
   }
 
-  Future<void> _persistSettings() => _store.save(_currentConfig());
+  /// Saves the current state — a no-op until [_loadSettings] has succeeded.
+  /// Before that (lifecycle events and dispose can come that early) the state
+  /// is the built-in default, and writing it would replace the stored profiles
+  /// with one empty "Standard".
+  Future<void> _persistSettings() =>
+      _loaded ? _store.save(_currentConfig()) : Future<void>.value();
 
   /// The active profile rebuilt from the live controller values.
   Profile _currentProfile() => Profile(
@@ -608,8 +669,18 @@ class _UpdaterPageState extends State<UpdaterPage>
         lastGoodHost: _lastGoodHost,
         remoteAccessProven: _remoteAccessProven,
         autoConnect: _autoConnect,
-        cachedServices: [for (final s in _services) s.toJson()],
+        // The demo's cards are sample data, not this Pi: saved as its cache
+        // they would come back as "Stand von vorhin" after a restart.
+        cachedServices: _demoMode
+            ? _storedCards
+            : [for (final s in _services) s.toJson()],
       );
+
+  /// The cards the active profile has remembered in [_profiles] — what it had
+  /// before a demo put its sample cards on screen.
+  List<Map<String, dynamic>> get _storedCards => _activeIndex < _profiles.length
+      ? _profiles[_activeIndex].cachedServices
+      : const [];
 
   /// Remembers the Pi's Tailscale tailnet IP from a detection, so the remote-
   /// access helper can pre-fill it as host later even when offline. Call inside
@@ -734,8 +805,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       setState(() {
         _profiles = [..._profiles, ...cfg.profiles];
         _activeIndex = _profiles.length - cfg.profiles.length; // first imported
-        _applyProfile(_profiles[_activeIndex]);
+        // Reset first: _applyProfile loads the new Pi's remembered cards, and
+        // a reset after it would wipe them (and the save below their cache).
         _resetDetectionForNewPi();
+        _applyProfile(_profiles[_activeIndex]);
       });
       _persistSettings();
       _snack(l10n.snackProfilesImported(cfg.profiles.length));
@@ -989,8 +1062,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     _profiles[_activeIndex] = _currentProfile(); // capture outgoing edits
     setState(() {
       _activeIndex = i;
-      _applyProfile(_profiles[i]);
+      // Reset first: _applyProfile loads the new Pi's remembered cards, and a
+      // reset after it would wipe them (and the save below their cache).
       _resetDetectionForNewPi();
+      _applyProfile(_profiles[i]);
     });
     _persistSettings();
   }
@@ -1007,8 +1082,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     setState(() {
       _profiles = next;
       _activeIndex = next.length - 1;
+      _resetDetectionForNewPi(); // before _applyProfile, see _switchProfile
       _applyProfile(_profiles[_activeIndex]);
-      _resetDetectionForNewPi();
     });
     _persistSettings();
   }
@@ -1047,8 +1122,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       _profiles = next;
       if (wasActive) {
         _activeIndex = _activeIndex.clamp(0, next.length - 1);
+        _resetDetectionForNewPi(); // before _applyProfile, see _switchProfile
         _applyProfile(_profiles[_activeIndex]);
-        _resetDetectionForNewPi();
       } else {
         // A lower-index deletion shifts the active profile down by one.
         if (i < _activeIndex) _activeIndex -= 1;
@@ -1243,8 +1318,6 @@ class _UpdaterPageState extends State<UpdaterPage>
         timeout: const Duration(seconds: 15),
       );
 
-  /// Validates, builds the config, remembers it, saves settings and enters the
-  /// busy state. Returns the config, or null when validation failed.
   /// Turns auto-connect on for the active Pi — and off for every other one.
   /// Exactly one Pi may start by itself: two would race at launch, both writing
   /// the host field, and the user would have no way to tell which one won.
@@ -1261,7 +1334,19 @@ class _UpdaterPageState extends State<UpdaterPage>
     _scheduleSave();
   }
 
-  SshConfig? _prepare() {
+  /// Validates, builds the config, remembers it, saves settings and enters the
+  /// busy state. Returns the config, or null when validation failed.
+  ///
+  /// In the demo every action gets [_demoConfig] instead: the connection
+  /// fields are not validated (a fresh install has none) and nothing is saved.
+  /// [real] is for the connect itself, which always means the typed fields —
+  /// also when it is started from within a demo.
+  SshConfig? _prepare({bool real = false}) {
+    if (_demoMode && !real) {
+      _lastConfig = _demoConfig;
+      _beginBusy();
+      return _demoConfig;
+    }
     final port = _validatedPort();
     if (port == null) return null;
     final config = _configFor(port);
@@ -1272,6 +1357,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _beginBusy() {
+    _cancelRequested = false; // a new action starts with a clean slate
     setState(() {
       _busy = true;
       _log.clear();
@@ -1597,19 +1683,36 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// remote access must not pay a probe's latency for a feature it doesn't use.
   /// If neither answers we also return [entered], so the normal connect reports
   /// a real error instead of us inventing one here.
+  ///
+  /// Runs inside the caller's [_guard]: a probe can throw (changed host key),
+  /// and a requested cancel ends here as a cancel.
   Future<SshConfig> _pickReachableHost(SshConfig entered) async {
+    final l10n = context.l10n;
     final candidates = remoteAccessCandidates(
       lanHost: _lanHost,
       tailscaleIp: _tailscaleIp,
       lastGood: _lastGoodHost,
     );
     if (candidates.length < 2) return entered;
+    // A host that is neither remembered address was typed on purpose (the Pi
+    // got a new address, or the profile now points at another Pi). Connect to
+    // exactly that instead of swapping a remembered address in.
+    if (!candidates.contains(entered.host)) return entered;
     for (final host in candidates) {
+      // "Neuen Key vertrauen" has to forget the entry of the address that was
+      // probed — which is not necessarily the one in the host field.
+      _lastConfig = entered.copyWith(host: host);
       final reachable = await _updater.probeConnection(
         config: entered.copyWith(
             host: host, timeout: const Duration(seconds: 4)),
         onLog: _appendLog,
       );
+      // probeConnection reports a cancelled probe as "not reachable", and the
+      // next connection clears the updater's own cancel flag — without this
+      // the connect would simply carry on after "Abbrechen".
+      if (_cancelRequested) {
+        throw EvccUpdateException(UpdateErrorKind.cancelled, l10n.logCancelled);
+      }
       if (!reachable) continue;
       if (mounted) {
         setState(() {
@@ -1625,10 +1728,19 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _testConnection() async {
     if (_busy) return;
-    final entered = _prepare();
+    final entered = _prepare(real: true);
     if (entered == null) return; // invalid port → keep any demo session intact
-    // A real connect always uses the real backend, even if we were in a demo.
-    if (_demoMode) setState(_restoreRealBackend);
+    // A real connect always uses the real backend, even if we were in a demo —
+    // and the demo ends right here, not when the connect succeeds: its session
+    // must not keep the tabs open (the Dateien tab lists on its own) against a
+    // Pi that has not answered yet, nor leave its sample cards behind.
+    if (_demoMode) {
+      setState(() {
+        _leaveDemo();
+        _connected = false;
+        if (isGatedTab(_tab)) _tab = kTabVerwaltung;
+      });
+    }
     _lastAction = _testConnection;
     // Show the running bar + Abbrechen during connect, but WITHOUT a keep-alive
     // (connect is short); the finally in _guard clears _busyMessage.
@@ -1636,8 +1748,11 @@ class _UpdaterPageState extends State<UpdaterPage>
       _testing = true;
       _busyMessage = context.l10n.busyConnecting;
     });
-    final config = await _pickReachableHost(entered);
     await _guard(() async {
+      // The address probe belongs INSIDE _guard: it throws on a changed host
+      // key, and outside nothing would release _busy or show the host-key bar.
+      final config = await _pickReachableHost(entered);
+      _lastConfig = config; // what trust-and-retry is about from here on
       final detected = await _updater.detectServices(
         config: config,
         onLog: _appendLog,
@@ -1690,14 +1805,24 @@ class _UpdaterPageState extends State<UpdaterPage>
     _apiClient = _realApi;
   }
 
+  /// Leaves the demo: real backend back, sample cards off the screen. What the
+  /// profile had remembered before comes back as what it is — a remembered
+  /// state. Call inside a setState.
+  void _leaveDemo() {
+    final stored = _storedCards;
+    _restoreRealBackend();
+    _services = [for (final j in stored) ServiceStatus.fromJson(j)];
+    _servicesFromCache = _services.isNotEmpty;
+    _evccLive = null;
+  }
+
   /// Enters demo mode: swaps in the demo backend and runs the normal detection
   /// against it, so every tab fills with believable sample data — no real Pi and
   /// no credentials. All Pro features are unlocked (via `_unlocked`). Exited via
   /// [_exitDemo] or any real connect.
   Future<void> _startDemo() async {
     if (_busy) return;
-    const config =
-        SshConfig(host: 'demo', port: 22, username: 'pi', password: 'demo');
+    const config = _demoConfig;
     setState(() {
       _demoMode = true;
       _updater = _demoUpdater;
@@ -1745,9 +1870,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// Leaves demo mode, returning to the disconnected connect screen.
   void _exitDemo() {
     setState(() {
-      _restoreRealBackend();
+      _leaveDemo();
       _connected = false;
-      _services = [];
       _statusMessage = null;
       _connectionOk = null;
       _lastConfig = null; // drop the dummy demo config
@@ -2698,8 +2822,10 @@ class _UpdaterPageState extends State<UpdaterPage>
   // ---- Dateien tab: remote file browser (browse / preview / upload / delete) ----
 
   /// Quiet SSH config for the Dateien tab (no snack, no _busy). Null when no
-  /// host is set yet — the tab then shows a "connect first" hint.
+  /// host is set yet — the tab then shows a "connect first" hint. In the demo
+  /// it is [_demoConfig], whatever the connection fields say.
   SshConfig? _filesConfig() {
+    if (_demoMode) return _demoConfig;
     if (_host.text.trim().isEmpty) return null;
     final port = int.tryParse(_port.text.trim());
     if (port == null || port <= 0 || port > 65535) return null;
@@ -3500,6 +3626,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _openPiholeAdmin() {
+    if (_demoHasNoWebUi()) return;
     if (_host.text.trim().isEmpty) {
       _snack(context.l10n.snackEnterHostFirst);
       return;
@@ -3588,6 +3715,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _openHomeAssistant() {
+    if (_demoHasNoWebUi()) return;
     if (_host.text.trim().isEmpty) {
       _snack(context.l10n.snackEnterHostFirst);
       return;
@@ -3601,6 +3729,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     _appendLog(_busyJob != null
         ? context.l10n.logStopFollowRequested
         : context.l10n.logCancelRequested);
+    _cancelRequested = true;
     await _updater.cancel();
   }
 
@@ -3675,7 +3804,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _showApiStatus() {
-    final host = _host.text.trim();
+    // Demo: the sample API answers whatever the host — an empty host field
+    // must not stand in the way.
+    final host = _demoMode ? _demoConfig.host : _host.text.trim();
     if (host.isEmpty) {
       _snack(context.l10n.snackEnterHostFirst);
       return;
@@ -3992,6 +4123,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _addHistory(String text) {
+    if (_demoMode) return; // a demo action is not part of this Pi's history
     _historyStore.add(HistoryEntry(
       when: formatTimestamp(DateTime.now()),
       text: text,
@@ -4070,7 +4202,18 @@ class _UpdaterPageState extends State<UpdaterPage>
     return '$_uiScheme://${_host.text.trim()}:$port';
   }
 
+  /// "Web öffnen" on a demo card: there is no Pi behind the sample data, so
+  /// there is nothing to open — say so instead of asking for a host (or
+  /// opening whatever address happens to be in the host field). True when the
+  /// tap was handled here.
+  bool _demoHasNoWebUi() {
+    if (!_demoMode) return false;
+    _snack(context.l10n.snackDemoNoWebUi);
+    return true;
+  }
+
   void _openEvccUi() {
+    if (_demoHasNoWebUi()) return;
     if (_host.text.trim().isEmpty) {
       _snack(context.l10n.snackEnterHostFirst);
       return;
@@ -5365,11 +5508,15 @@ class _UpdaterPageState extends State<UpdaterPage>
         setState(() => _remoteAccessPhase = _RemoteAccessPhase.awaitingBrowser);
         return;
       }
+      // A changed host key on the tailnet address has to be re-trusted for
+      // THAT address — _lastConfig still names the one in the host field.
+      _lastConfig = config.copyWith(host: _tailscaleIp);
       reachable = await _updater.probeConnection(
         config: config.copyWith(
             host: _tailscaleIp, timeout: const Duration(seconds: 8)),
         onLog: _appendLog,
       );
+      _lastConfig = config;
       if (!mounted) return;
       setState(() {
         _remoteAccessPhase = reachable
@@ -5861,6 +6008,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   void _openServiceWeb(int port) {
+    if (_demoHasNoWebUi()) return;
     if (_host.text.trim().isEmpty) {
       _snack(context.l10n.snackEnterHostFirst);
       return;
@@ -5878,6 +6026,27 @@ class _UpdaterPageState extends State<UpdaterPage>
       return const Scaffold(
         backgroundColor: kBlack,
         body: Center(child: _PromptMark(size: 64)),
+      );
+    }
+    // The stored settings could not be read. Nothing was written (see
+    // _persistSettings); offer a retry. Pinned dark like the lock screen — it
+    // follows the dark splash, and the theme setting is not known here.
+    if (_loadFailed) {
+      return Theme(
+        data: buildAppTheme(Brightness.dark),
+        child: Builder(
+          builder: (context) => Scaffold(
+            backgroundColor: kBlack,
+            body: _filesPlaceholder(
+              Theme.of(context),
+              icon: Icons.error_outline,
+              title: context.l10n.loadFailedTitle,
+              body: context.l10n.loadFailedBody,
+              actionLabel: context.l10n.loadFailedRetry,
+              onAction: _retryLoadSettings,
+            ),
+          ),
+        ),
       );
     }
     if (_locked) return _LockScreen(onUnlock: _tryUnlock);
@@ -6504,7 +6673,11 @@ class _UpdaterPageState extends State<UpdaterPage>
         onAction: _showPaywall,
       );
     }
-    if (_filesConfig() == null) {
+    // Only with a session (the demo sets _connected too). The IndexedStack
+    // builds this tab even while it is hidden, and _FilesView lists as soon as
+    // it exists — without this gate a stored profile alone would log in over
+    // SSH and send the sudo password, with nobody having tapped "connect".
+    if (!_connected || _filesConfig() == null) {
       return _filesPlaceholder(
         theme,
         icon: Icons.dns_outlined,
@@ -6516,7 +6689,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       // Rebuild (→ re-list) when the target Pi changes, so a profile switch or
       // host edit can't leave the previous Pi's listing + _path in place (which
       // would make the next upload/delete hit the new Pi at the old path).
-      key: ValueKey('$_activeIndex:${_host.text.trim()}:${_port.text.trim()}'),
+      // Demo and session state are part of it for the same reason: a demo
+      // listing must never stand in for a real Pi's, nor the other way round.
+      key: ValueKey('$_activeIndex:${_host.text.trim()}:${_port.text.trim()}'
+          ':$_demoMode:$_connected'),
       startPath: '/home',
       onList: _filesList,
       onOpenFile: _filesOpen,

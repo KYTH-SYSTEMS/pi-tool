@@ -175,6 +175,12 @@
     }
   },
   "wWelcomeTitle": "Welcome to Pi-Tool",
+  "loadFailedTitle": "Settings could not be loaded",
+  "@loadFailedTitle": {
+    "description": "Title of the error state shown when the stored settings cannot be read at app start"
+  },
+  "loadFailedBody": "The device's secure storage could not be read. Pi-Tool has not overwritten anything.",
+  "loadFailedRetry": "Try again",
   "exportProfilesTitle": "Export profiles",
   "exportProfilesBody": "The file contains your Pi credentials (passwords/SSH keys) — encrypted. Choose a passphrase; without it the file is worthless.",
   "snackExportCreated": "Export created — keep it safe.",
@@ -303,6 +309,10 @@
   "demoEntryHint": "No Pi at hand? Explore the whole app with sample data — no sign-in needed.",
   "demoBanner": "Demo mode – sample data, no real Pi.",
   "demoExit": "Exit",
+  "snackDemoNoWebUi": "There is no web interface in demo mode – there is no Pi behind the sample data.",
+  "@snackDemoNoWebUi": {
+    "description": "Snackbar when a service's web interface is opened from a demo card"
+  },
   "statusConnectedDetecting": "Connected – detecting services …",
   "statusConnectionOk": "Connection OK – detected: {found}.",
   "@statusConnectionOk": {

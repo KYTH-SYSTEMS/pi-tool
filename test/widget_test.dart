@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/l10n.dart';
 import 'package:evcc_updater/src/authenticator.dart';
@@ -7,6 +9,7 @@ import 'package:evcc_updater/src/kyth_wordmark.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -30,6 +33,38 @@ class _FakeStore extends AppConfigStore {
 
   @override
   Future<void> save(AppConfig c) async => saved = c;
+}
+
+/// Store for the startup path: [load] waits for [gate] and throws while
+/// [failures] is positive (like secure storage reporting a keystore error).
+class _StartupStore extends AppConfigStore {
+  _StartupStore(this._config, {this.failures = 0, bool held = false}) {
+    if (!held) gate.complete();
+  }
+
+  final AppConfig _config;
+  final gate = Completer<void>();
+  int failures;
+  int loadCalls = 0, saveCalls = 0;
+  AppConfig? saved;
+
+  @override
+  Future<AppConfig> load() async {
+    loadCalls++;
+    await gate.future;
+    if (failures > 0) {
+      failures--;
+      throw PlatformException(
+          code: 'Exception encountered', message: 'KeyStoreException');
+    }
+    return _config;
+  }
+
+  @override
+  Future<void> save(AppConfig c) async {
+    saveCalls++;
+    saved = c;
+  }
 }
 
 /// Authenticator that is available but always denies — keeps the app locked.
@@ -682,5 +717,116 @@ void main() {
 
     final ctx = tester.element(find.byKey(const Key('promptMark')));
     expect(Theme.of(ctx).brightness, Brightness.dark);
+  });
+
+  // ---- Startpfad: vor dem Laden wird nichts geschrieben ----
+
+  // Ein Profil, das sich vom eingebauten Startzustand („Standard", Benutzer
+  // „pi") unterscheidet. Bewusst ohne Host — diese Tests nutzen den echten
+  // Updater.
+  const stored = AppConfig(
+    profiles: [Profile(name: 'Zuhause', username: 'admin')],
+    activeIndex: 0,
+    disclaimerAccepted: true,
+    firstSeenVersionCode: 40,
+  );
+
+  Widget startupPage(AppConfigStore store) => MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('de'),
+        home: UpdaterPage(store: store, updateChecker: _noUpdateChecker),
+      );
+
+  // Out to the background and back; ends on `resumed` so later tests start
+  // from the normal state. Valid transitions only (the framework asserts them).
+  void backgroundAndReturn(WidgetTester tester) {
+    for (final s in const [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(s);
+    }
+  }
+
+  testWidgets(
+      'going to the background before the settings have loaded saves nothing',
+      (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final store = _StartupStore(stored, held: true);
+    await tester.pumpWidget(startupPage(store));
+    await tester.pump();
+
+    // Still loading: the state in memory is the built-in default, and saving
+    // it would replace the stored profiles with one empty "Standard".
+    backgroundAndReturn(tester);
+    await tester.pump();
+    expect(store.saveCalls, 0);
+
+    store.gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Verbindung herstellen'), findsOneWidget);
+
+    // Once loaded, the same transition saves again — the loaded profile.
+    backgroundAndReturn(tester);
+    await tester.pump();
+    expect(store.saveCalls, greaterThan(0));
+    expect(store.saved!.active.name, 'Zuhause');
+    expect(store.saved!.active.username, 'admin');
+  });
+
+  testWidgets('leaving the page before the settings have loaded saves nothing',
+      (tester) async {
+    _mockPackageInfo();
+    final store = _StartupStore(stored, held: true);
+    await tester.pumpWidget(startupPage(store));
+    await tester.pump();
+
+    await tester.pumpWidget(const SizedBox()); // dispose() saves on the way out
+    store.gate.complete();
+    await tester.pump();
+
+    expect(store.saveCalls, 0);
+  });
+
+  testWidgets(
+      'a failing settings store shows an error state with a retry, not the '
+      'boot mark forever', (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final store = _StartupStore(stored, failures: 2);
+    await tester.pumpWidget(startupPage(store));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Einstellungen konnten nicht geladen werden'),
+        findsOneWidget);
+    expect(find.text('Verbindung herstellen'), findsNothing);
+
+    // What is stored is unknown at this point — so nothing may be written.
+    backgroundAndReturn(tester);
+    await tester.pump();
+    expect(store.saveCalls, 0);
+
+    // A retry that fails again stays on the error state …
+    await tester.tap(find.widgetWithText(FilledButton, 'Erneut versuchen'));
+    await tester.pumpAndSettle();
+    expect(store.loadCalls, 2);
+    expect(find.text('Einstellungen konnten nicht geladen werden'),
+        findsOneWidget);
+    expect(store.saveCalls, 0);
+
+    // … and one that succeeds loads the stored settings.
+    await tester.tap(find.widgetWithText(FilledButton, 'Erneut versuchen'));
+    await tester.pumpAndSettle();
+    expect(store.loadCalls, 3);
+    expect(find.text('Einstellungen konnten nicht geladen werden'),
+        findsNothing);
+    expect(find.text('Verbindung herstellen'), findsOneWidget);
+    expect(find.text('Zuhause'), findsOneWidget); // the loaded profile's name
   });
 }

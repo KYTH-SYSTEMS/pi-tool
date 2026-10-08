@@ -12,6 +12,7 @@ import 'package:evcc_updater/src/commands.dart';
 import 'package:evcc_updater/src/entitlement.dart';
 import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/file_pick.dart';
+import 'package:evcc_updater/src/history.dart';
 import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/pi_job.dart';
@@ -26,6 +27,7 @@ import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/stack_wiring.dart';
 import 'package:evcc_updater/src/services/tailscale.dart';
+import 'package:evcc_updater/src/settings_store.dart';
 import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
@@ -96,6 +98,17 @@ class _FakeStore extends AppConfigStore {
   Future<void> save(AppConfig c) async => saved = c;
 }
 
+/// History store that records what the UI adds, without secure storage.
+class _RecordingHistory extends HistoryStore {
+  final added = <String>[];
+  @override
+  Future<List<HistoryEntry>> load() async => const [];
+  @override
+  Future<void> add(HistoryEntry entry) async => added.add(entry.text);
+  @override
+  Future<void> clear() async => added.clear();
+}
+
 /// Updater test double — overrides the public surface the UI dispatches to.
 class FakeEvccUpdater extends EvccUpdater {
   FakeEvccUpdater() : super(runnerFactory: _noRunner);
@@ -157,6 +170,14 @@ class FakeEvccUpdater extends EvccUpdater {
 
   @override
   Future<void> cancel() async => cancelCalls++;
+
+  int restartServiceCalls = 0;
+  @override
+  Future<void> restartService({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      restartServiceCalls++;
 
   int shutdownCalls = 0;
   @override
@@ -534,14 +555,17 @@ class FakeEvccUpdater extends EvccUpdater {
   Uint8List fileBytes = Uint8List(0);
   final uploadedTo = <String>[];
   final deletedPaths = <String>[];
+  int listDirCalls = 0; // every listing is an SSH login with the sudo password
 
   @override
   Future<List<DirEntry>> listDir({
     required SshConfig config,
     required String path,
     required void Function(String line) onLog,
-  }) async =>
-      dirEntries;
+  }) async {
+    listDirCalls++;
+    return dirEntries;
+  }
 
   bool uploadThrows = false;
 
@@ -846,12 +870,19 @@ class FakeEvccUpdater extends EvccUpdater {
     await _jobHooks(onJobStarted);
   }
 
+  /// Thrown by [probeConnection] — the real one rethrows only a changed host
+  /// key; everything else (a cancel included) comes back as "unreachable".
+  Object? probeError;
+  Completer<void>? probeGate; // if set, a probe awaits it (stay busy)
+
   @override
   Future<bool> probeConnection({
     required SshConfig config,
     void Function(String line)? onLog,
   }) async {
     probedHosts.add(config.host);
+    if (probeGate != null) await probeGate!.future;
+    if (probeError != null) throw probeError!;
     return reachableHosts.contains(config.host);
   }
 
@@ -1460,6 +1491,89 @@ void main() {
 
     expect(find.text('Datei-Explorer (Pro)'), findsOneWidget);
     expect(find.text('x'), findsNothing); // no browsing for free users
+  });
+
+  // Der verdeckte Dateien-Tab wird vom IndexedStack immer mitgebaut. Ein
+  // gespeichertes Profil allein darf deshalb kein Listing auslösen — das wäre
+  // ein SSH-Login samt sudo-Passwort, ohne dass jemand „Verbindung herstellen"
+  // getippt hat (und ohne Auto-Connect).
+  testWidgets(
+      'Dateien: ohne „Verbindung herstellen" geht kein Listing an den Pi',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..dirEntries = const [(name: 'x', isDir: false)];
+    await tester.pumpWidget(page(u)); // gespeichertes Profil: Host + Passwort
+    await tester.pumpAndSettle();
+
+    expect(u.detectCalls, 0);
+    expect(u.listDirCalls, 0);
+
+    // Mit Sitzung listet der Tab wie gewohnt.
+    await goDateien(tester);
+    expect(u.listDirCalls, greaterThan(0));
+    expect(find.text('x'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Dateien: nach der Demo zeigt der echte Pi nicht das Demo-Listing',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'echt.txt', isDir: false)];
+    await tester.pumpWidget(page(u)); // Host + Passwort, nie verbunden
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.folder_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('evcc.yaml'), findsOneWidget); // Demo-Dateien
+    expect(u.listDirCalls, 0, reason: 'die Demo fasst das echte Backend nicht an');
+
+    // Zurück zur Verwaltung und echt verbinden (der Knopf zeigt im Demo
+    // „Verbunden"), ohne die Demo vorher zu beenden.
+    await tester.tap(find.byIcon(Icons.tune_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Verbunden'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.folder_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('echt.txt'), findsOneWidget);
+    expect(find.text('evcc.yaml'), findsNothing,
+        reason: 'Demo-Einträge als Inhalt des echten Pi wären Ziel von '
+            'Öffnen/Löschen mit falschen Pfaden');
+  });
+
+  testWidgets(
+      'Verbinden aus der Demo heraus beendet die Demo sofort: keine '
+      'Beispielkarten, keine Sitzung und kein Listing, bevor der Pi antwortet',
+      (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()
+      ..detectGate = gate // der echte Connect bleibt hängen
+      ..dirEntries = const [(name: 'echt.txt', isDir: false)];
+    await tester.pumpWidget(page(u)); // Host + Passwort, nie verbunden
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('menu-pihole')), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Verbunden'));
+    await tester.pump();
+    await tester.pump();
+
+    // Der Connect läuft noch — die Sitzung der Demo darf ihm nichts vorgreifen.
+    expect(find.text('Demo-Modus – Beispieldaten, kein echter Pi.'),
+        findsNothing);
+    expect(find.byKey(const ValueKey('menu-pihole')), findsNothing);
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    expect(u.listDirCalls, 0);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
   });
 
   testWidgets('test shows "Verbunden" and reveals the service cards',
@@ -4212,6 +4326,299 @@ void main() {
         findsOneWidget);
   });
 
+  // Die Demo ist der Weg in die App für jemanden OHNE Pi — also mit leerem
+  // Host-Feld. Jede Aktion muss dort gegen die Beispieldaten laufen, statt nach
+  // Zugangsdaten zu fragen, die es nicht gibt.
+  Widget demoPage(AppConfigStore store, {HistoryStore? history}) => MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('de'),
+        home: UpdaterPage(
+          store: store,
+          updater: FakeEvccUpdater(),
+          updateChecker: _noUpdateChecker,
+          historyStore: history,
+          // The real API must never be asked in a demo; this one would fail.
+          apiClient: EvccApiClient(
+              getJson: (_) async =>
+                  throw const EvccApiException('kein Netz im Test')),
+          evccReleaseFetcher: () async => null,
+          haVersionFetcher: () async => null,
+        ),
+      );
+
+  const emptyProfile = AppConfig(
+    profiles: [Profile(name: 'S')],
+    activeIndex: 0,
+    disclaimerAccepted: true,
+  );
+
+  testWidgets(
+      'Demo mit leerem Profil: Aktionen in Verwaltung, Terminal und Dateien '
+      'laufen, ohne nach Host oder Passwort zu fragen', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(demoPage(_FakeStore(emptyProfile)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+
+    // Verwaltung: eine Karten-Aktion läuft gegen die Beispieldaten.
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paketlisten aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bitte Host/IP eintragen.'), findsNothing);
+    expect(find.text('Paketlisten aktualisiert.'), findsOneWidget);
+
+    // evcc-Status kommt aus der Demo-API, nicht von einem (leeren) Host.
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live-Status'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bitte zuerst Host/IP eintragen.'), findsNothing);
+    expect(find.text('Zuhause'), findsOneWidget);
+    Navigator.of(tester.element(find.text('Zuhause'))).pop();
+    await tester.pumpAndSettle();
+
+    // „Oberfläche öffnen" (evcc- und Pi-hole-Karte): hinter den Beispielkarten
+    // steht keine Weboberfläche.
+    expect(find.byIcon(Icons.open_in_browser), findsNWidgets(2));
+    for (final web in [
+      find.byIcon(Icons.open_in_browser).first,
+      find.byIcon(Icons.open_in_browser).last,
+    ]) {
+      await tester.tap(web);
+      await tester.pumpAndSettle();
+      expect(find.text('Bitte zuerst Host/IP eintragen.'), findsNothing);
+      expect(find.textContaining('keine Weboberfläche'), findsOneWidget);
+    }
+
+    // Terminal.
+    await tester.tap(find.byIcon(Icons.terminal_outlined));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('consoleField')), 'uptime');
+    await tester.tap(find.byIcon(Icons.keyboard_return));
+    await tester.pumpAndSettle();
+    expect(find.text('Bitte Host/IP eintragen.'), findsNothing);
+    expect(find.text('Befehl ausgeführt: uptime'), findsOneWidget);
+
+    // Dateien: Listing und Vorschau aus den Beispieldaten.
+    await tester.tap(find.byIcon(Icons.folder_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('Kein Pi verbunden'), findsNothing);
+    expect(find.text('evcc.yaml'), findsOneWidget);
+    await tester.tap(find.text('evcc.yaml'));
+    await tester.pumpAndSettle();
+    expect(find.text('Datei: evcc.yaml'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Demo: Beispielkarten werden nicht als „Stand von vorhin" ins Profil '
+      'geschrieben; der gemerkte Stand des Profils bleibt', (tester) async {
+    useTallScreen(tester);
+    // Ein importiertes Profil bringt gemerkte Karten mit, ohne dass auf diesem
+    // Gerät je verbunden wurde — der Demo-Einstieg ist dann noch da.
+    final store = _FakeStore(AppConfig(
+      profiles: [
+        Profile(name: 'S', cachedServices: [grafana.toJson()])
+      ],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    await tester.pumpWidget(demoPage(store));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('menu-grafana')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('menu-evcc')), findsOneWidget);
+
+    // Jeder Speichervorgang während der Demo — hier: App geht in den
+    // Hintergrund. Endet der Prozess danach, ist das der Stand beim Neustart.
+    for (final s in const [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(s);
+    }
+    await tester.pump();
+    expect([for (final j in store.saved.active.cachedServices) j['id']],
+        ['grafana']);
+
+    // Nach der Demo steht wieder der gemerkte Stand da — keine Beispielkarten
+    // und auch kein geleertes Profil.
+    await tester.tap(find.text('Beenden'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('menu-evcc')), findsNothing);
+    expect(find.byKey(const ValueKey('menu-grafana')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Demo: ein Tastendruck in den Zugangsdaten beendet die Demo samt '
+      'Beispielkarten', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(demoPage(_FakeStore(emptyProfile)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('menu-evcc')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Host / IP'), '192.168.1.50');
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    expect(find.text('Demo-Modus – Beispieldaten, kein echter Pi.'),
+        findsNothing);
+    // Ohne Banner wären die Beispielkarten nicht mehr als solche erkennbar —
+    // und ihre Aktionen gingen an das echte Backend.
+    expect(find.byKey(const ValueKey('menu-evcc')), findsNothing);
+    expect(find.byKey(const ValueKey('menu-system')), findsNothing);
+    expect(find.textContaining('Verbindung OK'), findsNothing);
+  });
+
+  testWidgets('Demo-Aktionen landen nicht im Verlauf des echten Pi',
+      (tester) async {
+    useTallScreen(tester);
+    final history = _RecordingHistory();
+    await tester.pumpWidget(demoPage(_FakeStore(emptyProfile), history: history));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dienst neu starten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('evcc-Dienst neu gestartet.'), findsOneWidget);
+    expect(history.added, isEmpty);
+  });
+
+  // Gegenprobe zum Test darüber: außerhalb der Demo schreibt dieselbe Aktion
+  // sehr wohl in den Verlauf.
+  testWidgets('echte Aktionen landen weiter im Verlauf', (tester) async {
+    useTallScreen(tester);
+    final history = _RecordingHistory();
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(_ready),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+        historyStore: history,
+        apiClient: EvccApiClient(
+            getJson: (_) async =>
+                throw const EvccApiException('kein Netz im Test')),
+        evccReleaseFetcher: () async => null,
+        haVersionFetcher: () async => null,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dienst neu starten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(history.added, ['evcc-Dienst neu gestartet.']);
+  });
+
+  // ---- Profilwechsel: nichts geht verloren, nichts wandert mit ----
+
+  testWidgets(
+      'Profilwechsel: der gemerkte Stand des Ziel-Pi erscheint und bleibt '
+      'gespeichert', (tester) async {
+    useTallScreen(tester);
+    final store = _FakeStore(AppConfig(
+      profiles: [
+        const Profile(name: 'A', host: '1.1.1.1', password: 'pw'),
+        Profile(
+            name: 'B',
+            host: '2.2.2.2',
+            password: 'pw',
+            cachedServices: [grafana.toJson()]),
+      ],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: store,
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('menu-grafana')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('B'));
+    await tester.pumpAndSettle();
+
+    // Shown as what it is — a remembered state …
+    expect(find.byKey(const ValueKey('menu-grafana')), findsOneWidget);
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+    // … and the switch itself must not wipe it from the stored profile.
+    expect([for (final j in store.saved.profiles[1].cachedServices) j['id']],
+        ['grafana']);
+  });
+
+  testWidgets(
+      'Profilwechsel: ein Fernzugriff-Ablauf von Pi A steht nicht bei Pi B',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5'),
+      ]
+      ..tailscaleUpUrl = null
+      ..reachableHosts = {}; // dieses Handy erreicht das Tailnet nicht
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [
+            Profile(name: 'A', host: '1.1.1.1', password: 'pw'),
+            Profile(name: 'B', host: '2.2.2.2', password: 'pw'),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.text('Jetzt prüfen'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('erreicht ihn noch nicht'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('B'));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Auf Pi B hat dieser Ablauf nie begonnen.
+    expect(find.textContaining('erreicht ihn noch nicht'), findsNothing);
+  });
+
   testWidgets(
       'bekannter Pi: keine WLAN-Suche und kein Einsteiger-Link unter dem '
       'Verbinden-Knopf', (tester) async {
@@ -4295,6 +4702,147 @@ void main() {
     await detect(tester);
 
     expect(u.probedHosts, isEmpty);
+  });
+
+  // ---- Vorprobe (Heim-/Tailnet-Adresse): Host-Key, Abbruch, eingetippter Host ----
+
+  // Host-Feld = Tailnet-IP, gemerkt sind Heim- UND Tailnet-Adresse → die
+  // Vorprobe läuft, und zwar zuerst gegen die Heim-Adresse.
+  const twoAddresses = AppConfig(
+    profiles: [
+      Profile(
+          name: 'S',
+          host: '100.64.0.5',
+          password: 'pw',
+          lanHost: '192.168.178.125',
+          tailscaleIp: '100.64.0.5')
+    ],
+    activeIndex: 0,
+    disclaimerAccepted: true,
+  );
+
+  testWidgets(
+      'geänderter Host-Key in der Vorprobe: Host-Key-Leiste statt blockierter '
+      'App, und „vertrauen" vergisst den Eintrag der sondierten Adresse',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..probeError = const EvccUpdateException(
+          UpdateErrorKind.hostKeyChanged, 'Host-Key geändert!');
+    await tester.pumpWidget(page(u, config: twoAddresses));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Same error path as a changed key on the connect itself …
+    expect(find.textContaining('neuen Key vertrauen'), findsOneWidget);
+    expect(u.detectCalls, 0,
+        reason: 'kein Connect an einem geänderten Host-Key vorbei');
+    // … and the UI is released: no running bar, the profile switcher reacts.
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(
+        tester
+            .widget<InkWell>(find.byKey(const Key('profileSwitcher')))
+            .onTap,
+        isNotNull);
+
+    // The key that changed belongs to the PROBED address (home first), not to
+    // the one in the host field.
+    u
+      ..probeError = null
+      ..reachableHosts = {'192.168.178.125'};
+    await tester.tap(find.byIcon(Icons.verified_user_outlined));
+    await tester.pumpAndSettle();
+    expect(u.forgotConfig!.host, '192.168.178.125');
+    expect(find.text('Verbunden'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Fernzugriff prüfen: geänderter Host-Key der Tailnet-Adresse → '
+      '„vertrauen" vergisst DEREN Eintrag, nicht den des Host-Felds',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'tailscale',
+            name: 'Tailscale',
+            installed: true,
+            active: true,
+            version: '100.64.0.5'),
+      ]
+      ..tailscaleUpUrl = null;
+    await tester.pumpWidget(page(u)); // Host-Feld: 192.168.178.64
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    u.probeError = const EvccUpdateException(
+        UpdateErrorKind.hostKeyChanged, 'Host-Key geändert!');
+    await tester.tap(find.text('Jetzt prüfen'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('neuen Key vertrauen'), findsOneWidget);
+
+    u
+      ..probeError = null
+      ..reachableHosts = {'100.64.0.5'};
+    await tester.tap(find.byIcon(Icons.verified_user_outlined));
+    await tester.pumpAndSettle();
+    expect(u.forgotConfig!.host, '100.64.0.5');
+  });
+
+  testWidgets(
+      '„Abbrechen" während der Vorprobe bricht ab — danach wird nicht doch '
+      'noch verbunden', (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<void>();
+    // reachableHosts leer: wie die echte probeConnection meldet der Fake eine
+    // abgebrochene Probe als „nicht erreichbar".
+    final u = FakeEvccUpdater()..probeGate = gate;
+    await tester.pumpWidget(page(u, config: twoAddresses));
+    await tester.pumpAndSettle();
+
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pump(); // running bar is up, the first probe hangs
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Abbrechen'));
+    await tester.pump();
+    expect(u.cancelCalls, 1);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(u.probedHosts, ['192.168.178.125'],
+        reason: 'nach dem Abbruch wird auch die zweite Adresse nicht sondiert');
+    expect(u.detectCalls, 0, reason: 'abgebrochen heißt: kein Connect');
+    expect(find.text('Abgebrochen.'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets(
+      'eingetippter Host, der keine gemerkte Adresse ist: kein Sondieren, '
+      'verbunden wird genau dorthin', (tester) async {
+    useTallScreen(tester);
+    // Beide gemerkten Adressen würden antworten — trotzdem gilt die Eingabe.
+    final u = FakeEvccUpdater()
+      ..reachableHosts = {'192.168.178.125', '100.64.0.5'};
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.200',
+                password: 'pw',
+                lanHost: '192.168.178.125',
+                tailscaleIp: '100.64.0.5')
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    expect(u.probedHosts, isEmpty);
+    expect(u.detectHosts, ['192.168.178.200']);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
   });
 
   testWidgets(
