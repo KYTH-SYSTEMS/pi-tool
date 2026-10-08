@@ -423,7 +423,9 @@ __SEC_PORTS__
   // </dev/null swallows the rest of the script, and the marker never comes.
   // systemctl, apt-cache and apt-config answer from a small model of the Pi:
   //  - fail2ban stays up when it has a log to read: /var/log/auth.log, or the
-  //    journal (the jail's `backend = systemd` plus python3-systemd);
+  //    journal (the jail's `backend = systemd` plus python3-systemd); without
+  //    one it is down at once, or — /state/f2b-dies-after — still "active"
+  //    for that many samples, like a server that was forked and then ends;
   //  - apt-config lists what the files in /etc/apt/apt.conf.d hold as
   //    Origins-Pattern entries, one `Key:: "value";` line each, like apt.
   // How fail2ban and apt themselves behave is taken from their sources and
@@ -452,8 +454,17 @@ f2b_has_a_log() {
 }
 case "$*" in
   "enable --now fail2ban"|"restart fail2ban")
-    if f2b_has_a_log; then : > "$S/f2b-active"; else "$REAL_RM" -f "$S/f2b-active"; fi ;;
-  "is-active --quiet fail2ban") [ -e "$S/f2b-active" ] || exit 3 ;;
+    "$REAL_RM" -f "$S/f2b-active" "$S/f2b-samples-left"
+    if f2b_has_a_log; then
+      : > "$S/f2b-active"
+    elif [ -e "$S/f2b-dies-after" ]; then
+      "$REAL_CAT" "$S/f2b-dies-after" > "$S/f2b-samples-left"
+    fi ;;
+  "is-active --quiet fail2ban")
+    [ -e "$S/f2b-active" ] && exit 0
+    left=$("$REAL_CAT" "$S/f2b-samples-left" 2>/dev/null)
+    [ "${left:-0}" -gt 0 ] || exit 3
+    echo $((left - 1)) > "$S/f2b-samples-left" ;;
   "is-active fail2ban")
     if [ -e "$S/f2b-active" ]; then echo active; else echo inactive; exit 3; fi ;;
   "enable --now unattended-upgrades") : > "$S/unattended-on" ;;
@@ -487,7 +498,9 @@ if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
           log: false);
       pi.stub('sudo', r'while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"',
           log: false);
-      pi.stub('sh', r'exec /bin/sh "$@"', log: false);
+      // The probe runs under `sh -c`: dash where there is one, as on a Pi
+      // (the /bin/sh of Git Bash is a bash).
+      pi.stub('sh', 'exec ${sandboxDash ?? '/bin/sh'} "\$@"', log: false);
       pi.stub('sshd', 'echo "permitrootlogin no"; echo "passwordauthentication no"',
           log: false);
       pi.stub('ss', 'echo "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*"', log: false);
@@ -650,6 +663,9 @@ if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
           'systemctl enable --now fail2ban',
           for (var i = 0; i < 5; i++) 'systemctl is-active --quiet fail2ban',
         ]);
+        // Two seconds before each sample: ten seconds of watching.
+        expect(pi.calls.where((c) => c.startsWith('sleep ')),
+            List.filled(5, 'sleep 2'));
         expect(pi.exists(jailFile), isFalse);
         expect((await finding('fail2ban')).level, SecurityLevel.ok);
       });
@@ -680,6 +696,41 @@ if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
           for (var i = 0; i < 5; i++) 'systemctl is-active --quiet fail2ban',
         ]);
         expect((await finding('fail2ban')).level, SecurityLevel.ok);
+      });
+
+      // What the finding is about: `enable --now` returns with the server
+      // forked, and a server without a log to read ends a moment later. One
+      // look right after the start would take it for running.
+      test('started, gone within the watch, no auth.log: sshd jail on the '
+          'journal', () async {
+        pi.put('/state/f2b-dies-after', '2');
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines.last, 'SECFIX_OK');
+        expect(pi.read(jailFile),
+            '[sshd]\nenabled = true\nbackend = systemd\n');
+        final c = changes();
+        expect(
+            c.sublist(c.indexOf('systemctl enable --now fail2ban') + 1), [
+          // Up at two samples, gone at the third.
+          for (var i = 0; i < 3; i++) 'systemctl is-active --quiet fail2ban',
+          '$aptInstall python3-systemd',
+          'systemctl restart fail2ban',
+          for (var i = 0; i < 5; i++) 'systemctl is-active --quiet fail2ban',
+        ]);
+      });
+
+      test('started, gone at the last sample, auth.log there: exit 1, no marker',
+          () async {
+        pi.put('/var/log/auth.log', '');
+        pi.put('/state/f2b-broken');
+        pi.put('/state/f2b-dies-after', '4');
+        final r = await fix(SecurityFix.fail2ban);
+        expect(r.code, 1);
+        expect(r.out, isNot(contains('SECFIX_OK')));
+        expect(r.out, contains(noLogFile));
+        expect(pi.exists(jailFile), isFalse);
+        expect(changes().where((c) => c.contains('python3-systemd')), isEmpty);
       });
 
       test('not starting although auth.log is there: journal, exit 1, no marker',

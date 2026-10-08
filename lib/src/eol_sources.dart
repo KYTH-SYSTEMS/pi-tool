@@ -125,6 +125,10 @@ bool isAptLocked(String output) => _aptLockError.hasMatch(output);
 // Not anchored to the line start: stdout and stderr share one log, so the
 // error may follow an unfinished progress line. The letter check keeps a
 // word ending in "E" (NOTE: …) from passing as apt's error prefix.
-final RegExp _aptLockError = RegExp(r'(?<![A-Za-z])E: (?:Could not get lock'
+// `Error:` is the same prefix spelled out — the `apt` front end of apt 3
+// (Debian 13) prints it that way (from apt's source, not measured). The app
+// calls apt-get only; a third-party installer it runs may call `apt`.
+final RegExp _aptLockError = RegExp(
+    r'(?<![A-Za-z])(?:E|Error): (?:Could not get lock'
     r'|Unable to acquire the dpkg frontend lock'
     r'|Unable to lock directory /var/lib/apt/lists)');

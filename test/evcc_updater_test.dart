@@ -3775,6 +3775,22 @@ void main() {
                           isNot(contains('Verbindung')))))));
     }
 
+    // The message points to the log: what sudo or the shell said is there.
+    test('…and the reason is in the log', () async {
+      final log = <String>[];
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            _jobStart: [
+              _r('',
+                  stderr: 'pi is not in the sudoers file.  This incident will '
+                      'be reported.\n',
+                  exitCode: 1)
+            ]
+          })).upgradeSystem(config: _config, onLog: log.add),
+          throwsA(isA<EvccUpdateException>()));
+      expect(log, contains(startsWith('pi is not in the sudoers file.')));
+    });
+
     test('the launcher\'s own exit 3 without a line stays "start unclear"', () =>
         upgradeWith(
             _r('',

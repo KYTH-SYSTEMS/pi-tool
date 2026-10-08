@@ -707,7 +707,9 @@ echo "rpi-connect $*" >> "$STUB/log"
               .stdout as String)
           .trim();
       pi.stub('id', 'echo 1000', log: false);
-      pi.stub('sh', r'exec /bin/sh "$@"', log: false);
+      // dash where there is one, as on a Pi (the /bin/sh of Git Bash is a
+      // bash).
+      pi.stub('sh', 'exec ${sandboxDash ?? '/bin/sh'} "\$@"', log: false);
       pi.stub('setsid', r'exec "$@"', log: false);
       pi.stub('rpi-connect', '''
 echo "Complete sign in by visiting $url"

@@ -73,6 +73,22 @@ void main() {
               '/var/lib/dpkg/lock-frontend. It is held by process 1234 (apt)\n'),
           isTrue);
     });
+
+    // apt 3 (Debian 13) spells the prefix out in its `apt` front end. The app
+    // itself only calls apt-get, an installer it runs may not.
+    test('the spelled-out error prefix of apt 3 counts too', () {
+      expect(
+          isAptLocked('Error: Could not get lock /var/lib/dpkg/lock-frontend. '
+              'It is held by process 1234 (apt)\n'
+              'Error: Unable to acquire the dpkg frontend lock '
+              '(/var/lib/dpkg/lock-frontend), is another process using it?\n'),
+          isTrue);
+      expect(isAptLocked('Error: Unable to lock directory /var/lib/apt/lists/'),
+          isTrue);
+      // The notice has no error prefix in that format either.
+      expect(isAptLocked('$waiting\nError: Unable to locate package foo\n'),
+          isFalse);
+    });
   });
 
   group('eolSourcesFixScript', () {

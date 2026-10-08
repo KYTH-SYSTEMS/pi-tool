@@ -339,7 +339,9 @@ esac''');
 exit 0''', log: false);
       pi.stub('sudo', r'while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"',
           log: false);
-      pi.stub('sh', r'exec /bin/sh "$@"', log: false);
+      // The power guard runs under `sh -c`: dash where there is one, as on a
+      // Pi (the /bin/sh of Git Bash is a bash).
+      pi.stub('sh', 'exec ${sandboxDash ?? '/bin/sh'} "\$@"', log: false);
       pi.stub('reboot', r': > "$S/rebooted"');
       pi.stub('poweroff', r': > "$S/powered-off"');
     });
