@@ -327,6 +327,14 @@ void main() {
       expect(await list('home/pi'), isEmpty);
     });
 
+    test('names with umlauts arrive as they are, LC_ALL=C or not', () async {
+      // The command pins the C locale for sudo's messages. find must not
+      // escape what is no ASCII there — it prints names raw into a pipe.
+      Directory(box.host('home/pi/Müll')).createSync();
+      File(box.host('home/pi/grün.txt')).writeAsBytesSync(const []);
+      expect(await list('home/pi'), [('Müll', true), ('grün.txt', false)]);
+    });
+
     test('symlinks: to a directory, to a file, dangling', () async {
       final links = box.setup('mkdir home/pi/target\n'
           ': > home/pi/target/inside.txt\n'
@@ -483,11 +491,14 @@ void main() {
       expect(box.ls('home/pi'), ['.env']);
       final dest = '${box.root}/home/pi/.env';
       final calls = box.calls;
-      expect(calls, hasLength(3));
-      final tmp = calls[0].substring('chmod 644 '.length);
+      // No `chmod 644` in between: the temp file stays 0600 (mktemp) until it
+      // has the owner and mode of the file it replaces — the new content of a
+      // 0600 file is never readable for everyone.
+      expect(calls, hasLength(2));
+      final tmp = calls[0].substring('chown --reference=$dest '.length);
       expect(tmpName.hasMatch(tmp), isTrue);
       // Owner first: chown may clear mode bits that chmod then sets again.
-      expect(calls.sublist(1), [
+      expect(calls, [
         'chown --reference=$dest $tmp',
         'chmod --reference=$dest $tmp',
       ]);

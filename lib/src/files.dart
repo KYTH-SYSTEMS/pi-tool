@@ -86,11 +86,15 @@ String buildUploadScript({required String path, required String base64Content}) 
       'tmp=\$(mktemp "\$dir/.pitool-up.XXXXXX")\n'
       'trap \'rm -f "\$tmp"\' EXIT\n'
       'printf %s ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"\n'
-      'chmod 644 "\$tmp"\n'
+      // mktemp made the file 0600. One that replaces a file goes from there
+      // straight to that file's owner and mode — never through 0644, or the
+      // new content of a 0600 file would be readable for everyone meanwhile.
       // Owner first: chown may clear mode bits that chmod then sets again.
       'if [ -f "\$dest" ]; then\n'
       '  chown --reference="\$dest" "\$tmp"\n'
       '  chmod --reference="\$dest" "\$tmp"\n'
+      'else\n'
+      '  chmod 644 "\$tmp"\n'
       'fi\n'
       // -T: should a directory appear at the target after the check above,
       // mv fails instead of moving into it.

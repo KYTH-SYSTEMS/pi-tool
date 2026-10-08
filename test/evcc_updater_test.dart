@@ -1711,8 +1711,12 @@ void main() {
     });
 
     test('listDir: a file named like sudo\'s message is just a file', () async {
-      final e = await list(_r('f\tSorry, try again.\x00'));
-      expect(e.single.name, 'Sorry, try again.');
+      // The second name ends in a line break: in the listing, sudo's words
+      // then end a line, exactly as they would in a message of sudo.
+      final e = await list(
+          _r('f\tSorry, try again.\x00f\tSorry, try again.\n\x00'));
+      expect(e.map((x) => x.name).toList(),
+          ['Sorry, try again.', 'Sorry, try again.\n']);
     });
 
     test('readFileBytes base64-decodes the file content', () async {
