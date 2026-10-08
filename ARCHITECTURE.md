@@ -1,7 +1,7 @@
 # Pi-Tool — Architektur
 
 > Referenz-Doku der App. **Bei architektur-relevanten Änderungen mitpflegen**
-> (siehe `CLAUDE.md`). Stand: v0.70.x.
+> (siehe `CLAUDE.md`). Stand: v0.71.x.
 
 Pi-Tool ist eine Flutter-**Android**-App, die einen Raspberry Pi (oder jedes
 Debian/Linux-Gerät) **per SSH** verwaltet: Dienste erkennen, installieren,
@@ -43,9 +43,34 @@ sind durchgängig **fail-soft** (dürfen die App nie stürzen lassen).
   Der Seam existiert, damit die Orchestrierung mit `FakeSshRunner` testbar ist —
   **dartssh2-Typen dürfen hier nicht durchsickern.**
 - **`Dartssh2Runner`**: echte Implementierung. Wichtige Invarianten:
+  - **dartssh2 `^4.1.0` ist eine Sicherheits-Untergrenze, keine Vorliebe**
+    (v0.71.0): Bis 2.22.5 kamen die Key-Exchange-Geheimnisse aus
+    `dart:math`-`Random()` (32-Bit-Seed) statt aus `Random.secure()` — wer den
+    Handshake mitschneidet, kann die Sitzungsschlüssel offline durchprobieren.
+    Behoben ab 3.0.1; **nie wieder unter 3.0.1 auflösen** (Kommentar an der
+    Abhängigkeit in `pubspec.yaml`). Vor jedem dartssh2-Upgrade den
+    Ende-zu-Ende-Test gegen einen echten SSH-Partner laufen lassen (§8).
+  - **Feste Cipher-Reihenfolge** (`_algorithms`): ChaCha20-Poly1305, dann
+    AES-256/128-CTR, AES-GCM zuletzt — bewusst nicht die Standard-Reihenfolge
+    der Bibliothek. Deren AES-GCM ist reines Dart und brauchte im
+    Integrationstest 31 s für 6,9 MB, ChaCha20-Poly1305 und AES-CTR unter 2 s
+    (bei einem Backup-Download der Unterschied zwischen Sekunden und Minuten).
+    ChaCha20 bietet jedes OpenSSH seit 6.5 an, CTR deckt Älteres ab.
   - **`LineBuffer`**: `onOutput` bekommt nur *ganze Zeilen* → die zeilenweise
     `redactPassword`-Maskierung kann nicht durch einen über zwei Netz-Chunks
     gesplitteten Geheimwert ausgehebelt werden. Rohe Chunks nie direkt streamen.
+    Arbeitet in **einem Durchlauf** über den Chunk: die Kosten wachsen mit der
+    Ausgabe, nicht mit ihrem Quadrat (das Abschneiden der Zeile vom Rest kopierte
+    den Rest einmal pro Zeile — 16 s für 940.000 kurze Zeilen).
+  - **Ausgabe wird als Strom dekodiert** (`Utf8ChunkDecoder`), nicht je
+    SSH-Paket: SSH schneidet an Byte-Grenzen, ein Mehrbyte-Zeichen kann über
+    zwei Pakete laufen. Einzeln dekodiert wurden beide Hälften zu U+FFFD — und
+    der Config-Editor schrieb das zurück in die Datei. Der Dekoder hält ein
+    unvollständiges Zeichen zurück, bis es komplett ist; Bytes, die gar kein
+    UTF-8 sind, werden U+FFFD statt eines Wurfs, und ein am Stream-Ende
+    abgeschnittenes Zeichen wird bei `close()` gemeldet statt verschluckt.
+    Reihenfolge je Kanal: Bytes → `Utf8ChunkDecoder` → Ergebnispuffer +
+    `LineBuffer`.
   - **TOFU**: `checkAndRecordHostKey` bricht den Handshake ab (gibt `false`),
     bevor je ein Passwort gesendet wird — sowohl bei geändertem Key als auch bei
     abgelehntem First-Use. Ein abgelehnter First-Use speichert den Key **nicht**.
@@ -53,9 +78,22 @@ sind durchgängig **fail-soft** (dürfen die App nie stürzen lassen).
     `commandTimeout` ist ein **Inaktivitäts**-Timeout (lange apt/docker-Läufe,
     die weiter streamen, dürfen laufen). `keepAliveInterval: 20s` verhindert,
     dass NAT/Router die Session in ruhigen dpkg-Phasen killen.
+    **Die Handshake-Frist zählt nur aktive Zeit** (`withinActiveTime` über
+    `_handshakeClock`): Solange der First-Use-Fingerprint-Dialog offen ist,
+    steht die Uhr — das ist die Zeit des Nutzers, nicht die des Pi. Wer den
+    Fingerprint wirklich vergleicht, bekäme sonst „Pi nicht erreichbar" für
+    einen Pi, der sofort geantwortet hat.
   - `run()` drainiert die Streams via `asFuture()` (feuert nach *allen*
     Kanaldaten) — so geht kein letzter Chunk (z.B. eine kurze Versionsausgabe)
     verloren.
+  - **`close()` ist best-effort und begrenzt**: Client und Socket werden
+    nacheinander geschlossen, je höchstens `closeWait` (3 s), Fehler werden
+    geschluckt. Nach einem Socket-Fehler (WLAN weg, Connection reset) liefert
+    dart:io beim Schließen denselben Fehler noch einmal — aus dem `finally` der
+    Aktion heraus ersetzte er deren Ergebnis („Pi-Job läuft weiter", „Ergebnis
+    unbekannt") durch einen rohen Socket-Fehler. Schließen bestimmt nie mit, was
+    eine Aktion meldet. `close()` beendet außerdem einen noch laufenden
+    `connect()` sofort (`_closeSignal`), statt die Handshake-Frist abzuwarten.
   - **Exit-Code** (v0.70.0): dartssh2 schließt stdout schon bei CHANNEL_EOF;
     `exit-status` kann danach kommen. `run()` wartet deshalb nach dem Drain
     bis zu 3 s per `session.waitForExit`. `exitCode == null` heißt danach
@@ -91,9 +129,15 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   found` — real gesehen am 2026-07-31). Deshalb einmal pro Verbindung
   `sudoNoPasswordProbe` (`sudo -n true`), Ergebnis für die Verbindung gecacht,
   und die stdin baut `buildRootStdin`. **Fail-safe:** Probe nicht erfolgreich ⇒
-  Passwort wird mitgeschickt. Betrifft die Skript-Pfade (`bash -s`); bei
-  einfachen Befehlen verwirft der Befehl die Zeile ohnehin. **Pi-Jobs** brauchen
-  die Probe nicht: ihr Bootstrap verwirft alles vor einer Sentinel-Zeile (s. u.).
+  Passwort wird mitgeschickt. Betrifft die Skript-Pfade (`bash -s`) **und die
+  Konsole** (`runConsoleCommand`, v0.71.0): Ein frei eingegebenes `sudo …`
+  bekommt das Passwort nur auf stdin, wenn die Probe sagt, dass sudo es liest.
+  Auf einem NOPASSWD-Pi erreichte die Zeile sonst das Programm — `sudo bash`
+  führte sie als Root-Befehlszeile aus, `sudo tee <datei>` schrieb sie in die
+  Datei. Die festen Einzelbefehle der App (`_sudoCommand`: `sudo -S apt-get …`
+  u. ä.) schicken die Zeile weiterhin ohne Probe mit — dahinter steht kein
+  Interpreter, der sie von stdin ausführen würde. **Pi-Jobs** brauchen die
+  Probe nicht: ihr Bootstrap verwirft alles vor einer Sentinel-Zeile (s. u.).
 - **Pi-Jobs** (v0.70.0, `pi_job.dart`, Protokoll in §5): paketverändernde
   **Updates** laufen nicht mehr im Vordergrund des SSH-Kanals, sondern als
   Hintergrund-Job auf dem Pi — System-Update, evcc-apt-Update (echter Lauf,
@@ -158,7 +202,10 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
 - **EOL-Paketquellen zuerst umstellen** (`_fixEolSources`, v0.67.1): **jede**
   Aktion, die Pakete installiert oder aktualisiert (evcc-Update außer Probelauf,
   evcc-Install, Tailscale, Grafana/InfluxDB/Mosquitto, Paketlisten,
-  System-Upgrade, Einzelpaket-Update, Sicherheits-Fixes fail2ban/Auto-Updates),
+  System-Upgrade, Einzelpaket-Update, Sicherheits-Fixes fail2ban/Auto-Updates,
+  seit v0.71.0 auch die **Pi-hole-** und die **Home-Assistant-Installation** —
+  Pi-holes Installer ruft `apt-get update` selbst auf und verwirft die Ausgabe,
+  Dockers Installationsskript installiert über apt),
   führt vorher `eolSourcesFixScript` als root aus (`eolSourcesShellCommand` =
   `installShellCommand` + ignoriertes Argument, damit Logs/Tests den Schritt
   unterscheiden). Anlass: Raspbian Buster liegt seit 2025 nur noch auf
@@ -178,7 +225,20 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
     Restore darf nie als Erfolg gemeldet werden). Skripte laufen unter `set -e`,
     der Marker steht nur am Happy-Path-Ende.
   - `_runRootScriptCapturing`: zusätzlich `BACKUP_OK <pfad>`-Parsing.
-- **Cancel**: `cancel()` setzt `_cancelRequested` + schließt `_active`.
+  - **Ablehnungs-Zeilen** (`commands.dart`): Ein Skript, das **vor** jeder
+    Änderung ablehnt, druckt genau eine Zeile mit deutschem Grund und endet mit
+    Exit 3 — `UNINSTALL_REFUSED: <Grund>` (`parseUninstallRefusal`, §4
+    „Deinstallieren") bzw. seit v0.71.0 **`INSTALL_REFUSED: <Grund>`**
+    (`installRefusedPrefix`/`parseInstallRefusal`; heute die 64-Bit-Guards für
+    Home Assistant und InfluxDB, §4). `_runRootScript` (Install-Zeile) und
+    `_runRootScriptExpectMarker` (beide) machen den Grund zur Fehlermeldung
+    statt „Details im Log". Erkannt wird nur eine Zeile, die mit dem Präfix
+    **beginnt** — das Install-Präfix ist ein Teilstring des Uninstall-Präfixes.
+- **Cancel**: `cancel()` setzt `_cancelRequested` + schließt **jede** offene
+  Verbindung (`_open`, eine Menge statt eines einzelnen Handles: die UI
+  serialisiert Aktionen hinter `_busy`, aber der Dateien-Tab listet und zeigt
+  daneben — mit einem Handle erreichte „Abbrechen" nur die zuletzt geöffnete
+  Verbindung, und die zuerst geschlossene nahm das Handle mit).
   `_withConnection` prüft das Flag (1) nach connect — ein Cancel im Handshake
   muss vor dem (evtl. destruktiven) body stoppen — und (2) nach dem body, weil
   ein Schließen mitten im Befehl `run()` **nicht** immer werfen lässt (dartssh2
@@ -186,9 +246,30 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   **Nach einem Job-Start heißt Cancel nur „nicht mehr mitlesen"**: der Job
   läuft weiter, Ergebnis `jobDetached` (Grund `userStopped`), nie `cancelled`.
 - **Fehler-Mapping** nur im `catch` von `_withConnection`: HostKeyDeclined →
-  connection, HostKeyChanged → hostKeyChanged (mit Fingerprint), Auth/KeyDecode →
-  auth, Socket/Timeout → connection, sonst unknown. Runner wird immer im
-  `finally` geschlossen.
+  connection, HostKeyChanged → hostKeyChanged (mit Fingerprint),
+  **`SSHAuthAbortError` → connection** („Verbindung vor der Anmeldung
+  getrennt": sshd hat die Verbindung fallen lassen oder sie riss im Handshake,
+  bevor der Pi Zugangsdaten beurteilt hat — dartssh2 führt das unter seinen
+  Auth-Fehlern, „Passwort prüfen" schickte den Nutzer aber in die falsche
+  Richtung; die Prüfung steht deshalb **vor** der auf `SSHAuthError`),
+  Auth/KeyDecode → auth, Socket/Timeout → connection, sonst unknown. Der Runner
+  wird immer im `finally` geschlossen, und das `finally` **schluckt Fehler von
+  `close()`**: das Schließen einer schon toten Verbindung kann werfen und
+  ersetzte sonst, was die Aktion gemeldet hat (ein Job, der weiterläuft; ein
+  unbekanntes Ergebnis; auch ein fertiges).
+- **Config lesen nur mit Beleg** (`readConfigFile`, v0.71.0): Der Editor
+  schreibt zurück, was er bekommen hat. Deshalb gilt ein `cat` ohne Exit 0 als
+  nicht vollständig gelesen (ein Speichern würde die Datei kürzen), und eine
+  Ausgabe mit U+FFFD — Bytes, die kein UTF-8 sind, etwa eine ISO-8859-1-Datei —
+  wird abgelehnt („nicht UTF-8-kodiert – in der App nicht bearbeitbar"), weil
+  Speichern das Ersatzzeichen dauerhaft über die Bytes schriebe.
+- **Erfolg nur mit Exit-Status, auch ohne sudo** (v0.71.0): `sendTestAlert`
+  wertet `curl` aus (kein Exit-Status = Ergebnis unbekannt; Exit ≠ 0 wirft mit
+  curls eigener Meldung, die auch im Log steht) — eine funktionierende
+  SSH-Verbindung ist kein zugestellter Push. `piConnectSet`/`piConnectSignout`
+  brechen bei fehlendem Exit-Status ab; ein Exit ≠ 0 wird vorerst nur im Log
+  genannt, weil nicht gemessen ist, welche Exit-Codes `rpi-connect` bei
+  harmlosen Wiederholungen (schon an, schon aus) liefert.
 - `EvccUpdater.real()` muss **dieselbe** `HostKeyStore`-Instanz an Runner-Factory
   und `hostKeyStore` geben, sonst widersprechen sich `forgetHostKey` und Runner.
 
@@ -203,7 +284,47 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
 - **Config schreiben** umgeht Quoting ganz: Inhalt als **base64** transportiert
   (`buildConfigWriteScript`) → beliebige Bytes, kein Injection-Risiko. Schreibt
   in `mktemp` + `mv -f` (atomar), `chmod/chown --reference` vorher (Rechte
-  erhalten), rotiert Backups (neueste 5), Marker `CONFIG_SAVED`.
+  erhalten), rotiert Backups **je Datei** (neueste 5; der Glob ist das
+  Zeitstempel-Muster `config-<basename>-JJJJMMTT-HHMMSS.bak`, damit `evcc.yaml`
+  die Sicherungen von `evcc.yaml-old` weder mitzählt noch löscht; gelöscht wird
+  zeilenweise statt per `xargs`, das Namen an Leerzeichen trennt), Marker
+  `CONFIG_SAVED`.
+- **evcc-Backup** (`buildBackupScript`, läuft über `installShellCommand`):
+  Archiv `/var/backups/evcc/evcc-backup-<zeit>.tar.gz` aus `/etc/evcc.yaml`
+  (falls vorhanden) und der Datenbank. **Reihenfolge der Datenbank-Kandidaten:**
+  der `dsn:`-Wert der Config, wenn er eine vorhandene Datei nennt (gelesen ohne
+  umschließende Anführungszeichen, ohne nachgestellten Kommentar und ohne CR;
+  nennt er keine Datei, gibt es eine Hinweiszeile, die den Wert nie ausgibt),
+  sonst `/var/lib/evcc/evcc.db`, `/var/lib/evcc/.evcc/evcc.db`,
+  `/root/.evcc/evcc.db`, zuletzt `/home/*/.evcc/evcc.db`. Die Datenbank des
+  Dienstes steht vor `/root`: die Migration des Pakets kopiert `/root/.evcc`
+  dorthin und lässt das Original liegen — neben einer aktiven Datenbank ist
+  `/root` ein veralteter Rest. Ohne Dienst-Datenbank kommt `/root` vor einem
+  Home-Verzeichnis (eine alte Installation, die noch als root läuft, hat ihre
+  Daten dort). Mit der Datenbank werden vorhandene **`-wal`/`-shm`/`-journal`**
+  archiviert (evcc läuft weiter; im WAL-Modus stehen bestätigte Schreibvorgänge
+  bis zum nächsten Checkpoint in `<db>-wal`). Die Dateiliste steht in den
+  Positionsparametern (Pfade mit Leerzeichen bleiben ein Argument).
+  **Atomar:** tar schreibt nach `.part`, erst `mv -f` macht daraus das Archiv;
+  ein gescheiterter Lauf lässt nichts zurück, liegengebliebene `.part` räumt
+  der nächste Lauf weg. **tar-Exit 1** („file changed as we read it") zählt
+  als geschriebenes Archiv, erst Exit ≥ 2 ist ein Fehler. Danach **Rotation auf
+  die 10 neuesten** `evcc-backup-*.tar.gz` (zeilenweise). Ausgabe:
+  `EVCC_BACKUP_OK <pfad>`, `EVCC_BACKUP_EMPTY` (nichts zu sichern, kein Fehler)
+  oder `EVCC_BACKUP_FAIL` + Exit 1.
+- **evcc-Restore** (`buildRestoreScript`, Marker `RESTORE_OK` als letzte Zeile,
+  über `_runRootScriptExpectMarker`): **Vorprüfung** — das Archiv muss sich
+  vollständig auflisten lassen (`tar -tzf`), bevor irgendetwas geändert wird;
+  ein abgeschnittenes Archiv stoppt weder evcc noch überschreibt es die Hälfte
+  der Dateien. Danach wird zuerst ein **`trap … EXIT`** gesetzt, der evcc
+  wieder startet, wenn ein späterer Schritt abbricht (tar, volle Platte,
+  geschlossener Kanal), und erst dann evcc gestoppt. Für jede `*.db` im Archiv
+  werden die auf dem Pi liegenden `<db>-wal`/`-shm`/`-journal` **entfernt**,
+  sofern das Archiv sie nicht selbst mitbringt — neben der zurückgespielten
+  Datei würde SQLite sie auf die falsche Datenbank anwenden. Dann
+  `tar -xzf … -C /`, Trap lösen, evcc starten. Ob evcc danach wirklich läuft,
+  prüft `restoreBackup` anschließend selbst (`systemctl start` meldet schon
+  beim Fork Erfolg).
 - **Detection-Batch**: `buildDetectBatch`/`splitDetectSections` bündeln ~14
   Probes in **eine** SSH-Runde (`@@PT@@key@@PT@@`-Marker, `{ cmd ; } 2>&1 || true`
   isoliert einzelne Fehlschläge). Ausgeführt via `detectShellCommand`
@@ -279,6 +400,18 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   frisch (Fail-safe). Ohne das meldete die System-Karte ein grünes „aktuell"
   über einem Pi mit 27 offenen Updates inkl. Sicherheitsfixes. Gegenmittel für
   Nutzer: `refreshAptIndex` (⋮ → „Paketlisten aktualisieren").
+  **Der Refresh setzt den Zeitstempel selbst** (`systemAptRefreshCommand`,
+  v0.71.0): apt ändert die mtime von `/var/lib/apt/lists` nur, wenn eine
+  Indexdatei ersetzt oder entfernt wird. Antworten alle Quellen mit „Hit"
+  (eingefrorenes EOL-Archiv, ruhige Woche), blieb das gemessene Alter stehen und
+  die Karten sagten direkt nach einem gelungenen Refresh weiter „Stand
+  unbekannt". Der Befehl führt `apt-get update -qq` aus und macht danach — nur
+  nach **sauberem** Lauf — `touch /var/lib/apt/lists`. Sauber = Exit 0 **und**
+  kein fehlgeschlagener Download: apt endet auch mit 0, wenn Quellen nicht
+  erreichbar waren („Failed to fetch", die alten Listen bleiben in Gebrauch);
+  ein Stempel gäbe dann einen veralteten Index als frisch aus. Ausgabe und
+  Exit-Status von apt werden unverändert durchgereicht. Nur hier, nicht in den
+  Pi-Job-Payloads.
 - **`stack_wiring.dart`** (v0.66.0) — verdrahtet den Monitoring-Stack in
   **einem** Root-Skript (Marker `WIRE_OK`): InfluxDB-Setup (Org `pi-tool`,
   Bucket `evcc`; Admin-Passwort wird AUF dem Pi generiert), Token via
@@ -335,10 +468,25 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   Erkennung — der Dienst-Katalog ist endlich, nichts kann pro Pi driften. Kein
   Drittanbieter-App-Link (sonst wäre „offiziell" gelogen); die System-Karte hat
   keinen Eintrag (der Pi ist keine Anwendung). Guard-Test:
-  `test/service_links_test.dart` (jede Karten-id braucht einen Eintrag).
+  `test/service_links_test.dart` (jede Karten-id braucht einen Eintrag; **jedes
+  `appPackage` muss in `<queries>` des Manifests stehen** — ohne Eintrag liefert
+  `getLaunchIntentForPackage` ab Android 11 `null`, und „Offizielle App" landete
+  trotz installierter App immer im Play-Eintrag).
 - **`apt_services.dart`** — Grafana/InfluxDB/Mosquitto. **Supply-Chain:**
   InfluxDB prüft den GPG-**Fingerprint** vor dem Vertrauen; Grafana speichert den
   armored Key ohne dearmor (aktueller offizieller Flow).
+  **InfluxDB nur 64-Bit** (v0.71.0): InfluxDatas Repo führt `influxdb2` für
+  arm64 und amd64, nicht für armhf. Der Guard steht vor Keyring und Quelle und
+  lehnt mit `INSTALL_REFUSED: …` (Exit 3, §2) ab, wenn die 64-Bit-Architektur
+  des **laufenden Kernels** (`uname -m` → arm64/amd64) weder dpkgs eigene noch
+  eine Fremdarchitektur (`dpkg --print-foreign-architectures`) ist. Bewusst
+  enger als „armhf ablehnen": die 32-Bit-Images von Raspberry Pi OS tragen
+  arm64 seit Bookworm als Fremdarchitektur ein, apt kann dort `influxdb2:arm64`
+  nehmen (hängt nur an curl, `influxd` ist ein statisches Binary). Abgelehnt
+  wird nur, was nicht laufen kann: ein 32-Bit-Kernel oder ein dpkg ohne
+  64-Bit-Architektur. Eine nicht lesbare dpkg-Architektur ist keine Ablehnung.
+  Dass die Installation über die Fremdarchitektur tatsächlich durchläuft, ist
+  an keinem Pi gemessen.
 - **`pihole_service.dart`** — v5+v6-Versionsparser; Backup via Teleporter, Restore
   **verweigert v5 `.tar.gz`** (nur v6-CLI-Import); der DNS-Reload im Restore
   bewusst *nicht* fehlerverschluckt (`set -e` vor `RESTORE_OK`).
@@ -349,6 +497,13 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   `piholeRestartCommand` per **Fähigkeits-Probe** (`pihole --help | grep -q
   reloaddns`) statt per Exit-Code; der Restore nutzt fest `reloaddns` (v6-only).
   Für neue `pihole`-Subcommands gilt dieselbe Regel: Exit-Code ≠ Beweis.
+  **Auch das Backup wählt die Generation nicht per Exit-Code** (v0.71.0,
+  `buildPiholeBackupScript` und der Timer-Wrapper in §5): v6 beantwortet
+  `pihole -a -t` mit seinem Hilfetext und Exit 0 und schreibt nichts — der
+  Rückfall `… || pihole-FTL --teleporter` wurde so nie erreicht. Deshalb läuft
+  zuerst die v5-CLI, und `pihole-FTL --teleporter` nur, wenn danach **kein
+  `*.tar.gz` entstanden ist**. Im manuellen Backup (Skript auf stdin) bekommen
+  beide Aufrufe ihr eigenes `</dev/null`.
   **Install + Web-Passwort (v0.69.0):** Die App belegt `setupVars.conf` vor,
   damit der offizielle Installer ohne TTY läuft — das zählt dort als
   *Aktualisierung* (`check_fresh_install`), und `pihole setpassword` läuft nur
@@ -367,6 +522,20 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
 - **`homeassistant_service.dart`** — HA als Docker-Container (bewusst, nicht HA
   OS). tar-Exit 1 auf laufendem HA = Warnung (nur rc>1 = Fehler). Restore per
   `trap` (Container kommt auch bei tar-Fehler zurück) + `.State.Running`-Check.
+  Der Trap wird **vor** `docker stop` gesetzt: Ein Abbruch schließt den Kanal,
+  `docker stop` stoppt den Container noch und stirbt beim Schreiben seines
+  Namens (SIGPIPE), `set -e` beendet das Skript genau dort — mit dem Trap erst
+  nach dem Stop bliebe HA aus (und wegen `--restart=unless-stopped` auch über
+  Neustarts hinweg).
+  **Install nur 64-Bit** (v0.71.0): Home Assistant veröffentlicht seinen
+  Container nur für arm64 und amd64 (32-Bit-Builds endeten mit 2025.12), und
+  Docker zieht für die Architektur des installierten Systems — ein 64-Bit-Kernel
+  unter einem 32-Bit-Raspberry-Pi-OS hilft nicht. Das Install-Skript lehnt
+  deshalb auf jeder anderen dpkg-Architektur mit `INSTALL_REFUSED: …` (Exit 3,
+  §2) ab, **bevor** Docker installiert wird. Nicht abgelehnt: eine unbekannte
+  Architektur (kein dpkg) und ein System, das schon einen Container
+  `homeassistant` hat — mit dem verfährt das Skript wie bisher (läuft er,
+  passiert nichts; ist er gestoppt, wird er gestartet).
 - **`system_service.dart`** — „System (Pi)"-Karte. `systemPendingCommand`
   simuliert `apt-get -s full-upgrade` (muss zur echten Aktion passen).
   `lowDisk` gate auf *absoluten* freien Platz (1-TB-Disk bei 94% warnt nicht).
@@ -379,18 +548,43 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   jeder Befehl mit `XDG_RUNTIME_DIR=/run/user/$(id -u)`, **nie sudo**. `signin`
   läuft **detached** (`setsid … &`, sleep, cat) — sonst hängt der SSH-Call. Doku
   deckt Headless-/SSH-Verhalten nicht ab → Parser tolerant, **Gerätecheck nötig**.
+  `on`/`off`/`signout` werten den Exit-Status aus (§2): fehlt er, ist das
+  Ergebnis unbekannt; ein Exit ≠ 0 steht bislang nur als Hinweis im Log.
 - **Karten-Regel „der Knopf zeigt, was als Nächstes dran ist"** (v0.64.2): Steht
   ein Update an, ist `actionUpdate` der **Primär-Knopf** — auch auf Pi Connect
   und Tailscale, deren Primär sonst am Anmelde-/Verbindungszustand hängt. Die
   verdrängte Aktion wandert ins ⋮ und kommt danach zurück. Vorher lag das Update
   dort nur als `_CardAction`, sichtbar allein an der ambernen LED — zu leise
   (real übersehen: Pi Connect 2.12.1 → 2.12.2 hinter „Web öffnen").
+  **Gegenstück `primaryIsUpdate`** (`_ServiceCard`, Default `true`): Das
+  deaktivierte „Aktuell" ersetzt den Primär-Knopf nur dort, wo dieser Knopf das
+  Update **ist**. Pi Connect und Tailscale übergeben `s.updateAvailable`, die
+  erkannten systemd-Dienste (Primär = Neustart) `false` — ohne anstehendes
+  Update bleibt dort die Zustands-Aktion der Primär-Knopf. Sonst verschwände bei
+  frischem apt-Index und ohne Update genau die Aktion, um die es geht:
+  „Anmelden" bzw. „Verbinden"/„Trennen" wären nirgends erreichbar (der Zustand
+  direkt nach einer Installation über die App).
 - **`tailscale.dart`** — VPN/Mesh, **System-Service** (einfacher als Pi Connect).
   Install = offizieller Installer (`curl … | sh`) unter **`set -o pipefail`**
   (sonst zählt nur der Exit von `sh`: fehlendes curl/abgebrochener Download =
   leeres Skript, Exit 0, Marker = Phantom-Erfolg); der Marker folgt erst nach
   `command -v tailscale`. Tote EOL-Quellen stellt vorher `_fixEolSources` um.
-  `up` detached (Login-URL). „up" = hat 100.x-Tailnet-IP. down/logout via sudo.
+  `up` detached (Login-URL). down/logout via sudo.
+  **„Verbunden" ist der Backend-Zustand, nicht die Adresse** (v0.71.0,
+  `parseTailscaleStatus(out, self: …)`): `tailscale ip -4` druckt die Adresse
+  aus der letzten Netzkarte, egal in welchem Zustand das Backend ist, und
+  `tailscale down` behält diese Karte — ein gestoppter Knoten hat sein 100.x
+  noch (die Karte blieb nach „Trennen" auf „Verbunden · 100.x" und bot weiter
+  „Trennen" an). Maßgeblich ist `BackendState` aus der ohnehin gelesenen Probe
+  `TS_SELF` (`tailscale status --json --peers=false`; der Batch ist
+  unverändert): **`Running` und `Starting` = verbunden** (`Starting` ist ein
+  `tailscale up`, das gerade greift — der Zustand, den das Up-Skript schon als
+  verbunden meldet; ein Pi ohne Internet bleibt dort, während er es weiter
+  versucht), **`NeedsLogin` = „Nicht angemeldet"** (`needsLogin`; „Verbinden"
+  führt dort zu einem Login), jeder andere Zustand = „Getrennt". Nur ohne
+  `BackendState` (Client zu alt für die Probe, Daemon antwortet nicht)
+  entscheidet wie früher die Adresse. Ein Knoten, der `Running` ist, aber keine
+  IPv4-Adresse nennt, steht als „Verbunden" ohne Adresse da.
   `remoteAccessCandidates` ordnet die Verbindungsversuche: Heim-Adresse zuerst
   (schnell, ohne VPN), es sei denn das Tailnet hat zuletzt geantwortet; ein
   `lastGood`, das zu keiner der beiden bekannten Adressen passt, ist veraltet
@@ -509,7 +703,7 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   eine behaltene `pihole.toml` — ist seit v0.69.0 behoben.) Docker-evcc (kein Install-Pfad); die Docker-Engine;
   nur erkannte Dienste (AdGuard, Node-RED, Zigbee2MQTT); System-Karte.
 
-## 5. On-Pi-Automatik (`auto_update.dart`, `alerts.dart`, `files.dart`, `notifications.dart`)
+## 5. On-Pi-Automatik (`auto_update.dart`, `alerts.dart`, `on_pi_wrapper.dart`, `files.dart`, `notifications.dart`)
 
 **Kern-Entscheidung:** Automatik läuft als **systemd-Timer auf dem Pi**, *kein*
 Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-Shell.
@@ -520,6 +714,13 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   (`eolSourcesFixScript` — bash, daher `#!/bin/bash` statt `#!/bin/sh`; greift
   erst bei neu eingerichtetem Timer), **self-heal** (startet evcc neu falls es
   starb), schreibt Status-Datei. Marker `AUTOUPDATE_INSTALLED/REMOVED`.
+  Die evcc-Sicherung vor dem Upgrade folgt denselben Regeln wie der
+  Backup-Wrapper (nur vorhandene Pfade, tar-Exit 1 zählt, `.part` → `mv`,
+  Rotation auf 5 nur nach Erfolg). Statuszeile
+  `/var/lib/pi-tool/autoupdate.status`: `<zeit> ok` bzw.
+  `<zeit> fehler(rc=N)`, dazu `; evcc-neustart` nach einem Self-Heal und
+  **`; backup-fehler(rc=N)`**, wenn die Sicherung vor dem Upgrade nicht
+  geschrieben werden konnte.
 - **`scheduled_backup.dart`** — geplante Backups (`pi-tool-backup.timer`, spiegelt
   `auto_update.dart`). Wrapper sichert **evcc** (Konfig + `/var/lib/evcc`) und
   **Pi-hole** (Teleporter `pihole -a -t`/`pihole-FTL --teleporter`), beide
@@ -530,9 +731,32 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Status-Datei `/var/lib/pi-tool/backup.status`, Marker `BACKUP_TIMER_INSTALLED/
   REMOVED` über `_runRootScriptExpectMarker`. Pro-Feature. HA bewusst NICHT im
   Timer (Docker-/config-Discovery zu fragil für unbeaufsichtigt).
+  **Wrapper-Regeln (v0.71.0, Generation 2):**
+  - **tar bekommt nur vorhandene Pfade** (Positionsparameter): Das evcc-Paket
+    liefert keine `/etc/evcc.yaml` — ein in der Weboberfläche eingerichtetes
+    evcc hat nie eine —, und **ein** Pfad, den tar nicht findet, lässt das ganze
+    Archiv scheitern (Exit 2, die Statuszeile sagte trotzdem „ok").
+  - **tar-Exit 1** („file changed as we read it", evcc läuft weiter) zählt als
+    geschriebenes Archiv; erst Exit ≥ 2 ist ein Fehler.
+  - **Pi-hole nicht per Exit-Code** (§4 `pihole_service.dart`): erst die
+    v5-CLI, `pihole-FTL --teleporter` nur, wenn kein `*.tar.gz` entstand. Ist
+    Pi-hole da, aber nichts entstanden, steht `pihole(kein-archiv)` im Status.
+  - **Statuszeile nennt Fehler zuerst** und wird in der App unverändert
+    angezeigt: `<zeit> ok: evcc pihole`, `<zeit> ok: nichts` (nichts zu sichern)
+    oder `<zeit> fehler: evcc(tar-rc=2); ok: pihole`. Fehler-Kürzel:
+    `evcc(tar-rc=N)`, `pihole(kein-archiv)`, `pihole(nicht-gespeichert)`.
 - **`alerts.dart`** — 30-Min-Health-Check → **ntfy**-Push (backend-frei) bei
   Platte ≥90% / Temp ≥75° / totem Dienst / anstehenden Updates. **Debounce** via
-  `alerts.last` (Push nur bei Änderung). **Heredoc-Regel**: ntfy-Server/-Topic
+  `alerts.last` (Push nur bei Änderung). **`alerts.last` wird nur nach
+  zugestelltem Push geschrieben** (v0.71.0; `curl -fsS --connect-timeout 10
+  --max-time 30` — `-f` macht einen HTTP-Fehler zum Exit-Code): ein
+  gescheiterter Push (kein DNS/Internet, HTTP-Fehler) wird beim nächsten Lauf
+  erneut versucht, statt als gesendet zu gelten; die Zeitlimits begrenzen die
+  oneshot-Unit, die kein eigenes Start-Timeout hat. Das Install-Skript löscht
+  `alerts.last` — ein neues Ziel hat von den aktuellen Problemen noch nichts
+  gehört. Die Test-Nachricht (`buildTestAlertCommand`, `curl -fsS --max-time
+  15`) entfernt Leerraum aus Server und Topic wie das Install-Skript und wird
+  am Exit-Status gemessen (§2). **Heredoc-Regel**: ntfy-Server/-Topic
   sind `shSingleQuote`d und landen in einem **quoted** Heredoc (`<<'WRAP'`) → kein
   Install-Zeit-Expand von `$(reboot)`. Blöcke nie zusammenlegen/entquoten.
   **Topic-Invariante (v0.63.0):** ntfy kennt kein Konto — das Topic *ist* das
@@ -544,6 +768,34 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Warnzeile auf der Automatik-Karte (`_AutomationTile.warning`) — Bestandsnutzer
   öffnen das Sheet sonst nie wieder. Beides rein/testbar; nie durch ein
   Freitext-Feld ohne Vorbelegung ersetzen.
+- **Remove-Skripte der drei Timer** (`buildAutoUpdateRemoveScript`,
+  `buildScheduledBackupRemoveScript`, `buildAlertsRemoveScript`) laufen unter
+  **`set -e`**: ein scheiterndes `rm` (Root nur-lesend) endet ohne Marker, statt
+  „entfernt" zu melden. Nur das `systemctl disable --now` davor ist tolerant.
+- **`on_pi_wrapper.dart`** (v0.71.0) — **Generations-Stempel der
+  On-Pi-Wrapper**. Ein Wrapper (`/usr/local/lib/pi-tool-autoupdate.sh`,
+  `…/pi-tool-backup.sh`, `…/pi-tool-alerts.sh`) wird beim Einrichten seines
+  Timers auf den Pi geschrieben und **bleibt dort**: Eine Korrektur in der App
+  erreicht einen Pi erst, wenn dieser Timer neu eingerichtet wird. Deshalb:
+  - Jeder Wrapper trägt als **zweite Zeile** (direkt nach dem Shebang)
+    `wrapperStampLine` = `# pi-tool-wrapper <wrapperGeneration>`. Aktuell
+    Generation **2**; Wrapper von vor v0.71.0 tragen keinen Stempel.
+  - Jede Status-Probe (`autoUpdateStatusCommand`,
+    `scheduledBackupStatusCommand`, `alertsStatusCommand`) hängt
+    `wrapperProbeHead` + Unit + `wrapperProbeTail` an und meldet eine Zeile
+    **`WRAPPER current|old|none`** (`grep -qxF` auf die ganze Stempelzeile; ohne
+    sudo, die Wrapper sind für alle lesbar).
+  - `parseWrapperOutdated` → Feld **`wrapperOutdated`** in den drei
+    Status-Records (`AutoUpdateStatus`, `ScheduledBackupStatus`,
+    `AlertsStatus`). Nur `old` zählt: ein fehlender Wrapper oder eine Probe ohne
+    die Zeile (unlesbare Datei, abgeschnittene Antwort) ist nicht „veraltet" —
+    es gibt nichts zu erneuern bzw. nichts Bekanntes.
+  - Das Sheet eines **aktiven** Timers mit älterem Wrapper zeigt
+    `wrapperOutdatedHint` (Key `wrapperOutdatedHint`) und nennt den Knopf, der
+    ihn erneuert („Zeitplan ändern", bei den Health-Alerts „Aktualisieren").
+  - **Regel: `wrapperGeneration` erhöhen, sobald sich das Verhalten eines
+    Wrappers ändert** (und im Kommentar der Konstante festhalten, was die
+    Generation ausmacht) — sonst erfährt kein Bestands-Pi von der Korrektur.
 - **`files.dart`** — Datei-Browser über den normalen Exec-Kanal (kein SFTP → der
   `FakeSshRunner`-Seam deckt ihn ab). `head -c 512K | base64` (Server-seitiges
   Limit gegen OOM bei riesigen Dateien). **Löschen** (`buildDeleteCommand`,
@@ -558,7 +810,12 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   **Bearbeiten:** `isProbablyTextFile` (NUL-Byte oder >5 % C0-Control = binär;
   UTF-8-Umlaute zählen nicht) + `kFileEditLimit` (256 KB) entscheiden, ob die
   Vorschau einen „Bearbeiten"-Knopf zeigt; der reicht an den bestehenden
-  Config-Editor weiter (atomarer Write + Backup, sudo-fähig).
+  Config-Editor weiter (atomarer Write + Backup, sudo-fähig). Der Editor liest
+  über `readConfigFile` (§2: nur mit Exit 0, nur UTF-8). `_ConfigEditorPage`
+  fragt per `PopScope` nach, bevor ungespeicherte Änderungen verloren gehen
+  (Zurück-Geste, Systemtaste, Pfeil der App-Leiste → „Verwerfen" / „Weiter
+  bearbeiten"); Speichern poppt direkt mit dem Text. Das `popUntil` beim
+  Sperren der App schließt den Editor weiterhin ohne Rückfrage.
 - **`ssh_keys.dart`** — **client-seitige** SSH-Key-Erzeugung. `generateSshKey`
   (Ed25519 via `cryptography`, rein Dart) → privater Key als **openssh-key-v1**-
   PEM (selbst kodiert; Korrektheit per Round-Trip getestet: `SSHKeyPair.fromPem`
@@ -638,6 +895,11 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   **„Beheben" (v0.66.0):** `securityFixFor` mappt fixbare Befunde auf
   `SecurityFix` (fail2ban, autoUpdates, rootLogin); `buildSecurityFixScript`
   liefert das Root-Skript (Marker `SECFIX_OK`, apt mit `Dpkg::Use-Pty=0`).
+  Die Skripte für fail2ban und Auto-Updates kommen über stdin (`sudo -S bash
+  -s`) und halten denselben Vertrag wie die übrigen Root-Skripte: **jedes
+  `apt-get` bekommt sein eigenes `</dev/null`**, Installationen laufen mit
+  `--force-confdef/--force-confold` — eine conffile-Rückfrage von dpkg läse
+  sonst den Rest des Skripts als Antwort und bräche ohne Marker ab.
   Invarianten: Passwort-Login-Abschalten wird NIE angeboten (ohne bewiesenen
   Key-Login = Aussperr-Risiko); der rootLogin-Fix läuft als **Drop-in** unter
   `sshd_config.d/`, `sshd -t` VOR dem Reload, Effekt via `sshd -T` verifiziert,
@@ -661,8 +923,11 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `isTailnetHost` (in `tailscale.dart`): `100.`-Präfix (CGNAT) ODER `*.ts.net`-
   MagicDNS — so überschreibt ein MagicDNS-Login die Heim-IP nicht. **Android lässt keine App
   ein fremdes/System-VPN selbst einschalten** — bewusst KEIN eigener VPN-Client
-  (v0.20.0-Native-Lektion). Manifest: `<queries><package com.tailscale.ipn>` für
-  Package-Sichtbarkeit (Android 11+). Seam injizierbar für Tests.
+  (v0.20.0-Native-Lektion). Manifest: `<queries>` nennt **jede** App, die die
+  Karten öffnen — `com.tailscale.ipn`, `io.evcc.android`,
+  `io.homeassistant.companion.android` (Package-Sichtbarkeit, Android 11+; der
+  Test in `service_links_test.dart` gleicht die Tabelle gegen das Manifest ab,
+  §4). Seam injizierbar für Tests.
 - **`file_pick.dart` + native `MainActivity`** — lokale Dateiauswahl fürs Upload.
   **Bewusst KEIN Picker-Plugin:** `file_picker` bringt sein eigenes altes
   Kotlin-Gradle-Plugin mit und scheitert am AGP-9-/Built-in-Kotlin-Setup (und es
@@ -670,6 +935,9 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   Android-SAF-Picker (`ACTION_OPEN_DOCUMENT`) **in der App** (`MainActivity.kt`,
   MethodChannel `pi_tool/filepicker`) → nutzt das projekteigene Kotlin/AGP.
   `FilePickerService`-Seam (`ChannelFilePicker` real, injizierbar für Tests).
+  Lehnt die native Seite eine Datei über dem Limit ab (Fehlercode `too_large`),
+  zeigt `_pickFailureText` die Meldung mit dem Limit (`snackFileTooLarge`)
+  statt eines bloßen „fehlgeschlagen" — für den Upload und den Profil-Import.
 - **`notifications.dart`** — **schlafender**, plugin-freier Kern für
   Update-Benachrichtigungen (`summarizeUpdates` + geseamter `UpdateCheckRunner`);
   bewusst **dauerhaft nicht** als Android-Hintergrunddienst verdrahtet. Grund:
@@ -732,7 +1000,7 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   `AppConfigStore` (Key `app_config_v1`) migriert einmalig aus den 14 Legacy-Flat-
   Keys und **löscht sie danach** (kein Klartext-Credential-Rest). Alles
   (Passwörter, PEM-Keys) nur in `FlutterSecureStorage` (Keystore).
-  Zwei Profil-Felder seit v0.65.0:
+  Zwei Profil-Felder seit v0.65.0 und ein globales seit v0.71.0:
   - **`Profile.autoConnect`** — dieser Pi verbindet beim App-Start von selbst
     (Ablauf in §7 „Verbundene Sitzung"). Default `false`: eine Verbindung
     erlaubt sudo-fähige Befehle, also Entscheidung je Pi und keine globale
@@ -746,9 +1014,18 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
     daraus `_services` und setzt `_servicesFromCache`; solange das gilt und
     keine Sitzung besteht, steht über den Karten der Hinweis `wCachedState`
     („Stand von vorhin") — ein gemerkter Stand wird nie als aktuell ausgegeben.
-    Die erste echte Erkennung ersetzt ihn (`_servicesFromCache = false`). Ein
-    Profilwechsel zeigt den Cache nicht: `_resetDetectionForNewPi` leert
-    `_services` direkt nach `_applyProfile`.
+    Die erste echte Erkennung ersetzt ihn (`_servicesFromCache = false`). Auch
+    ein **Profilwechsel** zeigt den gemerkten Stand des Ziel-Profils:
+    `_resetDetectionForNewPi()` läuft **vor** `_applyProfile()` (Wechseln,
+    Hinzufügen, Löschen des aktiven Profils, Import) — in umgekehrter
+    Reihenfolge leerte der Reset die gerade geladenen Karten, und das folgende
+    Speichern auch deren Cache. **Demo-Karten werden nie gespeichert:** im Demo
+    schreibt `_currentProfile()` den zuvor gemerkten Stand (`_storedCards`)
+    zurück, sonst kämen die Beispieldaten nach einem Neustart als „Stand von
+    vorhin" wieder.
+  - **`AppConfig.reviewPrompt`** (v0.71.0) — Zähler der Bewertungs-Anfrage
+    (`ReviewPromptState`, siehe `review_prompt.dart` unten); tolerant dekodiert,
+    Fehlendes zählt als „nie vermerkt".
 - **`settings_store.dart`** — Legacy-Migrationsquelle, `HistoryStore`,
   `SecureHostKeyStore`. Passwort-Feld ist dual: SSH+sudo (Passwort-Modus) bzw.
   nur sudo (Key-Modus).
@@ -775,6 +1052,22 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   `_exitDemo`). Pro ist im Demo offen über **`_unlocked = _isPro || _demoMode`** —
   alle Gate-Sites lesen `_unlocked`, nie mehr roh `_isPro`. Löst die Play-
   „LoginWall"-Prüfung ohne Demo-SSH-Server.
+  **Das Demo hängt nicht an den Verbindungsfeldern** (v0.71.0; auf einer
+  frischen Installation sind sie leer): `_prepare()` und `_filesConfig()`
+  liefern im Demo die feste `_demoConfig` — ohne Feldvalidierung, ohne
+  Speichern; `_prepare(real: true)` ist dem echten Verbinden vorbehalten, das
+  immer die eingegebenen Felder meint. **Demo-Daten bleiben im Demo:** die
+  Beispielkarten werden nicht als `cachedServices` gespeichert (s. o.),
+  Demo-Aktionen schreiben keinen Verlauf (`_addHistory` ist dort ein No-op —
+  und zählen damit auch nicht für die Bewertungs-Anfrage), und „Web öffnen"
+  auf einer Demo-Karte sagt nur, dass es keine Weboberfläche gibt
+  (`_demoHasNoWebUi`), statt nach einem Host zu fragen. Gemeinsamer Ausstieg
+  ist `_leaveDemo()` (echtes Backend zurück, Beispielkarten vom Bildschirm, der
+  zuvor gemerkte Stand des Profils kommt als gemerkter Stand wieder) — über
+  „Beenden", einen Tastendruck in den Zugangsdaten (`_invalidateConnTest`) und
+  jedes echte Verbinden; das Demo endet dabei **beim Start** des Verbindens,
+  nicht erst bei dessen Erfolg, damit seine Sitzung die Tabs nicht gegen einen
+  Pi offen hält, der noch nicht geantwortet hat.
   **Play-Invariante (nicht verhandelbar):** Ohne eingerichteten Pi muss der
   Einstieg „Demo ausprobieren" **auffällig und ohne Scrollen sichtbar** sein —
   gefüllter Knopf mit Key `demoEntry`, **vor** „Pi im WLAN suchen", plus
@@ -814,7 +1107,18 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
 - **`l10n.dart`** — `context.l10n`-Extension auf die generierten
   `AppLocalizations` (Quellen: `lib/l10n/app_{de,en}.arb`; Generat gitignored).
 - **`update_check.dart`** — Self-Update-Check (nur Sideload-Kanal) + evcc-/HA-
-  Versionsproben, alle fail-soft (Fehler → null). `isNewerVersion` numerisch.
+  Versionsproben. Der stille Check beim App-Start (`checkForUpdate`) und die
+  beiden Versionsproben sind fail-soft (Fehler → null). Die **manuelle** Prüfung
+  („Auf Update prüfen") nutzt `checkForUpdateOrThrow`: dort heißt `null` nur
+  „geprüft, nichts Neueres"; offline, Timeout, eine Nicht-200-Antwort (GitHubs
+  Rate-Limit ist 403/429), kaputtes JSON oder eine Antwort ohne Tag **werfen**,
+  und `_checkUpdatesNow` zeigt `snackUpdateCheckFailed` statt „Aktuell".
+  Der Adapter `githubGetJson` hat **5 s Connect-Limit** (DNS, TCP, TLS — ohne
+  `connectionTimeout` läuft das, bis das Betriebssystem aufgibt) und **10 s für
+  die ganze Anfrage einschließlich Body**; der Client wird mit `force`
+  geschlossen, damit ein aufgegebener Lesevorgang endet. Aufrufer warten darauf
+  mit gesperrter UI (Verbinden, jede Erkennung, vor dem evcc-Update).
+  `isNewerVersion` numerisch.
   **`installChannelFor(PackageInfo.installerStore)` → `InstallChannel`** setzt
   „nur Sideload" durch: bei `com.android.vending` (bzw. dem Legacy-Installer
   `com.google.android.feedback`) unterbleiben Banner UND Netz-Check, und „Auf
@@ -826,6 +1130,15 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   ohnehin genutzten `package_info_plus`.
 - **`evcc_api.dart`** — read-only `GET /api/state`. `followRedirects = false`
   (kein Bounce durch einen Impersonator), nie Credentials, defensiver Parser.
+  Der Adapter `evccGetJson` begrenzt die **ganze** Anfrage auf 10 s (Connect,
+  Header und Body — die Einzellimits ließen den Body offen). `parseEvccState`
+  liest die **verschachtelte** Form zuerst und fällt auf den flachen Schlüssel
+  älterer evcc-Versionen zurück: `grid.power` (seit 0.133.0) vor `gridPower`,
+  `battery.soc`/`battery.power` (seit 0.301.0) vor `batterySoc`/`batteryPower`.
+  „Batterie konfiguriert" folgt evccs eigener Oberfläche: `batteryConfigured`,
+  wo es noch existiert (bis 0.124.x), sonst eine nicht leere `battery`-Liste
+  (ab 0.125.0) bzw. ein nicht leeres `battery.devices` (ab 0.301.0). Die Tests
+  tragen je Form eine Antwort.
 - **`network_scan.dart`** — „Pi finden": TCP-Port-22-Sweep des /24 (bewusst
   kein mDNS: kein Plugin, kein Multicast-Lock).
 - **`keep_alive.dart`** — Android-Foreground-Service (hält den Prozess bei langen
@@ -846,16 +1159,59 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   App ist geschützt, bevor Dart läuft; der Kanal lockert nur. Ein fehlendes
   Argument zählt nativ als `secure = true`, ein Kanal-Fehler wird in Dart
   geschluckt: das Flag bleibt dann, wie es war, und der Startzustand ist
-  „gesperrt". Angewendet wird die Policy nach dem Laden der Einstellungen, beim
-  Sperren (Lifecycle `paused`/`hidden`), nach dem Entsperrversuch und beim
-  Auf-/Zuklappen der Karte über ihren Kopf. **Stand v0.70.0 nicht** an den
-  Stellen, die `_connExpanded` programmatisch setzen (Einklappen nach
-  erfolgreichem Verbinden; Aufklappen durch `_useTailscaleIp`, `_useHomeHost`,
-  `_remoteAccessViaTailscale`, `_exitDemo`; Profilwechsel über `_applyProfile`)
-  — dort folgt das Flag erst dem nächsten der genannten Ereignisse. Regel für
-  neuen Code: wer `_locked` oder `_connExpanded` ändert, ruft danach
-  `_applyScreenshotPolicy()`. Seam injizierbar für Tests
-  (`UpdaterPage.secureScreen`).
+  „gesperrt". **Angewendet wird die Policy ausschließlich über die Setter von
+  `_locked` und `_connExpanded`** (v0.71.0; die Werte liegen in
+  `_lockedValue`/`_connExpandedValue`): Jeder Schreibzugriff zieht das Flag
+  nach — das Sperren (Lifecycle `paused`/`hidden`), der Entsperrversuch, das
+  Auf-/Zuklappen der Karte über ihren Kopf **und** die Änderungen, die die App
+  von sich aus vornimmt (Einklappen nach erfolgreichem Verbinden bzw. im Demo;
+  Aufklappen durch `_useTailscaleIp`, `_useHomeHost`,
+  `_remoteAccessViaTailscale`, `_exitDemo`; Profilwechsel und Start über
+  `_applyProfile`). `_loadSettings` setzt die Sperre **vor** `_applyProfile`:
+  ein eingerichtetes Profil klappt die Karte ein, und für sich allein hieße das
+  auf dem Weg zum Sperrbildschirm einen Moment lang „Screenshots erlaubt".
+  **Regel für neuen Code:** `_locked` und `_connExpanded` nur über die Setter
+  schreiben, nie die `…Value`-Felder direkt; `_applyScreenshotPolicy()` hat
+  außer den beiden Settern keinen Aufrufer und bekommt auch keinen. Seam
+  injizierbar für Tests (`UpdaterPage.secureScreen`).
+- **`review_prompt.dart` + native `MainActivity`** (v0.71.0) —
+  **Bewertungs-Anfrage an Google Play.** Reine, Flutter-freie Entscheidung
+  (`shouldRequestReview`) über dem Zustand `ReviewPromptState` (`successes`,
+  `firstSuccessAt`, `lastAskedAt`, `asks`; persistiert als
+  `AppConfig.reviewPrompt`) plus Seam `ReviewRequester` (Default
+  `ChannelReviewRequester` über MethodChannel **`pi_tool/review`**, Methode
+  `requestReview`).
+  - **Wann gefragt wird:** nur in einem **Play-Build** (`InstallChannel.play` —
+    die Karte kann nirgends sonst erscheinen; bis die Plattform den Kanal
+    nennt, gilt Sideload, „unbekannt" fragt also nie), **nie im Demo-Modus**,
+    **nie über dem Sperrbildschirm** (`_locked`), frühestens nach
+    `kReviewMinSuccesses` = **3 gelungenen Aktionen und** `kReviewMinAge` =
+    **3 Tagen** seit der ersten, höchstens alle `kReviewCooldown` = **120
+    Tage**, insgesamt `kReviewMaxAsks` = **dreimal**. Eine zurückgestellte Uhr
+    löst nie eine Anfrage aus.
+  - **Zähl-Einheit ist der Verlaufseintrag:** `_addHistory` (eine Aktion, die
+    wirklich etwas getan hat; im Demo ein No-op) ruft `recordSuccess` und setzt
+    `_reviewCheckDue`. Geprüft wird erst, wenn die Aktion beendet ist — im
+    `finally` von `_guard` über `_maybeAskForReview`, und nur für einen Erfolg,
+    den **diese** Aktion vermerkt hat. Nichts davon läuft im Startpfad.
+  - **Play entscheidet allein und meldet nichts zurück** (Kontingent, schon
+    bewertet, kein Play Store auf dem Gerät): `true` vom Kanal heißt nur „die
+    Anfrage hat Play erreicht", nie „die Karte wurde gezeigt". Deshalb wird die
+    Anfrage **vor dem Absenden vermerkt** (`recordAsk` + Speichern) — eine
+    Karte, die Play verschluckt, darf nicht bei der nächsten Aktion erneut
+    angefragt werden.
+  - **Keine vorgeschaltete „Gefällt dir die App?"-Frage** — zu filtern, wer
+    bewerten darf, schließen Plays Richtlinien aus.
+  - **Nativ:** Googles Review-Bibliothek `com.google.android.play:review`
+    direkt (`ReviewManagerFactory` → `requestReviewFlow` → `launchReviewFlow`),
+    **kein Plugin**: `in_app_review` wendet `kotlin-android` an — das Muster, an
+    dem schon `file_picker` am Kotlin-Setup dieses Projekts gescheitert ist
+    (Begründung im Kommentar in `MainActivity.kt`; in `build.gradle.kts`
+    bewusst das schlichte Java-Artefakt ohne `-ktx`). Jeder native Fehlerpfad
+    endet in `false`, ein Kanal-Fehler wird in Dart geschluckt: die Anfrage
+    darf die App nie stören.
+  - Seams in `UpdaterPage` für die Tests: `reviewRequester`, `installChannel`,
+    `clock` (§8).
 
 ## 7. UI-Shell (`main.dart`, `ui_widgets.dart` (part), `kyth_splash.dart`)
 
@@ -871,7 +1227,12 @@ nicht in einen Import „aufräumen").
 Gating-Logik (`kTab*`-Konstanten, `isGatedTab`/`tabAllowed`/`tabAfterDisconnect`)
 lebt in `lib/src/session.dart` (unit-getestet). Automatik/Terminal/Dateien sowie
 die SSH-Aktionen „Pi neu starten/herunterfahren" im ⋮-Menü sind bis dahin
-gesperrt (ausgegraut + Hinweis). `_connected` fällt auf `false` bei:
+gesperrt (ausgegraut + Hinweis). Das Tab-Gate allein genügt nicht: der
+`IndexedStack` baut auch verdeckte Tabs, und `_FilesView` listet, sobald er
+existiert. Er wird deshalb **nur mit Sitzung gebaut** (`_connected`, das auch
+das Demo setzt) — sonst meldete sich die App schon mit einem gespeicherten
+Profil per SSH an und sendete das sudo-Passwort, ohne dass jemand „Verbinden"
+getippt hat. `_connected` fällt auf `false` bei:
 Profilwechsel (`_resetDetectionForNewPi`), Zugangsdaten-Edit
 (`_invalidateConnTest`), Verbindungs-Fehlern (`connection`/`auth`/
 `hostKeyChanged` im `_guard`-Catch) und **nach „Pi herunterfahren"** — mit
@@ -906,9 +1267,20 @@ unterbrochen → Hinweis auf „Paketzustand reparieren"). Kein automatisches
 Mitlesen beim Verbinden.
 
 **Gate-Reihenfolge in `build()`** (load-bearing): `_booting` (neutraler
-Splash-Ersatz) → `_locked` (Lock-Screen) → `!_disclaimerAccepted`
+Splash-Ersatz) → `_loadFailed` (Fehlerzustand mit „Erneut versuchen", fest
+dunkel wie der Lock-Screen) → `_locked` (Lock-Screen) → `!_disclaimerAccepted`
 (Ablehnen = App beenden) → einmaliges „Was ist neu?" (post-frame) → Shell
 (deren Tab-Gate siehe „Verbundene Sitzung" oben).
+
+**Laden vor Speichern** (v0.71.0): Bis `_loadSettings` gelungen ist, steht im
+State nur der eingebaute Default — und Lifecycle-Ereignisse oder `dispose`
+können so früh kommen. `_persistSettings()` ist deshalb ein **No-op, solange
+`_loaded` nicht gesetzt ist**; sonst überschriebe ein frühes Speichern die
+gespeicherten Profile mit einem leeren „Standard". Wirft der Store beim Laden
+(Keystore-Fehler erreichen Dart als `PlatformException`), endet der Start im
+Zustand `_loadFailed` statt für immer im Boot-Platzhalter: nichts wird
+geschrieben — das Gespeicherte kann intakt und nur gerade unlesbar sein —, und
+`_retryLoadSettings` liest erneut.
 
 **Theme:** Hell/System/Dunkel wählbar (`themeModeNotifier`, „Design"-Umschalter).
 Das App-Theme baut das öffentliche `buildAppTheme(Brightness, {fontFamily})` —
@@ -940,6 +1312,36 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
 `finally` setzt `_busy`/`_busyMessage` zurück, beendet Keep-Alive).
 - `_guard` ist der **einzige** Fehler-Handler. Generische Fehler bleiben (redigiert)
   nur im Log, die Überschrift bleibt generisch.
+- **Im Demo** liefert `_prepare()` die feste `_demoConfig` (keine
+  Feldvalidierung, kein Speichern, §6 `demo.dart`); `_prepare(real: true)`
+  gehört dem echten Verbinden.
+- **Auch die Adress-Vorprobe läuft im `_guard`** (v0.71.0): `_testConnection`
+  ruft `_pickReachableHost` (Heim-/Tailnet-Adresse sondieren) **innerhalb** des
+  Guards. Die Probe kann werfen — `probeConnection` reicht einen gewechselten
+  Host-Key durch (§4) —, und außerhalb gäbe nichts `_busy` frei, und die
+  Host-Key-Leiste erschiene nie. `_lastConfig` nennt während einer Probe die
+  **sondierte** Adresse (auch bei der Tailnet-Probe in `_checkRemoteAccess`),
+  damit „Neuen Key vertrauen" den richtigen Eintrag vergisst — das ist nicht
+  unbedingt die Adresse im Host-Feld. Ein Host, der keiner der beiden gemerkten
+  Adressen entspricht, wurde absichtlich getippt und wird unverändert benutzt.
+- **Abbrechen in der UI:** `_cancel` setzt zusätzlich ein eigenes
+  `_cancelRequested` (zurückgesetzt in `_beginBusy`). Das Flag des Updaters
+  gilt je Verbindung und wird von der nächsten Verbindung gelöscht; das der UI
+  deckt Abläufe mit mehreren Verbindungen oder noch ohne Verbindung ab: die
+  Vorprobe (`probeConnection` meldet einen abgebrochenen Versuch als „nicht
+  erreichbar" — ohne das Flag liefe das Verbinden nach „Abbrechen" weiter) und
+  den Release-Abruf vor dem evcc-Update (dort gibt es noch keine Verbindung,
+  die sich schließen ließe; nach einem gescheiterten Abruf gibt es auch keinen
+  Bestätigen-Dialog, das Update startete sonst ungefragt).
+- **`_statusOk` ist kein Erfolgssignal einer einzelnen Aktion:** es trägt noch
+  das Ergebnis der vorigen. Wer nach dem Guard weitermachen will, führt den
+  Erfolg über eine lokale Variable aus dem Guard-Body heraus
+  (`_setupRemoteAccess`, `_tailscaleUp` — „keine Login-URL" heißt sonst auch
+  „der Body hat geworfen"). Die Neuerkennung nach `tailscale up` läuft im
+  Guard, damit die App gesperrt bleibt, bis die Karten wieder die des Pi sind.
+- **Bewertungs-Anfrage:** das `finally` von `_guard` ruft nach dem Freigeben
+  von `_busy` `_maybeAskForReview`, wenn die Aktion einen Verlaufseintrag
+  geschrieben hat (§6 `review_prompt.dart`).
 - **Geteilte Leisten über allen Tabs** (weil Aktionen aus jedem Tab starten): die
   **Running-Bar** (Fortschritt + `_busyMessage` + „Log"-Sprung + Abbrechen) ist an
   `_busyMessage != null` gekoppelt (nicht `_busy`) → zeigt echte SSH-Arbeit, nicht
@@ -953,7 +1355,14 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
 - **Profile:** Umschalter in der App-Leiste (`Key('profileSwitcher')`, neutrales
   Server-Icon — *keine* Farbe, die wie Status-LED wirkt); pro Zeile ⋮
   (umbenennen/löschen). Wechsel ruft `_resetDetectionForNewPi()` (nichts leckt
-  zwischen Pis).
+  zwischen Pis — der Reset umfasst auch die Live-Werte `_evccLive` und die nur
+  im Speicher gehaltene `_remoteAccessPhase`) und **danach** `_applyProfile()`,
+  das den gemerkten Kartenstand des Ziel-Profils lädt (§6). Der **Import**
+  übernimmt vorher die Live-Eingaben des aktiven Profils (`_currentProfile()`,
+  wie Wechseln und Hinzufügen) — das Speichern danach schreibt das verlassene
+  Profil so, wie es in der Liste steht — und wird nicht angewendet, wenn
+  während Dateiauswahl, Passphrase und Entschlüsselung eine Aktion gestartet
+  wurde (`_busy`).
 - **Multi-Pi-Überblick:** `_MultiPiDashboardPage` (in `ui_widgets.dart`) zeigt
   eine Ampel-Zeile pro Profil (grün / amber = Updates·Warnung / rot = nicht
   erreichbar). `_showMultiPiDashboard` friert die Profil-Liste ein (aktives
@@ -967,7 +1376,16 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   **Bulk-Update:** App-Leisten-Knopf „Alle aktualisieren" iteriert sequenziell
   über die erreichbaren Pis MIT Updates (`update`-Callback = `_updatePiSystem` →
   `upgradeSystem` pro Profil), **fail-soft** (ein Fehler stoppt die übrigen
-  nicht), Status pro Zeile, danach Re-Probe.
+  nicht), Status pro Zeile, danach Re-Probe. Der Callback liefert
+  **`PiUpdateOutcome`** (`ok`, `note`) statt eines `bool`: Eine `JobException`
+  (der Pi-Job läuft ohne die App weiter, oder der Pi ist mit einem anderen
+  beschäftigt) ist weder Erfolg noch Fehlschlag — die Zeile zeigt dann amber
+  den Satz aus `_jobExceptionText` in voller Länge (er endet mit der Anweisung,
+  wo sich der Job mitlesen lässt) statt „Update fehlgeschlagen". „Neu prüfen"
+  (`_recheck`) leert die Ergebniszeilen, weil sie Vorrang vor dem Probe-Ergebnis
+  haben und die neue Prüfung sonst unsichtbar bliebe; die automatische Re-Probe
+  nach dem Sammellauf lässt sie stehen. Der Sammellauf hat weder
+  Bestätigungsdialog noch Keep-Alive.
 - **Karten:** nicht-installierte Dienste (außer `system`) werden zu
   `_AddableService`-Picker-Einträgen, nie Karten. `_ServiceCard`-⋮ hat stabiles
   `ValueKey('menu-${id}')`. Pro-Aktionen zeigen Free-Nutzern ein Schloss, der Tap
@@ -981,15 +1399,26 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   scheiterte (`_connectionOk == false` — die Adresse kann sich geändert haben).
   Das ⋮-Menü behält die Suche immer. Vom Demo-Einstieg unabhängig.
 - **Dateien-Tab:** `_FilesView` (in `ui_widgets.dart`) = eingebetteter Browser
-  (durchsuchen/vorschau/hochladen/löschen). Config via `_filesConfig()` (leise,
-  ohne `_busy` — Tab zeigt sonst einen „erst verbinden"-Platzhalter); Pro-gated
-  (`_filesPlaceholder` für Free). Datei-Ops (`_filesList/_filesOpen/_filesUpload/
-  _filesDelete`) verbinden pro Aktion selbst (wie der frühere Browser, ohne
-  `_guard`); `_filesUpload` nutzt den `FilePickerService`-Seam. Der View
-  serialisiert Taps gegen doppelte Verbindungen.
+  (durchsuchen/vorschau/hochladen/löschen). **Gebaut nur mit Sitzung**
+  (`_connected`, siehe „Verbundene Sitzung") und mit einer Config aus
+  `_filesConfig()` (leise, ohne `_busy`; im Demo `_demoConfig`) — sonst steht
+  der „erst verbinden"-Platzhalter; Pro-gated (`_filesPlaceholder` für Free).
+  Der `ValueKey` des Views enthält Profil, Host, Port **sowie Demo- und
+  Sitzungszustand**: eine Demo-Liste steht nie für die eines echten Pi und
+  umgekehrt, und ein Wechsel listet neu. Datei-Ops (`_filesList/_filesOpen/
+  _filesUpload/_filesDelete`) verbinden pro Aktion selbst (wie der frühere
+  Browser, ohne `_guard`) — sie laufen damit **neben** einer `_busy`-Aktion,
+  weshalb der Updater alle offenen Verbindungen führt (§2 „Cancel");
+  `_filesUpload` nutzt den `FilePickerService`-Seam. Der View serialisiert Taps
+  gegen doppelte Verbindungen.
 - **Terminal/Konsole:** `interactiveCommandHint` (commands.dart) fängt TUI-Befehle
   (htop/vi/less/`-f`) ab und zeigt eine Alternative, statt „Error opening
-  terminal" — die Konsole hat kein PTY.
+  terminal" — die Konsole hat kein PTY. `runConsoleCommand` kappt die Ausgabe
+  serverseitig: `{ <befehl>⏎} 2>&1 | head -c 262144` — die schließende Klammer
+  steht auf einer **eigenen Zeile** (nach ` ; }` verschluckte ein Kommentar im
+  Befehl die Klammer, und ein abschließendes `&` oder `;` war ein Syntaxfehler);
+  der Demo-Runner parst genau diese Form. Das Passwort für `sudo …` kommt nur
+  auf stdin, wenn sudo danach fragt (§2).
 - **`kyth_splash.dart`**: `splashDoneNotifier` (default `true`, damit Tests/Hot-
   Reload nie blockieren); der Lock wartet darauf, bevor die Biometrie kommt.
 - **`kyth_wordmark.dart`** — `KythWordmark`, die Corporate-Wortmarke nach Spec
@@ -1013,7 +1442,11 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   überlebten die Batch-Umstellung), `FakeEvccUpdater` (überschreibt jede von der
   UI genutzte Methode — neue Methode = hier überschreiben, sonst
   `UnimplementedError`), `_FakeStore`, `_FakeEntitlement`, `_FakeKeepAlive`,
-  `FakeSecureStorage`, `FakeHostKeyStore`.
+  `FakeSecureStorage`, `FakeHostKeyStore`. `UpdaterPage` nimmt dafür optional
+  u. a. `historyStore` (Verlauf beobachten ohne Secure Storage),
+  `reviewRequester`, `installChannel` und `clock` entgegen — die Tests der
+  Bewertungs-Anfrage brauchen so weder einen Plattform-Kanal noch einen
+  `PackageInfo`-Mock.
 - **Zwei Netze:** *innen* Command-Contract-Tests (exakte Befehlsstrings +
   Quote-Fuzzing mit `';reboot;'`), *außen* UI-Dispatch (echte `UpdaterPage`,
   Tab→Aktion→Fake asserted; `useTallScreen` weil das ListView off-screen nicht
@@ -1029,6 +1462,53 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Cancel/Watchdog nach STARTED → `jobDetached`, nie „Abgebrochen."). E2E auf
   einem echten Pi: `dart run tool/pi_job_dump.dart <dir>` schreibt Launcher,
   Follower, Guard und eine harmlose Payload (echo/sleep) samt Befehlen.
+- **SSH-Adapter Ende-zu-Ende** (v0.71.0): `test/ssh_integration_test.dart`
+  lässt den echten `Dartssh2Runner` gegen einen **echten SSH-Partner** laufen —
+  `tool/ssh_test_server.py`, ein lokaler asyncssh-Server, der Befehle in einer
+  lokalen bash ausführt. Alles andere in der Suite fälscht den `SshRunner`;
+  nur hier wird der dartssh2-Transport selbst geprüft: Key-Exchange, TOFU
+  (First-Use, geänderter und abgelehnter Key, Fingerprint-Dialog frisst die
+  Handshake-Frist nicht), Passwort- und Key-Login (mit einem von der App
+  erzeugten Key), exec mit stdin/stdout/stderr und Exit-Status, große Ausgabe
+  in ganzen Zeilen, ein über zwei Pakete geteiltes Mehrbyte-Zeichen, ein
+  TCP-Reset mitten im Befehl (kein Exit-Status, `close()` bleibt still). Die
+  beiden letzten beantwortet der Server selbst (`pitool-test split-utf8` /
+  `reset`), weil sie Kontrolle über die Leitung brauchen. **Übersprungen ohne
+  `PITOOL_TEST_SSHD_PYTHON`** (Pfad zu einem Python 3 mit `asyncssh`; unter
+  Windows zusätzlich `PITOOL_TEST_BASH`) — die CI führt ihn nicht aus.
+  **Vor jedem dartssh2-Upgrade laufen lassen** (§1). Die reinen Bausteine
+  (`LineBuffer`, `Utf8ChunkDecoder`, `withinActiveTime`, `resolveExitCode`)
+  testet `dartssh2_runner_test.dart` ohne Server.
+- **Skripte in echter bash gegen einen Sandbox-Pi** (v0.71.0 ausgebaut):
+  geprüft wird, was die Skripte auf der Platte hinterlassen und melden, nicht
+  welche Teilstrings die Builder enthalten. `test/backup_scripts_test.dart`
+  (evcc-Backup und -Restore, Pi-hole-Teleporter, HA-Restore, Timer-Wrapper,
+  Alerts, Config-Sicherungen — `tar`, `pihole`, `pihole-FTL`, `curl`,
+  `systemctl`, `docker` als Stubs), `test/install_arch_guard_test.dart` (die
+  Installskripte für Home Assistant und InfluxDB mit ihren 64-Bit-Guards),
+  `test/on_pi_wrapper_test.dart` (Stempel, Status-Probe, Parser), dazu
+  bash-Gruppen in `alerts_test.dart` (Test-Nachricht),
+  `security_check_test.dart` (Fix-Skripte), `system_service_test.dart`
+  (Paketlisten-Refresh), `tailscale_test.dart` (Status-Proben je
+  Backend-Zustand) und `evcc_updater_test.dart` (Konsolen-Wrapper). Linux/CI
+  nimmt `bash`; unter Windows laufen die Gruppen nur mit `PITOOL_TEST_BASH`
+  (Pfad zu Git Bash — ein bloßes `bash` kann dort der WSL-Starter sein).
+  **Regel für jede Sandbox: das Stub-Verzeichnis IM Skript vor den `PATH`
+  setzen** (`export PATH='<sandbox>/bin'…` als erste Zeile dessen, was die bash
+  ausführt — allein oder vor `$PATH`), nicht nur über die Prozess-Umgebung.
+  Git Bashs Starter stellt eigene Verzeichnisse (mit echtem
+  `curl`, `sh`, `gpg`, `uname`) **vor** einen geerbten `PATH`; ein echtes
+  Binary gleichen Namens gewinnt dann gegen den Stub. Beim Entwickeln des
+  Home-Assistant-Guards hat ein Sandbox-Lauf unter Windows so statt der Stubs
+  das echte `curl` und `sh` erreicht und Dockers Installationsskript
+  heruntergeladen und gestartet. Stubs für Kommandos, die stdin lesen könnten
+  (apt, dpkg, docker), leeren stdin — wie unter `sudo -S bash -s` verschluckt
+  ein Aufruf ohne eigenes `</dev/null` dann den Rest des Skripts, und der
+  Marker bleibt aus.
+- **Bewertungs-Anfrage:** `review_prompt_test.dart` (Entscheidung und
+  Persistenz), `review_ask_test.dart` (Verdrahtung in der Seite: gefragt wird
+  nach der Aktion, die die Schwelle erreicht; Sideload und Demo fragen nie,
+  eine gescheiterte Aktion zählt nicht).
 - **l10n:** `l10n_keys_test.dart` erzwingt denselben Schlüsselsatz in
   `app_de.arb` und `app_en.arb`.
 - **CI** (`.github/workflows/build.yml`): ein Job — (auf Tag: Tag-Name gegen
@@ -1092,6 +1572,16 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
 - `store/**` — Play-Playbook (Data-Safety = „keine Daten", Foreground-Service-
   Deklaration Pflicht), `launch-kit.md`; `izzyondroid-rfp.md` ist nur noch
   **Historie** (Kanal abgelehnt, siehe oben) — nicht als To-do lesen.
+- **Ein Build für beide Kanäle:** Play-AAB und GitHub-APK entstehen aus
+  demselben Code ohne Flavor. Googles Review-Bibliothek
+  (`com.google.android.play:review`, §6) ist eine gewöhnliche
+  Gradle-Abhängigkeit und steckt damit **auch in der GitHub-APK**. Aufgerufen
+  wird sie dort nie: `shouldRequestReview` verlangt `InstallChannel.play`, und
+  der Kanal kommt aus `PackageInfo.installerStore` — alles nicht sicher als
+  Play Erkannte gilt als Sideload (§6 `update_check.dart`). Der Satz „ohne
+  proprietäre/Google-Bibliotheken" in `store/launch-kit.md` §7 beschreibt den
+  Stand vor dieser Abhängigkeit. Die Datenschutzerklärung nennt die
+  Bewertungs-Anfrage in einem eigenen Abschnitt.
 - `docs/**` — GitHub-Pages: Landing + `privacy.html` + `impressum.html` (URLs im
   Play-Listing verankert — nicht umbenennen; kein Google-Fonts/Tracking).
   Ausgeliefert unter der **Custom Domain `pi-tool.kyth.systems`** (`docs/CNAME`,
@@ -1129,7 +1619,13 @@ Hilfe 17492799). Stand der Prüfung an v0.67.0 (2026-08-27):
   Optimization/Obfuscation, **erst ab 10 MB DEX**). Unser DEX misst 2,7 MB, die
   DEX-Regel greift also nicht; R8 läuft trotzdem und ist in
   `android/app/build.gradle.kts` per `isMinifyEnabled = true` festgenagelt,
-  damit kein Flutter-Upgrade sie stillschweigend abschaltet. Speicher- und
+  damit kein Flutter-Upgrade sie stillschweigend abschaltet.
+  `isShrinkResources` ist dort nicht gesetzt — das heißt **nicht** „aus": Das
+  Flutter-Gradle-Plugin (3.44.4) schaltet das Ressourcen-Shrinking für den
+  Release-Build einer App mit ein (außer mit `-Pshrink=false`), und nichts
+  setzt es zurück. Eine Ressource, die nur zur Laufzeit per Namen gesucht wird,
+  fehlt deshalb allein im Release-Build und braucht einen `tools:keep`-Eintrag
+  (`res/raw/keep.xml`; eine solche Datei hat die App heute nicht). Speicher- und
   Bitmap-Werte gibt es nur als Feldmessung in **Android Vitals** — vor Anfang
   2027 einmal nachsehen, besonders für den Foreground-Service-Zustand während
   langer SSH-Aktionen (§6).
@@ -1154,7 +1650,11 @@ Hilfe 17492799). Stand der Prüfung an v0.67.0 (2026-08-27):
    über `_proGate`. Kann die App ihn installieren, braucht er auch einen
    Deinstallations-Builder nach dem Skript-Vertrag in §4 und
    `..._uninstallActions(s)` im ⋮. **Eintrag in `service_links.dart`** (Website, ggf. offizielle
-   App) und `..._projectLinkActions(<id>)` ans Ende der `actions` — der Guard-Test
-   erzwingt es ohnehin.
-5. Version bumpen, `whats_new.dart` ergänzen, **diese Doku aktualisieren**,
+   App — deren Package dann auch in `<queries>` des Manifests) und
+   `..._projectLinkActions(<id>)` ans Ende der `actions` — Eintrag und
+   Manifest erzwingt der Guard-Test ohnehin.
+5. Ändert der Dienst einen On-Pi-Wrapper (Timer-Backup, Auto-Update, Alerts):
+   `wrapperGeneration` erhöhen (§5), sonst bleibt der alte Wrapper auf
+   Bestands-Pis unbemerkt.
+6. Version bumpen, `whats_new.dart` ergänzen, **diese Doku aktualisieren**,
    analyze+test grün, main-Build, taggen.

@@ -77,6 +77,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   nicht installierten** Dienste (evcc, Pi-hole, Home Assistant, Grafana,
   InfluxDB, Mosquitto) und installiert den gewählten (experimentell). So bleibt
   die Übersicht schlank, egal wie viele Dienste unterstützt werden.
+  Home Assistant (Container) und InfluxDB 2 gibt es nur für 64-Bit
+  (arm64/amd64): Auf einem System, auf dem sie nicht laufen können, lehnt die
+  App die Installation mit Begründung ab, bevor sie etwas einrichtet.
 - **Dienste deinstallieren** — im ⋮ jeder Karte, deren Dienst die App auch
   installieren kann (evcc per apt, Home Assistant, Pi Connect, Tailscale,
   Grafana, InfluxDB, Mosquitto). Standard: Das Programm verschwindet,
@@ -131,15 +134,21 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   **Health-Alerts** als Push via [ntfy](https://ntfy.sh) bei voller Platte,
   totem Dienst, Hitze oder anstehenden Updates. Das ntfy-Thema ist faktisch das
   Passwort (ntfy kennt kein Konto), deshalb schlägt die App ein langes
-  Zufallsthema vor und warnt vor leicht erratbaren Namen.
+  Zufallsthema vor und warnt vor leicht erratbaren Namen. Die Timer-Skripte
+  liegen auf dem Pi: Änderungen aus einer neueren App-Version gelten erst,
+  wenn der jeweilige Timer neu eingerichtet wird — läuft noch ein älteres
+  Skript, weist der Dialog des Timers darauf hin.
 - **Dateien** — der Datei-Browser deines Pi im eigenen Tab: Ordner durchsuchen,
   Dateien ansehen (Vorschau), **Textdateien direkt bearbeiten** (atomar mit
   Backup; Binärdateien bleiben schreibgeschützt), **vom Handy hochladen** und
   löschen — alles über die normale SSH-Sitzung, ohne SFTP-Server.
 - **Config-Editor** — Konfigdateien (z. B. `evcc.yaml`) direkt in der App
-  bearbeiten; gespeichert wird **atomar mit automatischem Backup**.
+  bearbeiten; gespeichert wird **atomar mit automatischem Backup** (die fünf
+  neuesten je Datei bleiben). Bearbeitet werden nur UTF-8-Dateien; wer den
+  Editor mit ungespeicherten Änderungen verlässt, wird vorher gefragt.
 - **Terminal** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
-  unterstützt, das Pi-Passwort wird sicher via stdin gepiped), Ausgabe live, mit
+  unterstützt; das Pi-Passwort geht nur dann über stdin an sudo, wenn sudo
+  danach fragt), Ausgabe live, mit
   **Verlauf + Schnellbefehlen** (vorgefertigt **und eigene** anlegbar).
   Interaktive Programme (htop, Editoren, `-f`)
   bekommen einen Hinweis mit Alternative statt eines kryptischen Fehlers. Auf
@@ -183,9 +192,13 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Probelauf** (`--dry-run`) — zeigt gefahrlos, ob ein Update verfügbar ist.
 - **Backup vor Update** — sichert vor einem apt-Update automatisch `evcc.yaml` +
   die Datenbank als zeitgestempeltes Archiv auf dem Pi (abschaltbar); schlägt es
-  fehl, wird der Fehler angezeigt und das Update gestoppt.
+  fehl, wird der Fehler angezeigt und das Update gestoppt. Automatische
+  Rotation: die zehn neuesten evcc-Backups unter `/var/backups/evcc/` bleiben,
+  ältere werden beim nächsten Backup gelöscht.
 - **Backup wiederherstellen** — listet die vorhandenen evcc-Backups auf dem Pi,
-  eines auswählen → evcc stoppen, entpacken, neu starten (mit Sicherheitsabfrage).
+  eines auswählen → Archiv prüfen, evcc stoppen, entpacken, neu starten (mit
+  Sicherheitsabfrage). Ein beschädigtes Archiv wird abgelehnt, bevor etwas
+  geändert ist.
 - **Pi-hole- & Home-Assistant-Backup** — Pi-hole per Teleporter-Export (offizielles,
   importierbares Format), Home Assistant als Tar des `/config`-Verzeichnisses;
   landet unter `/var/backups/pi-tool/` auf dem Pi. **Wiederherstellen und
@@ -393,6 +406,12 @@ nur noch tippen.
   werden **keine** Zugangsdaten gesendet.
 - Kein Account, kein Cloud-Backend. Annahme: LAN-Nutzung (zuhause im WLAN).
   Remote optional über **Tailscale-IP** (kein Portforwarding nötig).
+- **Bewertungs-Anfrage (nur bei Installation über Google Play):** Nach einer
+  gelungenen Aktion kann die App Google Play bitten, dessen Bewertungsdialog
+  anzuzeigen — frühestens nach drei gelungenen Aktionen und drei Tagen,
+  höchstens alle 120 Tage und insgesamt dreimal, nie im Demo-Modus; ob der
+  Dialog erscheint, entscheidet Google Play, und die App erfährt weder das noch
+  eine abgegebene Bewertung. Die Sideload-APK fragt nie.
 - Optionale **App-Sperre** per Biometrie/PIN. Screenshots, Bildschirmaufnahmen
   und die Vorschau in der App-Übersicht (Recents) sind nur dort gesperrt, wo
   Zugangsdaten zu sehen sein können (`FLAG_SECURE`): auf dem Sperrbildschirm und
@@ -533,7 +552,24 @@ Die Architektur trennt **testbare reine Logik** von I/O:
 - `lib/main.dart` — UI
 
 Tests: `flutter test` (reine Logik via TDD, Updater via `FakeSshRunner`,
-Widget-Tests mit injizierten Fakes).
+Widget-Tests mit injizierten Fakes). Zwei Gruppen brauchen etwas von außen und
+werden sonst übersprungen:
+
+- **Skripte in echter bash** — die On-Pi-Skripte (Backup, Restore, Timer,
+  Installer) laufen gegen einen Sandbox-Pi mit Stubs. Unter Linux genügt `bash`;
+  unter Windows den Pfad zu Git Bash setzen
+  (`PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe`).
+- **SSH-Integrationstest** — `test/ssh_integration_test.dart` lässt den echten
+  SSH-Adapter gegen einen lokalen SSH-Server laufen
+  (`tool/ssh_test_server.py`, braucht Python 3 mit `asyncssh`). Aktiv nur mit
+  `PITOOL_TEST_SSHD_PYTHON=<pfad zu python>` (unter Windows zusätzlich
+  `PITOOL_TEST_BASH`, der Server führt die Befehle in einer bash aus); die CI
+  führt ihn nicht aus. Vor jedem Upgrade von `dartssh2` laufen lassen:
+
+  ```bash
+  pip install asyncssh
+  PITOOL_TEST_SSHD_PYTHON=$(command -v python3) flutter test test/ssh_integration_test.dart
+  ```
 
 ## Roadmap
 
