@@ -65,5 +65,11 @@
         <!-- So getLaunchIntentForPackage can see the Tailscale app (Android 11+
              package visibility) for the one-tap remote-access helper. -->
         <package android:name="com.tailscale.ipn"/>
+        <!-- The same for the other official apps the service cards open
+             (every appPackage in lib/src/services/service_links.dart). Without
+             an entry the installed app stays invisible and "Offizielle App"
+             always ends up on its Play listing. -->
+        <package android:name="io.evcc.android"/>
+        <package android:name="io.homeassistant.companion.android"/>
     </queries>
 </manifest>

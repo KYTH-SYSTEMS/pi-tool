@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:evcc_updater/src/services/apt_services.dart';
 import 'package:evcc_updater/src/services/service_links.dart';
 import 'package:evcc_updater/src/systemd_services.dart';
@@ -54,6 +56,25 @@ void main() {
     test('an unknown id is a null lookup, not a crash', () {
       expect(linksFor('nope'), isNull);
       expect(linksFor(''), isNull);
+    });
+
+    test('every official app is declared in the manifest\'s <queries>', () {
+      // Android 11+ package visibility: getLaunchIntentForPackage returns null
+      // for a package the manifest does not name, and the launcher then falls
+      // back to the Play listing although the app is installed.
+      final manifest =
+          File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+      final queries =
+          RegExp(r'<queries>(.*?)</queries>', dotAll: true).allMatches(manifest);
+      expect(queries, hasLength(1));
+      final visible = RegExp(r'<package\s+android:name="([^"]+)"\s*/>')
+          .allMatches(queries.single.group(1)!)
+          .map((m) => m.group(1))
+          .toSet();
+      for (final e in serviceLinks.entries) {
+        if (!e.value.hasApp) continue;
+        expect(visible, contains(e.value.appPackage), reason: e.key);
+      }
     });
   });
 }
