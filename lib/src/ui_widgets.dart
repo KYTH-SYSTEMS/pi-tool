@@ -919,6 +919,8 @@ class _MultiPiDashboardPage extends StatefulWidget {
     required this.profiles,
     required this.probe,
     required this.update,
+    required this.onBulkStart,
+    required this.onBulkEnd,
   });
   final List<Profile> profiles;
   final Future<PiSnapshot> Function(Profile) probe;
@@ -926,6 +928,12 @@ class _MultiPiDashboardPage extends StatefulWidget {
   /// Runs a system update on one Pi and reports how it ended. Sequenced by the
   /// page across all reachable Pis with pending updates (fail-soft).
   final Future<PiUpdateOutcome> Function(Profile) update;
+
+  /// Bracket a bulk update — before its first Pi, after its last, also when
+  /// it ends early — so the app is kept alive for the whole run and the Pis
+  /// still waiting are not left out once the app goes to the background.
+  final Future<void> Function() onBulkStart;
+  final Future<void> Function() onBulkEnd;
 
   @override
   State<_MultiPiDashboardPage> createState() => _MultiPiDashboardPageState();
@@ -989,6 +997,20 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
       _bulkRunning = true;
       _updateResult.clear();
     });
+    await widget.onBulkStart();
+    try {
+      await _updateEach();
+    } finally {
+      await widget.onBulkEnd();
+    }
+    if (!mounted) return;
+    setState(() => _bulkRunning = false);
+    // Re-probe so the traffic lights reflect the new state.
+    if (!_cancelled) await _run();
+  }
+
+  /// The Pis of one bulk update, one after the other.
+  Future<void> _updateEach() async {
     for (final i in _updatable) {
       if (_cancelled || !mounted) break;
       setState(() => _updating = i);
@@ -1004,10 +1026,6 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
         _updating = -1;
       });
     }
-    if (!mounted) return;
-    setState(() => _bulkRunning = false);
-    // Re-probe so the traffic lights reflect the new state.
-    if (!_cancelled) await _run();
   }
 
   /// "Neu prüfen": a fresh look at every Pi. The outcome rows of an earlier
@@ -1403,13 +1421,17 @@ class _AutomationTile extends StatelessWidget {
 /// menu can show a lock for free users (the tap still routes through the gate).
 class _CardAction {
   const _CardAction(this.label, this.onTap,
-      {this.pro = false, this.destructive = false});
+      {this.pro = false, this.destructive = false, this.lockedHint});
   final String label;
   final VoidCallback onTap;
   final bool pro;
 
   /// Renders the menu label in the error colour (e.g. shutdown/reboot).
   final bool destructive;
+
+  /// Non-null → the entry is greyed out and shows this line under its label:
+  /// what has to happen first (the same look as a locked app-menu entry).
+  final String? lockedHint;
 }
 
 /// One entry in the "Dienst hinzufügen" picker: a not-yet-installed service and
@@ -1570,7 +1592,23 @@ class _ServiceCard extends StatelessWidget {
                     for (var i = 0; i < actions.length; i++)
                       PopupMenuItem(
                         value: i,
-                        child: (actions[i].pro && !isPro)
+                        enabled: actions[i].lockedHint == null,
+                        child: actions[i].lockedHint != null
+                            ? Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(actions[i].label),
+                                  Text(
+                                    actions[i].lockedHint!,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: cs.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : (actions[i].pro && !isPro)
                             ? Row(
                                 children: [
                                   Expanded(child: Text(actions[i].label)),

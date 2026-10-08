@@ -982,6 +982,7 @@
   "dialogMigrateBody": "Creates fresh backups (evcc, Pi-hole), fetches them to the phone, installs the services on the target Pi where missing and restores the backups there. THIS Pi stays untouched. Takes several minutes. Experimental.",
   "busyMigrating": "Migration running …",
   "statusMigrated": "Migration finished — check the target Pi via its profile.",
+  "errorMigratePiholeV5": "Pi-hole was not moved: this Pi's backup comes from Pi-hole v5 (.tar.gz) and can only be imported through the Pi-hole web interface (Settings → Teleporter). Nothing about Pi-hole was changed on the target Pi.",
   "actionBackupTeleporter": "Back up (Teleporter)",
   "actionManageBackups": "Manage backups",
   "actionUpdateBlocklists": "Update blocklists",
@@ -1397,6 +1398,14 @@
   },
   "piholePasswordTitle": "Pi-hole password",
   "piholePasswordBody": "The Pi-hole web interface is now protected with this password. The app does not store it – please write it down or add it to a password manager. You can change it in the web interface or with \"pihole setpassword\".",
+  "piholePasswordBodyTarget": "Pi-hole was newly installed on \"{name}\", but the backup was not restored there. The Pi-hole web interface of \"{name}\" is protected with this password. The app does not store it – please write it down or add it to a password manager. You can change it in the web interface or with \"pihole setpassword\".",
+  "@piholePasswordBodyTarget": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "actionCopy": "Copy",
   "actionDone": "Done",
   "snackPasswordCopied": "Password copied.",

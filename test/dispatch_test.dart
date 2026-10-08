@@ -150,6 +150,9 @@ class FakeEvccUpdater extends EvccUpdater {
         active: true,
         detail: 'aktuell'),
   ];
+  /// What detection sees on one particular host instead of [services] — for
+  /// flows across two Pis (the migration helper's source and target).
+  Map<String, List<ServiceStatus>> servicesByHost = {};
   Object? detectError; // thrown by detect* (e.g. hostKeyChanged)
   Completer<void>? detectGate; // if set, detectServices awaits it (stay busy)
   int cancelCalls = 0;
@@ -185,19 +188,30 @@ class FakeEvccUpdater extends EvccUpdater {
     if (detectGate != null) await detectGate!.future;
     onConnected?.call();
     if (detectError != null) throw detectError!;
-    return services;
+    return servicesByHost[config.host] ?? services;
   }
 
   @override
   Future<void> cancel() async => cancelCalls++;
 
   int restartServiceCalls = 0;
+  Completer<void>? restartGate; // if set, restartService awaits it (stay busy)
   @override
   Future<void> restartService({
     required SshConfig config,
     required void Function(String line) onLog,
+  }) async {
+    restartServiceCalls++;
+    if (restartGate != null) await restartGate!.future;
+  }
+
+  int rebootCalls = 0;
+  @override
+  Future<void> reboot({
+    required SshConfig config,
+    required void Function(String line) onLog,
   }) async =>
-      restartServiceCalls++;
+      rebootCalls++;
 
   int shutdownCalls = 0;
   @override
@@ -313,6 +327,7 @@ class FakeEvccUpdater extends EvccUpdater {
   /// What the Pi-hole password fix / install "sets" (null = one existed).
   String? piholeWebPassword;
   int piholeInstallCalls = 0;
+  final piholeInstallHosts = <String>[]; // which Pi got Pi-hole installed
 
   @override
   Future<String?> installPihole({
@@ -320,6 +335,7 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async {
     piholeInstallCalls++;
+    piholeInstallHosts.add(config.host);
     return piholeWebPassword;
   }
 
@@ -418,13 +434,17 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       deletedBackups.add(path);
 
+  Object? piholeRestoreError; // thrown by restorePiholeBackup
+
   @override
   Future<void> restorePiholeBackup({
     required SshConfig config,
     required String path,
     required void Function(String line) onLog,
-  }) async =>
-      restoredPihole.add(path);
+  }) async {
+    if (piholeRestoreError != null) throw piholeRestoreError!;
+    restoredPihole.add(path);
+  }
 
   @override
   Future<void> restoreHomeAssistantBackup({
@@ -733,13 +753,17 @@ class FakeEvccUpdater extends EvccUpdater {
   }
 
 
+  /// The archive [backupPihole] reports: Pi-hole v6 writes a `.zip`, v5 a
+  /// `.tar.gz` (which only the web interface can import).
+  String piholeBackupPath = '/var/backups/pi-tool/pihole-backup-x.zip';
+
   @override
   Future<String> backupPihole({
     required SshConfig config,
     required void Function(String line) onLog,
   }) async {
     piholeBackupCalls++;
-    return '/var/backups/pi-tool/pihole-backup-x.tar.gz';
+    return piholeBackupPath;
   }
 
   @override
@@ -884,12 +908,16 @@ class FakeEvccUpdater extends EvccUpdater {
     return followOutcome;
   }
 
+  Completer<void>? aptRefreshGate; // if set, refreshAptIndex awaits it
+
   @override
   Future<void> refreshAptIndex({
     required SshConfig config,
     required void Function(String line) onLog,
-  }) async =>
-      aptRefreshCalls++;
+  }) async {
+    aptRefreshCalls++;
+    if (aptRefreshGate != null) await aptRefreshGate!.future;
+  }
 
   int repairPackageCalls = 0;
 
@@ -1242,6 +1270,7 @@ void main() {
           AppConfig? config,
           AppConfigStore? store,
           AppLauncher? appLauncher,
+          Future<bool> Function(Uri uri)? urlOpener,
           Authenticator? authenticator,
           SecureScreen? secureScreen,
           Future<void> Function(String name, Uint8List bytes)? fileSaver}) =>
@@ -1267,6 +1296,7 @@ void main() {
           keepAlive: keepAlive,
           filePicker: filePicker,
           appLauncher: appLauncher,
+          urlOpener: urlOpener,
           authenticator: authenticator,
           secureScreen: secureScreen,
           fileSaver: fileSaver,
@@ -1773,12 +1803,55 @@ void main() {
     await tester.pump();
 
     expect(find.widgetWithText(OutlinedButton, 'Abbrechen'), findsOneWidget);
+    // The connect names itself in the running bar (and on its button) — the
+    // default text does not replace that.
+    expect(find.text('Verbinde …'), findsNWidgets(2));
+    expect(find.text('Vorgang läuft …'), findsNothing);
     await tester.tap(find.widgetWithText(OutlinedButton, 'Abbrechen'));
     await tester.pump();
     expect(u.cancelCalls, 1);
 
     gate.complete(); // release the pending future so the test settles cleanly
     await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'eine Aktion ohne eigenen Lauftext (evcc-Dienst neu starten) zeigt die '
+      'Laufleiste mit „Abbrechen" — aber ohne Keep-Alive', (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<void>();
+    final ka = _FakeKeepAlive();
+    final u = FakeEvccUpdater()..restartGate = gate;
+    await tester.pumpWidget(page(u, keepAlive: ka));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dienst neu starten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500)); // dialog is gone
+
+    // The restart hangs on the gate: buttons are locked, and the bar says so.
+    expect(u.restartServiceCalls, 1);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.text('Vorgang läuft …'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Log'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Abbrechen'));
+    await tester.pump();
+    expect(u.cancelCalls, 1);
+    // A short action: no foreground service for it.
+    expect(ka.beginCount, 0);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text('evcc-Dienst neu gestartet.'), findsOneWidget);
+    expect(ka.beginCount, 0);
+    expect(ka.endCount, 0);
   });
 
   testWidgets('an up-to-date service shows "Aktuell", update moves to ⋮',
@@ -2283,6 +2356,178 @@ void main() {
     // Pi-hole ships no official Android app — a third-party one must never be
     // offered as "the official app", so that entry stays away.
     expect(find.text('Offizielle App'), findsNothing);
+  });
+
+  // ---- „Oberfläche öffnen": the address each card hands to the browser ----
+
+  const webServices = [
+    ServiceStatus(
+        id: 'evcc',
+        name: 'evcc',
+        installed: true,
+        version: '0.310.0',
+        active: true,
+        detail: 'apt · Dienst aktiv'),
+    ServiceStatus(
+        id: 'pihole',
+        name: 'Pi-hole',
+        installed: true,
+        version: 'v6.0.4',
+        active: true),
+    ServiceStatus(
+        id: 'homeassistant',
+        name: 'Home Assistant',
+        installed: true,
+        version: '2026.7.1',
+        active: true),
+    ServiceStatus(
+        id: 'grafana',
+        name: 'Grafana',
+        installed: true,
+        version: '13.1.0',
+        active: true,
+        detail: 'apt · grafana · Dienst aktiv',
+        webPort: 3000,
+        aptPackage: 'grafana'),
+  ];
+
+  // The „Oberfläche öffnen" button of one card (found through its ⋮ key).
+  Finder openWebOf(String id) => find.descendant(
+      of: find
+          .ancestor(
+              of: find.byKey(ValueKey('menu-$id')),
+              matching: find.byType(Container))
+          .first,
+      matching: find.byIcon(Icons.open_in_browser));
+
+  testWidgets(
+      '„Oberfläche öffnen": der HTTPS-Schalter gilt nur für evcc — Pi-hole '
+      'bleibt http', (tester) async {
+    useTallScreen(tester);
+    final opened = <String>[];
+    final u = FakeEvccUpdater()..services = webServices;
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          uiScheme: 'https',
+        ),
+        urlOpener: (uri) async {
+          opened.add('$uri');
+          return true;
+        }));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    for (final id in ['evcc', 'pihole', 'homeassistant', 'grafana']) {
+      await tester.tap(openWebOf(id));
+      await tester.pumpAndSettle();
+    }
+    expect(opened, [
+      'https://192.168.178.64:7070',
+      'http://192.168.178.64/admin',
+      'http://192.168.178.64:8123',
+      'http://192.168.178.64:3000',
+    ]);
+  });
+
+  testWidgets(
+      '„Oberfläche öffnen": eine IPv6-Adresse als Host steht in Klammern in '
+      'der Adresse', (tester) async {
+    useTallScreen(tester);
+    final opened = <Uri>[];
+    final u = FakeEvccUpdater()..services = webServices;
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: 'fd00::64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        ),
+        urlOpener: (uri) async {
+          opened.add(uri);
+          return true;
+        }));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    for (final id in ['evcc', 'pihole', 'homeassistant', 'grafana']) {
+      await tester.tap(openWebOf(id));
+      await tester.pumpAndSettle();
+    }
+    expect([for (final uri in opened) '$uri'], [
+      'http://[fd00::64]:7070',
+      'http://[fd00::64]/admin',
+      'http://[fd00::64]:8123',
+      'http://[fd00::64]:3000',
+    ]);
+    // What the browser makes of it: the address, and the port apart from it.
+    expect([for (final uri in opened) uri.host], everyElement('fd00::64'));
+    expect([for (final uri in opened) uri.port], [7070, 80, 8123, 3000]);
+  });
+
+  testWidgets(
+      '„Oberfläche öffnen": ein Host, aus dem keine Adresse wird, meldet das '
+      'statt nichts zu tun', (tester) async {
+    useTallScreen(tester);
+    final opened = <Uri>[];
+    final u = FakeEvccUpdater()..services = webServices;
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          // A bracket that is never closed.
+          profiles: [Profile(name: 'S', host: '[fd00::64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        ),
+        urlOpener: (uri) async {
+          opened.add(uri);
+          return true;
+        }));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(openWebOf('pihole'));
+    await tester.pumpAndSettle();
+    expect(opened, isEmpty);
+    expect(find.text('Konnte den Link nicht öffnen.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'nach „Pi-hole installieren" führt der Einrichtungs-Knopf über http zur '
+      'Pi-hole-Oberfläche, auch mit evcc auf HTTPS', (tester) async {
+    useTallScreen(tester);
+    final opened = <String>[];
+    final u = FakeEvccUpdater()
+      ..services = [
+        ServiceStatus.absent('pihole', 'Pi-hole'),
+        const ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ];
+    await tester.pumpWidget(page(u,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          uiScheme: 'https',
+        ),
+        urlOpener: (uri) async {
+          opened.add('$uri');
+          return true;
+        }));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.textContaining('Dienst hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pi-hole'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.piholeInstallCalls, 1);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'evcc-Einrichtung öffnen'));
+    await tester.pumpAndSettle();
+    expect(opened, ['http://192.168.178.64/admin']);
   });
 
   testWidgets('Automatik → Health-Alerts: enable installs with the topic',
@@ -3073,6 +3318,92 @@ void main() {
 
     // The Pi is off now — the session must not survive the shutdown.
     expect(find.byKey(const Key('sessionConnected')), findsNothing);
+  });
+
+  testWidgets(
+      'gemerkte System-Karte ohne Sitzung: „Pi neu starten" und „Pi '
+      'herunterfahren" sind gesperrt wie im App-Menü, bis verbunden ist',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    const system = ServiceStatus(
+        id: 'system',
+        name: 'System (Pi)',
+        installed: true,
+        version: 'Debian 12',
+        active: true,
+        detail: 'aktuell');
+    await tester.pumpWidget(page(u,
+        config: AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                cachedServices: [system.toJson()]),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+
+    // The remembered card is on screen, no session yet.
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    expect(find.text('Zuerst mit dem Pi verbinden'), findsNWidgets(2));
+    await tester.tap(find.text('Pi neu starten'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pi neu starten?'), findsNothing);
+    await tester.tap(find.text('Pi herunterfahren'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pi herunterfahren?'), findsNothing);
+    // The other entries of the card are not touched by this.
+    expect(
+        tester
+            .widget<PopupMenuItem<int>>(
+                find.widgetWithText(PopupMenuItem<int>, 'Sicherheits-Check'))
+            .enabled,
+        isTrue);
+    await tester.tapAt(const Offset(10, 600)); // dismiss the menu
+    await tester.pumpAndSettle();
+
+    // Connected: both work, each behind its confirmation as before.
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    expect(find.text('Zuerst mit dem Pi verbinden'), findsNothing);
+    await tester.tap(find.text('Pi neu starten'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pi neu starten?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.rebootCalls, 1);
+    expect(u.shutdownCalls, 0);
+  });
+
+  testWidgets(
+      'Host geändert: die Karten des bisherigen Hosts stehen als „Stand von '
+      'vorhin" da', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.byKey(const ValueKey('menu-system')), findsOneWidget);
+    expect(find.textContaining('Stand von vorhin'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Host / IP'), '192.168.178.99');
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+
+    // Still shown — but as what they are now: not this host's measured state.
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    expect(find.byKey(const ValueKey('menu-system')), findsOneWidget);
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
   });
 
   testWidgets(
@@ -5480,6 +5811,61 @@ void main() {
     expect(u.repairPackageCalls, 1);
   });
 
+  testWidgets(
+      'zwei Bestätigungsdialoge übereinander: der zuerst bestätigte startet '
+      'die Aktion, der zweite startet nichts neben ihr', (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            updateAvailable: true,
+            updateKnown: true),
+      ]
+      ..jobGate = gate;
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // Two handlers past the busy check (nothing runs yet), each waiting in
+    // its confirmation. Called directly: a second tap in the same frame never
+    // arrives — the Navigator absorbs pointers once a route was pushed — so
+    // this pins _prepare()'s own check, not a path a finger can take.
+    final update = find.widgetWithText(OutlinedButton, 'Updates installieren');
+    final onPressed = tester.widget<OutlinedButton>(update).onPressed!;
+    onPressed();
+    onPressed();
+    await tester.pumpAndSettle();
+    expect(find.text('System aktualisieren?'), findsNWidgets(2));
+
+    // The upper one: the upgrade starts and stays busy on the gate.
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500)); // dialog is gone
+    expect(u.systemUpgradeCalls, 1);
+    expect(find.text('System aktualisieren?'), findsOneWidget);
+    expect(find.text('System-Upgrade läuft …'), findsOneWidget);
+
+    // The one underneath, confirmed while that upgrade is still running.
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('System aktualisieren?'), findsNothing);
+    expect(u.systemUpgradeCalls, 1,
+        reason: 'kein zweiter Lauf neben dem laufenden');
+    // The running action is still the one on screen.
+    expect(find.text('System-Upgrade läuft …'), findsOneWidget);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 1);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
   testWidgets('System ⋮ → Umzugshelfer zieht evcc + Pi-hole aufs Ziel um',
       (tester) async {
     useTallScreen(tester);
@@ -5532,11 +5918,136 @@ void main() {
     expect(u.downloadedPaths, hasLength(2));
     // … uploaded to the target's expected locations and restored there.
     expect(u.uploadedTo, contains('/var/backups/evcc/x.tar.gz'));
-    expect(u.uploadedTo,
-        contains('/var/backups/pi-tool/pihole-backup-x.tar.gz'));
+    expect(u.uploadedTo, contains('/var/backups/pi-tool/pihole-backup-x.zip'));
     expect(u.restoredPath, '/var/backups/evcc/x.tar.gz');
     expect(u.restoredPihole,
-        contains('/var/backups/pi-tool/pihole-backup-x.tar.gz'));
+        contains('/var/backups/pi-tool/pihole-backup-x.zip'));
+  });
+
+  // ---- Umzugshelfer: Pi-hole on the target and its web password ----
+
+  const migrationProfiles = AppConfig(
+    profiles: [
+      Profile(name: 'S', host: '192.168.178.64', password: 'pw'),
+      Profile(name: 'Zweiter', host: '192.168.178.99', password: 'pw'),
+    ],
+    activeIndex: 0,
+    disclaimerAccepted: true,
+  );
+  const migrationSystem = ServiceStatus(
+      id: 'system', name: 'System (Pi)', installed: true, active: true);
+  const migrationEvcc = ServiceStatus(
+      id: 'evcc',
+      name: 'evcc',
+      installed: true,
+      version: '0.211.0',
+      active: true,
+      detail: 'apt · Dienst aktiv');
+  const migrationPihole = ServiceStatus(
+      id: 'pihole',
+      name: 'Pi-hole',
+      installed: true,
+      version: 'v6.0.4',
+      active: true);
+
+  // Connects to the source, then runs the helper against „Zweiter".
+  Future<void> migrate(WidgetTester tester) async {
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Auf anderen Pi umziehen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Zweiter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'Umzugshelfer, Pi-hole v5 auf der Quelle: Pi-hole wird auf dem Ziel gar '
+      'nicht erst installiert, die Meldung nennt den Grund – evcc zieht um',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [migrationSystem, migrationEvcc, migrationPihole]
+      // The target has evcc already, but no Pi-hole.
+      ..servicesByHost = const {
+        '192.168.178.99': [migrationSystem, migrationEvcc]
+      }
+      ..piholeBackupPath = '/var/backups/pi-tool/pihole-backup-x.tar.gz'
+      ..piholeWebPassword = 'Abc234xyzKLMN567'
+      ..downloadBytes = Uint8List.fromList([1, 2, 3]);
+    await tester.pumpWidget(page(u, config: migrationProfiles));
+    await tester.pumpAndSettle();
+    await migrate(tester);
+
+    // evcc went across as before.
+    expect(u.restoredPath, '/var/backups/evcc/x.tar.gz');
+    // Pi-hole: nothing was written to the target — no install (which would
+    // set a password nobody gets to see), no upload, no restore.
+    expect(u.piholeInstallCalls, 0);
+    expect(u.uploadedTo, ['/var/backups/evcc/x.tar.gz']);
+    expect(u.restoredPihole, isEmpty);
+    expect(find.text('Pi-hole-Passwort'), findsNothing);
+    // The banner says what did not happen and why — and no success claim.
+    expect(find.textContaining('Pi-hole wurde nicht umgezogen'), findsOneWidget);
+    expect(find.textContaining('Pi-hole v5'), findsOneWidget);
+    expect(find.textContaining('Umzug abgeschlossen'), findsNothing);
+  });
+
+  testWidgets(
+      'Umzugshelfer: Pi-hole auf dem Ziel neu installiert, das Einspielen '
+      'scheitert → das dabei gesetzte Web-Passwort wird gezeigt',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [migrationSystem, migrationPihole]
+      ..servicesByHost = const {
+        '192.168.178.99': [migrationSystem]
+      }
+      ..piholeWebPassword = 'Abc234xyzKLMN567'
+      ..piholeRestoreError = const EvccUpdateException(
+          UpdateErrorKind.unknown, 'Pi-hole-Wiederherstellung fehlgeschlagen')
+      ..downloadBytes = Uint8List.fromList([1, 2, 3]);
+    await tester.pumpWidget(page(u, config: migrationProfiles));
+    await tester.pumpAndSettle();
+    await migrate(tester);
+
+    expect(u.piholeInstallHosts, ['192.168.178.99']);
+    expect(u.restoredPihole, isEmpty);
+    // The install's password is the only way into the target's web
+    // interface now — shown once, and it says which Pi it belongs to.
+    expect(find.text('Pi-hole-Passwort'), findsOneWidget);
+    expect(find.text('Abc234xyzKLMN567'), findsOneWidget);
+    expect(find.textContaining('„Zweiter"'), findsOneWidget);
+    await tester.tap(find.text('Fertig'));
+    await tester.pumpAndSettle();
+    // The failure itself stays on screen underneath.
+    expect(find.text('Pi-hole-Wiederherstellung fehlgeschlagen'),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'Umzugshelfer: Pi-hole auf dem Ziel neu installiert und Backup '
+      'eingespielt → kein Passwort-Dialog (der Import ersetzt das Passwort)',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [migrationSystem, migrationPihole]
+      ..servicesByHost = const {
+        '192.168.178.99': [migrationSystem]
+      }
+      ..piholeWebPassword = 'Abc234xyzKLMN567'
+      ..downloadBytes = Uint8List.fromList([1, 2, 3]);
+    await tester.pumpWidget(page(u, config: migrationProfiles));
+    await tester.pumpAndSettle();
+    await migrate(tester);
+
+    expect(u.piholeInstallHosts, ['192.168.178.99']);
+    expect(u.restoredPihole, ['/var/backups/pi-tool/pihole-backup-x.zip']);
+    expect(find.textContaining('Umzug abgeschlossen'), findsOneWidget);
+    expect(find.text('Pi-hole-Passwort'), findsNothing);
+    expect(find.text('Abc234xyzKLMN567'), findsNothing);
   });
 
   testWidgets('Grafana ⋮ → „Mit evcc verdrahten" verdrahtet den Stack',
@@ -6544,6 +7055,80 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Update fehlgeschlagen'), findsNWidgets(2));
+  });
+
+  testWidgets(
+      'Multi-Pi: ein Keep-Alive um den ganzen Sammellauf — vom ersten bis zum '
+      'letzten Pi, nicht je Pi', (tester) async {
+    useTallScreen(tester);
+    final ka = _FakeKeepAlive();
+    final gate = Completer<void>();
+    final u = FakeEvccUpdater()
+      ..services = systemWithUpdates
+      ..jobGate = gate;
+    await tester
+        .pumpWidget(page(u, config: twoPisWithUpdates, keepAlive: ka));
+    await tester.pumpAndSettle();
+    await openMultiPi(tester);
+    expect(ka.beginCount, 0, reason: 'das Prüfen allein braucht keinen');
+
+    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await tester.pump();
+    // The first Pi's upgrade hangs on the gate: the service is up and stays.
+    expect(u.systemUpgradeCalls, 1);
+    expect(ka.beginCount, 1);
+    expect(ka.endCount, 0);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 2);
+    expect(ka.beginCount, 1, reason: 'zwischen den Pis nicht neu gestartet');
+    expect(ka.endCount, 1);
+  });
+
+  testWidgets(
+      'Multi-Pi: Übersicht mitten im Sammellauf verlassen und eine andere '
+      'Aktion gestartet — das Ende des Sammellaufs nimmt ihr den Keep-Alive '
+      'nicht weg', (tester) async {
+    useTallScreen(tester);
+    final ka = _FakeKeepAlive();
+    final bulkGate = Completer<void>();
+    final refreshGate = Completer<void>();
+    final u = FakeEvccUpdater()
+      ..services = systemWithUpdates
+      ..jobGate = bulkGate
+      ..aptRefreshGate = refreshGate;
+    await tester
+        .pumpWidget(page(u, config: twoPisWithUpdates, keepAlive: ka));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await openMultiPi(tester);
+    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await tester.pump();
+    expect(ka.beginCount, 1);
+
+    // Back to the main view; the first Pi's upgrade is still under way.
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paketlisten aktualisieren'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500)); // menu is gone
+    expect(u.aptRefreshCalls, 1);
+    expect(ka.beginCount, 2);
+
+    // The bulk run's Pi finishes first: no further Pi is started (the page is
+    // gone), and the service stays up for the action that still runs.
+    bulkGate.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(u.systemUpgradeCalls, 1);
+    expect(ka.endCount, 0);
+
+    refreshGate.complete();
+    await tester.pumpAndSettle();
+    expect(ka.endCount, 1);
   });
 
   group('Pi-Jobs in der Oberfläche', () {

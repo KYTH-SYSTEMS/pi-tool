@@ -214,6 +214,7 @@ class UpdaterPage extends StatefulWidget {
     this.fileSaver,
     this.textSharer,
     this.appLauncher,
+    this.urlOpener,
     this.secureScreen,
     this.recentsPreview,
     this.historyStore,
@@ -262,6 +263,11 @@ class UpdaterPage extends StatefulWidget {
   /// Opens another app (Tailscale) for the remote-access helper. Injectable so
   /// widget tests don't hit the native channel.
   final AppLauncher? appLauncher;
+
+  /// Opens a link outside the app (default: url_launcher, as an external
+  /// application). Injectable so widget tests record the address instead of
+  /// hitting the platform channel.
+  final Future<bool> Function(Uri uri)? urlOpener;
   final SecureScreen? secureScreen;
 
   /// Keeps the app out of the recent-apps overview while the app lock is
@@ -324,6 +330,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.textSharer ?? _shareText;
   late final AppLauncher _appLauncher =
       widget.appLauncher ?? const ChannelAppLauncher();
+  late final Future<bool> Function(Uri uri) _urlOpener = widget.urlOpener ??
+      (uri) => launchUrl(uri, mode: LaunchMode.externalApplication);
   late final SecureScreen _secureScreen =
       widget.secureScreen ?? const ChannelSecureScreen();
 
@@ -720,6 +728,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         }
         _connectionOk = null;
         _connected = false; // editing creds invalidates the session
+        // The cards on screen were read from the address as it was. From here
+        // on they are a remembered state and say so ("Stand von vorhin").
+        _servicesFromCache = _services.isNotEmpty;
         if (isGatedTab(_tab)) _tab = tabAfterDisconnect(_tab);
       });
     }
@@ -1465,9 +1476,17 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (_activeIndex < profiles.length) {
       profiles[_activeIndex] = _currentProfile();
     }
+    final busyText = context.l10n.busySystemUpgrade;
     Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => _MultiPiDashboardPage(
-          profiles: profiles, probe: _probePi, update: _updatePiSystem),
+          profiles: profiles,
+          probe: _probePi,
+          update: _updatePiSystem,
+          // One keep-alive around the whole bulk update, not one per Pi:
+          // Android 12+ restricts starting a foreground service from the
+          // background, so a stop between two Pis could be final.
+          onBulkStart: () => _keepAliveBegin(busyText),
+          onBulkEnd: _keepAliveEnd),
     ));
   }
 
@@ -1498,13 +1517,16 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   /// Validates, builds the config, remembers it, saves settings and enters the
-  /// busy state. Returns the config, or null when validation failed.
+  /// busy state. Returns the config, or null when validation failed — or when
+  /// an action is already running: a handler that waited for a dialog since
+  /// its own `if (_busy) return;` must not start on top of it.
   ///
   /// In the demo every action gets [_demoConfig] instead: the connection
   /// fields are not validated (a fresh install has none) and nothing is saved.
   /// [real] is for the connect itself, which always means the typed fields —
   /// also when it is started from within a demo.
   SshConfig? _prepare({bool real = false}) {
+    if (_busy) return null;
     if (_demoMode && !real) {
       _lastConfig = _demoConfig;
       _beginBusy();
@@ -1532,9 +1554,30 @@ class _UpdaterPageState extends State<UpdaterPage>
     });
   }
 
+  // How many runs hold the keep-alive right now. More than one only when the
+  // multi-Pi overview was left during a bulk update — its current Pi finishes
+  // in the background — and another action started meanwhile: whichever ends
+  // first must not stop the foreground service the other still relies on.
+  int _keepAliveHolds = 0;
+
+  Future<void> _keepAliveBegin(String message) async {
+    _keepAliveHolds++;
+    await _keepAlive.begin(message);
+  }
+
+  Future<void> _keepAliveEnd() async {
+    if (_keepAliveHolds > 0) _keepAliveHolds--;
+    if (_keepAliveHolds > 0) return;
+    await _keepAlive.end();
+  }
+
   /// Shared error handling + busy-reset for every action. When
   /// [backgroundMessage] is given, a foreground service keeps the app alive for
   /// the duration so a long action (update/install) survives backgrounding.
+  ///
+  /// The running bar (progress, "Log", "Abbrechen") is shown for every action:
+  /// with [backgroundMessage], else with a text the handler set itself before
+  /// calling (the connect), else with the default one.
   Future<void> _guard(
     Future<void> Function() body, {
     String? backgroundMessage,
@@ -1542,9 +1585,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     final l10n = context.l10n;
     // Only a success recorded by THIS action may lead to the review ask.
     _reviewCheckDue = false;
-    if (backgroundMessage != null) {
-      await _keepAlive.begin(backgroundMessage);
-      if (mounted) setState(() => _busyMessage = backgroundMessage);
+    if (backgroundMessage != null) await _keepAliveBegin(backgroundMessage);
+    if (mounted) {
+      setState(() => _busyMessage =
+          backgroundMessage ?? _busyMessage ?? l10n.busyDefault);
     }
     try {
       await body();
@@ -1598,7 +1642,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         _statusOk = false;
       });
     } finally {
-      if (backgroundMessage != null) await _keepAlive.end();
+      if (backgroundMessage != null) await _keepAliveEnd();
       if (mounted) {
         setState(() {
           _busy = false;
@@ -1791,6 +1835,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         if (mounted) setState(() => _busy = false);
         return;
       }
+      // This handler held _busy itself up to here; _prepare() only starts
+      // from idle, so hand it back first. No await in between — no gap.
+      _busy = false;
     }
     final config = _prepare();
     if (config == null) {
@@ -2481,6 +2528,11 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (source == null) return;
     final targetCfg = _configForProfile(target);
     _lastAction = _migrateToOtherPi;
+    // Installing Pi-hole on the target sets a web password. Importing the
+    // backup replaces the whole configuration, that password included — so
+    // it only matters (and is shown below) when the import did not happen.
+    String? targetWebPassword;
+    var piholeRestored = false;
     await _guard(() async {
       // -- Source: fresh backups, fetched to the phone. Read-only otherwise. --
       Uint8List? evccBytes;
@@ -2525,9 +2577,18 @@ class _UpdaterPageState extends State<UpdaterPage>
         }
       }
       if (srcPihole) {
+        // A Pi-hole v5 backup (.tar.gz) cannot be imported from here (see
+        // restorePiholeBackup). Stop before anything is installed: the target
+        // would end up with a fresh Pi-hole, without the data and behind a
+        // password — while the only import left is its web interface.
+        if (piFile != null && !piFile.endsWith('.zip')) {
+          throw EvccUpdateException(
+              UpdateErrorKind.unknown, l10n.errorMigratePiholeV5);
+        }
         final has = targetServices.any((s) => s.id == 'pihole' && s.installed);
         if (!has) {
-          await _updater.installPihole(config: targetCfg, onLog: _appendLog);
+          targetWebPassword = await _updater.installPihole(
+              config: targetCfg, onLog: _appendLog);
         }
         if (piBytes != null && piFile != null) {
           final dest = '/var/backups/pi-tool/$piFile';
@@ -2535,6 +2596,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               config: targetCfg, path: dest, bytes: piBytes, onLog: _appendLog);
           await _updater.restorePiholeBackup(
               config: targetCfg, path: dest, onLog: _appendLog);
+          piholeRestored = true;
         }
       }
       if (!mounted) return;
@@ -2544,6 +2606,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       });
       _addHistory(l10n.statusMigrated);
     }, backgroundMessage: l10n.busyMigrating);
+    if (targetWebPassword != null && !piholeRestored && mounted) {
+      await _showPiholePassword(targetWebPassword!, onPi: target.name);
+    }
   }
 
   /// One-tap wiring of the monitoring stack (v0.66.0 user wish): InfluxDB →
@@ -3728,7 +3793,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       setState(() {
         _statusMessage = context.l10n.statusPiholeInstalled;
         _statusOk = true;
-        _setupUrl = '$_uiScheme://${_host.text.trim()}/admin';
+        _setupUrl = _piholeAdminUrl();
       });
       _addHistory(context.l10n.historyPiholeInstalled);
       await _refreshServices(config);
@@ -3738,8 +3803,10 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Shows a freshly set Pi-hole web password once, to copy. Not dismissible
   /// by a stray tap: the app keeps no copy — not in the log, the history or
-  /// the profile — so this is the only time it is visible.
-  Future<void> _showPiholePassword(String pw) => showDialog<void>(
+  /// the profile — so this is the only time it is visible. [onPi] names the
+  /// Pi it belongs to when that is not the active one (the migration target).
+  Future<void> _showPiholePassword(String pw, {String? onPi}) =>
+      showDialog<void>(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
@@ -3748,7 +3815,9 @@ class _UpdaterPageState extends State<UpdaterPage>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(ctx.l10n.piholePasswordBody),
+              Text(onPi == null
+                  ? ctx.l10n.piholePasswordBody
+                  : ctx.l10n.piholePasswordBodyTarget(onPi)),
               const SizedBox(height: 12),
               SelectableText(
                 pw,
@@ -3841,13 +3910,17 @@ class _UpdaterPageState extends State<UpdaterPage>
     }, backgroundMessage: l10n.busySystemUpgrade);
   }
 
+  /// Pi-hole's web interface. Always http: the HTTPS switch in the settings
+  /// is about evcc's interface only.
+  String _piholeAdminUrl() => piWebUrl(host: _host.text, path: '/admin');
+
   void _openPiholeAdmin() {
     if (_demoHasNoWebUi()) return;
     if (_host.text.trim().isEmpty) {
       _snack(context.l10n.snackEnterHostFirst);
       return;
     }
-    _openUrl('$_uiScheme://${_host.text.trim()}/admin');
+    _openUrl(_piholeAdminUrl());
   }
 
   Future<void> _backupPihole() => _runServiceBackup(
@@ -3923,7 +3996,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       setState(() {
         _statusMessage = context.l10n.statusHomeAssistantInstalled;
         _statusOk = true;
-        _setupUrl = 'http://${_host.text.trim()}:8123';
+        _setupUrl = piWebUrl(host: _host.text, port: '8123');
       });
       _addHistory(context.l10n.historyHomeAssistantInstalled);
       await _refreshServices(config);
@@ -3936,7 +4009,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _snack(context.l10n.snackEnterHostFirst);
       return;
     }
-    _openUrl('http://${_host.text.trim()}:8123');
+    _openUrl(piWebUrl(host: _host.text, port: '8123'));
   }
 
   /// Cancels the in-flight action by closing its SSH connection; the running
@@ -4449,7 +4522,7 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   String _evccUiUrl() {
     final port = _uiPort.text.trim().isEmpty ? '7070' : _uiPort.text.trim();
-    return '$_uiScheme://${_host.text.trim()}:$port';
+    return piWebUrl(host: _host.text, scheme: _uiScheme, port: port);
   }
 
   /// "Web öffnen" on a demo card: there is no Pi behind the sample data, so
@@ -4558,8 +4631,9 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<void> _openUrl(String url) async {
     final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+    // An address that is none (a typo in the host field) is reported like
+    // one nothing on the phone can open — not swallowed.
+    if (uri == null || !await _urlOpener(uri)) {
       if (mounted) _snack(context.l10n.snackCouldNotOpenLink);
     }
   }
@@ -5356,6 +5430,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           ));
         case 'system':
           final lastJob = _lastJobLine(s.job);
+          // Restart and shutdown need an explicit connection first, like the
+          // same two entries of the app menu — a remembered card is no session.
+          final needsSession =
+              _connected ? null : context.l10n.menuNeedsConnectionHint;
           cards.add(_ServiceCard(
             isPro: _unlocked,
             status: s,
@@ -5385,9 +5463,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               _CardAction(context.l10n.actionMigratePi,
                   () => _proGate(_migrateToOtherPi), pro: true),
               _CardAction(context.l10n.actionDockerContainers, _dockerContainers),
-              _CardAction(context.l10n.actionRebootPi, _reboot),
+              _CardAction(context.l10n.actionRebootPi, _reboot,
+                  lockedHint: needsSession),
               _CardAction(context.l10n.actionShutdownPi, _shutdown,
-                  destructive: true),
+                  destructive: true, lockedHint: needsSession),
             ],
           ));
         case 'adguard':
@@ -6366,7 +6445,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _snack(context.l10n.snackEnterHostFirst);
       return;
     }
-    _openUrl('http://${_host.text.trim()}:$port');
+    _openUrl(piWebUrl(host: _host.text, port: '$port'));
   }
 
   // ---- build ---------------------------------------------------------------
@@ -6593,8 +6672,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             // Shared action bar above ALL tabs: a running action, host-key
             // recovery and the status banner used to live only on the Dienste
             // tab, but actions launch from every tab — so surface them globally.
-            // Keyed on _busyMessage (set inside _guard for a named operation) so
-            // it shows for real SSH work, not while a confirm dialog is open.
+            // Keyed on _busyMessage (set by _guard for every action) so it
+            // shows for real SSH work, not while a confirm dialog is open.
             if (_demoMode) _demoBar(theme),
             if (_busyMessage != null) _runningBar(theme),
             if (!_busy && _jobToFollow != null)

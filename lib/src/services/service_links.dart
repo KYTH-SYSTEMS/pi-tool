@@ -62,3 +62,26 @@ final Map<String, ServiceLinks> serviceLinks = {
 /// Links for [serviceId], or null when the app has none on file for it (the
 /// System card is the Pi itself, not an application).
 ServiceLinks? linksFor(String serviceId) => serviceLinks[serviceId];
+
+/// The address of a web interface on the Pi itself (a card's "Web öffnen") —
+/// not one of the project links above. Built through [Uri], so an IPv6 literal
+/// in [host] gets the brackets a URL needs. An empty [port] is the scheme's
+/// own. A host or port [Uri] cannot take is passed on as typed: opening that
+/// address fails visibly, a thrown error from a button tap would not.
+String piWebUrl({
+  required String host,
+  String scheme = 'http',
+  String port = '',
+  String path = '',
+}) {
+  final h = host.trim();
+  final p = port.trim();
+  final asTyped = '$scheme://$h${p.isEmpty ? '' : ':$p'}$path';
+  final number = int.tryParse(p);
+  if (p.isNotEmpty && number == null) return asTyped;
+  try {
+    return Uri(scheme: scheme, host: h, port: number, path: path).toString();
+  } on FormatException {
+    return asTyped;
+  }
+}

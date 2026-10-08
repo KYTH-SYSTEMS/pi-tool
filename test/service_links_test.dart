@@ -77,4 +77,47 @@ void main() {
       }
     });
   });
+
+  group('piWebUrl', () {
+    test('an IPv4 address or a host name is set as typed', () {
+      expect(piWebUrl(host: '192.168.178.64', port: '8123'),
+          'http://192.168.178.64:8123');
+      expect(piWebUrl(host: 'raspberrypi.local', path: '/admin'),
+          'http://raspberrypi.local/admin');
+      expect(piWebUrl(host: ' 192.168.178.64 ', scheme: 'https', port: ' 7070 '),
+          'https://192.168.178.64:7070');
+    });
+
+    test('http unless a scheme is asked for', () {
+      expect(piWebUrl(host: '192.168.178.64', path: '/admin'),
+          startsWith('http://'));
+    });
+
+    test('an IPv6 literal gets its brackets — with a port and without', () {
+      expect(piWebUrl(host: 'fd00::1', port: '8123'), 'http://[fd00::1]:8123');
+      expect(piWebUrl(host: 'fd00::1', path: '/admin'),
+          'http://[fd00::1]/admin');
+      expect(piWebUrl(host: 'fd00::1', scheme: 'https', port: '7070'),
+          'https://[fd00::1]:7070');
+      // What the browser gets out of it: the address, and the port apart.
+      final uri = Uri.parse(piWebUrl(host: 'fd00::1', port: '8123'));
+      expect(uri.host, 'fd00::1');
+      expect(uri.port, 8123);
+    });
+
+    test('brackets that are already there are not doubled', () {
+      expect(piWebUrl(host: '[fd00::1]', port: '8123'),
+          'http://[fd00::1]:8123');
+    });
+
+    test('a host or port Uri cannot take is passed on as typed, not thrown',
+        () {
+      // A host typed together with a port is no IPv6 literal.
+      expect(piWebUrl(host: '192.168.178.64:8080', path: '/admin'),
+          'http://192.168.178.64:8080/admin');
+      expect(piWebUrl(host: '[fd00::1', port: '8123'), 'http://[fd00::1:8123');
+      expect(piWebUrl(host: '192.168.178.64', port: '70x70'),
+          'http://192.168.178.64:70x70');
+    });
+  });
 }
