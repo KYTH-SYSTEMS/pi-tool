@@ -29,6 +29,7 @@ import 'src/entitlement.dart';
 import 'src/file_pick.dart';
 import 'src/files.dart';
 import 'src/profile_transfer.dart';
+import 'src/review_prompt.dart';
 import 'src/scheduled_backup.dart';
 import 'src/security_check.dart';
 import 'src/ssh_keys.dart';
@@ -191,6 +192,9 @@ class UpdaterPage extends StatefulWidget {
     this.appLauncher,
     this.secureScreen,
     this.historyStore,
+    this.reviewRequester,
+    this.installChannel,
+    this.clock,
   });
 
   final AppConfigStore? store;
@@ -234,6 +238,17 @@ class UpdaterPage extends StatefulWidget {
   /// Where the action history is kept. Injectable so widget tests can see what
   /// is recorded without secure storage.
   final HistoryStore? historyStore;
+
+  /// Asks Google Play for its in-app review card. Defaults to the native
+  /// channel; injectable so widget tests record the ask instead.
+  final ReviewRequester? reviewRequester;
+
+  /// Where this build was installed from. Null = ask the platform
+  /// (PackageInfo) at startup; injectable so tests need no platform mock.
+  final InstallChannel? installChannel;
+
+  /// The time, for the review ask's bookkeeping. Injectable for tests.
+  final DateTime Function()? clock;
 
   @override
   State<UpdaterPage> createState() => _UpdaterPageState();
@@ -288,6 +303,17 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
   late final HistoryStore _historyStore =
       widget.historyStore ?? HistoryStore();
+  late final ReviewRequester _reviewRequester =
+      widget.reviewRequester ?? const ChannelReviewRequester();
+  late final DateTime Function() _now = widget.clock ?? DateTime.now;
+  // Sideload until the platform says otherwise: the Play review card exists on
+  // a Play build only, so "unknown" must never ask.
+  late InstallChannel _installChannel =
+      widget.installChannel ?? InstallChannel.sideload;
+  ReviewPromptState _reviewPrompt = ReviewPromptState.initial;
+  // Set by a history entry (an action that did something), read when the
+  // action has finished — see [_maybeAskForReview].
+  bool _reviewCheckDue = false;
 
   final _host = TextEditingController();
   final _port = TextEditingController(text: '22');
@@ -502,6 +528,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       _firstSeenVersionCode = cfg.firstSeenVersionCode;
       _everConnected = cfg.everConnected;
       _remoteAccessDismissed = cfg.remoteAccessDismissed;
+      _reviewPrompt = cfg.reviewPrompt;
       _consoleHistory = List.of(cfg.consoleHistory);
       _customCommands = List.of(cfg.customCommands);
       _alertsServer = cfg.alertsNtfyServer;
@@ -763,6 +790,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       firstSeenVersionCode: _firstSeenVersionCode,
       everConnected: _everConnected,
       remoteAccessDismissed: _remoteAccessDismissed,
+      reviewPrompt: _reviewPrompt,
     );
   }
 
@@ -1192,6 +1220,9 @@ class _UpdaterPageState extends State<UpdaterPage>
     try {
       final info = await PackageInfo.fromPlatform();
       if (mounted) setState(() => _appVersion = info.version);
+      if (widget.installChannel == null) {
+        _installChannel = installChannelFor(info.installerStore);
+      }
       // A Play build updates through Play — never point it at the GitHub APK
       // (Play requires updates to come through Play, and the sideload APK is
       // signed with a different key, so it could not install over it anyway).
@@ -1419,6 +1450,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     String? backgroundMessage,
   }) async {
     final l10n = context.l10n;
+    // Only a success recorded by THIS action may lead to the review ask.
+    _reviewCheckDue = false;
     if (backgroundMessage != null) {
       await _keepAlive.begin(backgroundMessage);
       if (mounted) setState(() => _busyMessage = backgroundMessage);
@@ -1482,6 +1515,10 @@ class _UpdaterPageState extends State<UpdaterPage>
           _busyMessage = null;
           _busyJob = null;
         });
+        if (_reviewCheckDue) {
+          _reviewCheckDue = false;
+          _maybeAskForReview();
+        }
       }
     }
   }
@@ -4213,6 +4250,34 @@ class _UpdaterPageState extends State<UpdaterPage>
       when: formatTimestamp(DateTime.now()),
       text: text,
     ));
+    // A history entry is an action that actually did something — the unit the
+    // review ask counts in (review_prompt.dart).
+    _reviewPrompt = _reviewPrompt.recordSuccess(_now());
+    _reviewCheckDue = true;
+    _persistSettings();
+  }
+
+  /// Asks Google Play for its in-app review card when the moment is fair: on a
+  /// Play build, after enough has worked over enough days, and rarely (the
+  /// rules live in review_prompt.dart). Called when an action that recorded a
+  /// success has finished — never at startup, never over the lock screen.
+  ///
+  /// Play alone decides whether the card appears and does not report back, so
+  /// the ask is recorded before it goes out: a card Play swallows must not be
+  /// asked for again on the next action.
+  void _maybeAskForReview() {
+    final now = _now();
+    if (_locked ||
+        !shouldRequestReview(
+            state: _reviewPrompt,
+            channel: _installChannel,
+            demoMode: _demoMode,
+            now: now)) {
+      return;
+    }
+    _reviewPrompt = _reviewPrompt.recordAsk(now);
+    _persistSettings();
+    unawaited(_reviewRequester.request());
   }
 
   String _notesExcerpt(String s) {
