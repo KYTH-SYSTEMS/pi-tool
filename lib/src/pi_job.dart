@@ -729,6 +729,14 @@ String _aptPrelude({bool eol = true, bool update = true}) => [
       if (update) _shUpdateLists.trim(),
     ].join('\n');
 
+/// The apt building blocks without anything of the job protocol — the EOL
+/// source fix, the options array `O`, `pitool_wait_apt_locks` and
+/// `pitool_repair` — for the on-Pi auto-update wrapper (auto_update.dart), so
+/// the unattended run upgrades the way an update started in the app does.
+/// Bash. That wrapper stays on the Pi: a change to these blocks changes it
+/// too, so raise `wrapperGeneration` (on_pi_wrapper.dart) along with it.
+String aptBuildingBlocks() => _aptPrelude(update: false);
+
 /// `system-upgrade`: EOL fix, repair, lists, `apt-get full-upgrade`.
 String buildSystemUpgradePayload() => buildJobPayload('''
 ${_aptPrelude()}

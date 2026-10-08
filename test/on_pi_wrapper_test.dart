@@ -6,6 +6,8 @@ import 'package:evcc_updater/src/on_pi_wrapper.dart';
 import 'package:evcc_updater/src/scheduled_backup.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'on_pi_sandbox.dart';
+
 /// bash for the probe test. On Windows it must be named explicitly
 /// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
 final String? _bash =
@@ -120,9 +122,160 @@ void main() {
         expect(await probe(unit), 'WRAPPER old');
       });
 
+      test('$unit: the wrapper v0.71.0 installed (generation 2) is old',
+          () async {
+        File('${tmp.path}/$unit.sh')
+            .writeAsStringSync('#!/bin/sh\n# pi-tool-wrapper 2\n');
+        expect(await probe(unit), 'WRAPPER old');
+      });
+
       test('$unit: no wrapper at all', () async {
         expect(await probe(unit), 'WRAPPER none');
       });
     }
   }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
+
+  group('checkOnCalendar', () {
+    test('passes every schedule the app builds, unchanged', () {
+      for (var hour = 0; hour < 24; hour++) {
+        final daily = scheduledBackupOnCalendar(hour: hour);
+        expect(checkOnCalendar(daily), daily);
+        expect(checkOnCalendar(autoUpdateOnCalendar(weekly: false, hour: hour)),
+            daily);
+        for (var day = 1; day <= 7; day++) {
+          final weekly =
+              autoUpdateOnCalendar(weekly: true, hour: hour, weekday: day);
+          expect(checkOnCalendar(weekly), weekly);
+        }
+      }
+    });
+
+    test('refuses everything else', () {
+      for (final bad in [
+        '',
+        'x',
+        'daily',
+        '*-*-* 04:00',
+        '*-*-* 24:00:00',
+        '*-*-* 04:60:00',
+        'Sonntag *-*-* 04:00:00',
+        'Sun  *-*-* 04:00:00',
+        ' *-*-* 04:00:00',
+        '*-*-* 04:00:00 ',
+        '*-*-* 04:00:00\n',
+        '*-*-* 04:00:00\nTMR\nreboot',
+      ]) {
+        expect(() => checkOnCalendar(bad), throwsArgumentError, reason: bad);
+      }
+    });
+  });
+
+  // A started Persistent=true timer triggers at once when a run was due since
+  // the time in its stamp file. systemd itself is a stub here: what is proven
+  // is which steps the scripts take, in which order — not what systemd makes
+  // of them.
+  group('timer install and remove in bash', () {
+    late PiSandbox pi;
+
+    setUp(() {
+      pi = PiSandbox();
+      // Logs each call with whether a stamp file exists at that moment.
+      pi.stub('systemctl', r'''
+if ls "$R"/var/lib/systemd/timers/stamp-* >/dev/null 2>&1; then s=stamp; else s=no-stamp; fi
+echo "systemctl $* [$s]" >> "$S/calls"
+exit 0''', log: false);
+    });
+    tearDown(() => pi.dispose());
+
+    final timers = [
+      (
+        unit: autoUpdateUnit,
+        install: wrappers[autoUpdateUnit]!,
+        remove: buildAutoUpdateRemoveScript(),
+        installed: 'AUTOUPDATE_INSTALLED',
+        removed: 'AUTOUPDATE_REMOVED',
+      ),
+      (
+        unit: scheduledBackupUnit,
+        install: wrappers[scheduledBackupUnit]!,
+        remove: buildScheduledBackupRemoveScript(),
+        installed: 'BACKUP_TIMER_INSTALLED',
+        removed: 'BACKUP_TIMER_REMOVED',
+      ),
+      (
+        unit: alertsUnit,
+        install: wrappers[alertsUnit]!,
+        remove: buildAlertsRemoveScript(),
+        installed: 'ALERTS_INSTALLED',
+        removed: 'ALERTS_REMOVED',
+      ),
+    ];
+
+    for (final t in timers) {
+      final stamp = '/var/lib/systemd/timers/stamp-${t.unit}.timer';
+
+      test('${t.unit}: removing takes systemd\'s stamp along', () async {
+        expect((await pi.run(t.install)).code, 0);
+        pi.put(stamp, '');
+        pi.clearCalls();
+        final r = await pi.run(t.remove);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines.last, t.removed);
+        expect(pi.exists(stamp), isFalse);
+        expect(timerStampPath(t.unit), stamp);
+        expect(pi.calls, [
+          'systemctl disable --now ${t.unit}.timer [stamp]',
+          'systemctl daemon-reload [no-stamp]',
+        ]);
+      });
+    }
+
+    // An upgrade started the moment the user taps is the one harmful case.
+    test('$autoUpdateUnit: setting up drops the stamp, stops the timer and '
+        'notes the time — all before the reload', () async {
+      const stamp = '/var/lib/systemd/timers/stamp-$autoUpdateUnit.timer';
+      pi.put(stamp, '');
+      final before = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final r = await pi.run(wrappers[autoUpdateUnit]!);
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines.last, 'AUTOUPDATE_INSTALLED');
+      expect(pi.calls, [
+        'systemctl stop $autoUpdateUnit.timer [no-stamp]',
+        'systemctl daemon-reload [no-stamp]',
+        'systemctl enable --now $autoUpdateUnit.timer [no-stamp]',
+      ]);
+      // Not written back by the script either: its mtime means "last run".
+      expect(pi.exists(stamp), isFalse);
+      final noted = int.parse(pi.read(autoUpdateSetupPath).trim());
+      expect(noted, inInclusiveRange(before - 2, before + 120));
+    });
+
+    test('$autoUpdateUnit: a stamp that cannot be removed (read-only root) '
+        'ends the setup without the marker — and without stopping the timer',
+        () async {
+      pi.stub('rm', 'exit 1');
+      final r = await pi.run(wrappers[autoUpdateUnit]!);
+      expect(r.code, isNot(0));
+      expect(r.out, isNot(contains('AUTOUPDATE_INSTALLED')));
+      expect(pi.calls.where((c) => c.startsWith('systemctl ')), isEmpty);
+    });
+
+    // A health check or one more archive at once does no harm: these two
+    // timers are not stopped, and a stamp that is there stays.
+    for (final t in timers.where((t) => t.unit != autoUpdateUnit)) {
+      test('${t.unit}: setting up again leaves the running timer alone',
+          () async {
+        final stamp = '/var/lib/systemd/timers/stamp-${t.unit}.timer';
+        pi.put(stamp, '');
+        final r = await pi.run(t.install);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines.last, t.installed);
+        expect(pi.calls, [
+          'systemctl daemon-reload [stamp]',
+          'systemctl enable --now ${t.unit}.timer [stamp]',
+        ]);
+        expect(pi.exists(stamp), isTrue);
+      });
+    }
+  }, skip: needsBash);
 }

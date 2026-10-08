@@ -1726,7 +1726,7 @@ void main() {
           FakeSshRunner({installShellCommand: [_r('boom', exitCode: 1)]});
       await expectLater(
         _updaterWith(runner).enableAutoUpdate(
-            config: _config, onCalendar: 'x', onLog: (_) {}),
+            config: _config, onCalendar: '*-*-* 04:00:00', onLog: (_) {}),
         throwsA(isA<EvccUpdateException>()),
       );
     });

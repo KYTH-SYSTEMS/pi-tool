@@ -363,6 +363,8 @@ void main() {
           .run(buildAutoUpdateInstallScript(onCalendar: '*-*-* 04:00:00'));
       expect(r.code, 0, reason: r.err);
       expect(r.lines.last, 'AUTOUPDATE_INSTALLED');
+      // The wrapper ignores a start within five minutes of its setup.
+      pi.put('/var/lib/pi-tool/autoupdate.setup', '0\n');
       pi.clearCalls();
     });
     tearDown(() => pi.dispose());

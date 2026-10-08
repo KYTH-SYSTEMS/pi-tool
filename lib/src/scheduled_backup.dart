@@ -19,10 +19,13 @@ String scheduledBackupOnCalendar({required int hour}) =>
 
 /// Root script: installs the wrapper + service + timer and enables it. [keep] =
 /// how many backups per service to retain (older ones are pruned each run).
+/// [onCalendar] must be a schedule from [scheduledBackupOnCalendar]
+/// ([checkOnCalendar]).
 String buildScheduledBackupInstallScript({
   required String onCalendar,
   required int keep,
 }) {
+  checkOnCalendar(onCalendar);
   final drop = keep.clamp(1, 999) + 1; // `tail -n +drop` prunes from the drop-th
   return '''
 set -e
@@ -116,15 +119,17 @@ echo BACKUP_TIMER_INSTALLED
 ''';
 }
 
-/// Root script: removes the timer, service and wrapper again. `set -e`: a
-/// failing `rm` (read-only root) must end without the marker.
+/// Root script: removes the timer, service and wrapper again — and systemd's
+/// stamp of the timer ([timerStampPath]). `set -e`: a failing `rm` (read-only
+/// root) must end without the marker.
 String buildScheduledBackupRemoveScript() {
   return '''
 set -e
 systemctl disable --now $scheduledBackupUnit.timer 2>/dev/null || true
 rm -f /etc/systemd/system/$scheduledBackupUnit.timer \\
   /etc/systemd/system/$scheduledBackupUnit.service \\
-  /usr/local/lib/$scheduledBackupUnit.sh
+  /usr/local/lib/$scheduledBackupUnit.sh \\
+  ${timerStampPath(scheduledBackupUnit)}
 systemctl daemon-reload
 echo BACKUP_TIMER_REMOVED
 ''';
