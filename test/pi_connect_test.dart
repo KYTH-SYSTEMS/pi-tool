@@ -5,6 +5,8 @@ import 'package:evcc_updater/src/commands.dart' show shSingleQuote;
 import 'package:evcc_updater/src/services/pi_connect.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'on_pi_sandbox.dart';
+
 /// The shell for the real-bash group: `bash` on Linux/macOS (CI). On Windows
 /// `bash` may be the WSL launcher, so it only runs with an explicit Git Bash
 /// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
@@ -689,6 +691,80 @@ echo "rpi-connect $*" >> "$STUB/log"
       expect(r.out, contains('Hinweis: Linger für bob bleibt eingeschaltet'));
     });
   }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
+
+  // The sign-in command as the app sends it (login user, no sudo), on a
+  // sandboxed Pi. `rpi-connect signin` is a stub that prints the verify line
+  // into whatever the command redirected it to and notes the umask it got and
+  // the files in /tmp at that moment; `sleep` waits for that stub.
+  group('piConnectSigninCommand in bash', () {
+    late PiSandbox pi;
+    const url = 'https://connect.raspberrypi.com/verify/AB-12';
+
+    setUp(() {
+      pi = PiSandbox();
+      final realSleep = (Process.runSync(
+                  sandboxBash!, ['-c', 'command -v sleep'])
+              .stdout as String)
+          .trim();
+      pi.stub('id', 'echo 1000', log: false);
+      pi.stub('sh', r'exec /bin/sh "$@"', log: false);
+      pi.stub('setsid', r'exec "$@"', log: false);
+      pi.stub('rpi-connect', '''
+echo "Complete sign in by visiting $url"
+umask > "\$S/umask"
+for f in "\$R"/tmp/*; do
+  [ -e "\$f" ] && "\$REAL_STAT" -c '%a %n' "\$f"
+done > "\$S/tmpfiles"
+: > "\$S/signin-done"''');
+      pi.stub('sleep', '''
+i=0
+while [ ! -e "\$S/signin-done" ] && [ "\$i" -lt 50 ]; do
+  '$realSleep' 0.1
+  i=\$((i + 1))
+done''', log: false);
+    });
+    tearDown(() => pi.dispose());
+
+    /// /tmp is the sandbox's own, whatever the command names.
+    Future<SandboxRun> signin() => pi.run(
+        piConnectSigninCommand.replaceAll('/tmp/', '${pi.root}/tmp/'),
+        rebase: false);
+
+    test('prints the verify line, as the app reads it', () async {
+      final r = await signin();
+      expect(r.code, 0, reason: r.err);
+      expect(parseSigninUrl(r.out), url);
+      expect(pi.calls, ['rpi-connect signin']);
+    });
+
+    test('the output file is private, randomly named and gone afterwards',
+        () async {
+      final r = await signin();
+      expect(r.code, 0, reason: r.err);
+      // While rpi-connect ran: exactly one file, not the old fixed name …
+      final seen = pi.read('/state/tmpfiles').trim().split('\n');
+      expect(seen, hasLength(1));
+      expect(seen.single, isNot(contains('pi-tool-signin')));
+      expect(seen.single, matches(RegExp(r'^\d+ .+/tmp/tmp\.\w+$')));
+      // … created for the owner alone (mode bits are not real on Windows).
+      if (!Platform.isWindows) expect(seen.single, startsWith('600 '));
+      // Read once, then removed: nothing with the verify URL stays behind.
+      expect(pi.ls('/tmp'), isEmpty);
+    });
+
+    test('rpi-connect itself keeps the umask of the login', () async {
+      final login = (await pi.run('umask', rebase: false)).out.trim();
+      final r = await signin();
+      expect(r.code, 0, reason: r.err);
+      expect(pi.read('/state/umask').trim(), login);
+    });
+
+    test('is one sh -c argument without a fixed path', () {
+      expect(piConnectSigninCommand, isNot(contains('/tmp/')));
+      expect("'".allMatches(piConnectSigninCommand).length, 2);
+      expect(piConnectSigninCommand, endsWith("'"));
+    });
+  }, skip: needsBash);
 
   group('parseSigninUrl', () {
     test('extracts the verify URL from signin output', () {

@@ -29,9 +29,17 @@ const String piConnectSignoutCommand = '$_env rpi-connect signout 2>&1';
 /// `rpi-connect signin` prints the verify URL then keeps polling until you
 /// complete it in the browser. Run it DETACHED (setsid + &) so the SSH call
 /// doesn't hang, wait briefly for the URL, then print the log to read it out.
-const String piConnectSigninCommand =
-    "$_env sh -c 'setsid rpi-connect signin >/tmp/pi-tool-signin 2>&1 & "
-    "sleep 4; cat /tmp/pi-tool-signin 2>/dev/null'";
+///
+/// Whoever opens the verify URL links the Pi to their own Raspberry Pi ID, so
+/// the log is a private temp file (umask 077, mktemp — not a fixed name
+/// another account could read or occupy) and is removed once printed; the
+/// detached sign-in keeps its open descriptor. The umask is set for mktemp
+/// alone: rpi-connect runs with the one it always had. The app reads the URL
+/// from this command's output only. Holds no single quote (`sh -c '…'`).
+const String piConnectSigninCommand = "$_env sh -c '"
+    "f=\$(umask 077; mktemp) || exit 1; "
+    "setsid rpi-connect signin >\"\$f\" 2>&1 & "
+    "sleep 4; cat \"\$f\" 2>/dev/null; rm -f \"\$f\"'";
 
 /// Written by [piConnectInstallScript] only when it switched linger on itself
 /// (not Imager or the user); one user name per line. The full uninstall
