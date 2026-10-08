@@ -18,6 +18,9 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.71.0': [
+    'Bug fixes and security improvements.',
+  ],
   '0.70.0': [
     'Updates keep running on the Pi when the connection drops: the system '
         'update, the evcc update, package updates, "Repair package state" and '
@@ -332,6 +335,9 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.71.0': [
+    'Fehlerbehebungen und Sicherheitsverbesserungen.',
+  ],
   '0.70.0': [
     'Updates laufen auf dem Pi weiter, wenn die Verbindung abreißt: '
         'System-Update, evcc-Update, Paket-Updates, „Paketzustand reparieren" '
