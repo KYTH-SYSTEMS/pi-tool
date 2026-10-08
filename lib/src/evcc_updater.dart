@@ -1528,6 +1528,8 @@ class EvccUpdater {
   }
 
   /// Disconnects (`tailscale down`) or logs out (`tailscale logout`). Root.
+  /// Refused while the session itself runs over the tailnet — the same check
+  /// as in [uninstallService].
   Future<void> tailscaleSet({
     required SshConfig config,
     required bool logout,
@@ -1537,6 +1539,27 @@ class EvccUpdater {
         config: config,
         onLog: onLog,
         body: (runner, log) async {
+          // A logout would cut this very session off and take the Pi out of
+          // the tailnet. `tailscale down` is turned down by the CLI itself
+          // then ("aborted, no changes made") — that arrived as "Exit 1".
+          final what = logout ? 'Abmelden' : 'Trennen';
+          if (isTailnetHost(config.host)) {
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'Die Verbindung läuft über Tailscale und würde beim $what '
+                'abreißen – bitte über die Heimnetz-Adresse verbinden.');
+          }
+          // Also under a home address, through the shared home network. Read
+          // without sudo: its env_reset hides SSH_CONNECTION.
+          final probe = await runner.run(tailscaleSessionProbe);
+          if (isTailnetClient(probe.stdout.trim())) {
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'Die Verbindung zum Pi läuft über Tailscale (auch unter der '
+                'Heimnetz-Adresse, wenn der Pi das Heimnetz freigibt) und '
+                'würde beim $what abreißen – bitte im Heimnetz mit '
+                'ausgeschaltetem Tailscale auf dem Handy erneut versuchen.');
+          }
           log('\$ tailscale ${logout ? 'logout' : 'down'}');
           final r = await runner.run(
               logout ? tailscaleLogoutCommand : tailscaleDownCommand,

@@ -1928,6 +1928,62 @@ void main() {
             .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)),
       );
     });
+
+    // Over a tailnet session a logout cuts the session off and takes the Pi
+    // out of the tailnet; `tailscale down` is turned down by the CLI itself
+    // ("aborted, no changes made"), which used to arrive as a bare "Exit 1".
+    for (final (logout, what, command) in [
+      (true, 'Abmelden', tailscaleLogoutCommand),
+      (false, 'Trennen', tailscaleDownCommand),
+    ]) {
+      for (final host in ['100.64.0.5', 'evcc-pi.tail1234.ts.net']) {
+        test('tailscaleSet($what) über die Tailnet-Adresse $host → abgelehnt, '
+            'nichts läuft', () async {
+          final runner = FakeSshRunner({});
+          await expectLater(
+              _updaterWith(runner).tailscaleSet(
+                  config: SshConfig(
+                      host: host, port: 22, username: 'pi', password: 'sekret'),
+                  logout: logout,
+                  onLog: (_) {}),
+              _err(
+                  UpdateErrorKind.unknown,
+                  allOf(contains('über Tailscale'), contains('beim $what'),
+                      contains('Heimnetz-Adresse'))));
+          expect(runner.commandsRun, isEmpty);
+        });
+      }
+
+      test('tailscaleSet($what): Sitzung kommt über das Tailnet '
+          '(Subnet-Route) → abgelehnt', () async {
+        final runner = FakeSshRunner({
+          tailscaleSessionProbe: [_r('100.101.1.2 51234 192.168.178.64 22\n')],
+        });
+        await expectLater(
+            _updaterWith(runner)
+                .tailscaleSet(config: _config, logout: logout, onLog: (_) {}),
+            // Not "use the home address" — the session already uses it.
+            _err(
+                UpdateErrorKind.unknown,
+                allOf(contains('über Tailscale'), contains('beim $what'),
+                    contains('ausgeschaltetem Tailscale'))));
+        expect(runner.commandsRun, [tailscaleSessionProbe]);
+      });
+
+      test('tailscaleSet($what) aus dem Heimnetz läuft wie bisher', () async {
+        final runner = FakeSshRunner({
+          tailscaleSessionProbe: [
+            _r('192.168.178.20 51234 192.168.178.64 22\n')
+          ],
+          command: [_r('')],
+        });
+        await _updaterWith(runner)
+            .tailscaleSet(config: _config, logout: logout, onLog: (_) {});
+        expect(runner.commandsRun, [tailscaleSessionProbe, command]);
+        expect(runner.stdinByCommand[command], 'sekret\n');
+        expect(runner.stdinByCommand[tailscaleSessionProbe], isNull);
+      });
+    }
   });
 
   // After "Trennen" (`tailscale down`) the node keeps its network map, so
