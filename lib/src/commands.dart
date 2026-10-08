@@ -620,9 +620,20 @@ String buildRootStdin({
 }) =>
     sudoNeedsPassword ? '$password\n$script\n' : '$script\n';
 
+/// The apt options of an install that runs through the root shell, the same as
+/// in the apt service installs (apt_services.dart): wait for a held lock
+/// instead of failing, no pty noise, and keep changed conffiles without asking.
+const String _aptInstallOpts = '-o DPkg::Lock::Timeout=120 $aptNoPty '
+    '-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold';
+
 /// The root install script: official evcc apt-repo setup + package install +
 /// service enable. Mirrors https://docs.evcc.io/en/installation/linux.
 /// Runs as root (via [installShellCommand]), so it uses no inner `sudo`.
+///
+/// The script arrives on stdin (`bash -s`), so every apt-get gets its own
+/// </dev/null: dpkg's conffile question or a `read` in evcc's postinst (it
+/// asks about leftovers of a manual install) would otherwise take the next
+/// script line as the answer.
 ///
 /// [channel] selects the apt repo: 'stable' (default) or 'unstable' (nightly).
 String buildInstallScript({String channel = 'stable'}) {
@@ -631,13 +642,13 @@ String buildInstallScript({String channel = 'stable'}) {
 set -e
 export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C
-apt-get $aptNoPty install -y debian-keyring debian-archive-keyring apt-transport-https curl
+apt-get $_aptInstallOpts install -y debian-keyring debian-archive-keyring apt-transport-https curl </dev/null
 setup=\$(mktemp)
 curl -1sLf 'https://dl.evcc.io/public/evcc/$repo/setup.deb.sh' -o "\$setup"
 bash "\$setup"
 rm -f "\$setup"
-apt-get update
-apt-get $aptNoPty install -y evcc
+apt-get update </dev/null
+apt-get $_aptInstallOpts install -y evcc </dev/null
 systemctl enable --now evcc
 ''';
 }

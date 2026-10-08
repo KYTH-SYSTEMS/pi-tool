@@ -89,6 +89,37 @@ void main() {
     test('runs non-interactively (no apt prompts)', () {
       expect(script, contains('DEBIAN_FRONTEND=noninteractive'));
     });
+
+    // Same pattern as the apt service installs (apt_services.dart): wait for a
+    // held lock, keep changed conffiles without asking, and never let apt or a
+    // maintainer script read the rest of the script off stdin — evcc's postinst
+    // asks with `read` when it finds leftovers of a manual install.
+    test('both installs carry the apt options of the service installs', () {
+      const opts = 'apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 '
+          '-o Dpkg::Options::=--force-confdef '
+          '-o Dpkg::Options::=--force-confold install -y';
+      for (final s in [script, buildInstallScript(channel: 'unstable')]) {
+        final installs = s
+            .split('\n')
+            .where((l) => l.contains('apt-get') && l.contains(' install '))
+            .toList();
+        expect(installs, [
+          '$opts debian-keyring debian-archive-keyring apt-transport-https '
+              'curl </dev/null',
+          '$opts evcc </dev/null',
+        ]);
+      }
+    });
+
+    test('no apt call can read the script from stdin', () {
+      final apt = script.split('\n').where((l) => l.contains('apt-get'));
+      expect(apt, hasLength(3));
+      for (final line in apt) {
+        expect(line.trimRight(), endsWith('</dev/null'),
+            reason: '"$line" could swallow the script tail');
+      }
+      expect(script, isNot(matches(RegExp(r'exec\s*<\s*/dev/null'))));
+    });
   });
 
   group('buildBackupScript', () {

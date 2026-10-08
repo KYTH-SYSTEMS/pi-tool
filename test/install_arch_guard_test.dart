@@ -415,4 +415,56 @@ void main() {
       expectNothingWritten();
     });
   }, skip: _needsBash);
+
+  // The evcc install arrives on stdin like the others. Its apt calls must not
+  // read it: dpkg's conffile question, or the `read` evcc's postinst asks with
+  // when it finds leftovers of a manual install, would take the next script
+  // line as the answer.
+  group('evcc install in bash', () {
+    late _Pi pi;
+    const opts = 'apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 '
+        '-o Dpkg::Options::=--force-confdef '
+        '-o Dpkg::Options::=--force-confold install -y';
+
+    setUp(() {
+      pi = _Pi();
+      pi.stub('apt-get', 'exit 0', drainStdin: true);
+      pi.stub('mktemp', 'echo "${pi.state}/setup.sh"', log: false);
+      // `curl -1sLf <url> -o <file>` writes the repo's setup script; the
+      // `bash` stub stands in for running it.
+      pi.stub('curl', 'for a; do last=\$a; done; : > "\$last"');
+      pi.stub('bash', 'exit 0');
+      pi.stub('systemctl', 'exit 0');
+    });
+    tearDown(() => pi.dispose());
+
+    for (final channel in ['stable', 'unstable']) {
+      test('$channel: runs to its last line, every step in order', () async {
+        final r = await pi.run(buildInstallScript(channel: channel));
+        expect(r.code, 0, reason: '${r.out}\n${r.err}');
+        expect(pi.calls, [
+          '$opts debian-keyring debian-archive-keyring apt-transport-https '
+              'curl',
+          'curl -1sLf https://dl.evcc.io/public/evcc/$channel/setup.deb.sh '
+              '-o ${pi.state}/setup.sh',
+          'bash ${pi.state}/setup.sh',
+          'apt-get update',
+          '$opts evcc',
+          'systemctl enable --now evcc',
+        ]);
+        expect(File('${pi.state}/setup.sh').existsSync(), isFalse,
+            reason: 'the downloaded setup script is removed');
+      });
+    }
+
+    test('a failing install ends the script before the service is enabled',
+        () async {
+      pi.stub('apt-get', 'case " \$* " in *" evcc "*) exit 100 ;; esac',
+          drainStdin: true);
+      final r = await pi.run(buildInstallScript());
+      expect(r.code, 100, reason: '${r.out}\n${r.err}');
+      expect(pi.calls.last, '$opts evcc');
+      expect(pi.calls, isNot(contains('systemctl enable --now evcc')));
+    });
+  }, skip: _needsBash);
 }
