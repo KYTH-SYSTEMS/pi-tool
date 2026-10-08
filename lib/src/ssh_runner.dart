@@ -12,14 +12,17 @@ class SshConfig {
   final String username;
   final String password;
 
-  /// Bounds the TCP connect AND the SSH auth handshake.
+  /// Bounds the TCP connect AND the SSH auth handshake — and, for every
+  /// command, the wait until the Pi has confirmed the channel and the exec
+  /// request.
   final Duration timeout;
 
   /// Max time a command may produce NO output before it's considered stalled.
   /// This is an *inactivity* timeout, not a total cap: a big `apt-get
   /// full-upgrade` or `docker pull` streams progress for many minutes and must
   /// be allowed to finish, but a truly dropped/hung connection (no output at
-  /// all for this long) still aborts. Reset on every stdout/stderr chunk.
+  /// all for this long) still aborts. Reset on every stdout/stderr chunk and
+  /// on every piece of stdin the Pi takes (an upload prints nothing).
   final Duration commandTimeout;
 
   /// Optional PEM private key for SSH auth. When non-empty, the connection

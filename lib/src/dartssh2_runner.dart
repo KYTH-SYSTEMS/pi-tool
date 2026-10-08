@@ -269,17 +269,23 @@ class Dartssh2Runner implements SshRunner {
       errText.add(data);
     });
 
-    if (stdin != null) {
-      session.stdin.add(Uint8List.fromList(utf8.encode(stdin)));
-    }
-    // Not awaited on its own: close() completes once all of stdin is handed to
-    // the transport, and input beyond the peer's window only goes out as the
-    // Pi reads it — over a dead link, never. So it is waited for under the
+    // Not awaited on its own: stdin is out once all of it is handed to the
+    // transport, and input beyond the peer's window only goes out as the Pi
+    // reads it — over a dead link, never. So it is waited for under the
     // inactivity timeout below, together with the output. That limit and not
-    // the short connect timeout: an upload legitimately takes minutes. Once
-    // stdin is out the silence counts from there, as it always did.
-    final stdinSent =
-        session.stdin.close().whenComplete(() => lastActivity = DateTime.now());
+    // the short connect timeout: an upload legitimately takes minutes. And as
+    // inactivity, not as a cap on the transfer: stdin goes in pieces, dartssh2
+    // takes the next one only when the peer's window has room for it, and
+    // every piece taken counts like output. A slow upload that still moves
+    // runs on; one the Pi stopped taking goes quiet.
+    void active() => lastActivity = DateTime.now();
+    final stdinSent = (stdin == null
+            ? session.stdin.close()
+            : session.stdin
+                .addStream(
+                    inPieces(Uint8List.fromList(utf8.encode(stdin)), active))
+                .then((_) => session.stdin.close()))
+        .whenComplete(active);
 
     // Inactivity timeout, not a total cap: a multi-minute upgrade that keeps
     // streaming progress must run to completion, but a command that produces no
@@ -402,6 +408,22 @@ Future<T> withinOrDiscard<T>(
       unawaited(pending.then(discard).catchError((Object _) {}));
       throw TimeoutException('keine Antwort', limit);
     });
+
+/// [bytes] as a stream of pieces of at most [size], each made only when the
+/// listener is ready for the next one; [onPiece] runs for every piece made. A
+/// paused listener (dartssh2 waiting for room in the peer's window) stops it —
+/// so [onPiece] tells how far a transfer got, which one big chunk cannot.
+Stream<Uint8List> inPieces(
+  Uint8List bytes,
+  void Function() onPiece, {
+  int size = 32 * 1024,
+}) async* {
+  for (var at = 0; at < bytes.length; at += size) {
+    final end = at + size < bytes.length ? at + size : bytes.length;
+    onPiece();
+    yield Uint8List.sublistView(bytes, at, end);
+  }
+}
 
 /// Decodes UTF-8 that arrives in arbitrary byte chunks. A character whose bytes
 /// are split across two chunks is held back until it is complete; bytes that

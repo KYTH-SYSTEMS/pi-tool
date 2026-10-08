@@ -298,6 +298,53 @@ void main() {
     });
   });
 
+  // run() hands stdin to the channel with it, and counts every piece taken as
+  // activity: an upload that still moves must not hit the inactivity timeout.
+  group('inPieces (stdin handed over on demand)', () {
+    Uint8List bytes(int n) =>
+        Uint8List.fromList(List.generate(n, (i) => i % 251));
+
+    test('the pieces put together are the input, none larger than the size',
+        () async {
+      final input = bytes(70000);
+      final pieces = await inPieces(input, () {}, size: 32768).toList();
+      expect(pieces.map((p) => p.length), [32768, 32768, 4464]);
+      expect(pieces.expand((p) => p).toList(), input);
+    });
+
+    test('input that fits into one piece is one piece', () async {
+      final input = bytes(32768);
+      final pieces = await inPieces(input, () {}, size: 32768).toList();
+      expect(pieces, [input]);
+    });
+
+    test('no input: no piece', () async {
+      var made = 0;
+      expect(await inPieces(Uint8List(0), () => made++).toList(), isEmpty);
+      expect(made, 0);
+    });
+
+    test('a piece is made only when the listener takes one', () async {
+      var made = 0;
+      final taken = <Uint8List>[];
+      final done = Completer<void>();
+      late final StreamSubscription<Uint8List> sub;
+      sub = inPieces(bytes(40), () => made++, size: 4).listen((p) {
+        taken.add(p);
+        if (taken.length == 1) sub.pause(); // the window is full
+      }, onDone: done.complete);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // One piece handed over, at most one more waiting — not all ten.
+      expect(taken.length, 1);
+      expect(made, lessThanOrEqualTo(2));
+
+      sub.resume();
+      await done.future;
+      expect(taken.length, 10);
+      expect(made, 10);
+    });
+  });
+
   // dartssh2 closes stdout on CHANNEL_EOF; the exit status can arrive after
   // it. run() therefore waits for it (resolveExitCode) instead of reading a
   // premature null — null means "unknown" to every caller, never success.

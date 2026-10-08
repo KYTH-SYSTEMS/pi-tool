@@ -198,6 +198,20 @@ void _tests() {
       expect(r.exitCode, 0);
     });
 
+    test('a command that ends without taking its stdin returns its result',
+        () async {
+      // A rejected sudo password in front of an upload: more input than the
+      // channel window, and nobody reads it. The result must not wait for it.
+      final runner = await connected();
+      final watch = Stopwatch()..start();
+      final r = await runner.run('echo early; exit 3',
+          stdin: 'x' * (6 * 1024 * 1024));
+      await runner.close();
+      expect(r.stdout, 'early\n');
+      expect(r.exitCode, 3);
+      expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
+    });
+
     test('a large output arrives complete, and live chunks are whole lines',
         () async {
       final runner = await connected();
@@ -320,6 +334,25 @@ void _tests() {
       await runner.close();
     });
 
+    test('close() ends a run() whose stdin is still on its way', () async {
+      // The cancel path during an upload; the inactivity timeout (10 min) is
+      // not what ends it.
+      final runner = await connected();
+      final input = 'x' * (6 * 1024 * 1024);
+      final running = runner
+          .run('sleep 5', stdin: input)
+          .then<Object?>((r) => r, onError: (Object e) => e);
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      await runner.close();
+      final outcome = await running.timeout(const Duration(seconds: 3));
+      // A result without an exit status or an error: both say "unknown".
+      if (outcome is CommandResult) {
+        expect(outcome.exitCode, isNull);
+      } else {
+        expect(outcome, isNot(isA<TimeoutException>()));
+      }
+    });
+
     test('stdin that takes longer than the connect timeout is not cut off',
         () async {
       // An upload: the peer takes its time. The connect timeout must not be
@@ -332,5 +365,23 @@ void _tests() {
       expect(int.parse(r.stdout.trim()), input.length);
       expect(r.exitCode, 0);
     });
+
+    test('stdin the peer takes slowly is not cut off while it keeps moving',
+        () async {
+      // A slow upload: as a whole it takes longer than the inactivity timeout
+      // and prints nothing, but it never stands still for that long. The peer
+      // takes 1 MiB and pauses, sixteen times, then the rest at once.
+      final runner = await connected(
+          cfg: config(commandTimeout: const Duration(seconds: 4)));
+      const mib = 1024 * 1024;
+      final input = 'x' * (24 * mib);
+      final r = await runner.run(
+          'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do '
+          'head -c $mib >/dev/null; sleep 0.5; done; wc -c',
+          stdin: input);
+      await runner.close();
+      expect(int.parse(r.stdout.trim()), 8 * mib);
+      expect(r.exitCode, 0);
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 }
