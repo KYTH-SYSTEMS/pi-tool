@@ -75,6 +75,20 @@ void main() {
     });
   });
 
+  // The demo answers through the wrapper the real updater builds — so the test
+  // goes through the updater too, not through a hand-written command string.
+  test('terminal: the canned answers survive the console wrapper', () async {
+    final u = buildDemoUpdater();
+    Future<String> run(String cmd) =>
+        u.runConsoleCommand(config: _cfg, command: cmd, onLog: (_) {});
+    expect(await run('pwd'), '/home/pi\n');
+    expect(await run('whoami'), 'pi\n');
+    expect(await run('echo hallo # Kommentar'), 'hallo # Kommentar\n');
+    expect(await run('df -h'), contains('/dev/root'));
+    // Anything unknown (and every sudo command) gets the demo note.
+    expect(await run('sudo systemctl restart evcc'), contains('Demo-Modus'));
+  });
+
   test('demo security check yields real findings, not five unknowns', () {
     // Audit 2026-08-15: the probe fell through to the benign default, so the
     // sheet claimed "Keine Warnungen" above five "Konnte nicht ermittelt".

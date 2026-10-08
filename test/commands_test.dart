@@ -131,6 +131,34 @@ void main() {
     });
   });
 
+  group('parseInstallRefusal', () {
+    test('reads the reason from the refusal line', () {
+      expect(
+          parseInstallRefusal('some output\n'
+              '${installRefusedPrefix}InfluxDB 2 gibt es nur für 64 Bit.\n'),
+          'InfluxDB 2 gibt es nur für 64 Bit.');
+    });
+
+    test('null without a refusal line or without a reason', () {
+      expect(parseInstallRefusal('E: Unable to locate package influxdb2'),
+          isNull);
+      expect(parseInstallRefusal(installRefusedPrefix), isNull);
+      expect(parseInstallRefusal(''), isNull);
+    });
+
+    test('install and uninstall refusals do not read each other\'s line', () {
+      // INSTALL_REFUSED is a substring of UNINSTALL_REFUSED — the line start
+      // decides, not contains().
+      expect(parseInstallRefusal('${uninstallRefusedPrefix}x'), isNull);
+      expect(parseUninstallRefusal('${installRefusedPrefix}x'), isNull);
+      expect(parseUninstallRefusal('${uninstallRefusedPrefix}x'), 'x');
+    });
+
+    test('the prefix cannot be mistaken for a success marker', () {
+      expect(installRefusedPrefix, isNot(contains('INSTALL_OK')));
+    });
+  });
+
   group('apt without a pty', () {
     // apt hands dpkg a pty even with no terminal attached (Debian #860931), and
     // dpkg then repaints "(Reading database ... N%" ~20× per package. Over SSH

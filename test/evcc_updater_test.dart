@@ -79,6 +79,12 @@ const _config = SshConfig(
 CommandResult _r(String stdout, {String stderr = '', int? exitCode = 0}) =>
     CommandResult(exitCode: exitCode, stdout: stdout, stderr: stderr);
 
+/// A real bash for the console-wrapper tests: `bash` on Linux/macOS (CI). On
+/// Windows `bash` may be the WSL launcher, so they only run with an explicit
+/// Git Bash (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
+final String? _bash =
+    Platform.isWindows ? Platform.environment['PITOOL_TEST_BASH'] : 'bash';
+
 /// In-memory [SshRunner] that returns scripted output per command. A command
 /// listed with several results yields them in order on successive calls (the
 /// version query runs twice: before and after).
@@ -1161,6 +1167,25 @@ void main() {
             .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
       );
     });
+
+    test('a refusal of the install script is the message', () async {
+      // InfluxDB 2 on a system it has no package for: the script refuses
+      // before it writes the key and the source, and says why.
+      const reason = 'InfluxDB 2 gibt es nur für 64-Bit-Systeme (arm64/amd64) '
+          '– dieses System ist armhf.';
+      final influx = knownAptServices.firstWhere((s) => s.id == 'influxdb');
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('$installRefusedPrefix$reason\n', exitCode: 3)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .installAptService(config: _config, service: influx, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', reason)),
+      );
+    });
   });
 
   group('EvccUpdater service backup management', () {
@@ -2021,6 +2046,55 @@ void main() {
       expect(runner.commandsRun, contains(piConnectOnCommand));
       expect(runner.stdinByCommand[piConnectOnCommand], isNull);
     });
+
+    test('piConnectSet: a failing rpi-connect is not "aktiviert"', () async {
+      for (final (on, cmd) in [
+        (true, piConnectOnCommand),
+        (false, piConnectOffCommand),
+      ]) {
+        final runner = FakeSshRunner({
+          cmd: [_r('Failed to connect to bus: No medium found\n', exitCode: 1)],
+        });
+        await expectLater(
+          _updaterWith(runner)
+              .piConnectSet(config: _config, on: on, onLog: (_) {}),
+          throwsA(isA<EvccUpdateException>()
+              .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)
+              .having((e) => e.message, 'message',
+                  contains('rpi-connect ${on ? 'on' : 'off'}'))
+              .having((e) => e.message, 'message', contains('Exit 1'))),
+          reason: cmd,
+        );
+      }
+    });
+
+    test('piConnectSignout: a failing rpi-connect is not "abgemeldet"',
+        () async {
+      final runner = FakeSshRunner({
+        piConnectSignoutCommand: [_r('not signed in\n', exitCode: 1)],
+      });
+      await expectLater(
+        _updaterWith(runner).piConnectSignout(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having((e) => e.message, 'message',
+            contains('rpi-connect signout'))),
+      );
+    });
+
+    test('piConnectSet / piConnectSignout: no exit status is never a success',
+        () async {
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            piConnectOnCommand: [_r('', exitCode: null)],
+          })).piConnectSet(config: _config, on: true, onLog: (_) {}),
+          throwsA(isA<EvccUpdateException>().having(
+              (e) => e.message, 'message', contains('Ergebnis unbekannt'))));
+      await expectLater(
+          _updaterWith(FakeSshRunner({
+            piConnectSignoutCommand: [_r('', exitCode: null)],
+          })).piConnectSignout(config: _config, onLog: (_) {}),
+          throwsA(isA<EvccUpdateException>().having(
+              (e) => e.message, 'message', contains('Ergebnis unbekannt'))));
+    });
   });
 
   group('EvccUpdater.fetchServiceLogs', () {
@@ -2086,6 +2160,64 @@ void main() {
       expect(runner.commandsRun, contains(cmd));
     });
 
+    test('sendTestAlert: a failing curl is a failure with curl\'s reason',
+        () async {
+      // SSH works, the push does not (typo in the server, no DNS, HTTP error):
+      // "sent" would send the user looking for the fault in ntfy.
+      final cmd = buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42');
+      final runner = FakeSshRunner({
+        cmd: [
+          _r('',
+              stderr: 'curl: (22) The requested URL returned error: 404\n',
+              exitCode: 22)
+        ],
+      });
+      final log = <String>[];
+      await expectLater(
+        _updaterWith(runner).sendTestAlert(
+            config: _config,
+            ntfyServer: 'https://ntfy.sh',
+            ntfyTopic: 'my-pi-42',
+            onLog: log.add),
+        throwsA(isA<EvccUpdateException>().having((e) => e.message, 'message',
+            contains('curl: (22) The requested URL returned error: 404'))),
+      );
+      // The snackbar points at the log — so the reason has to be in there.
+      expect(log.join('\n'), contains('curl: (22)'));
+    });
+
+    test('sendTestAlert: no exit status is never "sent"', () async {
+      final cmd = buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42');
+      final runner = FakeSshRunner({cmd: [_r('', exitCode: null)]});
+      await expectLater(
+        _updaterWith(runner).sendTestAlert(
+            config: _config,
+            ntfyServer: 'https://ntfy.sh',
+            ntfyTopic: 'my-pi-42',
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.message, 'message', contains('Ergebnis unbekannt'))),
+      );
+    });
+
+    test('sendTestAlert: ntfy\'s answer (it names the topic) stays out of the '
+        'log', () async {
+      final cmd = buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42');
+      final runner = FakeSshRunner({
+        cmd: [_r('{"id":"x","event":"message","topic":"my-pi-42"}\n')],
+      });
+      final log = <String>[];
+      await _updaterWith(runner).sendTestAlert(
+          config: _config,
+          ntfyServer: 'https://ntfy.sh',
+          ntfyTopic: 'my-pi-42',
+          onLog: log.add);
+      expect(log.join('\n'), isNot(contains('my-pi-42')));
+    });
+
     test('readAlertsStatus parses the timer state', () async {
       final runner = FakeSshRunner({
         alertsStatusCommand: [_r('ENABLED enabled\nLAST 2026-07-07 12:00 checked\n')]
@@ -2098,8 +2230,10 @@ void main() {
   });
 
   group('EvccUpdater.runConsoleCommand', () {
-    // The exec is wrapped to cap output: `{ <cmd> ; } 2>&1 | head -c 262144`.
-    String capped(String inner) => '{ $inner ; } 2>&1 | head -c 262144';
+    // The exec is wrapped to cap output: `{ <cmd>⏎} 2>&1 | head -c 262144` —
+    // a line break before the brace, so a comment or a trailing `&`/`;` in
+    // the command cannot swallow or break it.
+    String capped(String inner) => '{ $inner\n} 2>&1 | head -c 262144';
 
     test('runs a plain command, echoes it and streams the output', () async {
       final runner = FakeSshRunner({
@@ -2122,6 +2256,49 @@ void main() {
       expect(runner.stdinByCommand[exec], startsWith('sekret\n'));
     });
 
+    test('passwordless sudo: the password is NOT piped', () async {
+      // sudo reads the line only when it asks. On a NOPASSWD Pi it would reach
+      // the program instead: `sudo tee <file>` writes it into the file,
+      // `sudo bash` runs it as a root command line.
+      final exec = capped("sudo -S -p '' tee /etc/motd");
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('')], // exit 0 → sudo asks nothing
+        exec: [_r('')],
+      });
+      await _updaterWith(runner).runConsoleCommand(
+          config: _config, command: 'sudo tee /etc/motd', onLog: (_) {});
+      expect(runner.commandsRun, contains(exec));
+      expect(runner.stdinByCommand[exec], isNull);
+      expect(
+          runner.stdinByCommand.values
+              .any((s) => s != null && s.contains(_config.password)),
+          isFalse);
+    });
+
+    test('a plain command does not ask sudo anything', () async {
+      final runner = FakeSshRunner({capped('uptime'): [_r('up 3 days\n')]});
+      await _updaterWith(runner)
+          .runConsoleCommand(config: _config, command: 'uptime', onLog: (_) {});
+      expect(runner.commandsRun, [capped('uptime')]);
+      expect(runner.stdinByCommand[capped('uptime')], isNull);
+    });
+
+    test('sudo probe without an answer: the command does not run', () async {
+      final exec = capped("sudo -S -p '' systemctl restart evcc");
+      final runner = FakeSshRunner({
+        sudoNoPasswordProbe: [_r('', exitCode: null)],
+      });
+      await expectLater(
+        _updaterWith(runner).runConsoleCommand(
+            config: _config,
+            command: 'sudo systemctl restart evcc',
+            onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>().having(
+            (e) => e.message, 'message', contains('Ergebnis unbekannt'))),
+      );
+      expect(runner.commandsRun, isNot(contains(exec)));
+    });
+
     test('a rejected sudo password surfaces as a sudo error', () async {
       final exec = capped("sudo -S -p '' apt-get update");
       final runner = FakeSshRunner({
@@ -2134,6 +2311,57 @@ void main() {
             .having((e) => e.kind, 'kind', UpdateErrorKind.sudo)),
       );
     });
+
+    // The wrapper the updater really sends, parsed and run by a real bash.
+    group('wrapper in bash', () {
+      Future<String> wrapperFor(String command) async {
+        final runner = FakeSshRunner({});
+        await _updaterWith(runner).runConsoleCommand(
+            config: _config, command: command, onLog: (_) {});
+        return runner.commandsRun.single;
+      }
+
+      for (final command in [
+        'echo hi',
+        'echo hi # ein Kommentar',
+        'true &',
+        'echo hi;',
+        'echo a; echo b # zwei Befehle',
+      ]) {
+        test('"$command" is valid shell', () async {
+          final r = Process.runSync(
+              _bash!, ['-n', '-c', await wrapperFor(command)]);
+          expect(r.exitCode, 0, reason: '${r.stderr}');
+        });
+      }
+
+      test('a comment does not swallow the closing brace or the cap', () async {
+        final r = Process.runSync(
+            _bash!, ['-c', await wrapperFor('echo hi # ein Kommentar')]);
+        expect(r.exitCode, 0, reason: '${r.stderr}');
+        expect((r.stdout as String).trim(), 'hi');
+      });
+
+      test('a trailing ; or & still runs the command', () async {
+        var r = Process.runSync(_bash!, ['-c', await wrapperFor('echo hi;')]);
+        expect(r.exitCode, 0, reason: '${r.stderr}');
+        expect((r.stdout as String).trim(), 'hi');
+        r = Process.runSync(_bash!, ['-c', await wrapperFor('echo hi &')]);
+        expect(r.exitCode, 0, reason: '${r.stderr}');
+        expect((r.stdout as String).trim(), 'hi');
+      });
+
+      test('stderr is merged and the output stays capped', () async {
+        var r = Process.runSync(
+            _bash!, ['-c', await wrapperFor('echo out; echo err >&2')]);
+        expect((r.stdout as String).split('\n').map((l) => l.trim()),
+            containsAll(['out', 'err']));
+        expect(r.stderr, isEmpty);
+        r = Process.runSync(
+            _bash!, ['-c', await wrapperFor('yes | head -c 300000')]);
+        expect((r.stdout as String).length, 262144);
+      });
+    }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
   });
 
   group('EvccUpdater.reboot', () {
@@ -3180,6 +3408,26 @@ void main() {
       expectRepairFirst(runner, installShellCommand);
     });
 
+    // Both installers run `apt-get update` themselves (Pi-hole's discards
+    // apt's message), so a dead source would fail them without a cause.
+    test('the Pi-hole install repairs first', () async {
+      final runner = FakeSshRunner({installShellCommand: [_r('INSTALL_OK\n')]});
+      await _updaterWith(runner).installPihole(config: _config, onLog: (_) {});
+      expectRepairFirst(runner, installShellCommand);
+    });
+
+    test('the Home Assistant install repairs first', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [_r('Home Assistant gestartet.')],
+        dockerListRunningCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+      });
+      await _updaterWith(runner)
+          .installHomeAssistant(config: _config, onLog: (_) {});
+      expectRepairFirst(runner, installShellCommand);
+    });
+
     test('a rejected sudo password during the repair is a sudo error',
         () async {
       final runner = FakeSshRunner({
@@ -3757,6 +4005,27 @@ void main() {
         throwsA(isA<EvccUpdateException>().having((e) => e.message, 'message',
             contains('Home-Assistant-Installation'))),
       );
+    });
+
+    test('installHomeAssistant: a refusal of the script is the message',
+        () async {
+      // E.g. a 32-bit system: the script refuses before Docker is installed
+      // and says why — not "Exit 3, Details im Log".
+      const reason = 'Home Assistant gibt es als Container nur noch für '
+          '64-Bit-Systeme (arm64/amd64) – dieses System ist armhf.';
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('$installRefusedPrefix$reason\n', exitCode: 3)
+        ],
+      });
+      await expectLater(
+        _updaterWith(runner)
+            .installHomeAssistant(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.message, 'message', reason)),
+      );
+      // Refused = nothing started: no point in looking for the container.
+      expect(runner.commandsRun, isNot(contains(dockerListRunningCommand)));
     });
 
     test('installHomeAssistant fails when the container is not running after',

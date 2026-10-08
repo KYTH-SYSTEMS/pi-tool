@@ -1,7 +1,22 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:evcc_updater/src/alerts.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// The shell for the real-bash group: `bash` on Linux/macOS (CI). On Windows
+/// `bash` may be the WSL launcher, so it only runs with an explicit Git Bash
+/// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
+final String? _bash =
+    Platform.isWindows ? Platform.environment['PITOOL_TEST_BASH'] : 'bash';
+
+/// A path the sandbox bash understands (Git Bash wants /c/... on Windows).
+String _posix(String p) {
+  final s = p.replaceAll(r'\', '/');
+  final m = RegExp(r'^([A-Za-z]):/').firstMatch(s);
+  return m == null ? s : '/${m.group(1)!.toLowerCase()}/${s.substring(3)}';
+}
 
 void main() {
   group('buildAlertsInstallScript', () {
@@ -76,7 +91,99 @@ void main() {
       expect(c, contains(r"'\''"));
       expect(c, isNot(contains("/a';reboot")));
     });
+    test('fails on an HTTP error and names the reason, within a time limit',
+        () {
+      final c = buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42');
+      // -f: HTTP >= 400 is an exit code, not a silent success. -sS: no
+      // progress meter, but the error text. --max-time: a dead server cannot
+      // hang the action.
+      expect(c, startsWith('curl -fsS --max-time 15 '));
+    });
+    test('strips whitespace like the install script does', () {
+      // A pasted server with a trailing blank or a topic with a line break
+      // must test the destination the timer will really use.
+      final c = buildTestAlertCommand(
+          ntfyServer: ' https://ntfy.sh \n', ntfyTopic: ' my-pi\t-42\n');
+      expect(c, endsWith(" 'https://ntfy.sh/my-pi-42'"));
+      final s = buildAlertsInstallScript(
+          ntfyServer: ' https://ntfy.sh \n', ntfyTopic: ' my-pi\t-42\n');
+      expect(s, contains("URL='https://ntfy.sh'"));
+      expect(s, contains("TOPIC='my-pi-42'"));
+    });
   });
+
+  // The real command in a real bash; `curl` is a stub that records its
+  // arguments one per line. PATH is the stub directory alone (set inside the
+  // shell — Git Bash's launcher prepends its own, with a real curl), so
+  // nothing leaves the machine.
+  group('buildTestAlertCommand in bash', () {
+    late Directory tmp;
+    late String root; // posix form of tmp
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('ntfytest');
+      root = _posix(tmp.path);
+      Directory('${tmp.path}/bin').createSync();
+      File('${tmp.path}/bin/curl').writeAsStringSync('#!/bin/sh\n'
+          'for a; do printf \'%s\\n\' "\$a"; done > "\$STUB/args"\n'
+          'if [ -f "\$STUB/fail" ]; then\n'
+          '  echo "curl: (22) The requested URL returned error: 404" >&2\n'
+          '  exit 22\n'
+          'fi\n');
+      File('${tmp.path}/bin/reboot')
+          .writeAsStringSync('#!/bin/sh\n: > "\$STUB/rebooted"\n');
+      if (!Platform.isWindows) {
+        Process.runSync(
+            'chmod', ['+x', '${tmp.path}/bin/curl', '${tmp.path}/bin/reboot']);
+      }
+    });
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    Future<({int code, String err})> run(String command) async {
+      final p = await Process.start(_bash!, ['-s']);
+      final err = p.stderr.transform(utf8.decoder).join();
+      final out = p.stdout.drain<void>();
+      p.stdin.add(utf8
+          .encode("export PATH='$root/bin' STUB='$root'\n$command\n"));
+      await p.stdin.close();
+      final code = await p.exitCode;
+      await out;
+      return (code: code, err: await err);
+    }
+
+    List<String> args() => File('${tmp.path}/args').readAsLinesSync();
+
+    test('curl gets the flags, the title, the message and ONE url argument',
+        () async {
+      final r = await run(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
+      expect(r.code, 0, reason: r.err);
+      final a = args();
+      expect(a.sublist(0, 5),
+          ['-fsS', '--max-time', '15', '-H', 'Title: Pi-Tool']);
+      expect(a[5], '-d');
+      expect(a[6], startsWith('Test-Benachrichtigung'));
+      expect(a.last, 'https://ntfy.sh/my-pi-42');
+      expect(a, hasLength(8));
+    });
+
+    test('a hostile topic stays one argument and runs nothing', () async {
+      final r = await run(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: "a';reboot;'"));
+      expect(r.code, 0, reason: r.err);
+      expect(args().last, "https://ntfy.sh/a';reboot;'");
+      expect(File('${tmp.path}/rebooted').existsSync(), isFalse);
+    });
+
+    test('curl\'s exit code and reason come through', () async {
+      File('${tmp.path}/fail').writeAsStringSync('');
+      final r = await run(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
+      expect(r.code, 22);
+      expect(r.err, contains('curl: (22)'));
+    });
+  }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
 
   group('parseAlertsStatus', () {
     test('reads enabled state + last check', () {

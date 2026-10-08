@@ -251,8 +251,9 @@ final String _sampleFileB64 = '${base64.encode(_sampleFileBytes)}\n';
 /// feels alive; anything else gets a friendly demo note.
 String _terminalResponse(String wrapped) {
   var inner = wrapped;
+  // `{ <cmd>⏎} 2>&1 | head -c 262144` — see EvccUpdater.runConsoleCommand.
   final s = inner.indexOf('{ ');
-  final e = inner.indexOf(' ; }');
+  final e = inner.lastIndexOf('\n}');
   if (s >= 0 && e > s) inner = inner.substring(s + 2, e).trim();
   inner = inner.replaceFirst(RegExp(r"^sudo -S -p '' "), 'sudo ');
   final first = inner.split(RegExp(r'\s+')).first;

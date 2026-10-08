@@ -1501,7 +1501,8 @@ class EvccUpdater {
         },
       );
 
-  /// Turns Pi Connect on / off (user service, no sudo).
+  /// Turns Pi Connect on / off (user service, no sudo). Throws when
+  /// `rpi-connect` fails or the channel ends without an exit status.
   Future<void> piConnectSet({
     required SshConfig config,
     required bool on,
@@ -1518,6 +1519,16 @@ class EvccUpdater {
                 final t = c.trimRight();
                 if (t.isNotEmpty) log(t);
               });
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          if (r.exitCode != 0) {
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'rpi-connect ${on ? 'on' : 'off'} fehlgeschlagen '
+                '(Exit ${r.exitCode}). Details im Log.');
+          }
           final out = '${r.stdout}${r.stderr}'.trim();
           log(out.isEmpty
               ? 'Fertig (Fernzugriff ${on ? 'aktiviert' : 'pausiert'}).'
@@ -1525,7 +1536,8 @@ class EvccUpdater {
         },
       );
 
-  /// Signs the Pi out of Pi Connect (user service, no sudo).
+  /// Signs the Pi out of Pi Connect (user service, no sudo). Throws like
+  /// [piConnectSet].
   Future<void> piConnectSignout({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -1539,6 +1551,16 @@ class EvccUpdater {
             final t = c.trimRight();
             if (t.isNotEmpty) log(t);
           });
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          if (r.exitCode != 0) {
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'rpi-connect signout fehlgeschlagen (Exit ${r.exitCode}). '
+                'Details im Log.');
+          }
           final out = '${r.stdout}${r.stderr}'.trim();
           if (out.isNotEmpty) log(out);
         },
@@ -1819,7 +1841,10 @@ class EvccUpdater {
         },
       );
 
-  /// Sends a one-off test push to verify the ntfy destination. No sudo.
+  /// Sends a one-off test push to verify the ntfy destination. No sudo. Throws
+  /// when curl fails (no network/DNS on the Pi, a typo in the server, an HTTP
+  /// error from ntfy, curl missing) — a working SSH connection alone is not a
+  /// delivered push.
   Future<void> sendTestAlert({
     required SshConfig config,
     required String ntfyServer,
@@ -1831,8 +1856,26 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('Sende Test-Benachrichtigung …');
-          await runner.run(buildTestAlertCommand(
+          // No onOutput: on success curl prints ntfy's answer, which names the
+          // topic — and the topic is the password (see alerts.dart).
+          final r = await runner.run(buildTestAlertCommand(
               ntfyServer: ntfyServer, ntfyTopic: ntfyTopic));
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          if (r.exitCode != 0) {
+            // curl -sS names the reason on stderr ("curl: (22) The requested
+            // URL returned error: 404"); the caller's hint points at the log.
+            final reason = r.stderr.trim();
+            if (reason.isNotEmpty) log(reason);
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                reason.isNotEmpty
+                    ? 'Test-Benachrichtigung fehlgeschlagen: $reason'
+                    : 'Test-Benachrichtigung fehlgeschlagen '
+                        '(Exit ${r.exitCode}).');
+          }
         },
       );
 
@@ -1947,6 +1990,9 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('Installiere Pi-hole … (unbeaufsichtigt, dauert ein paar Minuten)');
+          // Pi-hole's installer runs `apt-get update` itself and discards the
+          // output — a dead EOL source would fail it without naming a cause.
+          await _fixEolSources(runner, log, config);
           final pw = _webPassword();
           // Marker: the multi-step installer runs under `set -e`, so INSTALL_OK
           // is only reached if every step succeeded (a half-run install, incl.
@@ -1963,6 +2009,8 @@ class EvccUpdater {
 
   /// Installs Home Assistant as a Docker container, unattended (installs Docker
   /// first if missing). Experimental — see buildHomeAssistantInstallScript.
+  /// On a system Home Assistant has no container for (32-bit) the script
+  /// refuses before it changes anything; its reason is the error message.
   Future<void> installHomeAssistant({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -1972,6 +2020,8 @@ class EvccUpdater {
         onLog: onLog,
         body: (runner, log) async {
           log('Installiere Home Assistant (Docker) … (dauert ein paar Minuten)');
+          // The Docker convenience script installs through apt.
+          await _fixEolSources(runner, log, config);
           await _runRootScript(runner, log, config,
               sudo: true,
               script: buildHomeAssistantInstallScript(),
@@ -2358,6 +2408,12 @@ class EvccUpdater {
       throw const EvccUpdateException(UpdateErrorKind.unknown, _resultUnknown);
     }
     if (result.exitCode != 0) {
+      // An install script that refused changed nothing and says why — that
+      // reason is the message, not a pointer to the log.
+      final refusal = parseInstallRefusal(combined);
+      if (refusal != null) {
+        throw EvccUpdateException(UpdateErrorKind.unknown, refusal);
+      }
       throw EvccUpdateException(
         UpdateErrorKind.unknown,
         '$failMsg (Exit ${result.exitCode}). Details im Log.',
@@ -2395,9 +2451,10 @@ class EvccUpdater {
     final ok = combined.contains(successMarker) &&
         !(result.exitCode != null && result.exitCode != 0);
     if (!ok) {
-      // An uninstall script that refused changed nothing and says why — that
-      // reason is the message, not a pointer to the log.
-      final refusal = parseUninstallRefusal(combined);
+      // An uninstall (or install) script that refused changed nothing and says
+      // why — that reason is the message, not a pointer to the log.
+      final refusal =
+          parseUninstallRefusal(combined) ?? parseInstallRefusal(combined);
       if (refusal != null) {
         throw EvccUpdateException(UpdateErrorKind.unknown, refusal);
       }
@@ -2598,9 +2655,10 @@ class EvccUpdater {
   /// success. A rejected sudo password (no disconnect) is reported.
   /// Runs a free-form console command on the Pi in a one-off SSH session and
   /// returns its combined stdout+stderr. A `sudo …` command gets the Pi password
-  /// piped in (see [buildConsoleExec]); everything else runs verbatim. Output is
-  /// streamed to [onLog] line by line (password-redacted). The user is
-  /// responsible for what they run — this is a raw shell, not a guarded action.
+  /// piped in (see [buildConsoleExec]) — when sudo asks for one; everything
+  /// else runs verbatim. Output is streamed to [onLog] line by line
+  /// (password-redacted). The user is responsible for what they run — this is
+  /// a raw shell, not a guarded action.
   Future<String> runConsoleCommand({
     required SshConfig config,
     required String command,
@@ -2612,13 +2670,19 @@ class EvccUpdater {
         body: (runner, log) async {
           log('\$ $command');
           final prep = buildConsoleExec(command);
+          // The password goes in only when sudo will read it. On a NOPASSWD
+          // Pi the line would reach the program instead: `sudo bash` runs it
+          // as a root command line, `sudo tee <file>` writes it into the file.
+          final pipePassword = prep.sudo && await _sudoNeedsPassword(runner);
           // Cap output server-side so a high-volume command (or a runaway like
           // `cat /dev/urandom`) can't exhaust memory — head closing the pipe
-          // also stops the producer.
-          final exec = '{ ${prep.exec} ; } 2>&1 | head -c 262144';
+          // also stops the producer. The brace closes on its own line: after
+          // ` ; }` a comment in the command would swallow it, and a trailing
+          // `&` or `;` would be a syntax error.
+          final exec = '{ ${prep.exec}\n} 2>&1 | head -c 262144';
           final result = await runner.run(
             exec,
-            stdin: prep.sudo ? '${config.password}\n' : null,
+            stdin: pipePassword ? '${config.password}\n' : null,
             onOutput: (chunk) {
               final t = chunk.trimRight();
               if (t.isNotEmpty) log(t);

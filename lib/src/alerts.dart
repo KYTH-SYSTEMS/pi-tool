@@ -163,13 +163,20 @@ echo ALERTS_REMOVED
 }
 
 /// One-off command that sends a test push, to verify the ntfy destination.
+/// `-f` turns an HTTP error into an exit code and `-sS` keeps curl's reason on
+/// stderr, so the caller can tell a delivered push from a failed one;
+/// `--max-time` keeps an unreachable server from hanging the action.
+/// Whitespace is stripped like in [buildAlertsInstallScript], so the test hits
+/// the destination the timer will use.
 String buildTestAlertCommand({
   required String ntfyServer,
   required String ntfyTopic,
 }) {
-  final url = shSingleQuote('$ntfyServer/$ntfyTopic');
+  final server = ntfyServer.replaceAll(RegExp(r'\s'), '');
+  final topic = ntfyTopic.replaceAll(RegExp(r'\s'), '');
+  final url = shSingleQuote('$server/$topic');
   final msg = shSingleQuote('Test-Benachrichtigung ✓ von Pi-Tool');
-  return "curl -s -H 'Title: Pi-Tool' -d $msg $url";
+  return "curl -fsS --max-time 15 -H 'Title: Pi-Tool' -d $msg $url";
 }
 
 /// No-sudo status command parsed by [parseAlertsStatus].

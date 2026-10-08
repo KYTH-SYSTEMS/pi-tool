@@ -235,10 +235,27 @@ systemctl enable --now grafana-server
 // by fingerprint before it is trusted (raw string so the grep's `\\+` survives).
 // UCF_FORCE_CONFFOLD: influxdata-archive-keyring manages influxdata.list via
 // ucf, which would otherwise ask about the list this script already wrote.
+//
+// 64-bit only: InfluxData's repo carries influxdb2 for arm64 and amd64, not
+// for armhf. The guard runs before the key and the source are written and
+// prints one `INSTALL_REFUSED: <Grund>` line (exit 3, see installRefusedPrefix
+// in commands.dart). It asks for the 64-bit architecture the running kernel
+// executes (`uname -m`) and accepts it as dpkg's own OR as a foreign one: the
+// 32-bit Raspberry Pi OS images register arm64 as foreign since Bookworm, so
+// apt can take influxdb2:arm64 there (it only depends on curl, and influxd is
+// a static binary) — refusing every armhf system would break that. Refused is
+// only what cannot work: a 32-bit kernel, or a system whose dpkg knows no
+// 64-bit architecture. An unreadable dpkg architecture is not refused.
 const String _influxdbInstall = r'''
 set -e
 export DEBIAN_FRONTEND=noninteractive
 export UCF_FORCE_CONFFOLD=1
+arch=$(dpkg --print-architecture 2>/dev/null </dev/null || true)
+case "$(uname -m)" in aarch64) need=arm64 ;; x86_64) need=amd64 ;; *) need=none ;; esac
+if [ -n "$arch" ] && [ "$arch" != "$need" ] && ! dpkg --print-foreign-architectures 2>/dev/null </dev/null | grep -qx "$need"; then
+  echo "INSTALL_REFUSED: InfluxDB 2 gibt es nur für 64-Bit-Systeme (arm64/amd64) – dieses System ist $arch. Nichts installiert; nötig wäre ein 64-Bit-Raspberry-Pi-OS."
+  exit 3
+fi
 apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y wget gnupg </dev/null
 mkdir -p /etc/apt/keyrings
 wget -q -O /tmp/influxdata-archive.key https://repos.influxdata.com/influxdata-archive.key

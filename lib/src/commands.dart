@@ -602,11 +602,25 @@ systemctl enable --now evcc
 const String uninstallRefusedPrefix = 'UNINSTALL_REFUSED: ';
 
 /// The reason from an uninstall script's refusal line, or null.
-String? parseUninstallRefusal(String out) {
+String? parseUninstallRefusal(String out) =>
+    _refusalReason(out, uninstallRefusedPrefix);
+
+/// Prefix of the one line an install script prints when it refuses before
+/// changing anything (exit 3), followed by the German reason — e.g. a service
+/// that has no build for this system's architecture.
+const String installRefusedPrefix = 'INSTALL_REFUSED: ';
+
+/// The reason from an install script's refusal line, or null.
+String? parseInstallRefusal(String out) =>
+    _refusalReason(out, installRefusedPrefix);
+
+/// The text after [prefix] on the first line that STARTS with it — the install
+/// prefix is a substring of the uninstall one, so `contains` would mix them up.
+String? _refusalReason(String out, String prefix) {
   for (final line in out.split('\n')) {
     final t = line.trim();
-    if (t.startsWith(uninstallRefusedPrefix)) {
-      final reason = t.substring(uninstallRefusedPrefix.length).trim();
+    if (t.startsWith(prefix)) {
+      final reason = t.substring(prefix.length).trim();
       return reason.isEmpty ? null : reason;
     }
   }

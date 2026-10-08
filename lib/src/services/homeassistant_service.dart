@@ -201,10 +201,28 @@ HomeAssistantContainer? parseHomeAssistant(String dockerPs) {
 /// (host network, privileged for hardware, config bind mount, dbus). Idempotent:
 /// a pre-existing `homeassistant` container is left untouched. Experimental —
 /// the user finishes onboarding in the browser on port 8123.
+///
+/// 64-bit only: Home Assistant publishes its container for arm64 and amd64
+/// (32-bit builds ended with 2025.12), and Docker pulls for the architecture of
+/// the installed system — a 64-bit kernel under a 32-bit Raspberry Pi OS does
+/// not help. On any other dpkg architecture `docker run` could only fail, after
+/// Docker was installed for nothing; so the script refuses first, with one
+/// `INSTALL_REFUSED: <Grund>` line and exit 3 (see `installRefusedPrefix`).
+/// Not refused: an unknown architecture (no dpkg), and a system that already
+/// has a `homeassistant` container — that one is started as before.
 String buildHomeAssistantInstallScript() {
   return r'''
 set -e
 export DEBIAN_FRONTEND=noninteractive
+arch=$(dpkg --print-architecture 2>/dev/null </dev/null || true)
+case "$arch" in
+  ''|arm64|amd64) ;;
+  *)
+    if ! docker ps -a --format '{{.Names}}' 2>/dev/null </dev/null | grep -qx homeassistant; then
+      echo "INSTALL_REFUSED: Home Assistant gibt es als Container nur noch für 64-Bit-Systeme (arm64/amd64) – dieses System ist $arch. Nichts installiert; nötig wäre ein 64-Bit-Raspberry-Pi-OS."
+      exit 3
+    fi ;;
+esac
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker nicht gefunden - installiere Docker (get.docker.com) ..."
   setup=$(mktemp)
