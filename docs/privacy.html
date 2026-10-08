@@ -138,6 +138,18 @@
       Alerts jederzeit im selben Dialog abschalten — Timer und Skript werden dann vom Pi entfernt.</li>
   </ul>
 
+  <h2>Bewertungs-Anfrage über Google Play</h2>
+  <p>Hast du Pi-Tool über Google Play installiert, kann die App Google Play bitten, dessen
+  Bewertungsdialog anzuzeigen — nach einer gelungenen Aktion, frühestens nach einigen Tagen Nutzung und
+  insgesamt nur wenige Male. Der Dialog stammt von Google Play; ob er erscheint, entscheidet Google.
+  Pi-Tool erfährt weder, ob er gezeigt wurde, noch ob oder wie du bewertet hast, und <strong>überträgt
+  dabei selbst keine Daten</strong>. Dafür ist Googles Play-Review-Bibliothek
+  (<code>com.google.android.play:review</code>) in die App eingebunden; sie spricht auf deinem Gerät mit
+  der Play-Store-App und bringt keine Berechtigung mit. Eine Bewertung, die du abgibst, geht an Google;
+  dafür gilt die <a href="https://policies.google.com/privacy">Datenschutzerklärung von Google</a>. In
+  einer nicht über Google Play installierten App (APK von GitHub) stellt Pi-Tool die Anfrage nie; die
+  Bibliothek ist dort enthalten, bleibt aber ungenutzt.</p>
+
   <h2>Berechtigungen der App</h2>
   <ul>
     <li><strong>Internet</strong> (<code>INTERNET</code>) — für die SSH-Verbindung zu deinem Pi und die
@@ -268,6 +280,15 @@
   name can read your messages — which is why the app suggests a long random topic and warns about guessable
   ones. Legal basis: performing the function you triggered (Art. 6(1)(b)/(f) GDPR); switch it off in the same
   dialog and the timer is removed from the Pi.</p>
+  <p><strong>Review request via Google Play:</strong> if you installed Pi-Tool from Google Play, the app may ask
+  Google Play to show its review dialog — after an action has succeeded, at the earliest after a few days of use
+  and only a few times in total. The dialog is provided by Google Play, and Google decides whether it appears.
+  Pi-Tool learns neither whether it was shown nor whether or how you rated, and <strong>transmits no data itself
+  in the process</strong>. For this, Google's Play review library (<code>com.google.android.play:review</code>)
+  is included in the app; it talks to the Play Store app on your device and adds no permission. A review you
+  submit goes to Google and is subject to <a href="https://policies.google.com/privacy">Google's privacy
+  policy</a>. An app that was not installed from Google Play (the APK from GitHub) never makes the request; the
+  library is included there but stays unused.</p>
   <p><strong>Permissions:</strong> <code>INTERNET</code> for the SSH connection and the calls above;
   <code>USE_BIOMETRIC</code> only for the optional app lock (Android performs the check — the app receives
   "confirmed"/"cancelled" and no biometric data); <code>POST_NOTIFICATIONS</code> so Android may show the
