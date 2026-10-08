@@ -62,6 +62,45 @@ void main() {
       expect(out.first.updateKnown, isTrue);
     });
 
+    // The compare is against the STABLE release. A Pi on the nightly repo is
+    // on another channel: "not older than stable" says nothing about it.
+    test('a nightly build gains no certainty from the stable release', () {
+      for (final nightly in [
+        '0.310.0+1767225600', // build suffix
+        '0.310.0-rc1', // pre-release suffix
+        '0.310.0~nightly', // Debian's "before" marker
+        '0.311.0', // plain, but ahead of the stable release
+      ]) {
+        final stale = evccApt(nightly).copyWith(updateKnown: false);
+        final out = applyLatestEvccVersion([stale], '0.310.0').first;
+        expect(out.updateKnown, isFalse, reason: nightly);
+        expect(out.updateAvailable, isFalse, reason: nightly);
+      }
+    });
+
+    test('a nightly build keeps what a fresh apt index already knew', () {
+      final fresh = applyLatestEvccVersion(
+          [evccApt('0.310.0+1767225600')], '0.310.0').first;
+      expect(fresh.updateKnown, isTrue);
+      expect(fresh.updateAvailable, isFalse);
+      // An update apt found stays, known or not.
+      final found = applyLatestEvccVersion([
+        evccApt('0.310.0+1767225600', updateAvailable: true)
+            .copyWith(updateKnown: false)
+      ], '0.310.0').first;
+      expect(found.updateAvailable, isTrue);
+      expect(found.updateKnown, isFalse);
+    });
+
+    test('a nightly build older than the stable release still gets the update',
+        () {
+      final stale =
+          evccApt('0.309.0+1767225600').copyWith(updateKnown: false);
+      final out = applyLatestEvccVersion([stale], '0.310.0').first;
+      expect(out.updateAvailable, isTrue);
+      expect(out.updateKnown, isTrue);
+    });
+
     test('never touches a Docker evcc (image tag, not a comparable version)',
         () {
       final docker = ServiceStatus(

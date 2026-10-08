@@ -153,6 +153,11 @@ class ServiceStatus {
 /// if [latestEvccVersion] is newer than the installed apt version, flag the
 /// update anyway. Only touches an apt evcc — a Docker evcc carries an image tag,
 /// not a comparable version. Fail-safe: null/empty latest → unchanged.
+///
+/// [latestEvccVersion] is the latest STABLE release. A nightly install (see
+/// [_isStableEvccBuild]) is on another channel: an older one still gets the
+/// update flagged, but "not older than stable" is no knowledge about it — it
+/// keeps whatever the apt index knew.
 List<ServiceStatus> applyLatestEvccVersion(
     List<ServiceStatus> services, String? latestEvccVersion) {
   if (latestEvccVersion == null || latestEvccVersion.isEmpty) return services;
@@ -169,12 +174,25 @@ List<ServiceStatus> applyLatestEvccVersion(
         s.copyWith(
           updateAvailable: s.updateAvailable ||
               isNewerVersion(latestEvccVersion, s.version!),
-          updateKnown: true,
+          updateKnown: isNewerVersion(latestEvccVersion, s.version!) ||
+                  _isStableEvccBuild(s.version!, latestEvccVersion)
+              ? true
+              : null,
         )
       else
         s,
   ];
 }
+
+/// A plain release version (`0.310.0`): no build, pre-release or Debian suffix.
+final _plainVersion = RegExp(r'^v?\d+(?:\.\d+)*$');
+
+/// Whether the installed apt [version] can be a build of the stable channel
+/// whose latest release is [latestStable]: a plain version that is not ahead
+/// of it. Anything else comes from the nightly repo.
+bool _isStableEvccBuild(String version, String latestStable) =>
+    _plainVersion.hasMatch(version.trim()) &&
+    !isNewerVersion(version, latestStable);
 
 /// Cross-checks the running Home Assistant against its latest GitHub release.
 /// HA's version comes from /config/.HA_VERSION (see haVersionProbe) — a calver
