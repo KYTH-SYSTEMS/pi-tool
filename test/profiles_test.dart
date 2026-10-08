@@ -1,4 +1,5 @@
 import 'package:evcc_updater/src/profiles.dart';
+import 'package:evcc_updater/src/review_prompt.dart';
 import 'package:evcc_updater/src/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -112,6 +113,41 @@ void main() {
           profiles: [Profile(name: 'A'), Profile(name: 'B')], activeIndex: 9);
       expect(cfg.safeIndex, 1);
       expect(cfg.active.name, 'B');
+    });
+
+    test('the review-prompt state survives the round-trip', () {
+      final state = ReviewPromptState.initial
+          .recordSuccess(DateTime(2026, 10, 1))
+          .recordSuccess(DateTime(2026, 10, 2))
+          .recordAsk(DateTime(2026, 10, 9));
+      final back = parseAppConfig(encodeAppConfig(AppConfig(
+          profiles: const [Profile(name: 'A')],
+          activeIndex: 0,
+          reviewPrompt: state)));
+      expect(back.reviewPrompt.successes, 2);
+      expect(back.reviewPrompt.firstSuccessAt, DateTime(2026, 10, 1));
+      expect(back.reviewPrompt.lastAskedAt, DateTime(2026, 10, 9));
+      expect(back.reviewPrompt.asks, 1);
+    });
+
+    test('a config written before the review prompt starts it from zero', () {
+      final cfg = parseAppConfig('{"profiles":[],"activeIndex":0}');
+      expect(cfg.reviewPrompt.successes, 0);
+      expect(cfg.reviewPrompt.asks, 0);
+    });
+
+    test('copyWith keeps the review-prompt state unless told otherwise', () {
+      final state = ReviewPromptState.initial.recordSuccess(DateTime(2026));
+      final cfg = AppConfig(
+          profiles: const [Profile(name: 'A')],
+          activeIndex: 0,
+          reviewPrompt: state);
+      expect(cfg.copyWith(uiPort: '8080').reviewPrompt.successes, 1);
+      expect(
+          cfg.copyWith(reviewPrompt: ReviewPromptState.initial)
+              .reviewPrompt
+              .successes,
+          0);
     });
 
     test('empty profile list still yields a usable active profile', () {

@@ -96,3 +96,10 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Google Play's in-app review card (MainActivity, channel "pi_tool/review").
+    // The plain Java artifact on purpose: no -ktx flavour and no Flutter
+    // plugin, so it builds with the project's own Kotlin/AGP.
+    implementation("com.google.android.play:review:2.0.2")
+}

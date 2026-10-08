@@ -7,6 +7,7 @@ import android.provider.OpenableColumns
 import android.view.WindowManager
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.play.core.review.ReviewManagerFactory
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -125,6 +126,38 @@ class MainActivity : FlutterFragmentActivity() {
                         }
                         result.success(false) // not installed → fallback used
                     } else {
+                        result.success(false)
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
+
+        // Separate channel: ask Google Play for its in-app review card. Play
+        // alone decides whether the card appears (quota, already rated) and
+        // never reports back, so `true` only means "the request reached Play".
+        // Talks to Google's review library directly instead of through the
+        // in_app_review plugin, which applies kotlin-android — the pattern
+        // that already broke file_picker against this project's Kotlin setup.
+        // Never in the startup path, and nothing here may throw into the app.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pi_tool/review")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "requestReview") {
+                    try {
+                        val manager = ReviewManagerFactory.create(this)
+                        manager.requestReviewFlow().addOnCompleteListener { request ->
+                            try {
+                                if (request.isSuccessful) {
+                                    manager.launchReviewFlow(this, request.result)
+                                        .addOnCompleteListener { result.success(true) }
+                                } else {
+                                    result.success(false)
+                                }
+                            } catch (_: Throwable) {
+                                result.success(false)
+                            }
+                        }
+                    } catch (_: Throwable) {
                         result.success(false)
                     }
                 } else {

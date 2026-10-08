@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'review_prompt.dart';
 import 'settings_store.dart';
 
 /// One named connection profile (a Pi). Holds only connection fields; global
@@ -187,6 +188,10 @@ class AppConfig {
   /// ✕ is a dismissal, not a dead end.
   final bool remoteAccessDismissed;
 
+  /// What the app remembers about asking for a Play review: how much has
+  /// worked so far and when it last asked. See review_prompt.dart.
+  final ReviewPromptState reviewPrompt;
+
   const AppConfig({
     required this.profiles,
     required this.activeIndex,
@@ -208,6 +213,7 @@ class AppConfig {
     this.firstSeenVersionCode,
     this.everConnected = false,
     this.remoteAccessDismissed = false,
+    this.reviewPrompt = ReviewPromptState.initial,
   });
 
   static const initial =
@@ -240,6 +246,7 @@ class AppConfig {
     int? firstSeenVersionCode,
     bool? everConnected,
     bool? remoteAccessDismissed,
+    ReviewPromptState? reviewPrompt,
   }) =>
       AppConfig(
         profiles: profiles ?? this.profiles,
@@ -264,6 +271,7 @@ class AppConfig {
         everConnected: everConnected ?? this.everConnected,
         remoteAccessDismissed:
             remoteAccessDismissed ?? this.remoteAccessDismissed,
+        reviewPrompt: reviewPrompt ?? this.reviewPrompt,
       );
 
   Map<String, dynamic> toJson() => {
@@ -287,6 +295,7 @@ class AppConfig {
         'firstSeenVersionCode': firstSeenVersionCode,
         'everConnected': everConnected,
         'remoteAccessDismissed': remoteAccessDismissed,
+        'reviewPrompt': reviewPrompt.toJson(),
       };
 
   static AppConfig fromJson(Map<String, dynamic> j) {
@@ -326,6 +335,7 @@ class AppConfig {
           : null,
       everConnected: j['everConnected'] == true,
       remoteAccessDismissed: j['remoteAccessDismissed'] == true,
+      reviewPrompt: ReviewPromptState.fromJson(j['reviewPrompt']),
     );
   }
 }
