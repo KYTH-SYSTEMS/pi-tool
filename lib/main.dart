@@ -1196,8 +1196,10 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Manual "Auf Update prüfen": re-checks GitHub and reports the outcome (an
   /// update banner if newer, else a snackbar). Fail-soft — a failed check just
-  /// says so. On a Play build there is nothing to check here: Play delivers the
-  /// updates, so we only offer a shortcut to the store page.
+  /// says so, hence the throwing variant: the silent one returns null for
+  /// "nothing newer" and "could not check" alike. On a Play build there is
+  /// nothing to check here: Play delivers the updates, so we only offer a
+  /// shortcut to the store page.
   Future<void> _checkUpdatesNow() async {
     try {
       final info = await PackageInfo.fromPlatform();
@@ -1209,7 +1211,8 @@ class _UpdaterPageState extends State<UpdaterPage>
             onAction: () => _openUrl(kPlayStoreUrl));
         return;
       }
-      final release = await _updateChecker.checkForUpdate(info.version);
+      final release =
+          await _updateChecker.checkForUpdateOrThrow(info.version);
       if (!mounted) return;
       setState(() {
         _appVersion = info.version;

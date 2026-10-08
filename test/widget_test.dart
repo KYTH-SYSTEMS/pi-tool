@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show HttpException;
 
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/l10n.dart';
@@ -119,6 +120,27 @@ Widget _page() => MaterialApp(
       supportedLocales: AppLocalizations.supportedLocales,
       locale: const Locale('de'),
     home: UpdaterPage(store: _FakeStore(), updateChecker: _noUpdateChecker));
+
+/// Opens the top-right ⋮ and taps "Auf Update prüfen" on a sideload build
+/// (v0.21.2) whose GitHub answer comes from [getJson].
+Future<void> _checkForUpdateManually(
+    WidgetTester tester, HttpGetJson getJson) async {
+  _mockPackageInfo(); // installerStore null → sideload
+  await tester.pumpWidget(MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    locale: const Locale('de'),
+    home: UpdaterPage(
+        store: _FakeStore(), updateChecker: UpdateChecker(getJson: getJson)),
+  ));
+  await tester.pumpAndSettle();
+
+  await tester.tap(find.byType(PopupMenuButton<String>)); // top-right ⋮
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Auf Update prüfen'));
+  await tester.pump(); // kick off the async check
+  await tester.pump(const Duration(milliseconds: 300)); // resolve + snackbar
+}
 
 void main() {
   // A tall phone-sized surface so the whole single screen fits (the ListView
@@ -249,29 +271,37 @@ void main() {
 
   testWidgets('⋮ → "Auf Update prüfen" reports up to date on the current version',
       (tester) async {
-    PackageInfo.setMockInitialValues(
-      appName: 'Pi-Tool',
-      packageName: 'systems.kyth.pitool',
-      version: '0.21.2',
-      buildNumber: '40',
-      buildSignature: '',
-    );
     useTallScreen(tester);
-    await tester.pumpWidget(MaterialApp(
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      locale: const Locale('de'),
-      home: UpdaterPage(store: _FakeStore(), updateChecker: _noUpdateChecker),
-    ));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byType(PopupMenuButton<String>)); // top-right ⋮
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Auf Update prüfen'));
-    await tester.pump(); // kick off the async check
-    await tester.pump(const Duration(milliseconds: 300)); // resolve + snackbar
+    // GitHub's latest release IS the installed version.
+    await _checkForUpdateManually(
+        tester,
+        (_) async => {
+              'tag_name': 'v0.21.2',
+              'html_url': 'https://example.invalid/releases/tag/v0.21.2',
+            });
     expect(find.text('Aktuell – du hast die neueste Version (v0.21.2).'),
         findsOneWidget);
+  });
+
+  // A failed check used to pass as "no update": offline, a GitHub rate limit
+  // (HTTP 403/429) or an answer without a tag all reported "Aktuell".
+  testWidgets('⋮ → "Auf Update prüfen" says so when the check itself failed',
+      (tester) async {
+    useTallScreen(tester);
+    await _checkForUpdateManually(
+        tester, (_) async => throw const HttpException('GitHub API 403'));
+    expect(find.text('Update-Prüfung fehlgeschlagen – später erneut versuchen.'),
+        findsOneWidget);
+    expect(find.textContaining('du hast die neueste Version'), findsNothing);
+  });
+
+  testWidgets('⋮ → "Auf Update prüfen": an answer without a release tag is a '
+      'failed check, not "up to date"', (tester) async {
+    useTallScreen(tester);
+    await _checkForUpdateManually(tester, (_) async => <String, dynamic>{});
+    expect(find.text('Update-Prüfung fehlgeschlagen – später erneut versuchen.'),
+        findsOneWidget);
+    expect(find.textContaining('du hast die neueste Version'), findsNothing);
   });
 
   // The early-adopter marker is what makes the later Pro grandfathering

@@ -2,8 +2,10 @@
 /// [installChannelFor] enforces (a Play build is updated by Play itself).
 ///
 /// Pure version comparison + JSON parsing are unit-tested; the network fetch is
-/// a thin injectable adapter. The check is deliberately fail-soft: any error
-/// yields "no update" so it can never disrupt the app.
+/// a thin injectable adapter with a hard time limit. The silent check at app
+/// start is deliberately fail-soft: any error yields "no update" so it can
+/// never disrupt the app. The manual check uses the throwing variant, so a
+/// failed fetch is not reported as "up to date".
 library;
 
 import 'dart:async';
@@ -119,21 +121,33 @@ class UpdateChecker {
     HttpGetJson? getJson,
     this.owner = 'KYTH-SYSTEMS',
     this.repo = 'pi-tool',
-  }) : _get = getJson ?? _defaultGetJson;
+  }) : _get = getJson ?? githubGetJson;
 
   /// Returns [ReleaseInfo] when a release newer than [currentVersion] exists,
   /// otherwise `null`. Never throws — a failed check just means "no update".
+  /// For the silent check at app start; a caller that reports the outcome
+  /// uses [checkForUpdateOrThrow].
   Future<ReleaseInfo?> checkForUpdate(String currentVersion) async {
     try {
-      final json = await _get(
-        Uri.parse('https://api.github.com/repos/$owner/$repo/releases/latest'),
-      );
-      final info = parseLatestRelease(json);
-      if (info.version.isEmpty) return null;
-      return isNewerVersion(info.version, currentVersion) ? info : null;
+      return await checkForUpdateOrThrow(currentVersion);
     } catch (_) {
       return null;
     }
+  }
+
+  /// Like [checkForUpdate], but `null` only ever means "checked, nothing
+  /// newer". A check that could not be completed THROWS: no network, a
+  /// timeout, a non-200 answer (GitHub's rate limit is 403/429), broken JSON,
+  /// or an answer without a release tag.
+  Future<ReleaseInfo?> checkForUpdateOrThrow(String currentVersion) async {
+    final json = await _get(
+      Uri.parse('https://api.github.com/repos/$owner/$repo/releases/latest'),
+    );
+    final info = parseLatestRelease(json);
+    if (info.version.trim().isEmpty) {
+      throw const FormatException('GitHub release without tag_name');
+    }
+    return isNewerVersion(info.version, currentVersion) ? info : null;
   }
 }
 
@@ -151,9 +165,10 @@ EvccRelease parseEvccRelease(Map<String, dynamic> json) => EvccRelease(
     );
 
 /// Fetches evcc's latest GitHub release notes. Fail-soft: returns null on any
-/// error, so it can never block the update flow.
+/// error, and the adapter's time limit keeps it from holding up the update
+/// flow.
 Future<EvccRelease?> fetchEvccRelease({HttpGetJson? getJson}) async {
-  final get = getJson ?? _defaultGetJson;
+  final get = getJson ?? githubGetJson;
   try {
     final json = await get(
       Uri.parse('https://api.github.com/repos/evcc-io/evcc/releases/latest'),
@@ -166,9 +181,9 @@ Future<EvccRelease?> fetchEvccRelease({HttpGetJson? getJson}) async {
 }
 
 /// Home Assistant's latest release tag (e.g. "2026.6.3"). Fail-soft: null on any
-/// error, so it can never block detection.
+/// error, and the adapter's time limit keeps it from holding up detection.
 Future<String?> fetchLatestHomeAssistantVersion({HttpGetJson? getJson}) async {
-  final get = getJson ?? _defaultGetJson;
+  final get = getJson ?? githubGetJson;
   try {
     final json = await get(Uri.parse(
         'https://api.github.com/repos/home-assistant/core/releases/latest'));
@@ -179,19 +194,29 @@ Future<String?> fetchLatestHomeAssistantVersion({HttpGetJson? getJson}) async {
   }
 }
 
-Future<Map<String, dynamic>> _defaultGetJson(Uri url) async {
-  final client = HttpClient();
-  try {
+/// The real GitHub fetch behind the checks above. Callers wait on it with the
+/// UI busy, so every phase is limited: the connect (DNS, TCP, TLS — without
+/// `connectionTimeout` that runs until the OS gives up, minutes when packets
+/// are dropped) and, through [timeout], the WHOLE request including the body.
+/// Closing the client with `force` afterwards ends an abandoned read.
+Future<Map<String, dynamic>> githubGetJson(Uri url,
+    {Duration timeout = const Duration(seconds: 10)}) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  Future<Map<String, dynamic>> read() async {
     final request = await client.getUrl(url);
     request.headers.set(HttpHeaders.userAgentHeader, 'evcc-updater-app');
     request.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
-    final response = await request.close().timeout(const Duration(seconds: 10));
+    final response = await request.close();
     if (response.statusCode != 200) {
       throw HttpException('GitHub API ${response.statusCode}');
     }
     final body = await response.transform(utf8.decoder).join();
     return jsonDecode(body) as Map<String, dynamic>;
+  }
+
+  try {
+    return await read().timeout(timeout);
   } finally {
-    client.close();
+    client.close(force: true);
   }
 }

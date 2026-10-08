@@ -1,7 +1,49 @@
+import 'dart:io';
+
 import 'package:evcc_updater/src/evcc_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// A loopback server standing in for evcc. [stall] true: it sends the headers
+/// and the start of the body, then goes quiet without closing.
+Future<HttpServer> _evccServer({required bool stall}) async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  server.listen((req) async {
+    const body = '{"version":"0.316.2","grid":{"power":120}}';
+    req.response
+      ..statusCode = 200
+      ..headers.contentType = ContentType.json
+      ..contentLength = body.length
+      ..write(stall ? body.substring(0, 12) : body);
+    await (stall ? req.response.flush() : req.response.close());
+  });
+  addTearDown(() => server.close(force: true));
+  return server;
+}
+
 void main() {
+  group('evccGetJson (HTTP adapter)', () {
+    test('reads a complete answer', () async {
+      final server = await _evccServer(stall: false);
+      final state = await EvccApiClient().fetchState(
+          scheme: 'http', host: '127.0.0.1', port: '${server.port}');
+      expect(state.version, '0.316.2');
+      expect(state.gridPower, 120);
+    });
+
+    test('a body that stalls mid-way ends in a timeout, not a hang', () async {
+      // Headers arrive (so the header limit passes), the body never finishes.
+      // Without a limit on the whole request this waited for good.
+      final server = await _evccServer(stall: true);
+      final sw = Stopwatch()..start();
+      await expectLater(
+          evccGetJson(Uri.parse('http://127.0.0.1:${server.port}/api/state'),
+              timeout: const Duration(milliseconds: 400)),
+          throwsA(isA<EvccApiException>().having(
+              (e) => e.message, 'message', contains('Zeitüberschreitung'))));
+      expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+    }, timeout: const Timeout(Duration(seconds: 20)));
+  });
+
   group('parseEvccState', () {
     test('reads the legacy result-wrapped shape', () {
       final state = parseEvccState({

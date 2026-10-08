@@ -190,7 +190,7 @@ typedef JsonGetter = Future<Map<String, dynamic>> Function(Uri url);
 class EvccApiClient {
   final JsonGetter _get;
 
-  EvccApiClient({JsonGetter? getJson}) : _get = getJson ?? _defaultGet;
+  EvccApiClient({JsonGetter? getJson}) : _get = getJson ?? evccGetJson;
 
   /// Fetches and parses `/api/state`. Throws [EvccApiException] with a
   /// user-facing German message on any failure.
@@ -205,10 +205,15 @@ class EvccApiClient {
   }
 }
 
-Future<Map<String, dynamic>> _defaultGet(Uri url) async {
+/// The real HTTP read behind [EvccApiClient]. [timeout] bounds the WHOLE
+/// request — connect, headers and body. The per-step limits alone left the
+/// body open: a peer that answered and then went quiet kept the caller
+/// waiting for good. Closing the client afterwards ends the abandoned read.
+Future<Map<String, dynamic>> evccGetJson(Uri url,
+    {Duration timeout = const Duration(seconds: 10)}) async {
   final client = HttpClient()
     ..connectionTimeout = const Duration(seconds: 6);
-  try {
+  Future<Map<String, dynamic>> read() async {
     final request = await client.getUrl(url);
     // Don't chase redirects: a server impersonating evcc shouldn't be able to
     // bounce this read-only probe elsewhere.
@@ -230,6 +235,10 @@ Future<Map<String, dynamic>> _defaultGet(Uri url) async {
       throw const EvccApiException('Unerwartete Antwort der evcc-API.');
     }
     return Map<String, dynamic>.from(decoded);
+  }
+
+  try {
+    return await read().timeout(timeout);
   } on EvccApiException {
     rethrow;
   } on SocketException {
