@@ -59,6 +59,30 @@ bool isWeakNtfyTopic(String topic) {
 /// systemd schedule for the health check (every 30 minutes).
 const String _alertsOnCalendar = '*-*-* *:00/30:00';
 
+/// Where the wrapper reads its ntfy destination from: a file of its own that
+/// only root can read. The topic is the password — and the wrapper has to stay
+/// world-readable, because the status probe looks for its stamp line as the
+/// SSH user, without sudo (on_pi_wrapper.dart).
+const String alertsDestinationPath = '/usr/local/lib/$alertsUnit.conf';
+
+final RegExp _httpRe = RegExp(r'^https?://', caseSensitive: false);
+final RegExp _schemeRe = RegExp(r'^[A-Za-z][A-Za-z0-9+.-]*://');
+
+/// The ntfy server as curl gets it: without whitespace and with an explicit
+/// http(s) scheme. A server typed without one ("ntfy.sh") gets `http://` —
+/// what curl assumes for such a value, so a destination that works today
+/// keeps working. Any other scheme (and no server at all) is refused: the
+/// field is free text, and curl speaks more protocols than ntfy.
+String _ntfyServer(String server) {
+  final s = server.replaceAll(RegExp(r'\s'), '');
+  if (_httpRe.hasMatch(s)) return s;
+  if (s.isEmpty || _schemeRe.hasMatch(s)) {
+    throw ArgumentError.value(
+        server, 'ntfyServer', 'kein http(s)-Server für ntfy');
+  }
+  return 'http://$s';
+}
+
 /// Root script that installs the health-check wrapper + timer and enables it.
 /// [ntfyServer] + [ntfyTopic] are the ntfy destination; both are shell-quoted.
 String buildAlertsInstallScript({
@@ -71,7 +95,7 @@ String buildAlertsInstallScript({
   // executing the remainder in the root install shell. (Values can arrive from
   // an imported profile, which isn't newline-filtered.) shSingleQuote handles
   // the rest of the escaping.
-  final url = shSingleQuote(ntfyServer.replaceAll(RegExp(r'\s'), ''));
+  final url = shSingleQuote(_ntfyServer(ntfyServer));
   final topic = shSingleQuote(ntfyTopic.replaceAll(RegExp(r'\s'), ''));
   return '''
 set -e
@@ -84,34 +108,58 @@ cat > /usr/local/lib/$alertsUnit.sh <<'WRAP'
 $wrapperStampLine
 mkdir -p /var/lib/pi-tool
 WRAP
-# URL/TOPIC are Dart-substituted (shell-quoted) BEFORE the shell sees them, so a
-# QUOTED heredoc lands them verbatim — no install-time shell expansion of a
-# hostile topic like \$(reboot). They assign as literals at wrapper runtime.
-cat >> /usr/local/lib/$alertsUnit.sh <<'WRAP'
+# The destination gets a file of its own that only root can read; the wrapper
+# sources it. URL/TOPIC are Dart-substituted (shell-quoted) BEFORE the shell
+# sees them, so a QUOTED heredoc lands them verbatim — no install-time shell
+# expansion of a hostile topic like \$(reboot). They assign as literals at
+# wrapper runtime.
+rm -f $alertsDestinationPath
+(umask 077; cat > $alertsDestinationPath <<'WRAP'
 URL=$url
 TOPIC=$topic
 WRAP
+)
+chmod 600 $alertsDestinationPath
 cat >> /usr/local/lib/$alertsUnit.sh <<'WRAP'
+URL="" TOPIC=""
+[ -r $alertsDestinationPath ] && . $alertsDestinationPath
 problems=""
+classes=""
+# One problem. Its class goes into the debounce hash, its text — with the
+# measured value — only into the message: a value that moves above its
+# threshold (91 to 93 percent, 3 to 5 updates) is the same problem and must
+# not push again.
+problem() {
+  classes="\$classes \$1"
+  problems="\$problems"'\\n'"\$2"
+}
 use=\$(df / | awk 'NR==2{gsub("%","",\$5); print \$5}')
-[ -n "\$use" ] && [ "\$use" -ge 90 ] && problems="\$problems"'\\n'"Speicher: \${use}% belegt"
+[ -n "\$use" ] && [ "\$use" -ge 90 ] && problem disk "Speicher: \${use}% belegt"
 if [ -r /sys/class/thermal/thermal_zone0/temp ]; then
   t=\$(( \$(cat /sys/class/thermal/thermal_zone0/temp) / 1000 ))
-  [ "\$t" -ge 75 ] && problems="\$problems"'\\n'"Temperatur: \${t} Grad"
+  [ "\$t" -ge 75 ] && problem temp "Temperatur: \${t} Grad"
 fi
 # Dying-SD symptoms: a read-only-remounted root, or piling I/O errors in the
 # kernel log. /proc/mounts always lists rw/ro as the FIRST option.
-grep -qE '^\\S+ / \\S+ ro[, ]' /proc/mounts && problems="\$problems"'\\n'"SD-Karte: Dateisystem nur-lesend"
+grep -qE '^\\S+ / \\S+ ro[, ]' /proc/mounts && problem ro "SD-Karte: Dateisystem nur-lesend"
 ioerr=\$(journalctl -k --no-pager -q 2>/dev/null | grep -icE 'i/o error|ext4-fs error|mmc[0-9]+: error')
-[ -n "\$ioerr" ] && [ "\$ioerr" -ge 5 ] && problems="\$problems"'\\n'"SD-Karte: \$ioerr I/O-Fehler im Kernel-Log"
+[ -n "\$ioerr" ] && [ "\$ioerr" -ge 5 ] && problem ioerr "SD-Karte: \$ioerr I/O-Fehler im Kernel-Log"
 for s in evcc pihole-FTL grafana-server influxdb mosquitto; do
   if systemctl is-enabled "\$s" >/dev/null 2>&1; then
-    [ "\$(systemctl is-active "\$s" 2>/dev/null)" != "active" ] && problems="\$problems"'\\n'"Dienst aus: \$s"
+    # Down means failed or inactive. "activating" is a service that starts (a
+    # restart, the Pi booting) and no outage — unless systemd is restarting it
+    # because it keeps dying (SubState auto-restart).
+    case "\$(systemctl is-active "\$s" 2>/dev/null)" in
+      failed|inactive) problem "svc:\$s" "Dienst aus: \$s" ;;
+      activating)
+        systemctl show -p SubState "\$s" 2>/dev/null | grep -q '^SubState=auto-restart' &&
+          problem "svc:\$s" "Dienst aus: \$s" ;;
+    esac
   fi
 done
 pend=\$(LC_ALL=C apt-get -s upgrade 2>/dev/null | grep -c '^Inst ')
-[ "\$pend" -gt 0 ] && problems="\$problems"'\\n'"\$pend Updates verfuegbar"
-hash=\$(printf '%s' "\$problems" | md5sum | awk '{print \$1}')
+[ "\$pend" -gt 0 ] && problem updates "\$pend Updates verfuegbar"
+hash=\$(printf '%s' "\$classes" | md5sum | awk '{print \$1}')
 last=\$(cat /var/lib/pi-tool/alerts.last 2>/dev/null)
 if [ -n "\$problems" ] && [ "\$hash" != "\$last" ]; then
   # Remember the hash only once the push went out: a failed one (no DNS or
@@ -119,13 +167,35 @@ if [ -n "\$problems" ] && [ "\$hash" != "\$last" ]; then
   # of counting as sent. The timeouts bound the oneshot unit, which has no
   # start timeout of its own.
   if printf 'Pi-Tool hat Probleme erkannt:%b' "\$problems" | \\
-    curl -fsS --connect-timeout 10 --max-time 30 -H 'Title: Pi-Tool' -H 'Priority: high' --data-binary @- "\$URL/\$TOPIC" >/dev/null 2>&1; then
+    curl -fsS --connect-timeout 10 --max-time 30 -H 'Title: Pi-Tool' -H 'Priority: high' --data-binary @- -- "\$URL/\$TOPIC" >/dev/null 2>&1; then
     printf '%s' "\$hash" > /var/lib/pi-tool/alerts.last
   fi
 elif [ -z "\$problems" ]; then
   : > /var/lib/pi-tool/alerts.last
 fi
 echo "\$(date '+%Y-%m-%d %H:%M') checked" > /var/lib/pi-tool/alerts.status
+rc=\$?
+# Last, so it can neither delay nor lose a push. "N Updates verfuegbar" is
+# counted against the local package lists, and on a stock Pi nothing refreshes
+# those. So do it here once they are older than a day — at most once per 24 h
+# (alerts.aptupdate marks the try, whatever came of it); the next check then
+# counts against the new lists. Bounded by timeout, and with a lock timeout of
+# 0, so it gives up at once instead of queueing behind another apt run. A clean
+# run stamps /var/lib/apt/lists like "Paketlisten aktualisieren" in the app
+# does (apt leaves the mtime alone while every source answers "Hit"), so the
+# app's cards see the refresh too.
+now=\$(date +%s)
+age() { m=\$(stat -c %Y "\$1" 2>/dev/null) || m=0; echo \$((now - m)); }
+if [ "\$(age /var/lib/apt/lists)" -ge 86400 ] && [ "\$(age /var/lib/pi-tool/alerts.aptupdate)" -ge 86400 ]; then
+  touch /var/lib/pi-tool/alerts.aptupdate
+  if out=\$(LC_ALL=C timeout -k 10 120 apt-get -o DPkg::Lock::Timeout=0 update -qq 2>&1); then
+    case "\$out" in
+      *"Failed to fetch"*|*"failed to download"*) ;;
+      *) touch /var/lib/apt/lists ;;
+    esac
+  fi
+fi
+exit "\$rc"
 WRAP
 chmod +x /usr/local/lib/$alertsUnit.sh
 cat > /etc/systemd/system/$alertsUnit.service <<'SVC'
@@ -150,7 +220,8 @@ echo ALERTS_INSTALLED
 ''';
 }
 
-/// Root script that removes the alerts timer, service and wrapper. `set -e`: a
+/// Root script that removes the alerts timer, service, wrapper and destination
+/// file — and systemd's stamp of the timer ([timerStampPath]). `set -e`: a
 /// failing `rm` (read-only root) must end without the marker.
 String buildAlertsRemoveScript() {
   return '''
@@ -158,7 +229,9 @@ set -e
 systemctl disable --now $alertsUnit.timer 2>/dev/null || true
 rm -f /etc/systemd/system/$alertsUnit.timer \\
   /etc/systemd/system/$alertsUnit.service \\
-  /usr/local/lib/$alertsUnit.sh
+  /usr/local/lib/$alertsUnit.sh \\
+  $alertsDestinationPath \\
+  ${timerStampPath(alertsUnit)}
 systemctl daemon-reload
 echo ALERTS_REMOVED
 ''';
@@ -168,17 +241,18 @@ echo ALERTS_REMOVED
 /// `-f` turns an HTTP error into an exit code and `-sS` keeps curl's reason on
 /// stderr, so the caller can tell a delivered push from a failed one;
 /// `--max-time` keeps an unreachable server from hanging the action.
-/// Whitespace is stripped like in [buildAlertsInstallScript], so the test hits
-/// the destination the timer will use.
+/// Whitespace is stripped and the server checked like in
+/// [buildAlertsInstallScript], so the test hits the destination the timer will
+/// use.
 String buildTestAlertCommand({
   required String ntfyServer,
   required String ntfyTopic,
 }) {
-  final server = ntfyServer.replaceAll(RegExp(r'\s'), '');
+  final server = _ntfyServer(ntfyServer);
   final topic = ntfyTopic.replaceAll(RegExp(r'\s'), '');
   final url = shSingleQuote('$server/$topic');
   final msg = shSingleQuote('Test-Benachrichtigung ✓ von Pi-Tool');
-  return "curl -fsS --max-time 15 -H 'Title: Pi-Tool' -d $msg $url";
+  return "curl -fsS --max-time 15 -H 'Title: Pi-Tool' -d $msg -- $url";
 }
 
 /// No-sudo status command parsed by [parseAlertsStatus].

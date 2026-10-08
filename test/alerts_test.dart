@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:evcc_updater/src/alerts.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'on_pi_sandbox.dart';
+
 /// The shell for the real-bash group: `bash` on Linux/macOS (CI). On Windows
 /// `bash` may be the WSL launcher, so it only runs with an explicit Git Bash
 /// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
@@ -17,6 +19,77 @@ String _posix(String p) {
   final m = RegExp(r'^([A-Za-z]):/').firstMatch(s);
   return m == null ? s : '/${m.group(1)!.toLowerCase()}/${s.substring(3)}';
 }
+
+// ---- stubs of the wrapper sandbox; each reads its scenario from $S ---------
+
+/// `df /`: root usage in percent from `$S/disk` (50 without).
+const String _df = r'''
+echo "Filesystem 1K-blocks Used Available Use% Mounted on"
+echo "/dev/root 100 0 0 $(cat "$S/disk" 2>/dev/null || echo 50)% /"''';
+
+/// `journalctl -k`: as many I/O error lines as `$S/ioerr` says (none without).
+const String _journalctl = r'''
+n=$(cat "$S/ioerr" 2>/dev/null || echo 0)
+i=0
+while [ "$i" -lt "$n" ]; do
+  echo "kernel: blk_update_request: I/O error, dev mmcblk0, sector $i"
+  i=$((i + 1))
+done''';
+
+/// systemd as the wrapper asks it: a service is enabled when
+/// `$S/enabled-<name>` exists, `is-active` prints `$S/active-<name>` (active
+/// without) and `show -p SubState` prints `$S/sub-<name>` (running without).
+const String _systemctl = r'''
+case "$1" in
+  is-enabled) [ -e "$S/enabled-$2" ]; exit $? ;;
+  is-active)
+    st=$(cat "$S/active-$2" 2>/dev/null || echo active)
+    echo "$st"
+    [ "$st" = active ]; exit $? ;;
+  show) echo "SubState=$(cat "$S/sub-$4" 2>/dev/null || echo running)" ;;
+esac
+exit 0''';
+
+/// apt-get: the simulation lists `$S/pending` packages; `update` behaves as
+/// `$S/apt-update` says (clean without) and never touches the lists
+/// directory — like apt when every source answers "Hit". Message texts as in
+/// apt-pkg (acquire.cc, update.cc).
+const String _aptGet = r'''
+case " $* " in
+  *" -s upgrade "*)
+    n=$(cat "$S/pending" 2>/dev/null || echo 0)
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      echo "Inst pkg$i [1.0] (1.1 Debian:stable [arm64])"
+      i=$((i + 1))
+    done ;;
+  *" update "*)
+    [ -e "$R/var/lib/pi-tool/alerts.status" ] && : > "$S/status-before-update"
+    case "$(cat "$S/apt-update" 2>/dev/null)" in
+      locked)
+        echo "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 4711 (apt-get)" >&2
+        echo "E: Unable to lock directory /var/lib/apt/lists/" >&2
+        exit 100 ;;
+      transient)
+        echo "W: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease  Temporary failure resolving 'deb.debian.org'" >&2
+        echo "W: Some index files failed to download. They have been ignored, or old ones used instead." >&2 ;;
+    esac ;;
+esac
+exit 0''';
+
+/// timeout: drops `-k N` and the duration, then runs the command.
+const String _timeout = r'''
+[ "$1" = -k ] && shift 2
+shift
+exec "$@"''';
+
+/// curl: keeps its arguments (one per line) and the message it was piped;
+/// fails like "could not resolve host" while `$S/curl-fails` exists.
+const String _curl = r'''
+for a; do printf '%s\n' "$a"; done > "$S/curl-args"
+cat > "$S/push-body"
+[ -e "$S/curl-fails" ] && exit 6
+exit 0''';
 
 void main() {
   group('buildAlertsInstallScript', () {
@@ -113,6 +186,54 @@ void main() {
     });
   });
 
+  // The server is free text in the sheet. Only http(s) may reach curl — and a
+  // destination that works today must keep working.
+  group('ntfy server', () {
+    String installed(String server) => heredocBody(
+            buildAlertsInstallScript(ntfyServer: server, ntfyTopic: 't'),
+            'WRAP',
+            1)
+        .split('\n')
+        .first;
+    String tested(String server) =>
+        buildTestAlertCommand(ntfyServer: server, ntfyTopic: 't')
+            .split(' -- ')
+            .last;
+
+    test('http and https are taken as typed, whatever the case', () {
+      for (final server in [
+        'https://ntfy.sh',
+        'http://ntfy.lan:8080',
+        'HTTPS://Ntfy.Example',
+      ]) {
+        expect(installed(server), "URL='$server'");
+        expect(tested(server), "'$server/t'");
+      }
+    });
+
+    test('a server typed without a scheme gets http:// — what curl assumes '
+        'for it anyway', () {
+      expect(installed('ntfy.sh'), "URL='http://ntfy.sh'");
+      expect(tested('ntfy.sh'), "'http://ntfy.sh/t'");
+      expect(installed('ntfy.lan:8080'), "URL='http://ntfy.lan:8080'");
+      // Never an option for curl, even without the `--` in front.
+      expect(installed('-K/etc/shadow'), "URL='http://-K/etc/shadow'");
+    });
+
+    test('any other scheme, or no server at all, is refused by both builders',
+        () {
+      for (final bad in ['ftp://ntfy.sh', 'file:///etc/shadow', 'x://', '', ' \n']) {
+        expect(
+            () => buildAlertsInstallScript(ntfyServer: bad, ntfyTopic: 't'),
+            throwsArgumentError,
+            reason: bad);
+        expect(() => buildTestAlertCommand(ntfyServer: bad, ntfyTopic: 't'),
+            throwsArgumentError,
+            reason: bad);
+      }
+    });
+  });
+
   // The real command in a real bash; `curl` is a stub that records its
   // arguments one per line. PATH is the stub directory alone (set inside the
   // shell — Git Bash's launcher prepends its own, with a real curl), so
@@ -164,8 +285,10 @@ void main() {
           ['-fsS', '--max-time', '15', '-H', 'Title: Pi-Tool']);
       expect(a[5], '-d');
       expect(a[6], startsWith('Test-Benachrichtigung'));
+      // `--` ends the options: whatever the URL starts with, it is the URL.
+      expect(a[7], '--');
       expect(a.last, 'https://ntfy.sh/my-pi-42');
-      expect(a, hasLength(8));
+      expect(a, hasLength(9));
     });
 
     test('a hostile topic stays one argument and runs nothing', () async {
@@ -184,6 +307,382 @@ void main() {
       expect(r.err, contains('curl: (22)'));
     });
   }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
+
+  // The wrapper as the install script writes it, run under its own shebang on
+  // a sandboxed Pi: what it pushes, remembers and refreshes is checked.
+  group('health-alerts wrapper in bash', () {
+    late PiSandbox pi;
+    const wrapper = '/usr/local/lib/$alertsUnit.sh';
+    const destination = '/usr/local/lib/$alertsUnit.conf';
+    const last = '/var/lib/pi-tool/alerts.last';
+    const lists = '/var/lib/apt/lists';
+
+    Future<void> install({
+      String server = 'https://ntfy.example',
+      String topic = 'pi-tool-test',
+    }) async {
+      final r = await pi.run(
+          buildAlertsInstallScript(ntfyServer: server, ntfyTopic: topic));
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines.last, 'ALERTS_INSTALLED');
+      pi.clearCalls();
+    }
+
+    setUp(() async {
+      pi = PiSandbox();
+      pi.stub('systemctl', _systemctl, log: false);
+      pi.stub('journalctl', _journalctl, log: false);
+      pi.stub('df', _df, log: false);
+      pi.stub('apt-get', _aptGet);
+      pi.stub('timeout', _timeout);
+      pi.stub('curl', _curl);
+      // A healthy Pi: root mounted read-write, 45 °C.
+      pi.put('/proc/mounts', '/dev/root / ext4 rw,noatime 0 0\n');
+      pi.put('/sys/class/thermal/thermal_zone0/temp', '45000\n');
+      await install();
+    });
+    tearDown(() => pi.dispose());
+
+    /// One run of the timer — under the wrapper's shebang, or under [shell].
+    /// The wrapper has every tool it uses, so anything on stderr is a defect
+    /// of the script.
+    Future<void> check({String? shell}) async {
+      final r = await pi.run(
+          "${shell == null ? '' : "'$shell' "}'${pi.root}$wrapper'",
+          rebase: false);
+      expect(r.code, 0, reason: r.err);
+      expect(r.err, isEmpty);
+    }
+
+    void disk(int percent) => pi.put('/state/disk', '$percent');
+    void pending(int n) => pi.put('/state/pending', '$n');
+    void service(String name, String state, {String sub = 'running'}) {
+      pi.put('/state/enabled-$name', '');
+      pi.put('/state/active-$name', state);
+      pi.put('/state/sub-$name', sub);
+    }
+
+    List<String> pushes() =>
+        pi.calls.where((c) => c.startsWith('curl ')).toList();
+    List<String> listUpdates() => pi.calls
+        .where((c) => c.startsWith('apt-get ') && c.contains(' update'))
+        .toList();
+    String message() => pi.read('/state/push-body');
+
+    test('a healthy Pi: nothing is pushed, the check is noted', () async {
+      await check();
+      expect(pushes(), isEmpty);
+      expect(pi.read('/var/lib/pi-tool/alerts.status'),
+          matches(RegExp(r'^\d{4}-\d\d-\d\d \d\d:\d\d checked\n$')));
+    });
+
+    test('curl fails: the alert stays pending and goes out with a later check',
+        () async {
+      disk(95);
+      pi.put('/state/curl-fails', '');
+      await check();
+      expect(pushes(), hasLength(1));
+      expect(pi.exists(last), isFalse);
+      await check();
+      expect(pushes(), hasLength(2));
+      pi.remove('/state/curl-fails');
+      await check();
+      expect(pushes(), hasLength(3));
+      expect(pi.read(last), matches(RegExp(r'^[0-9a-f]{32}$')));
+      await check();
+      expect(pushes(), hasLength(3));
+    });
+
+    test('the same problems twice are one push — and so are their values '
+        'moving above the threshold', () async {
+      disk(95);
+      pending(3);
+      pi.put('/state/ioerr', '7');
+      pi.put('/sys/class/thermal/thermal_zone0/temp', '76000\n');
+      await check();
+      expect(pushes(), hasLength(1));
+      expect(message().split('\n'), [
+        'Pi-Tool hat Probleme erkannt:',
+        'Speicher: 95% belegt',
+        'Temperatur: 76 Grad',
+        'SD-Karte: 7 I/O-Fehler im Kernel-Log',
+        '3 Updates verfuegbar',
+      ]);
+      await check();
+      expect(pushes(), hasLength(1));
+      disk(97);
+      pending(5);
+      pi.put('/state/ioerr', '9');
+      pi.put('/sys/class/thermal/thermal_zone0/temp', '81000\n');
+      await check();
+      expect(pushes(), hasLength(1));
+    });
+
+    test('a further problem pushes once more, with everything that is wrong',
+        () async {
+      disk(95);
+      await check();
+      pending(4);
+      await check();
+      expect(pushes(), hasLength(2));
+      expect(message().split('\n').skip(1),
+          ['Speicher: 95% belegt', '4 Updates verfuegbar']);
+      pending(6);
+      await check();
+      expect(pushes(), hasLength(2));
+    });
+
+    test('a problem that went away and comes back is reported again',
+        () async {
+      disk(95);
+      await check();
+      disk(60);
+      await check();
+      expect(pushes(), hasLength(1));
+      expect(pi.read(last), isEmpty);
+      disk(96);
+      await check();
+      expect(pushes(), hasLength(2));
+      expect(message(), contains('Speicher: 96% belegt'));
+    });
+
+    test('a read-only root is a problem of its own', () async {
+      pi.put('/proc/mounts', '/dev/root / ext4 ro,noatime 0 0\n');
+      await check();
+      expect(pushes(), hasLength(1));
+      expect(message().split('\n').skip(1),
+          ['SD-Karte: Dateisystem nur-lesend']);
+    });
+
+    test('an enabled service is reported when it is down — not while it '
+        'starts, reloads or stops', () async {
+      for (final (state, sub, reported) in [
+        ('active', 'running', false),
+        ('failed', 'failed', true),
+        ('inactive', 'dead', true),
+        // Starting (a restart, the Pi booting) is not an outage …
+        ('activating', 'start', false),
+        ('activating', 'start-pre', false),
+        // … but systemd restarting a service that keeps dying is one.
+        ('activating', 'auto-restart', true),
+        ('reloading', 'reload', false),
+        ('deactivating', 'stop-sigterm', false),
+      ]) {
+        service('evcc', state, sub: sub);
+        pi.remove(last);
+        pi.clearCalls();
+        await check();
+        expect(pushes(), hasLength(reported ? 1 : 0), reason: '$state/$sub');
+        if (reported) {
+          expect(message().split('\n').skip(1), ['Dienst aus: evcc'],
+              reason: '$state/$sub');
+        }
+      }
+    });
+
+    test('failed and inactive are the same problem of a service; another '
+        'service is a new one', () async {
+      service('evcc', 'failed', sub: 'failed');
+      await check();
+      service('evcc', 'inactive', sub: 'dead');
+      await check();
+      expect(pushes(), hasLength(1));
+      service('mosquitto', 'failed', sub: 'failed');
+      await check();
+      expect(pushes(), hasLength(2));
+      expect(message().split('\n').skip(1),
+          ['Dienst aus: evcc', 'Dienst aus: mosquitto']);
+    });
+
+    test('a service that is not enabled is never reported', () async {
+      pi.put('/state/active-evcc', 'inactive');
+      await check();
+      expect(pushes(), isEmpty);
+    });
+
+    test('under dash — the /bin/sh of a Pi — the wrapper does the same',
+        () async {
+      await pi.setAge(lists, '2 days ago');
+      disk(95);
+      pending(3);
+      service('evcc', 'failed', sub: 'failed');
+      service('influxdb', 'activating', sub: 'start');
+      service('mosquitto', 'activating', sub: 'auto-restart');
+      await check(shell: sandboxDash);
+      expect(pushes(), hasLength(1));
+      expect(message().split('\n'), [
+        'Pi-Tool hat Probleme erkannt:',
+        'Speicher: 95% belegt',
+        'Dienst aus: evcc',
+        'Dienst aus: mosquitto',
+        '3 Updates verfuegbar',
+      ]);
+      expect(listUpdates(), hasLength(1));
+      expect(await pi.ageSeconds(lists), lessThan(3600));
+      disk(97);
+      pending(4);
+      await check(shell: sandboxDash);
+      expect(pushes(), hasLength(1));
+      expect(listUpdates(), hasLength(1));
+    }, skip: needsDash);
+
+    // "N Updates verfuegbar" is counted against the local package lists, and
+    // on a stock Pi nothing refreshes those.
+    test('package lists older than 24 h: exactly one apt-get update — bounded, '
+        'not queueing behind another apt run — and the lists are stamped',
+        () async {
+      await pi.setAge(lists, '2 days ago');
+      await check();
+      expect(listUpdates(),
+          ['apt-get -o DPkg::Lock::Timeout=0 update -qq']);
+      expect(
+          pi.calls.where((c) => c.startsWith('timeout ')),
+          ['timeout -k 10 120 apt-get -o DPkg::Lock::Timeout=0 update -qq']);
+      // The stamp "Paketlisten aktualisieren" sets: the app's cards read the
+      // age of this directory.
+      expect(await pi.ageSeconds(lists), lessThan(3600));
+      await check();
+      expect(listUpdates(), hasLength(1));
+    });
+
+    test('fresh package lists: no apt-get update', () async {
+      await pi.setAge(lists, '23 hours ago');
+      await check();
+      await check();
+      expect(listUpdates(), isEmpty);
+      expect(pi.calls.where((c) => c.startsWith('timeout ')), isEmpty);
+    });
+
+    test('the refresh comes last: after the push and the status line',
+        () async {
+      await pi.setAge(lists, '2 days ago');
+      disk(95);
+      await check();
+      final order = pi.calls
+          .where((c) => c.startsWith('curl ') || c.startsWith('timeout '))
+          .map((c) => c.split(' ').first);
+      expect(order, ['curl', 'timeout']);
+      expect(pi.exists('/state/status-before-update'), isTrue);
+    });
+
+    test('another apt run holds the lock (apt exit 100): the push still goes '
+        'out, the lists stay unstamped, no second try within 24 h', () async {
+      await pi.setAge(lists, '2 days ago');
+      pi.put('/state/apt-update', 'locked');
+      disk(95);
+      await check();
+      expect(pushes(), hasLength(1));
+      expect(listUpdates(), hasLength(1));
+      expect(await pi.ageSeconds(lists), greaterThan(86400));
+      await check();
+      expect(listUpdates(), hasLength(1));
+    });
+
+    test('a try older than 24 h is repeated', () async {
+      await pi.setAge(lists, '3 days ago');
+      pi.put('/state/apt-update', 'locked');
+      await check();
+      await pi.setAge('/var/lib/pi-tool/alerts.aptupdate', '25 hours ago');
+      await check();
+      expect(listUpdates(), hasLength(2));
+    });
+
+    test('sources not reachable (apt exits 0 all the same): the lists are not '
+        'stamped as fresh', () async {
+      await pi.setAge(lists, '2 days ago');
+      pi.put('/state/apt-update', 'transient');
+      await check();
+      expect(listUpdates(), hasLength(1));
+      expect(await pi.ageSeconds(lists), greaterThan(86400));
+    });
+
+    test('the updates found after a refresh are pushed with the next check',
+        () async {
+      await pi.setAge(lists, '2 days ago');
+      await check();
+      expect(pushes(), isEmpty);
+      pending(12); // what the refreshed lists now show
+      await check();
+      expect(pushes(), hasLength(1));
+      expect(message(), contains('12 Updates verfuegbar'));
+    });
+
+    test('curl gets `--` and the destination as its last two arguments',
+        () async {
+      disk(95);
+      await check();
+      final args = pi.read('/state/curl-args').trim().split('\n');
+      expect(args.sublist(args.length - 2),
+          ['--', 'https://ntfy.example/pi-tool-test']);
+      expect(args, contains('--max-time'));
+    });
+
+    test('the ntfy destination lies in a file only root reads, not in the '
+        'wrapper — whose stamp the status probe therefore still reads without '
+        'sudo', () async {
+      pi.stub('chmod', r'exec "$REAL_CHMOD" "$@"');
+      final r = await pi.run(buildAlertsInstallScript(
+          ntfyServer: 'https://ntfy.example', ntfyTopic: 'pi-tool-test'));
+      expect(r.lines.last, 'ALERTS_INSTALLED', reason: r.err);
+      expect(pi.read(wrapper), isNot(contains('pi-tool-test')));
+      expect(pi.read(wrapper), isNot(contains('ntfy.example')));
+      expect(pi.read(destination).trim().split('\n'),
+          ["URL='https://ntfy.example'", "TOPIC='pi-tool-test'"]);
+      expect(pi.calls, contains('chmod 600 ${pi.root}$destination'));
+      if (!Platform.isWindows) {
+        expect(await pi.mode(destination), '600');
+        // Readable for the SSH user the probe runs as.
+        expect(await pi.mode(wrapper), endsWith('5'));
+      }
+      // The probe exactly as the app sends it — a plain command, no sudo.
+      final probe = await pi.run(alertsStatusCommand);
+      expect(probe.lines, contains('WRAPPER current'));
+      expect(parseAlertsStatus(probe.out).wrapperOutdated, isFalse);
+      // And the wrapper still finds its destination.
+      disk(95);
+      await check();
+      expect(pi.read('/state/curl-args').trim().split('\n').last,
+          'https://ntfy.example/pi-tool-test');
+    });
+
+    test('a wrapper of the previous generation, destination inside: the probe '
+        'says old, and setting up again takes the topic out of it', () async {
+      pi.put(
+          wrapper,
+          '#!/bin/sh\n# pi-tool-wrapper 2\n'
+          "URL='https://ntfy.example'\nTOPIC='pi-tool-old'\n");
+      final probe = await pi.run(alertsStatusCommand);
+      expect(probe.lines, contains('WRAPPER old'));
+      await install();
+      expect(pi.read(wrapper), isNot(contains('pi-tool-old')));
+      expect((await pi.run(alertsStatusCommand)).lines,
+          contains('WRAPPER current'));
+    });
+
+    test('removing takes the destination file along', () async {
+      expect(pi.exists(destination), isTrue);
+      final r = await pi.run(buildAlertsRemoveScript());
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines.last, 'ALERTS_REMOVED');
+      expect(pi.exists(destination), isFalse);
+      expect(pi.exists(wrapper), isFalse);
+    });
+
+    test('a hostile topic and server stay data — at install and at run time',
+        () async {
+      // No blank survives the builder, hence ${IFS}.
+      final topic = "x';touch\${IFS}${pi.root}/state/pwned1;'"
+          "\$(touch\${IFS}${pi.root}/state/pwned2)";
+      final server =
+          "https://ntfy.example/`touch\${IFS}${pi.root}/state/pwned3`";
+      await install(server: server, topic: topic);
+      disk(95);
+      await check();
+      expect(pi.read('/state/curl-args').trim().split('\n').last,
+          '$server/$topic');
+      expect(pi.ls('/state').where((n) => n.startsWith('pwned')), isEmpty);
+    });
+  }, skip: needsBash);
 
   group('parseAlertsStatus', () {
     test('reads enabled state + last check', () {
