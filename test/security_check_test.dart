@@ -239,6 +239,15 @@ __SEC_PORTS__
       expect(securityFixFor(off), SecurityFix.autoUpdates);
       expect(securityFixFor(missing), SecurityFix.autoUpdates);
     });
+
+    // systemctl gave no answer at all: the line says which origin is in use,
+    // not whether unattended-upgrades runs — unknown stays unknown.
+    test('that line alone determines nothing', () {
+      final f = updatesOf('__SEC_UNATT__\nraspbian-origin-uncovered\n');
+      expect(f.level, SecurityLevel.info);
+      expect(f.detail, 'Konnte nicht ermittelt werden.');
+      expect(securityFixFor(f), isNull);
+    });
   });
 
   group('securityFixFor', () {

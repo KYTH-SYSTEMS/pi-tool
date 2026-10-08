@@ -303,6 +303,11 @@ List<SecurityFinding> parseSecurityReport(String output) {
   // 3) Automatic security updates.
   SecurityFinding updates;
   final unatt = sections['UNATT']!.map((l) => l.toLowerCase()).toList();
+  // 32-bit Raspberry Pi OS: no pattern lets the origin Raspbian in (the probe
+  // prints this line in that case only). Taken out first — it says nothing
+  // about whether unattended-upgrades runs, so the verdicts below stay what
+  // they are without it.
+  final raspbianLeftOut = unatt.remove('raspbian-origin-uncovered');
   if (unatt.isEmpty) {
     updates = (
       title: 'Automatische Sicherheitsupdates',
@@ -317,9 +322,6 @@ List<SecurityFinding> parseSecurityReport(String output) {
     // the default on Debian/Raspberry Pi OS after install is "1").
     final periodicOff = unatt.any((l) =>
         l.contains('apt::periodic::unattended-upgrade') && l.contains('"0"'));
-    // 32-bit Raspberry Pi OS: the daily run happens, but no pattern lets the
-    // origin Raspbian in (the probe prints this line in that case only).
-    final raspbianLeftOut = unatt.contains('raspbian-origin-uncovered');
     updates = periodicOff
         ? (
             title: 'Automatische Sicherheitsupdates',
