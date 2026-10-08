@@ -18,6 +18,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'src/app_launcher.dart';
+import 'src/app_lock.dart';
 import 'src/authenticator.dart';
 import 'src/alerts.dart';
 import 'src/auto_update.dart';
@@ -139,11 +140,20 @@ ThemeData buildAppTheme(Brightness brightness, {String? fontFamily}) {
 }
 
 class EvccPiToolApp extends StatelessWidget {
-  const EvccPiToolApp({super.key});
+  const EvccPiToolApp({super.key, this.home, this.splash = true});
+
+  /// The page behind lock and splash. Null = the real [UpdaterPage]; widget
+  /// tests pass one with fake collaborators to run against the app's own
+  /// wiring.
+  final Widget? home;
+
+  /// Whether the brand splash (a video) plays at the start. Tests switch it
+  /// off.
+  final bool splash;
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
+    final app = ValueListenableBuilder<ThemeMode>(
       valueListenable: themeModeNotifier,
       builder: (_, mode, _) => ValueListenableBuilder<Locale?>(
         valueListenable: localeNotifier,
@@ -161,10 +171,23 @@ class EvccPiToolApp extends StatelessWidget {
           // English fallback for any non-German device language.
           localeResolutionCallback: (device, supported) =>
               resolveSystemLocale(locale ?? device),
-          home: const KythSplashGate(child: UpdaterPage()),
+          // The app lock lies above the Navigator, so that it covers every
+          // route (see app_lock.dart) — and the splash above the lock, as when
+          // both were part of the home route.
+          builder: (context, child) {
+            final layer = AppLockLayer(
+              lockScreen: (onUnlock) => _LockScreen(onUnlock: onUnlock),
+              child: child ?? const SizedBox.shrink(),
+            );
+            return splash ? KythSplashGate(child: layer) : layer;
+          },
+          home: home ?? const UpdaterPage(),
         ),
       ),
     );
+    // Above MaterialApp: its State registers with the binding before the
+    // Navigator's does, and is asked first about system back.
+    return AppLockScope(child: app);
   }
 }
 
@@ -192,6 +215,7 @@ class UpdaterPage extends StatefulWidget {
     this.textSharer,
     this.appLauncher,
     this.secureScreen,
+    this.recentsPreview,
     this.historyStore,
     this.reviewRequester,
     this.installChannel,
@@ -240,6 +264,11 @@ class UpdaterPage extends StatefulWidget {
   final AppLauncher? appLauncher;
   final SecureScreen? secureScreen;
 
+  /// Keeps the app out of the recent-apps overview while the app lock is
+  /// switched on. Injectable so widget tests record instead of hitting the
+  /// native channel.
+  final RecentsPreview? recentsPreview;
+
   /// Where the action history is kept. Injectable so widget tests can see what
   /// is recorded without secure storage.
   final HistoryStore? historyStore;
@@ -252,7 +281,8 @@ class UpdaterPage extends StatefulWidget {
   /// (PackageInfo) at startup; injectable so tests need no platform mock.
   final InstallChannel? installChannel;
 
-  /// The time, for the review ask's bookkeeping. Injectable for tests.
+  /// The time, for the review ask's bookkeeping and the time limit of a lock
+  /// held off for the file picker. Injectable for tests.
   final DateTime Function()? clock;
 
   @override
@@ -308,6 +338,12 @@ class _UpdaterPageState extends State<UpdaterPage>
   void _applyScreenshotPolicy() {
     _secureScreen.setSecure(_locked || _connExpanded);
   }
+  late final RecentsPreview _recentsPreview =
+      widget.recentsPreview ?? const ChannelSecureScreen();
+  // The lock layer above the Navigator (EvccPiToolApp provides it). Null for a
+  // page that runs on its own, as in most widget tests: it then draws the lock
+  // in its own route, as it always did — see [_engageLock] and [build].
+  AppLockController? _appLock;
   late final HistoryStore _historyStore =
       widget.historyStore ?? HistoryStore();
   late final ReviewRequester _reviewRequester =
@@ -353,12 +389,24 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _busy = false;
   AuthMode _authMode = AuthMode.password;
   String _uiScheme = 'http';
-  bool _lockEnabled = false;
+  // Written through a setter as well: with the app lock switched on, the
+  // app's last screen stays out of the recent-apps overview (see
+  // [RecentsPreview]). Only a change reaches the platform — an install
+  // without the lock never makes the call.
+  bool _lockEnabledValue = false;
+  bool get _lockEnabled => _lockEnabledValue;
+  set _lockEnabled(bool value) {
+    if (value == _lockEnabledValue) return;
+    _lockEnabledValue = value;
+    _recentsPreview.setRecentsHidden(value);
+  }
+
   bool _lockedValue = false;
   bool get _locked => _lockedValue;
   set _locked(bool value) {
     _lockedValue = value;
     _applyScreenshotPolicy();
+    _appLock?.locked = value;
   }
 
   bool _booting = true; // true until settings load, so the shell isn't shown
@@ -371,6 +419,11 @@ class _UpdaterPageState extends State<UpdaterPage>
   // system file picker) — otherwise you return from picking a file to the lock
   // screen. Like _unlocking (which covers the biometric prompt).
   bool _suppressLock = false;
+  // Since when the app has been in the background with the lock held off
+  // like that. A picker left open is no reason to stay unlocked for good:
+  // past [_kSuppressLockLimit] the app locks on the way back.
+  DateTime? _suppressedSince;
+  static const _kSuppressLockLimit = Duration(minutes: 5);
   String _themeMode = 'system';
   String _languageMode = 'system'; // 'system' | 'de' | 'en'
   String _channel = 'stable';
@@ -452,6 +505,8 @@ class _UpdaterPageState extends State<UpdaterPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _appLock = AppLockLayer.maybeOf(context)
+      ?..attach(this, onUnlock: _tryUnlock);
     _loadSettings();
     _checkForUpdate();
     _loadEntitlement();
@@ -466,6 +521,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   void dispose() {
     _saveDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _appLock?.detach(this);
     _persistSettings(); // reads controllers synchronously before disposal
     for (final c in _savedControllers) {
       c.dispose();
@@ -489,16 +545,41 @@ class _UpdaterPageState extends State<UpdaterPage>
     // and not while an unlock is already in progress.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      if (_lockEnabled && !_unlocking && !_suppressLock && mounted) {
-        // Dismiss any open sheet/dialog (API status, history, settings, find-Pi)
-        // so it can't stay readable above the lock screen on resume.
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((r) => r.isFirst);
-        setState(() => _locked = true);
+      if (_lockEnabled && !_unlocking && mounted) {
+        if (_suppressLock) {
+          _suppressedSince ??= _now(); // held off, but not without a limit
+        } else {
+          _engageLock();
+        }
       }
-    } else if (state == AppLifecycleState.resumed && _locked && !_unlocking) {
-      _tryUnlock();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.resumed) {
+      // On the way back from a background the lock was held off in. Checked
+      // here and not only on `resumed`: `inactive` comes first, and frames are
+      // drawn from then on.
+      final since = _suppressedSince;
+      _suppressedSince = null;
+      if (since != null && _lockEnabled && !_locked && mounted) {
+        final away = _now().difference(since);
+        // A clock that was set back meanwhile counts as over the limit.
+        if (away.isNegative || away >= _kSuppressLockLimit) _engageLock();
+      }
+      if (state == AppLifecycleState.resumed && _locked && !_unlocking) {
+        _tryUnlock();
+      }
     }
+  }
+
+  /// Locks the app. Beneath the lock layer everything stays open, hidden
+  /// until the unlock. A page without that layer can only draw the lock in
+  /// its own route, so what lies above the route is closed first (API status,
+  /// history, settings, find-Pi) — it would stay readable over the lock
+  /// screen.
+  void _engageLock() {
+    if (_appLock == null) {
+      Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+    }
+    setState(() => _locked = true);
   }
 
   Future<void> _loadSettings() async {
@@ -3985,12 +4066,13 @@ class _UpdaterPageState extends State<UpdaterPage>
     // The (bounded) scan still finishes in the background; if the user already
     // cancelled, the dialog is gone — just drop the result.
     if (cancelled) return;
-    // Only pop if our dialog is still the top route: if the app was backgrounded
-    // mid-scan with app-lock on, the lifecycle handler already popUntil'd to the
-    // home route, and a blind pop() would remove the home route (blank screen).
+    // Only pop if our dialog is still the top route: a page without the lock
+    // layer closes every route when it locks (see _engageLock), and a blind
+    // pop() would then remove the home route (blank screen).
     if (navigator.canPop()) navigator.pop();
-    // Don't draw the results over the lock screen (or after dispose).
-    if (!mounted || _locked) return;
+    // Don't draw the results over a lock screen the page draws itself (or
+    // after dispose). Beneath the lock layer they wait for the unlock.
+    if (!mounted || (_locked && _appLock == null)) return;
     if (hosts.isEmpty) {
       _snack(context.l10n.snackNoSshDevices);
       return;
@@ -6314,7 +6396,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         ),
       );
     }
-    if (_locked) return _LockScreen(onUnlock: _tryUnlock);
+    // The lock layer covers this route and every other one. Only a page
+    // without it draws the lock itself — locked, it never shows its content.
+    if (_locked && _appLock == null) return _LockScreen(onUnlock: _tryUnlock);
     // First run: require accepting the disclaimer before anything else.
     if (!_disclaimerAccepted) {
       return _DisclaimerScreen(
@@ -6323,8 +6407,10 @@ class _UpdaterPageState extends State<UpdaterPage>
         onPrivacy: () => _openUrl(kPrivacyUrl),
       );
     }
-    // App shell is about to show → check for a "What's New" popup once.
-    if (!_whatsNewChecked) {
+    // App shell is about to show → check for a "What's New" popup once. Built
+    // beneath the lock layer it is not about to show yet: the popup and its
+    // "seen" mark wait for the unlock, as when the lock replaced this content.
+    if (!_whatsNewChecked && !_locked) {
       _whatsNewChecked = true;
       WidgetsBinding.instance
           .addPostFrameCallback((_) => _maybeShowWhatsNew());

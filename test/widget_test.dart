@@ -78,6 +78,17 @@ class _DenyAuth implements Authenticator {
   Future<bool> authenticate(String reason) async => false;
 }
 
+/// Authenticator whose answer the test sets.
+class _SwitchAuth implements Authenticator {
+  bool allow = true;
+
+  @override
+  Future<bool> canAuthenticate() async => true;
+
+  @override
+  Future<bool> authenticate(String reason) async => allow;
+}
+
 /// Records every FLAG_SECURE request instead of calling the platform channel.
 class _RecordingSecureScreen implements SecureScreen {
   final calls = <bool>[];
@@ -897,5 +908,59 @@ void main() {
         findsNothing);
     expect(find.text('Verbindung herstellen'), findsOneWidget);
     expect(find.text('Zuhause'), findsOneWidget); // the loaded profile's name
+  });
+
+  // ---- App lock without the lock layer ----
+
+  // The app draws the lock above the Navigator and keeps every route beneath
+  // it (app_lock_test.dart). A page pumped on its own, as in this file, has no
+  // such layer: locked, it must keep its content — and what it opened — away
+  // by itself.
+  testWidgets(
+      'without the lock layer the page draws the lock in its route and closes '
+      'what lies above it', (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final auth = _SwitchAuth();
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(const AppConfig(
+          profiles: [Profile(name: 'Standard')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+          lockEnabled: true,
+        )),
+        updateChecker: _noUpdateChecker,
+        authenticator: auth,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Entsperren'), findsNothing); // the prompt went through
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.widgetWithText(PopupMenuItem<String>, 'Einstellungen'));
+    await tester.pumpAndSettle();
+    expect(find.text('App mit Biometrie/PIN sperren'), findsOneWidget);
+
+    auth.allow = false;
+    backgroundAndReturn(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Entsperren'), findsOneWidget);
+    expect(find.text('Verbindung herstellen'), findsNothing);
+    expect(find.text('App mit Biometrie/PIN sperren', skipOffstage: false),
+        findsNothing);
+
+    // Unlocking brings the page back — without the sheet.
+    auth.allow = true;
+    await tester.tap(find.text('Entsperren'));
+    await tester.pumpAndSettle();
+    expect(find.text('Verbindung herstellen'), findsOneWidget);
+    expect(find.text('App mit Biometrie/PIN sperren'), findsNothing);
   });
 }

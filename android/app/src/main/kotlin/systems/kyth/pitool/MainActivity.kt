@@ -2,6 +2,7 @@ package systems.kyth.pitool
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.WindowManager
@@ -95,6 +96,22 @@ class MainActivity : FlutterFragmentActivity() {
                         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     } else {
                         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                    result.success(null)
+                } else if (call.method == "setRecentsHidden") {
+                    // App lock switched on: no picture of the app in the
+                    // recent-apps overview. The lock engages in the background,
+                    // after Android took that picture — FLAG_SECURE comes too
+                    // late for it. The platform offers this from Android 13
+                    // (API 33); below that nothing changes. Dart calls it when
+                    // the lock setting is on or changes — nothing is added to
+                    // onCreate — and nothing here may throw into the app.
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            val hidden = call.argument<Boolean>("hidden") ?: true
+                            setRecentsScreenshotEnabled(!hidden)
+                        }
+                    } catch (_: Throwable) {
                     }
                     result.success(null)
                 } else {

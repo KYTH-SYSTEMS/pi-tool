@@ -18,8 +18,22 @@ abstract class SecureScreen {
   Future<void> setSecure(bool secure);
 }
 
+/// Keeps the app's last screen out of the recent-apps overview.
+///
+/// For the app lock: the lock engages when the app is already in the
+/// background, and Android has taken the picture for the overview by then —
+/// [SecureScreen] comes too late for it. With the lock switched on the picture
+/// is therefore turned off for good, and screenshots stay possible.
+///
+/// Android offers this from version 13 (API 33). On older versions the call
+/// does nothing and the overview keeps showing the last screen.
+abstract class RecentsPreview {
+  /// True = no picture of the app in the overview, false = the default.
+  Future<void> setRecentsHidden(bool hidden);
+}
+
 /// Default: a tiny MethodChannel (no plugin), mirroring the file picker.
-class ChannelSecureScreen implements SecureScreen {
+class ChannelSecureScreen implements SecureScreen, RecentsPreview {
   const ChannelSecureScreen();
   static const _channel = MethodChannel('pi_tool/secure');
 
@@ -30,6 +44,16 @@ class ChannelSecureScreen implements SecureScreen {
     } catch (_) {
       // A failure here must never take the app down. The worst case is that
       // the flag stays as it was — and it starts in the SECURE state.
+    }
+  }
+
+  @override
+  Future<void> setRecentsHidden(bool hidden) async {
+    try {
+      await _channel.invokeMethod<void>('setRecentsHidden', {'hidden': hidden});
+    } catch (_) {
+      // As above. The worst case is the overview picture as it was before the
+      // app lock cared about it.
     }
   }
 }
