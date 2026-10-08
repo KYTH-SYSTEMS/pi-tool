@@ -1548,11 +1548,12 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   und Sideload-Installationen — deren Update-Check den Tag-Namen vergleicht
   (`update_check.dart`) — sähen dauerhaft ein Update-Banner.
 - **Pull Requests** (gegen `main`): analyze + test + Debug-APK (arm64) als
-  Compile-Check; veröffentlicht wird nie etwas. Fork- und Dependabot-PRs
-  bekommen keine Secrets, dort wird auch nichts signiert. Ein PR aus einem
-  Branch **dieses** Repos bekommt sie: Der Keystore wird angelegt, ein
-  signiertes Release-AAB aus dem PR-Code gebaut und als Workflow-Artefakt
-  hochgeladen (die Schritte hängen nur an `HAS_KEYSTORE`).
+  Compile-Check; veröffentlicht und signiert wird nie etwas. Fork- und
+  Dependabot-PRs bekommen ohnehin keine Secrets. Ein PR aus einem Branch
+  **dieses** Repos bekommt sie — deshalb schließen die drei Signier-Schritte
+  (Keystore anlegen, App Bundle bauen, AAB-Artefakt hochladen) das Ereignis
+  `pull_request` ausdrücklich aus, sonst entstünde aus ungeprüftem PR-Code
+  ein signiertes Release-AAB.
 - **Play-Upload** (`fastlane/Fastfile`, Lane `play_release`): `supply` lädt auf
   `v*`-Tag den signierten AAB in die **Produktions-Spur mit Status `completed`
   (= 100 % Rollout, kein Draft)** und dazu die Texte aus `fastlane/metadata/**`

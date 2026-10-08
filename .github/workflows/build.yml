@@ -8,12 +8,11 @@ on:
   # way to judge them was to merge and see. A PR now gets analyze + test + a
   # debug APK build — the APK matters because plugin bumps break at the
   # Gradle/native layer, not in the Dart analyzer. Nothing is published on this
-  # path: releasing stays tied to a v* tag. Whether anything is SIGNED depends
-  # on where the PR comes from. Fork and Dependabot PRs get no secrets, so
-  # HAS_KEYSTORE is false and nothing is signed or uploaded as an AAB. A PR
-  # from a branch of this repository does get them: the keystore is
-  # materialized, a signed release AAB is built from the PR's code and uploaded
-  # as a workflow artifact (the steps gated on HAS_KEYSTORE alone).
+  # path: releasing stays tied to a v* tag. Nothing is signed either, wherever
+  # the PR comes from. Fork and Dependabot PRs get no secrets anyway; a PR from
+  # a branch of this repository does, so the three signing steps (keystore,
+  # App Bundle, AAB artifact) exclude the pull_request event explicitly —
+  # otherwise unreviewed PR code would be built into a signed release AAB.
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -130,7 +129,7 @@ jobs:
           exit 1
 
       - name: Configure release signing
-        if: env.HAS_KEYSTORE == 'true'
+        if: env.HAS_KEYSTORE == 'true' && github.event_name != 'pull_request'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -164,7 +163,7 @@ jobs:
       # so friends only ever see the installable .apk). Built here — before the
       # signing material is wiped — so both artifacts exist first.
       - name: Build release App Bundle (Play Store)
-        if: env.HAS_KEYSTORE == 'true'
+        if: env.HAS_KEYSTORE == 'true' && github.event_name != 'pull_request'
         run: flutter build appbundle --release
 
       # Delete the keystore + plaintext key.properties from the workspace before
@@ -183,7 +182,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Play Store AAB artifact
-        if: env.HAS_KEYSTORE == 'true'
+        if: env.HAS_KEYSTORE == 'true' && github.event_name != 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pi-tool-playstore-aab
