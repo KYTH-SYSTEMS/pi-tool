@@ -1,4 +1,4 @@
-/// Lightweight remote file browser over the normal SSH exec channel (ls +
+/// Lightweight remote file browser over the normal SSH exec channel (find +
 /// base64) — no separate SFTP subsystem, so the FakeSshRunner covers it too.
 /// Pure command builders, listing parser and path helpers (unit-testable).
 library;
@@ -25,10 +25,18 @@ bool isProbablyTextFile(Uint8List bytes) {
   return control / bytes.length < 0.05;
 }
 
-/// Lists a directory (sudo, so root-only paths work too). `-p` marks dirs with
-/// a trailing slash, `-A` shows dotfiles but not `.`/`..`.
+/// Lists a directory (sudo, so root-only paths work too): one
+/// `<type>\t<name>\0` record per entry, dotfiles included, without `.`/`..`.
+///
+/// `%Y` is the type BEHIND a symlink (`d` for /bin -> usr/bin on a merged-usr
+/// system, `N` for a dangling link) — `ls -p` marked such a link as a file and
+/// it could not be entered. `-H` follows a link only when it is the directory
+/// asked for. NUL-terminated because a name may hold anything else, a line
+/// break included. Messages of sudo and find stay on stderr (LC_ALL=C: sudo's
+/// are matched in English), so none of them can turn up as an entry.
 String buildListDirCommand(String path) =>
-    "sudo -S -p '' ls -1Ap ${shSingleQuote(path)} 2>&1";
+    "LC_ALL=C sudo -S -p '' find -H ${shSingleQuote(path)} "
+    r"-mindepth 1 -maxdepth 1 -printf '%Y\t%f\0'";
 
 /// Max bytes fetched for a file preview — caps memory so tapping a multi-GB
 /// log/db/.img can't OOM the app.
@@ -36,8 +44,16 @@ const int kFilePreviewLimit = 512 * 1024;
 
 /// Reads (up to [kFilePreviewLimit] bytes of) a file base64-encoded, so any
 /// bytes survive the text channel intact. The size cap is server-side.
+///
+/// A plain pipeline ends with the status of base64, whatever became of `head`
+/// — a file that could not be read used to arrive as an empty one. With
+/// `pipefail` a failed read (missing, a directory, an I/O error) is the status
+/// of the command, and head's message stays on stderr. bash, like the root
+/// scripts: not every `sh` (dash) knows pipefail.
 String buildReadFileCommand(String path) =>
-    "sudo -S -p '' head -c $kFilePreviewLimit ${shSingleQuote(path)} 2>/dev/null | base64";
+    "LC_ALL=C sudo -S -p '' bash -c "
+    "'set -o pipefail; head -c $kFilePreviewLimit -- \"\$1\" | base64' "
+    'bash ${shSingleQuote(path)}';
 
 /// Max bytes for an upload — keeps the base64 payload (transported inside the
 /// script over stdin) and the app's memory bounded.
@@ -48,10 +64,19 @@ const int kFileUploadLimit = 8 * 1024 * 1024;
 /// inject shell. Decodes into a temp file in the SAME directory, then `mv -f`
 /// (atomic rename) so a half-written upload never truncates an existing file.
 /// Prints `UPLOAD_OK` — the caller verifies that marker, not the exit code.
+///
+/// A new file is root's, 0644. One that replaces an existing file takes over
+/// that file's owner and mode — a service user's 0600 `.env` stays what it
+/// was. A directory at [path] is refused: `mv` would move the temp file INTO
+/// it and report success. The temp file never outlives a failure.
 String buildUploadScript({required String path, required String base64Content}) {
-  final q = shSingleQuote(path);
   return 'set -e\n'
-      'dir=\$(dirname $q)\n'
+      'dest=${shSingleQuote(path)}\n'
+      'if [ -d "\$dest" ]; then\n'
+      '  echo "Pi-Tool: Das Ziel ist ein Verzeichnis – nichts hochgeladen."\n'
+      '  exit 1\n'
+      'fi\n'
+      'dir=\$(dirname "\$dest")\n'
       // The directory may legitimately not exist yet: the migration helper
       // uploads backups to /var/backups/… on a TARGET Pi that has never been
       // backed up (those dirs are created by the backup scripts, which run on
@@ -59,9 +84,17 @@ String buildUploadScript({required String path, required String base64Content}) 
       // after the target was already installed. No-op for the file browser.
       'mkdir -p "\$dir"\n'
       'tmp=\$(mktemp "\$dir/.pitool-up.XXXXXX")\n'
+      'trap \'rm -f "\$tmp"\' EXIT\n'
       'printf %s ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"\n'
       'chmod 644 "\$tmp"\n'
-      'mv -f "\$tmp" $q\n'
+      // Owner first: chown may clear mode bits that chmod then sets again.
+      'if [ -f "\$dest" ]; then\n'
+      '  chown --reference="\$dest" "\$tmp"\n'
+      '  chmod --reference="\$dest" "\$tmp"\n'
+      'fi\n'
+      // -T: should a directory appear at the target after the check above,
+      // mv fails instead of moving into it.
+      'mv -fT "\$tmp" "\$dest"\n'
       'echo UPLOAD_OK\n';
 }
 
@@ -89,21 +122,17 @@ String buildDeleteCommand({required String path, required bool isDir}) =>
 typedef DirEntry = ({String name, bool isDir});
 
 /// Parses [buildListDirCommand] output: dirs first, then files, alphabetical.
-/// Skips error lines (permission denied, no such file) and `.`/`..`.
+/// A record is `<type>\t<name>` up to its NUL; what follows the last NUL was
+/// cut off and is no entry. The name is taken as it is — trimmed, it would
+/// name another file in the paths of open and delete.
 List<DirEntry> parseDirListing(String out) {
   final entries = <DirEntry>[];
-  for (final raw in out.split('\n')) {
-    final l = raw.trimRight();
-    if (l.isEmpty) continue;
-    if (l.startsWith('ls:') ||
-        l.contains('Permission denied') ||
-        l.contains('No such file')) {
-      continue;
-    }
-    final isDir = l.endsWith('/');
-    final name = isDir ? l.substring(0, l.length - 1) : l;
-    if (name.isEmpty || name == '.' || name == '..') continue;
-    entries.add((name: name, isDir: isDir));
+  final records = out.split('\x00')..removeLast();
+  for (final r in records) {
+    if (r.length < 3 || r[1] != '\t') continue;
+    final name = r.substring(2);
+    if (name == '.' || name == '..') continue;
+    entries.add((name: name, isDir: r[0] == 'd'));
   }
   entries.sort((a, b) {
     if (a.isDir != b.isDir) return a.isDir ? -1 : 1;

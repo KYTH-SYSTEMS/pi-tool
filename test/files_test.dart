@@ -1,8 +1,143 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:evcc_updater/src/files.dart';
+import 'package:evcc_updater/src/parsing.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// The bash for the real-shell groups. On Windows `bash` may be the WSL
+/// launcher, so they only run with an explicit Git Bash
+/// (PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe).
+final String? _bash =
+    Platform.isWindows ? Platform.environment['PITOOL_TEST_BASH'] : 'bash';
+
+/// Skip reason for the real-bash groups, or false when a bash is at hand.
+final Object _needsBash =
+    _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false;
+
+/// The plain tools the commands under test use; each gets a pass-through
+/// wrapper in the sandbox.
+const _realTools = [
+  'base64', 'bash', 'chmod', 'chown', 'dirname', 'find', 'head', 'mkdir',
+  'mktemp', 'mv', 'rm',
+];
+
+class _Run {
+  _Run(this.code, this.out, this.err);
+  final int code;
+  final String out;
+  final String err;
+}
+
+/// A throwaway directory tree for running the file browser's commands in a
+/// real bash. PATH holds ONLY `bin/`: pass-through wrappers for [_realTools]
+/// (chmod and chown also log their call) and a `sudo` that takes the password
+/// from stdin like `sudo -S` — nothing else on the host can be reached. Every
+/// path a test hands to a command lies below [root].
+class _Box {
+  _Box() : _dir = Directory.systemTemp.createTempSync('pitool-files') {
+    // The directory as bash names it: with a `C:/…` in PATH the colon would
+    // split the entry and the stubs would not be found.
+    final facts = (Process.runSync(_bash!, [
+      '-c',
+      'cd "\$0" && pwd && command -v ${_realTools.join(' ')}',
+      _dir.path,
+    ]).stdout as String)
+        .trim()
+        .split('\n');
+    if (facts.length != _realTools.length + 1) {
+      throw StateError('sandbox probe: $facts');
+    }
+    root = facts.first.trim();
+    Directory(host('bin')).createSync();
+    Directory(host('home/pi')).createSync(recursive: true);
+    for (var i = 0; i < _realTools.length; i++) {
+      final name = _realTools[i];
+      final log = name == 'chmod' || name == 'chown'
+          ? "echo \"$name \$*\" >> '$root/calls'\n"
+          : '';
+      File(host('bin/$name')).writeAsStringSync(
+          '#!/bin/sh\n${log}exec "${facts[i + 1].trim()}" "\$@"\n');
+    }
+    // Like `sudo -S [-p prompt]`: the password is the first line on stdin.
+    File(host('bin/sudo')).writeAsStringSync(r'''#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -p) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+IFS= read -r pw
+if [ "$pw" != sekret ]; then
+  echo "Sorry, try again." >&2
+  echo "sudo: 1 incorrect password attempt" >&2
+  exit 1
+fi
+exec "$@"
+''');
+    Process.runSync(_bash!, ['-c', r'chmod +x "$0"/bin/*', _dir.path]);
+  }
+
+  final Directory _dir;
+
+  /// The sandbox as bash names it (`/tmp/…` in Git Bash).
+  late final String root;
+
+  /// [rel] below the sandbox as dart:io reaches it.
+  String host(String rel) => '${_dir.path}/$rel';
+
+  /// Prepares fixtures with the host's own tools; [script] runs with the
+  /// sandbox as its working directory and touches nothing outside it. Returns
+  /// whether it succeeded. `ln -s` gives Git Bash's emulated links where
+  /// Windows grants no real ones — a script that needs links ends in a
+  /// `[ -L … ]` and the test skips itself on false.
+  bool setup(String script) => Process.runSync(
+          _bash!, ['-c', 'cd "\$0" && { $script\n}', _dir.path],
+          environment: {'MSYS': 'winsymlinks:lnk'}).exitCode ==
+      0;
+
+  /// Runs [command] the way the app does: one command line in a shell, the
+  /// sudo password on stdin.
+  Future<_Run> exec(String command, {String password = 'sekret'}) =>
+      _run(['-c', "export PATH='$root/bin'; $command"], '$password\n');
+
+  /// Feeds [script] to `bash -s` on stdin, like the app's root shell.
+  Future<_Run> script(String script) =>
+      _run(['-s'], "export PATH='$root/bin'\n$script\n");
+
+  Future<_Run> _run(List<String> args, String stdin) async {
+    final p = await Process.start(_bash!, args, workingDirectory: _dir.path);
+    final out = p.stdout.transform(utf8.decoder).join();
+    final err = p.stderr.transform(utf8.decoder).join();
+    p.stdin.add(utf8.encode(stdin));
+    await p.stdin.close();
+    return _Run(await p.exitCode, await out, await err);
+  }
+
+  /// The chmod/chown calls so far, one `name args` line each.
+  List<String> get calls {
+    final f = File(host('calls'));
+    return f.existsSync()
+        ? f.readAsLinesSync().where((l) => l.isNotEmpty).toList()
+        : const [];
+  }
+
+  /// Entry names in [rel], sorted (hidden ones included).
+  List<String> ls(String rel) => Directory(host(rel))
+      .listSync(followLinks: false)
+      .map((e) => e.path.replaceAll(r'\', '/').split('/').last)
+      .toList()
+    ..sort();
+
+  /// Through bash first: dart:io on Windows cannot name a file that ends in a
+  /// space, so it could not remove what the listing tests create.
+  void dispose() {
+    Process.runSync(_bash!, ['-c', r'rm -rf -- "$0"', _dir.path]);
+    if (_dir.existsSync()) _dir.deleteSync(recursive: true);
+  }
+}
 
 void main() {
   group('isProbablyTextFile', () {
@@ -34,12 +169,19 @@ void main() {
 
   group('commands', () {
     test('list + read are sudo and shell-quoted', () {
-      expect(buildListDirCommand('/etc'), "sudo -S -p '' ls -1Ap '/etc' 2>&1");
+      // LC_ALL=C for sudo's messages; stderr stays on its own stream.
+      expect(
+          buildListDirCommand('/etc'),
+          "LC_ALL=C sudo -S -p '' find -H '/etc' -mindepth 1 -maxdepth 1 "
+          r"-printf '%Y\t%f\0'");
       // Size-capped read (head -c) so a huge file can't OOM the app.
-      expect(buildReadFileCommand('/etc/evcc.yaml'),
-          contains("head -c 524288 '/etc/evcc.yaml'"));
-      expect(buildReadFileCommand('/etc/evcc.yaml'), endsWith('| base64'));
+      expect(
+          buildReadFileCommand('/etc/evcc.yaml'),
+          "LC_ALL=C sudo -S -p '' bash -c "
+          r"""'set -o pipefail; head -c 524288 -- "$1" | base64' """
+          "bash '/etc/evcc.yaml'");
       expect(buildListDirCommand("/x';reboot;'"), contains(r"'\''"));
+      expect(buildReadFileCommand("/x';reboot;'"), contains(r"'\''"));
     });
 
     test('upload: base64-decodes atomically into the target dir + marker', () {
@@ -94,22 +236,316 @@ void main() {
   });
 
   group('parseDirListing', () {
-    test('dirs first (trailing /), then files, alphabetical; skips errors', () {
-      const out = 'etc/\n'
-          'zeta.txt\n'
-          'apps/\n'
-          'alpha.conf\n'
-          'ls: cannot access foo: Permission denied\n';
-      final e = parseDirListing(out);
-      expect(e.map((x) => x.name).toList(), ['apps', 'etc', 'alpha.conf', 'zeta.txt']);
-      expect(e.first.isDir, isTrue);
-      expect(e.last.isDir, isFalse);
+    List<(String, bool)> parsed(String out) =>
+        [for (final e in parseDirListing(out)) (e.name, e.isDir)];
+
+    test('dirs first, then files, alphabetical', () {
+      expect(parsed('d\tetc\x00f\tzeta.txt\x00d\tapps\x00f\talpha.conf\x00'), [
+        ('apps', true),
+        ('etc', true),
+        ('alpha.conf', false),
+        ('zeta.txt', false),
+      ]);
     });
-    test('empty / all-error listing → empty', () {
+
+    test('a symlink counts as what it points to', () {
+      // %Y: d for /bin -> usr/bin, N for a dangling link, L for a loop.
+      expect(parsed('d\tbin\x00f\tvmlinuz\x00N\tdangling\x00L\tloop\x00'), [
+        ('bin', true),
+        ('dangling', false),
+        ('loop', false),
+        ('vmlinuz', false),
+      ]);
+    });
+
+    test('names stay as they are: spaces, tabs, line breaks', () {
+      // They go into the paths of open and delete — a trimmed name is
+      // another file.
+      expect(
+          parsed('f\ttrailing \x00f\t leading\x00f\ta\tb\x00'
+              'f\tline\nbreak\x00d\tdir \x00'),
+          [
+            ('dir ', true),
+            (' leading', false),
+            ('a\tb', false),
+            ('line\nbreak', false),
+            ('trailing ', false),
+          ]);
+    });
+
+    test('empty listing → empty', () {
       expect(parseDirListing(''), isEmpty);
-      expect(parseDirListing('ls: /x: No such file or directory'), isEmpty);
+    });
+
+    test('a record cut off before its terminator is not an entry', () {
+      expect(parsed('f\tdone\x00f\thalf'), [('done', false)]);
+    });
+
+    test('text that is not a record is not an entry', () {
+      // What used to turn up as a file: a message in the listing's stream.
+      expect(parseDirListing('Sorry, try again.\n'), isEmpty);
+      expect(
+          parseDirListing("find: '/x': No such file or directory\n\x00"),
+          isEmpty);
+      expect(parseDirListing('\x00\x00f\t\x00'), isEmpty);
     });
   });
+
+  group('buildListDirCommand in bash', () {
+    late _Box box;
+    setUp(() => box = _Box());
+    tearDown(() => box.dispose());
+
+    Future<List<(String, bool)>> list(String rel) async {
+      final r = await box.exec(buildListDirCommand('${box.root}/$rel'));
+      expect(r.code, 0, reason: r.err);
+      expect(r.err, isEmpty);
+      return [for (final e in parseDirListing(r.out)) (e.name, e.isDir)];
+    }
+
+    test('directories, files, hidden files, names with spaces', () async {
+      expect(
+          box.setup('mkdir home/pi/dir "home/pi/dir with space"\n'
+              ': > home/pi/file.txt\n'
+              ': > "home/pi/two words"\n'
+              ': > "home/pi/trailing "\n'
+              ': > "home/pi/ leading"\n'
+              ': > home/pi/.hidden'),
+          isTrue);
+      expect(await list('home/pi'), [
+        ('dir', true),
+        ('dir with space', true),
+        (' leading', false),
+        ('.hidden', false),
+        ('file.txt', false),
+        ('trailing ', false),
+        ('two words', false),
+      ]);
+    });
+
+    test('an empty directory lists nothing', () async {
+      expect(await list('home/pi'), isEmpty);
+    });
+
+    test('symlinks: to a directory, to a file, dangling', () async {
+      final links = box.setup('mkdir home/pi/target\n'
+          ': > home/pi/target/inside.txt\n'
+          ': > home/pi/file.txt\n'
+          'ln -s target home/pi/to-dir\n'
+          'ln -s file.txt home/pi/to-file\n'
+          'ln -s nowhere home/pi/dangling\n'
+          '[ -L home/pi/to-dir ] && [ -L home/pi/dangling ]');
+      if (!links) {
+        markTestSkipped('no symlinks on this platform');
+        return;
+      }
+      // merged-usr: /bin, /lib and /sbin are such links — as files they could
+      // not be entered.
+      expect(await list('home/pi'), [
+        ('target', true),
+        ('to-dir', true),
+        ('dangling', false),
+        ('file.txt', false),
+        ('to-file', false),
+      ]);
+      // … and entering one lists what it points to.
+      expect(await list('home/pi/to-dir'), [('inside.txt', false)]);
+    });
+
+    test('a missing directory: nothing listed, exit status and message',
+        () async {
+      final r = await box.exec(buildListDirCommand('${box.root}/home/nope'));
+      expect(r.code, isNot(0));
+      expect(r.out, isEmpty);
+      expect(r.err, contains('No such file or directory'));
+    });
+
+    test('a rejected sudo password: nothing listed, sudo says so on stderr',
+        () async {
+      expect(box.setup(': > home/pi/file.txt'), isTrue);
+      final r = await box.exec(buildListDirCommand('${box.root}/home/pi'),
+          password: 'falsch');
+      expect(r.code, isNot(0));
+      expect(r.out, isEmpty);
+      expect(isSudoPasswordFailure(r.err), isTrue);
+    });
+
+    test('a hostile path stays one argument', () async {
+      // mkdir is on the sandbox PATH and the shell runs in the sandbox: a
+      // name that broke out of its quotes would leave `pwned` there.
+      expect(box.setup('mkdir "home/pi/a\'; mkdir pwned; \'"'), isTrue);
+      expect(await list("home/pi/a'; mkdir pwned; '"), isEmpty);
+      expect(box.ls('home/pi'), ["a'; mkdir pwned; '"]);
+      expect(Directory(box.host('pwned')).existsSync(), isFalse);
+    });
+  }, skip: _needsBash);
+
+  group('buildReadFileCommand in bash', () {
+    late _Box box;
+    setUp(() => box = _Box());
+    tearDown(() => box.dispose());
+
+    Future<_Run> read(String rel, {String password = 'sekret'}) => box.exec(
+        buildReadFileCommand('${box.root}/$rel'),
+        password: password);
+
+    Uint8List decoded(_Run r) =>
+        base64.decode(r.out.replaceAll(RegExp(r'\s'), ''));
+
+    test('any bytes arrive intact', () async {
+      final bytes = Uint8List.fromList(
+          [...utf8.encode('grün\n'), 0, 1, 2, 0xff, 0xfe, 10]);
+      File(box.host('home/pi/data.bin')).writeAsBytesSync(bytes);
+      final r = await read('home/pi/data.bin');
+      expect(r.code, 0, reason: r.err);
+      expect(r.err, isEmpty);
+      expect(decoded(r), bytes);
+    });
+
+    test('an empty file: exit 0 and no bytes', () async {
+      File(box.host('home/pi/empty')).writeAsBytesSync(const []);
+      final r = await read('home/pi/empty');
+      expect(r.code, 0, reason: r.err);
+      expect(decoded(r), isEmpty);
+    });
+
+    test('a file over the preview limit is cut at the limit', () async {
+      File(box.host('home/pi/big'))
+          .writeAsBytesSync(Uint8List(kFilePreviewLimit + 4096));
+      final r = await read('home/pi/big');
+      expect(r.code, 0, reason: r.err);
+      expect(decoded(r), hasLength(kFilePreviewLimit));
+    });
+
+    test('a name with a space and a quote', () async {
+      expect(box.setup('printf hallo > "home/pi/it\'s here.txt"'), isTrue);
+      final r = await read("home/pi/it's here.txt");
+      expect(r.code, 0, reason: r.err);
+      expect(utf8.decode(decoded(r)), 'hallo');
+    });
+
+    test('a missing file: no output, exit status and message', () async {
+      final r = await read('home/pi/nope');
+      expect(r.code, isNot(0));
+      expect(r.out, isEmpty);
+      expect(r.err, contains('nope'));
+    });
+
+    test('a directory is not an empty file', () async {
+      final r = await read('home/pi');
+      expect(r.code, isNot(0));
+      expect(r.out, isEmpty);
+    });
+
+    test('a rejected sudo password: no output, sudo says so on stderr',
+        () async {
+      File(box.host('home/pi/secret')).writeAsStringSync('geheim');
+      final r = await read('home/pi/secret', password: 'falsch');
+      expect(r.code, isNot(0));
+      expect(r.out, isEmpty);
+      expect(isSudoPasswordFailure(r.err), isTrue);
+    });
+  }, skip: _needsBash);
+
+  group('buildUploadScript in bash', () {
+    late _Box box;
+    setUp(() => box = _Box());
+    tearDown(() => box.dispose());
+
+    Future<_Run> upload(String rel, String content) => box.script(
+        buildUploadScript(
+            path: '${box.root}/$rel',
+            base64Content: base64.encode(utf8.encode(content))));
+
+    String text(String rel) => File(box.host(rel)).readAsStringSync();
+
+    final tmpName = RegExp(r'/\.pitool-up\.[A-Za-z0-9]{6}$');
+
+    test('a new file: written, 0644, marker, nothing left behind', () async {
+      final r = await upload('home/pi/notes.txt', 'neu\n');
+      expect(r.code, 0, reason: r.err);
+      expect(r.out.trim(), 'UPLOAD_OK');
+      expect(text('home/pi/notes.txt'), 'neu\n');
+      expect(box.ls('home/pi'), ['notes.txt']);
+      // Nothing to take over: only the default mode is set.
+      expect(box.calls, hasLength(1));
+      expect(box.calls.single, startsWith('chmod 644 ${box.root}/home/pi/'));
+      expect(tmpName.hasMatch(box.calls.single), isTrue);
+    });
+
+    test('an existing file keeps its owner and its mode', () async {
+      File(box.host('home/pi/.env')).writeAsStringSync('ALT=1\n');
+      expect(box.setup('chmod 600 home/pi/.env'), isTrue);
+      final r = await upload('home/pi/.env', 'NEU=2\n');
+      expect(r.code, 0, reason: r.err);
+      expect(r.out.trim(), 'UPLOAD_OK');
+      expect(text('home/pi/.env'), 'NEU=2\n');
+      expect(box.ls('home/pi'), ['.env']);
+      final dest = '${box.root}/home/pi/.env';
+      final calls = box.calls;
+      expect(calls, hasLength(3));
+      final tmp = calls[0].substring('chmod 644 '.length);
+      expect(tmpName.hasMatch(tmp), isTrue);
+      // Owner first: chown may clear mode bits that chmod then sets again.
+      expect(calls.sublist(1), [
+        'chown --reference=$dest $tmp',
+        'chmod --reference=$dest $tmp',
+      ]);
+      // Git Bash only emulates modes; where they are real, 0600 must survive.
+      if (!Platform.isWindows) {
+        expect(File(box.host('home/pi/.env')).statSync().mode & 0x1ff, 0x180);
+      }
+    });
+
+    test('a directory of that name: refused, nothing moved into it', () async {
+      expect(box.setup('mkdir home/pi/backup\n: > home/pi/backup/keep.txt'),
+          isTrue);
+      final r = await upload('home/pi/backup', 'x');
+      expect(r.code, isNot(0));
+      expect(r.out, isNot(contains('UPLOAD_OK')));
+      expect(r.out, contains('Verzeichnis'));
+      expect(box.ls('home/pi'), ['backup']);
+      expect(box.ls('home/pi/backup'), ['keep.txt']);
+    });
+
+    test('a symlink to a directory: refused as well', () async {
+      final links = box.setup('mkdir home/pi/real\n'
+          'ln -s real home/pi/link\n'
+          '[ -L home/pi/link ]');
+      if (!links) {
+        markTestSkipped('no symlinks on this platform');
+        return;
+      }
+      final r = await upload('home/pi/link', 'x');
+      expect(r.code, isNot(0));
+      expect(r.out, isNot(contains('UPLOAD_OK')));
+      expect(box.ls('home/pi/real'), isEmpty);
+    });
+
+    test('a failure half-way: no temp file stays, the old file is untouched',
+        () async {
+      File(box.host('home/pi/notes.txt')).writeAsStringSync('alt\n');
+      final r = await box.script(buildUploadScript(
+          path: '${box.root}/home/pi/notes.txt', base64Content: '!!!'));
+      expect(r.code, isNot(0));
+      expect(r.out, isNot(contains('UPLOAD_OK')));
+      expect(text('home/pi/notes.txt'), 'alt\n');
+      expect(box.ls('home/pi'), ['notes.txt']);
+    });
+
+    test('a target directory that does not exist yet is created', () async {
+      final r = await upload('var/backups/evcc/evcc-backup-1.tar.gz', 'tgz');
+      expect(r.code, 0, reason: r.err);
+      expect(text('var/backups/evcc/evcc-backup-1.tar.gz'), 'tgz');
+    });
+
+    test('a hostile name is one file, not a command', () async {
+      final r = await upload("home/pi/a'; mkdir pwned; '.txt", 'x');
+      expect(r.code, 0, reason: r.err);
+      expect(box.ls('home/pi'), ["a'; mkdir pwned; '.txt"]);
+      expect(Directory(box.host('pwned')).existsSync(), isFalse);
+    });
+  }, skip: _needsBash);
 
   group('path helpers', () {
     test('join respects an existing trailing slash', () {

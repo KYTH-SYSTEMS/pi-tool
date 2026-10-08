@@ -1637,13 +1637,82 @@ void main() {
   });
 
   group('EvccUpdater file browser', () {
+    // What sudo -S -p '' prints on stderr for a wrong password.
+    const rejected = 'Sorry, try again.\n\n'
+        'sudo: no password was provided\n'
+        'sudo: 1 incorrect password attempt\n';
+
+    Future<List<DirEntry>> list(CommandResult result, {List<String>? log}) =>
+        _updaterWith(FakeSshRunner({
+          buildListDirCommand('/home/pi'): [result]
+        })).listDir(
+            config: _config, path: '/home/pi', onLog: log?.add ?? (_) {});
+
+    Future<Uint8List> read(CommandResult result, {List<String>? log}) =>
+        _updaterWith(FakeSshRunner({
+          buildReadFileCommand('/root/secret'): [result]
+        })).readFileBytes(
+            config: _config, path: '/root/secret', onLog: log?.add ?? (_) {});
+
     test('listDir lists a directory as root (password piped)', () async {
       final cmd = buildListDirCommand('/home/pi');
-      final runner = FakeSshRunner({cmd: [_r('backups/\nnotes.txt\n')]});
+      final runner =
+          FakeSshRunner({cmd: [_r('d\tbackups\x00f\tnotes.txt\x00')]});
       final e = await _updaterWith(runner)
           .listDir(config: _config, path: '/home/pi', onLog: (_) {});
       expect(e.map((x) => x.name).toList(), ['backups', 'notes.txt']);
       expect(runner.stdinByCommand[cmd], 'sekret\n');
+    });
+
+    test('listDir: a rejected sudo password is a sudo error, not a listing',
+        () async {
+      // sudo's lines used to be parsed as file names.
+      await expectLater(list(_r('', stderr: rejected, exitCode: 1)),
+          _err(UpdateErrorKind.sudo, contains('Passwort')));
+    });
+
+    test('listDir: a directory that cannot be read is an error, not empty',
+        () async {
+      final log = <String>[];
+      await expectLater(
+          list(
+              _r('',
+                  stderr: "find: '/home/pi': No such file or directory\n",
+                  exitCode: 1),
+              log: log),
+          _err(UpdateErrorKind.unknown, contains('Verzeichnis')));
+      expect(log.join('\n'), contains('No such file or directory'));
+    });
+
+    test('listDir without an exit status is not a listing', () async {
+      await expectLater(list(_r('d\tbackups\x00', exitCode: null)),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+    });
+
+    test('listDir: one entry find could not examine does not hide the rest',
+        () async {
+      // /run/user/1000 on a desktop Pi: the user's FUSE mount refuses root,
+      // find lists the others and exits 1.
+      final log = <String>[];
+      final e = await list(
+          _r('f\tbus\x00d\tsystemd\x00',
+              stderr: "find: '/home/pi/gvfs': Permission denied\n",
+              exitCode: 1),
+          log: log);
+      expect(e.map((x) => x.name).toList(), ['systemd', 'bus']);
+      expect(log.join('\n'), contains('Permission denied'));
+    });
+
+    test('listDir: what sudo says on stderr is not an entry', () async {
+      final e = await list(_r('f\tnotes.txt\x00',
+          stderr: 'sudo: unable to resolve host pi: Name or service not '
+              'known\n'));
+      expect(e.map((x) => x.name).toList(), ['notes.txt']);
+    });
+
+    test('listDir: a file named like sudo\'s message is just a file', () async {
+      final e = await list(_r('f\tSorry, try again.\x00'));
+      expect(e.single.name, 'Sorry, try again.');
     });
 
     test('readFileBytes base64-decodes the file content', () async {
@@ -1652,17 +1721,43 @@ void main() {
       final bytes = await _updaterWith(runner)
           .readFileBytes(config: _config, path: '/etc/hostname', onLog: (_) {});
       expect(utf8.decode(bytes), 'pi\n');
+      expect(runner.stdinByCommand[cmd], 'sekret\n');
     });
 
-    test('readFileBytes on unreadable output is a clear failure', () async {
-      final cmd = buildReadFileCommand('/root/secret');
-      final runner =
-          FakeSshRunner({cmd: [_r('base64: /root/secret: Permission denied')]});
+    test('readFileBytes: an empty file is an empty file', () async {
+      expect(await read(_r('')), isEmpty);
+    });
+
+    test('readFileBytes: a failed read is an error, not an empty file',
+        () async {
+      // What the command gives for a file it cannot read: nothing on stdout,
+      // head's message on stderr and its exit status.
+      final log = <String>[];
       await expectLater(
-        _updaterWith(runner)
-            .readFileBytes(config: _config, path: '/root/secret', onLog: (_) {}),
-        throwsA(isA<EvccUpdateException>()),
-      );
+          read(
+              _r('',
+                  stderr: "head: cannot open '/root/secret' for reading: "
+                      'No such file or directory\n',
+                  exitCode: 1),
+              log: log),
+          _err(UpdateErrorKind.unknown, contains('nicht gelesen')));
+      expect(log.join('\n'), contains('cannot open'));
+    });
+
+    test('readFileBytes: a rejected sudo password is a sudo error', () async {
+      await expectLater(read(_r('', stderr: rejected, exitCode: 1)),
+          _err(UpdateErrorKind.sudo, contains('Passwort')));
+    });
+
+    test('readFileBytes without an exit status is not the file', () async {
+      await expectLater(read(_r('cGkK\n', exitCode: null)),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
+    });
+
+    test('readFileBytes: output that is not base64 is a clear failure',
+        () async {
+      await expectLater(read(_r('kein base64 !')),
+          _err(UpdateErrorKind.unknown, contains('nicht gelesen')));
     });
   });
 

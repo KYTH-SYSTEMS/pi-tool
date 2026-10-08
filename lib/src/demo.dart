@@ -89,7 +89,7 @@ String demoResponseFor(String command, {String? stdin}) {
   if (c == dockerListCommand || c.contains('docker ps')) return '';
 
   // 3. Dateien tab (file browser).
-  if (c.contains(' ls -1Ap ')) return _dirListing;
+  if (c.contains(' find -H ')) return _dirListing;
   if (c.contains('head -c 524288') && c.contains('base64')) return _sampleFileB64;
   if (c.startsWith('wc -c <')) return '${_sampleFileBytes.length}\n';
   if (c.startsWith('base64 --')) return _sampleFileB64;
@@ -231,7 +231,6 @@ const String _detectDoc = '$_m'
     // the document for a cut-off one and shows nothing.
     '$_m$detectEndKey$_m\n';
 
-/// Canned `ls -1Ap` listing (dirs end with `/`), parsed by `parseDirListing`.
 /// Canned output of [buildSecurityProbe] for the demo Pi: hardened SSH, but
 /// automatic updates off and no fail2ban — so the traffic light shows what it
 /// is for, including a working "Beheben" button.
@@ -249,11 +248,13 @@ const String _securityReport = '__SEC_SSHD__\n'
     '0.0.0.0:80\n'
     '0.0.0.0:7070\n';
 
-const String _dirListing = 'backups/\n'
-    'logs/\n'
-    'evcc.yaml\n'
-    'evcc.db\n'
-    'README.md\n';
+/// Canned listing in the format of `buildListDirCommand` (`<type>\t<name>\0`),
+/// parsed by `parseDirListing`.
+const String _dirListing = 'd\tbackups\x00'
+    'd\tlogs\x00'
+    'f\tevcc.yaml\x00'
+    'f\tevcc.db\x00'
+    'f\tREADME.md\x00';
 
 /// A small sample file shown when previewing/downloading in the browser.
 const String _sampleFileText = '# evcc – Demo-Konfiguration\n'

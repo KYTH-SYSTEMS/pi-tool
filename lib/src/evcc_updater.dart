@@ -1669,11 +1669,34 @@ class EvccUpdater {
         body: (runner, log) async {
           final r = await runner.run(buildListDirCommand(path),
               stdin: '${config.password}\n');
-          return parseDirListing(r.stdout);
+          // The listing is on stdout (names are payload — never searched for
+          // sudo's words); sudo and find report on stderr.
+          if (isSudoPasswordFailure(r.stderr)) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          final entries = parseDirListing(r.stdout);
+          if (r.exitCode != 0) {
+            final err = r.stderr.trim();
+            if (err.isNotEmpty) log(err);
+            // find also exits non-zero when it could not examine single
+            // entries (a user's FUSE mount refuses root) but listed the rest.
+            // With nothing listed, the directory itself could not be read.
+            if (entries.isEmpty) {
+              throw const EvccUpdateException(UpdateErrorKind.unknown,
+                  'Verzeichnis konnte nicht gelesen werden (Details im Log).');
+            }
+          }
+          return entries;
         },
       );
 
-  /// Reads a remote file's raw bytes (base64 over the channel).
+  /// Reads a remote file's raw bytes (base64 over the channel). Throws when
+  /// the file could not be read — an empty result is an empty file.
   Future<Uint8List> readFileBytes({
     required SshConfig config,
     required String path,
@@ -1685,6 +1708,20 @@ class EvccUpdater {
         body: (runner, log) async {
           final r = await runner.run(buildReadFileCommand(path),
               stdin: '${config.password}\n');
+          if (isSudoPasswordFailure(r.stderr)) {
+            throw const EvccUpdateException(UpdateErrorKind.sudo,
+                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+          }
+          if (r.exitCode == null) {
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          if (r.exitCode != 0) {
+            final err = r.stderr.trim();
+            if (err.isNotEmpty) log(err);
+            throw const EvccUpdateException(UpdateErrorKind.unknown,
+                'Datei konnte nicht gelesen werden (Details im Log).');
+          }
           try {
             return base64.decode(r.stdout.replaceAll(RegExp(r'\s'), ''));
           } catch (_) {
