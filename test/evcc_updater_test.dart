@@ -1480,6 +1480,92 @@ void main() {
     });
   });
 
+  // After "Trennen" (`tailscale down`) the node keeps its network map, so
+  // `tailscale ip -4` goes on printing the 100.x address. The card took that
+  // address for "connected" and kept offering "Trennen" — with "Verbinden"
+  // out of reach. The backend state of the node's own status decides now.
+  group('EvccUpdater Tailscale-Erkennung (BackendState)', () {
+    const lanRoutes =
+        'default via 192.168.178.1 dev eth0 proto dhcp src 192.168.178.64\n'
+        '192.168.178.0/24 dev eth0 proto kernel scope link src 192.168.178.64\n';
+    String self(String state) => '{"BackendState": "$state", "Self": '
+        '{"DNSName": "evcc-pi.tail1234.ts.net.", "TailscaleIPs": '
+        '["100.64.0.5"], "AllowedIPs": ["100.64.0.5/32", "192.168.178.0/24"]}}';
+
+    Future<ServiceStatus> detect(Map<String, List<CommandResult>> probes) async {
+      final list = await _updaterWith(FakeSshRunner(probes))
+          .detectServices(config: _config, onLog: (_) {});
+      return list.firstWhere((s) => s.id == 'tailscale');
+    }
+
+    test('Stopped, Adresse weiter vorhanden: getrennt, kein Routen-Zustand',
+        () async {
+      final ts = await detect({
+        tailscaleStatusCommand: [_r('Tailscale is stopped.\n100.64.0.5')],
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["192.168.178.0/24"]}')
+        ],
+        tailscaleSelfCommand: [_r(self('Stopped'))],
+      });
+      expect(ts.installed, isTrue);
+      expect(ts.active, isFalse);
+      expect(ts.detail, 'Getrennt');
+      expect(ts.version, isNull);
+      expect(ts.routes, isNull);
+    });
+
+    test('Running: verbunden mit Adresse', () async {
+      final ts = await detect({
+        tailscaleStatusCommand: [_r('100.64.0.5   evcc-pi   linux\n100.64.0.5')],
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscaleSelfCommand: [_r(self('Running'))],
+      });
+      expect(ts.active, isTrue);
+      expect(ts.detail, 'Verbunden · 100.64.0.5');
+      expect(ts.version, '100.64.0.5');
+      expect(ts.routes, isNotNull);
+    });
+
+    test('NeedsLogin: nicht angemeldet', () async {
+      final ts = await detect({
+        tailscaleStatusCommand: [
+          _r('Logged out.\nLog in at: https://login.tailscale.com/a/abc')
+        ],
+        tailscaleSelfCommand: [_r('{"BackendState": "NeedsLogin"}')],
+      });
+      expect(ts.installed, isTrue);
+      expect(ts.active, isFalse);
+      expect(ts.detail, 'Nicht angemeldet');
+      expect(ts.version, isNull);
+    });
+
+    test('Running ohne IPv4-Adresse: verbunden, ohne Adresse im Text',
+        () async {
+      final ts = await detect({
+        tailscaleStatusCommand: [_r('fd7a:115c:a1e0::5   evcc-pi   linux')],
+        tailscaleSelfCommand: [_r(self('Running'))],
+      });
+      expect(ts.active, isTrue);
+      expect(ts.detail, 'Verbunden');
+      expect(ts.version, isNull);
+    });
+
+    test('ohne BackendState (alter Client): die Adresse entscheidet wie bisher',
+        () async {
+      final up = await detect({
+        tailscaleStatusCommand: [_r('100.64.0.5   evcc-pi   linux\n100.64.0.5')],
+      });
+      expect(up.active, isTrue);
+      expect(up.detail, 'Verbunden · 100.64.0.5');
+      final down = await detect({
+        tailscaleStatusCommand: [_r('Tailscale is stopped.')],
+      });
+      expect(down.active, isFalse);
+      expect(down.detail, 'Getrennt');
+    });
+  });
+
   group('EvccUpdater Tailscale-Heimnetz', () {
     const lanRoutes =
         'default via 192.168.178.1 dev eth0 proto dhcp src 192.168.178.64\n'

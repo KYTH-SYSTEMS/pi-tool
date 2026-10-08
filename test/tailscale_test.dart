@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:evcc_updater/src/commands.dart'
+    show buildDetectBatch, splitDetectSections;
 import 'package:evcc_updater/src/services/pi_service.dart';
 import 'package:evcc_updater/src/services/tailscale.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -99,7 +101,166 @@ void main() {
       final s = parseTailscaleStatus('tailscale: command not found');
       expect(s.installed, isFalse);
     });
+
+    // `tailscale ip` prints the address from the last network map whatever
+    // the backend state is (cmd/tailscale/cli/ip.go reads Status.TailscaleIPs;
+    // `tailscale down` keeps the map), so the address alone says nothing. The
+    // state comes from `tailscale status --json`: Status.BackendState is an
+    // ipn.State string — "NoState", "NeedsLogin", "NeedsMachineAuth",
+    // "Stopped", "Starting", "Running" (ipn/backend.go, ipn/ipnstate).
+    String self(String state) => '{\n  "Version": "1.90.2-t1234",\n'
+        '  "BackendState": "$state",\n'
+        '  "TailscaleIPs": ["100.101.102.103"],\n'
+        '  "Self": {"HostName": "raspberrypi"}\n}';
+
+    test('Stopped with the address still shown: not up', () {
+      final s = parseTailscaleStatus(
+          'Tailscale is stopped.\n100.101.102.103',
+          self: self('Stopped'));
+      expect(s.installed, isTrue);
+      expect(s.up, isFalse);
+      expect(s.needsLogin, isFalse);
+    });
+
+    test('Running: up, with the address', () {
+      final s = parseTailscaleStatus(
+          '100.101.102.103  my-pi  user@  linux  -\n100.101.102.103',
+          self: self('Running'));
+      expect(s.up, isTrue);
+      expect(s.needsLogin, isFalse);
+      expect(s.ip, '100.101.102.103');
+    });
+
+    test('NeedsLogin: not up, and known to be logged out', () {
+      final s = parseTailscaleStatus(
+          'Logged out.\nLog in at: https://login.tailscale.com/a/abc123',
+          self: '{"BackendState": "NeedsLogin", "TailscaleIPs": null}');
+      expect(s.installed, isTrue);
+      expect(s.up, isFalse);
+      expect(s.needsLogin, isTrue);
+    });
+
+    test('every other state is not up — even with an address', () {
+      for (final state in [
+        'NoState',
+        'InUseOtherUser',
+        'NeedsMachineAuth',
+        'Starting',
+      ]) {
+        final s = parseTailscaleStatus('100.101.102.103', self: self(state));
+        expect(s.up, isFalse, reason: state);
+        expect(s.needsLogin, isFalse, reason: state);
+      }
+    });
+
+    test('Running without an IPv4 address is still up', () {
+      final s = parseTailscaleStatus('fd7a:115c:a1e0::1234  my-pi  linux  -',
+          self: self('Running'));
+      expect(s.up, isTrue);
+      expect(s.ip, isNull);
+    });
+
+    test('without a BackendState the address decides, as before', () {
+      // An old client without `--peers`, an unreadable daemon, cut-off JSON.
+      for (final noState in [
+        '',
+        'flag provided but not defined: -peers',
+        '{"Self": {"HostName": "raspberrypi"}}',
+        '{"BackendState": 6}',
+        '{"BackendState": "Runn',
+      ]) {
+        final up = parseTailscaleStatus(
+            '100.101.102.103  my-pi  linux  -\n100.101.102.103',
+            self: noState);
+        expect(up.up, isTrue, reason: noState);
+        expect(up.ip, '100.101.102.103', reason: noState);
+        expect(up.needsLogin, isFalse, reason: noState);
+        final down =
+            parseTailscaleStatus('Tailscale is stopped.', self: noState);
+        expect(down.up, isFalse, reason: noState);
+      }
+    });
+
+    test('a warning line before the JSON does not hide the state', () {
+      final s = parseTailscaleStatus('Tailscale is stopped.\n100.101.102.103',
+          self: 'Warning: client version "1.90.1" != tailscaled server '
+              'version "1.90.2"\n${self('Stopped')}');
+      expect(s.up, isFalse);
+    });
   });
+
+  // The two probes of the detection batch, in a real bash, against a
+  // `tailscale` that answers like the real CLI in each backend state
+  // (cmd/tailscale/cli/status.go and ip.go): plain `status` exits 1 with one
+  // line unless running, `ip -4` prints the address while a network map is
+  // held, `status --json` prints the state whatever it is. PATH is the stub
+  // directory alone, so a client on the dev PC is never asked.
+  group('Tailscale-Erkennung in bash', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('tsdet');
+      Directory('${tmp.path}/bin').createSync();
+      File('${tmp.path}/bin/tailscale').writeAsStringSync(_tailscaleCliStub);
+      Process.runSync(
+          _bash!, ['-c', r'chmod +x "$0"/bin/*', _posixArg(tmp.path)]);
+    });
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    Future<TailscaleStatus> detect(String state) async {
+      final p = await Process.start(_bashAbsolute!, ['-s'], environment: {
+        'PATH': '${_posixArg(tmp.path)}/bin',
+        'LC_ALL': 'C',
+        'TS_STATE': state,
+      });
+      final out = p.stdout.transform(utf8.decoder).join();
+      p.stderr.drain<void>();
+      p.stdin.write('${buildDetectBatch([
+            ('TAILSCALE', tailscaleStatusCommand),
+            ('TS_SELF', tailscaleSelfCommand),
+          ])}\n');
+      await p.stdin.close();
+      expect(await p.exitCode, 0);
+      final sec = splitDetectSections(await out);
+      expect(sec.keys, containsAll(['TAILSCALE', 'TS_SELF']));
+      return parseTailscaleStatus(sec['TAILSCALE']!, self: sec['TS_SELF']!);
+    }
+
+    test('nach „Trennen“ (Stopped): Adresse noch da, trotzdem getrennt',
+        () async {
+      final s = await detect('Stopped');
+      expect(s.installed, isTrue);
+      expect(s.ip, '100.101.102.103'); // `tailscale ip -4` still prints it
+      expect(s.up, isFalse);
+      expect(s.needsLogin, isFalse);
+    });
+
+    test('Running: verbunden mit Adresse', () async {
+      final s = await detect('Running');
+      expect(s.up, isTrue);
+      expect(s.ip, '100.101.102.103');
+    });
+
+    test('NeedsLogin: nicht angemeldet', () async {
+      final s = await detect('NeedsLogin');
+      expect(s.installed, isTrue);
+      expect(s.up, isFalse);
+      expect(s.needsLogin, isTrue);
+    });
+
+    test('alter Client ohne --peers: die Adresse entscheidet wie bisher',
+        () async {
+      final s = await detect('old');
+      expect(s.installed, isTrue);
+      expect(s.up, isTrue);
+      expect(s.ip, '100.101.102.103');
+    });
+
+    test('nicht installiert', () async {
+      File('${tmp.path}/bin/tailscale').deleteSync();
+      expect((await detect('Running')).installed, isFalse);
+    });
+  }, skip: _bash == null ? 'braucht bash (Linux oder Git Bash)' : false);
 
   group('remoteAccessCandidates', () {
     test('beide bekannt: Heim-Adresse zuerst (schnell, ohne VPN)', () {
@@ -1226,8 +1387,55 @@ final String? _bash = Platform.isLinux
         ? _gitBash
         : null;
 
+/// [_bash] as an absolute path, for runs whose PATH is a stub directory alone
+/// — a bare `bash` would not be found there.
+final String? _bashAbsolute = Platform.isLinux
+    ? (Process.runSync('bash', ['-c', 'command -v bash']).stdout as String)
+        .trim()
+    : _bash;
+
 /// Forward slashes: Git Bash reads `C:/…` paths as given.
 String _posixArg(String path) => path.replaceAll(r'\', '/');
+
+/// A `tailscale` that answers the three detection calls like the real CLI in
+/// backend state `$TS_STATE` (`old`: running, but a client whose `status` does
+/// not know `--peers` yet). `status --json` ends without a newline, like the
+/// real one.
+const String _tailscaleCliStub = r'''#!/bin/sh
+ip=100.101.102.103
+case "$TS_STATE" in old) state=Running ;; *) state=$TS_STATE ;; esac
+case "$1 $2" in
+  "status --json")
+    if [ "$TS_STATE" = old ]; then
+      echo "flag provided but not defined: -peers" >&2
+      exit 2
+    fi
+    case "$state" in
+      NeedsLogin) ips=null ;;
+      *) ips="[\"$ip\", \"fd7a:115c:a1e0::1234\"]" ;;
+    esac
+    printf '{\n  "Version": "1.90.2-t1234",\n  "TUN": true,\n  "BackendState": "%s",\n  "AuthURL": "",\n  "TailscaleIPs": %s,\n  "Self": {\n    "HostName": "raspberrypi",\n    "DNSName": "evcc-pi.tail1234.ts.net."\n  },\n  "Health": []\n}' "$state" "$ips"
+    ;;
+  "status ")
+    case "$state" in
+      Running|Starting) printf '%s  evcc-pi  user@  linux  -\n' "$ip" ;;
+      Stopped) echo "Tailscale is stopped."; exit 1 ;;
+      NeedsLogin) echo "Logged out."; exit 1 ;;
+      *) echo "unexpected state: $state"; exit 1 ;;
+    esac
+    ;;
+  "ip -4")
+    case "$state" in
+      NeedsLogin) echo "no current Tailscale IPs; state: $state" >&2; exit 1 ;;
+      *) echo "$ip" ;;
+    esac
+    ;;
+  *)
+    echo "stub: unexpected call: $*" >&2
+    exit 99
+    ;;
+esac
+''';
 
 /// Builds `sb/` next to itself: a Pi with an apt-installed, enabled and
 /// running Tailscale, plus unrelated files that must survive.

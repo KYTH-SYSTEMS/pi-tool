@@ -735,7 +735,10 @@ class EvccUpdater {
         }
 
         // ---- Tailscale (VPN/mesh, official installer, any OS) ----
-        final ts = parseTailscaleStatus(sec['TAILSCALE'] ?? '');
+        // "Connected" is the backend state out of TS_SELF, not the mere
+        // presence of a 100.x address: a stopped node keeps its address.
+        final ts = parseTailscaleStatus(sec['TAILSCALE'] ?? '',
+            self: sec['TS_SELF'] ?? '');
         if (ts.installed) {
           final tsUpdate = aptUpgrades
               .any((u) => u == 'tailscale' || u.startsWith('tailscale:'));
@@ -745,7 +748,11 @@ class EvccUpdater {
             installed: true,
             active: ts.up,
             version: ts.up ? ts.ip : null,
-            detail: ts.up ? 'Verbunden · ${ts.ip}' : 'Getrennt',
+            detail: ts.up
+                ? (ts.ip == null ? 'Verbunden' : 'Verbunden · ${ts.ip}')
+                : ts.needsLogin
+                    ? 'Nicht angemeldet'
+                    : 'Getrennt',
             updateAvailable: tsUpdate,
             updateKnown: aptKnown,
             aptPackage: 'tailscale',

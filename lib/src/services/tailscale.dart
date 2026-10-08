@@ -119,16 +119,36 @@ List<String> remoteAccessCandidates({
   return lastGood.trim() == ts ? [ts, lan] : [lan, ts];
 }
 
-typedef TailscaleStatus = ({bool installed, bool up, String? ip});
+typedef TailscaleStatus = ({
+  bool installed,
+  bool up,
+  String? ip,
+  bool needsLogin,
+});
 
-/// Parses [tailscaleStatusCommand] output. "up" = has a tailnet IP.
-TailscaleStatus parseTailscaleStatus(String out) {
+/// Parses [tailscaleStatusCommand] output together with the node's own status
+/// ([tailscaleSelfCommand], [self]). "up" = the backend state is `Running`.
+///
+/// The tailnet IP alone does not say so: `tailscale ip` prints the address
+/// from the last network map, and `tailscale down` keeps that map — a stopped
+/// node still has its 100.x. `BackendState` is one of tailscaled's states
+/// (NoState, InUseOtherUser, NeedsLogin, NeedsMachineAuth, Stopped, Starting,
+/// Running); `needsLogin` marks the logged-out node, where "Verbinden" leads
+/// to a login. Only when [self] carries no state at all (a client too old for
+/// the probe, a daemon that does not answer) the IP decides, as it used to.
+TailscaleStatus parseTailscaleStatus(String out, {String self = ''}) {
   final o = out.toLowerCase();
   if (o.contains('command not found') || o.contains(': not found')) {
-    return (installed: false, up: false, ip: null);
+    return (installed: false, up: false, ip: null, needsLogin: false);
   }
   final ip = parseTailscaleIp(out);
-  return (installed: true, up: ip != null, ip: ip);
+  final state = _jsonObject(self)?['BackendState'];
+  return (
+    installed: true,
+    up: state is String ? state == 'Running' : ip != null,
+    ip: ip,
+    needsLogin: state == 'NeedsLogin',
+  );
 }
 
 // ---- Heimnetz freigeben (subnet router) ----
