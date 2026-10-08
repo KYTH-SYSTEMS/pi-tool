@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Read from Android 12 (API 31) on: what of the app's data may leave the
      device. Nothing may — neither into a cloud backup nor in a device-to-device
-     transfer (see android:allowBackup in AndroidManifest.xml for why). Every
-     domain is named: excluding "root" does not cover the other ones. -->
+     transfer (see android:allowBackup in AndroidManifest.xml for why). The
+     domains are named one by one: excluding "root" does not cover the other
+     ones. Left out are the four device_* domains (device-protected storage):
+     neither the app nor its plugins store anything there. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" path="."/>
