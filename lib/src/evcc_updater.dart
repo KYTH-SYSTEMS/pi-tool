@@ -50,6 +50,12 @@ enum UpdateErrorKind {
   /// Another Pi-Job (or the on-Pi auto-update) holds the Pi; nothing was
   /// started. See [JobException].
   jobBusy,
+
+  /// A command went quiet on a connection that was up: no output for the
+  /// inactivity limit. The Pi was reachable and may still be working on it —
+  /// the result is unknown, and this is NOT a connection failure (the UI keeps
+  /// the session).
+  outputTimeout,
 }
 
 /// A failure during the update, carrying a user-facing German [message].
@@ -187,13 +193,32 @@ class EvccUpdater {
   /// last was the only one "Abbrechen" could reach, and whichever closed first
   /// took the handle with it.
   final Set<SshRunner> _open = {};
-  bool _cancelRequested = false;
 
-  /// Cancels the in-flight SSH action by closing its connection. The running
-  /// action then completes with [UpdateErrorKind.cancelled]. No-op when idle.
+  /// Connections [cancel] has closed. Per connection, like [_jobTouched]: with
+  /// one flag on the instance, a connection that opened right behind
+  /// "Abbrechen" (the Dateien tab) cleared the request — the cancelled action
+  /// then reported whatever its closed connection left behind, and a job that
+  /// was only un-followed read as "Verbindung abgerissen".
+  final Expando<bool> _cancelled = Expando<bool>('cancelled');
+
+  bool _cancelRequested(SshRunner runner) => _cancelled[runner] == true;
+
+  /// Connections on which a foreground script (`bash -s`, with or without
+  /// sudo) or a root command went out — see [_cancelledError].
+  final Expando<bool> _rootWorkSent = Expando<bool>('root-work');
+
+  /// Cancels the in-flight SSH actions by closing their connections; each then
+  /// completes with [UpdateErrorKind.cancelled]. No-op when idle. This closes
+  /// connections and nothing else: what the Pi was already told to do is not
+  /// stopped by it (see [_cancelledError]).
   Future<void> cancel() async {
-    _cancelRequested = true;
-    for (final runner in _open.toList()) {
+    // Mark all, then close: the closes are awaited one after the other, and an
+    // action must find its request as soon as its connection is gone.
+    final open = _open.toList();
+    for (final runner in open) {
+      _cancelled[runner] = true;
+    }
+    for (final runner in open) {
       try {
         await runner.close();
       } catch (_) {
@@ -806,6 +831,7 @@ class EvccUpdater {
     bool checkExit = true,
   }) async {
     log('\$ $command');
+    _rootWorkSent[runner] = true;
     final r = await runner.run(
       command,
       stdin: '${config.password}\n',
@@ -2387,6 +2413,7 @@ class EvccUpdater {
     String failMsg = 'Vorgang fehlgeschlagen',
   }) async {
     final shell = sudo ? installShellCommand : 'bash -s';
+    if (!sudo) _rootWorkSent[runner] = true; // with sudo: [_rootStdin] does
     final result = await runner.run(
       shell,
       stdin: sudo ? await _rootStdin(runner, config, script) : '$script\n',
@@ -3191,7 +3218,7 @@ class EvccUpdater {
       config: config,
       onLog: onLog,
       body: (runner, log) async {
-        if (_cancelRequested) {
+        if (_cancelRequested(runner)) {
           throw const EvccUpdateException(
               UpdateErrorKind.cancelled, 'Abgebrochen.');
         }
@@ -3212,7 +3239,8 @@ class EvccUpdater {
           JobRunDetached(:final kind) => kind,
           _ => null,
         };
-        throw _jobRunError(run, JobRef(id: jobId, kind: kind ?? 'unknown'));
+        throw _jobRunError(
+            runner, run, JobRef(id: jobId, kind: kind ?? 'unknown'));
       },
     );
   }
@@ -3230,7 +3258,7 @@ class EvccUpdater {
     void Function(JobRef ref)? onJobStarted,
   }) async {
     // Never start a job after the user asked to stop.
-    if (_cancelRequested) {
+    if (_cancelRequested(runner)) {
       throw const EvccUpdateException(
           UpdateErrorKind.cancelled, 'Abgebrochen.');
     }
@@ -3251,7 +3279,7 @@ class EvccUpdater {
         id: id,
         onJobStarted: onJobStarted);
     if (run is JobRunRc) return JobRunResult(ref: ref, rc: run.rc, log: run.log);
-    throw _jobRunError(run, ref);
+    throw _jobRunError(runner, run, ref);
   }
 
   /// Runs a launcher/follower command, streams the job's log live (control
@@ -3344,7 +3372,7 @@ class EvccUpdater {
   }
 
   /// The user-facing error for every job ending except an exit code.
-  EvccUpdateException _jobRunError(JobRun run, JobRef ref) {
+  EvccUpdateException _jobRunError(SshRunner runner, JobRun run, JobRef ref) {
     final label = jobKindLabel(ref.kind);
     switch (run) {
       case JobRunRc():
@@ -3392,7 +3420,7 @@ class EvccUpdater {
         return const EvccUpdateException(UpdateErrorKind.unknown,
             'Pi-Tool-Startkopf fehlt – der Job wurde nicht gestartet.');
       case JobRunDetached(:final started):
-        final reason = _cancelRequested
+        final reason = _cancelRequested(runner)
             ? JobDetachReason.userStopped
             : JobDetachReason.connectionLost;
         final head = reason == JobDetachReason.userStopped
@@ -3452,14 +3480,16 @@ class EvccUpdater {
   /// Opens the connection, runs [body], and maps any SSH/IO failure to an
   /// [EvccUpdateException]. The runner is always closed afterwards.
   /// Whether sudo on this Pi asks for a password — probed once per connection
-  /// (see [_sudoNeedsPassword]). Null = not asked yet.
-  bool? _sudoNeedsPw;
+  /// (see [_sudoNeedsPassword]). Null = not asked yet. Kept per connection: on
+  /// the instance, the answer of another Pi's connection that ran alongside
+  /// would decide whether the password goes in front of a root script.
+  final Expando<bool> _sudoNeedsPw = Expando<bool>('sudo-needs-pw');
 
   /// Asks sudo itself instead of assuming. Cached for the connection: the
   /// answer cannot change mid-session in any way that matters, and one probe
   /// per root script would be pure noise on the wire.
   Future<bool> _sudoNeedsPassword(SshRunner runner) async {
-    final cached = _sudoNeedsPw;
+    final cached = _sudoNeedsPw[runner];
     if (cached != null) return cached;
     final r = await runner.run(sudoNoPasswordProbe);
     // No exit status = no answer. Guessing "needs a password" would hand a
@@ -3467,17 +3497,43 @@ class EvccUpdater {
     if (r.exitCode == null) {
       throw const EvccUpdateException(UpdateErrorKind.unknown, _resultUnknown);
     }
-    return _sudoNeedsPw = r.exitCode != 0;
+    return _sudoNeedsPw[runner] = r.exitCode != 0;
   }
 
   /// stdin for a root script: password first only when sudo will consume it.
   Future<String> _rootStdin(
-          SshRunner runner, SshConfig config, String script) async =>
-      buildRootStdin(
-        sudoNeedsPassword: await _sudoNeedsPassword(runner),
-        password: config.password,
-        script: script,
-      );
+      SshRunner runner, SshConfig config, String script) async {
+    final sudoNeedsPassword = await _sudoNeedsPassword(runner);
+    // Every root script takes its stdin from here, right before it is sent.
+    _rootWorkSent[runner] = true;
+    return buildRootStdin(
+      sudoNeedsPassword: sudoNeedsPassword,
+      password: config.password,
+      script: script,
+    );
+  }
+
+  /// What a cancel on [runner] reports. A cancel only closes the connection.
+  /// A root script the Pi already has is not stopped by that: it runs on until
+  /// one of its commands writes to the closed output — a quiet one runs to its
+  /// end, a chatty one (apt, dpkg) ends somewhere in the middle. So after
+  /// foreground root work the message says so; a bare "Abgebrochen." reads as
+  /// "stopped". Pi-Jobs have their own wording ([_jobRunError]).
+  EvccUpdateException _cancelledError(SshRunner runner) => EvccUpdateException(
+      UpdateErrorKind.cancelled,
+      _rootWorkSent[runner] == true
+          ? 'Abgebrochen – die Verbindung wurde getrennt. Ein Schritt, der auf '
+              'dem Pi bereits lief, kann dort noch zu Ende laufen.'
+          : 'Abgebrochen.');
+
+  /// The message of [UpdateErrorKind.outputTimeout]; [silence] is how long
+  /// nothing came.
+  static String _noOutputMessage(Duration silence) {
+    final s = silence.inSeconds;
+    final span = s >= 60 && s % 60 == 0 ? '${s ~/ 60} min' : '$s s';
+    return 'Seit $span keine Ausgabe – die Aktion läuft möglicherweise auf dem '
+        'Pi weiter, Ergebnis unbekannt.';
+  }
 
   Future<T> _withConnection<T>({
     required SshConfig config,
@@ -3487,8 +3543,12 @@ class EvccUpdater {
   }) async {
     final runner = runnerFactory(config);
     _open.add(runner);
-    _cancelRequested = false;
-    _sudoNeedsPw = null; // a fresh connection re-asks
+    // A fresh connection starts clean and re-asks sudo. (Only a test hands the
+    // same runner out twice; the real factory makes one per connection.)
+    _cancelled[runner] = null;
+    _rootWorkSent[runner] = null;
+    _sudoNeedsPw[runner] = null;
+    var connected = false;
     // The one seam every log line passes through — so the pty progress painting
     // apt/dpkg emit (see [stripProgressNoise]) is filtered once here, for every
     // action and every consumer of the log, instead of at each call site. Only
@@ -3502,10 +3562,11 @@ class EvccUpdater {
 
     try {
       await runner.connect();
+      connected = true;
       // A cancel that arrived during the connect handshake must stop here —
       // before the (possibly destructive) body runs — since closing a not-yet-
       // established connection can't abort the handshake itself.
-      if (_cancelRequested) {
+      if (_cancelRequested(runner)) {
         throw const EvccUpdateException(
             UpdateErrorKind.cancelled, 'Abgebrochen.');
       }
@@ -3516,9 +3577,8 @@ class EvccUpdater {
       // requested cancel as cancelled regardless of how the body finished —
       // except after a Pi-Job: its result came with positive proof (RC line),
       // and a cancel there only ever stopped the following.
-      if (_cancelRequested && _jobTouched[runner] != true) {
-        throw const EvccUpdateException(
-            UpdateErrorKind.cancelled, 'Abgebrochen.');
+      if (_cancelRequested(runner) && _jobTouched[runner] != true) {
+        throw _cancelledError(runner);
       }
       return result;
     } catch (e) {
@@ -3529,10 +3589,7 @@ class EvccUpdater {
       if (_jobTouched[runner] == true && e is EvccUpdateException) rethrow;
       // A user-requested cancel closed the connection mid-action; whatever low
       // -level error that surfaced (socket/SSH) is reported as a clean cancel.
-      if (_cancelRequested) {
-        throw const EvccUpdateException(
-            UpdateErrorKind.cancelled, 'Abgebrochen.');
-      }
+      if (_cancelRequested(runner)) throw _cancelledError(runner);
       if (e is EvccUpdateException) rethrow;
       if (e is HostKeyDeclinedException) {
         throw const EvccUpdateException(
@@ -3578,6 +3635,14 @@ class EvccUpdater {
         );
       }
       if (e is TimeoutException) {
+        // Raised by the body: the Pi was reachable and took commands. What
+        // went quiet may be the link — or a step that prints nothing for a
+        // long time (tar over a large directory) and is still running there.
+        // Not "Pi nicht erreichbar", and no reason to give up the session.
+        if (connected) {
+          throw EvccUpdateException(UpdateErrorKind.outputTimeout,
+              _noOutputMessage(e.duration ?? config.commandTimeout));
+        }
         throw const EvccUpdateException(
           UpdateErrorKind.connection,
           'Zeitüberschreitung – Pi nicht erreichbar.',

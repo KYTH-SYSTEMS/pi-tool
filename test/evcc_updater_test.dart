@@ -205,6 +205,11 @@ class _CloseThrowsRunner extends FakeSshRunner {
 /// run() RETURNS a partial result (exitCode null) rather than throwing, and a
 /// subsequent run() throws because the client is gone.
 class _HangingRunner implements SshRunner {
+  _HangingRunner({this.hangOn});
+
+  /// Only this command hangs; the others are answered at once (the sudo probe
+  /// with "a password is required"). Null = every command hangs.
+  final String? hangOn;
   final runStarted = Completer<void>();
   Completer<CommandResult>? _gate;
   bool closed = false;
@@ -216,6 +221,10 @@ class _HangingRunner implements SshRunner {
   Future<CommandResult> run(String command,
       {String? stdin, void Function(String chunk)? onOutput}) {
     if (closed) throw StateError('connection closed');
+    if (hangOn != null && command != hangOn) {
+      return Future.value(
+          _r('', exitCode: command == sudoNoPasswordProbe ? 1 : 0));
+    }
     if (!runStarted.isCompleted) runStarted.complete();
     _gate = Completer<CommandResult>();
     return _gate!.future;
@@ -321,6 +330,25 @@ class _CallbackRunner implements SshRunner {
 
   @override
   Future<void> close() async {}
+}
+
+/// A [FakeSshRunner] that holds [held] back until [release] completes — an
+/// action that is still busy while another connection comes and goes.
+class _GatedRunner extends FakeSshRunner {
+  _GatedRunner(super.responses, this.held);
+  final String held;
+  final reached = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<CommandResult> run(String command,
+      {String? stdin, void Function(String chunk)? onOutput}) async {
+    if (command == held) {
+      if (!reached.isCompleted) reached.complete();
+      await release.future;
+    }
+    return super.run(command, stdin: stdin, onOutput: onOutput);
+  }
 }
 
 /// A run() that never completes and never prints — not even on close(): the
@@ -2761,6 +2789,157 @@ void main() {
       await expectLater(f, _err(UpdateErrorKind.cancelled));
       expect(runner.bodyRan, isFalse);
     });
+
+    // The Dateien tab opens its own connections next to a running action.
+    test('a connection that opens right behind "Abbrechen" neither takes the '
+        'cancel away nor is cancelled itself', () async {
+      final action = _HangingRunner();
+      final listing = FakeSshRunner({
+        'true': [_r('')]
+      });
+      final queue = <SshRunner>[action, listing];
+      final updater = EvccUpdater(runnerFactory: (_) => queue.removeAt(0));
+      final a = updater.updatePiholeGravity(config: _config, onLog: (_) {});
+      await action.runStarted.future;
+
+      final cancelling = updater.cancel();
+      final b = updater.probeConnection(config: _config);
+      // With one flag on the updater the newcomer cleared it, and the action
+      // reported what its closed connection left behind ("Ergebnis unbekannt").
+      await expectLater(a, _err(UpdateErrorKind.cancelled));
+      expect(await b, isTrue, reason: 'opened after the cancel: not its target');
+      expect(listing.commandsRun, ['true']);
+      await cancelling;
+    });
+
+    test('a connection that came and went leaves "Abbrechen" to the action',
+        () async {
+      final action = _HangingRunner();
+      final listing = FakeSshRunner({
+        'true': [_r('')]
+      });
+      final queue = <SshRunner>[action, listing];
+      final updater = EvccUpdater(runnerFactory: (_) => queue.removeAt(0));
+      final a = updater.updatePiholeGravity(config: _config, onLog: (_) {});
+      await action.runStarted.future;
+      expect(await updater.probeConnection(config: _config), isTrue);
+      expect(listing.closed, isTrue);
+
+      final cancelling = updater.cancel();
+      await expectLater(a, _err(UpdateErrorKind.cancelled));
+      expect(action.closed, isTrue);
+      await cancelling;
+    });
+
+    test('"Nicht mehr mitlesen" stays a user stop when another connection '
+        'opens right behind it', () async {
+      final job = _StartedJobRunner();
+      final listing = FakeSshRunner({
+        'true': [_r('')]
+      });
+      final queue = <SshRunner>[job, listing];
+      final updater = EvccUpdater(
+          runnerFactory: (_) => queue.removeAt(0),
+          jobIdGenerator: () => _jobId);
+      final f = updater.upgradeSystem(config: _config, onLog: (_) {});
+      await job.started.future;
+
+      final cancelling = updater.cancel();
+      final b = updater.probeConnection(config: _config);
+      // "Verbindung abgerissen" here would also make the UI drop the session.
+      await expectLater(
+        f,
+        throwsA(isA<JobException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.jobDetached)
+            .having((e) => e.reason, 'reason', JobDetachReason.userStopped)),
+      );
+      expect(await b, isTrue);
+      await cancelling;
+    });
+
+    test('the sudo answer of one connection is not used on another', () async {
+      // Two Pis, same password: one with NOPASSWD, one that asks. With one
+      // cache on the updater the second answer reached the first connection,
+      // and the password went to `bash -s` as its first command line.
+      final noPassword = _GatedRunner({
+        sudoNoPasswordProbe: [_r('')],
+        installShellCommand: [_r('SECFIX_OK\n')],
+      }, eolSourcesShellCommand);
+      final asks = FakeSshRunner({
+        installShellCommand: [_r('SECFIX_OK\n')],
+      });
+      final queue = <SshRunner>[noPassword, asks];
+      final updater = EvccUpdater(runnerFactory: (_) => queue.removeAt(0));
+
+      final a = updater.fixSecurity(
+          config: _config, fix: SecurityFix.fail2ban, onLog: (_) {});
+      await noPassword.reached.future; // its first root script is running
+      await updater.fixSecurity(
+          config: _config, fix: SecurityFix.rootLogin, onLog: (_) {});
+      expect(asks.stdinByCommand[installShellCommand], startsWith('sekret\n'));
+
+      noPassword.release.complete();
+      await a;
+      expect(noPassword.stdinByCommand[installShellCommand],
+          isNot(contains('sekret')));
+    });
+
+    // What "Abbrechen" says. Closing the connection does not stop a root
+    // script the Pi already has.
+    const stoppedNothing = 'Abgebrochen – die Verbindung wurde getrennt. Ein '
+        'Schritt, der auf dem Pi bereits lief, kann dort noch zu Ende laufen.';
+
+    test('cancel while a root script runs: says that the Pi may finish it',
+        () async {
+      final runner = _HangingRunner(hangOn: installShellCommand);
+      final updater = EvccUpdater(runnerFactory: (_) => runner);
+      final f = updater.fixSecurity(
+          config: _config, fix: SecurityFix.rootLogin, onLog: (_) {});
+      await runner.runStarted.future; // the script is with the Pi
+      await updater.cancel();
+      await expectLater(f, _err(UpdateErrorKind.cancelled, stoppedNothing));
+    });
+
+    test('cancel while a single root command runs: the same', () async {
+      final runner = _HangingRunner();
+      final updater = EvccUpdater(runnerFactory: (_) => runner);
+      final f = updater.updatePiholeGravity(config: _config, onLog: (_) {});
+      await runner.runStarted.future;
+      await updater.cancel();
+      await expectLater(f, _err(UpdateErrorKind.cancelled, stoppedNothing));
+    });
+
+    test('cancel before the root script went out: plain "Abgebrochen."',
+        () async {
+      // Hangs on the sudo probe — the script itself was never sent.
+      final runner = _HangingRunner();
+      final updater = EvccUpdater(runnerFactory: (_) => runner);
+      final f = updater.fixSecurity(
+          config: _config, fix: SecurityFix.rootLogin, onLog: (_) {});
+      await runner.runStarted.future;
+      await updater.cancel();
+      await expectLater(f, _err(UpdateErrorKind.cancelled, 'Abgebrochen.'));
+    });
+
+    test('cancel of a read-only action: plain "Abgebrochen."', () async {
+      final runner = _HangingRunner();
+      final updater = EvccUpdater(runnerFactory: (_) => runner);
+      final f = updater.detectServices(config: _config, onLog: (_) {});
+      await runner.runStarted.future;
+      await updater.cancel();
+      await expectLater(f, _err(UpdateErrorKind.cancelled, 'Abgebrochen.'));
+    });
+
+    test('cancel during connect: plain "Abgebrochen."', () async {
+      final runner = _ConnectHangRunner();
+      final updater = EvccUpdater(runnerFactory: (_) => runner);
+      final f = updater.fixSecurity(
+          config: _config, fix: SecurityFix.rootLogin, onLog: (_) {});
+      await runner.connectStarted.future;
+      await updater.cancel();
+      await expectLater(f, _err(UpdateErrorKind.cancelled, 'Abgebrochen.'));
+      expect(runner.bodyRan, isFalse);
+    });
   });
 
   group('Pi-Jobs: transport failures after the start', () {
@@ -3574,6 +3753,60 @@ void main() {
         throwsA(isA<EvccUpdateException>()
             .having((e) => e.kind, 'kind', UpdateErrorKind.auth)),
       );
+    });
+  });
+
+  group('EvccUpdater: a timeout before and after the connect', () {
+    Future<void> gravity(FakeSshRunner runner) =>
+        _updaterWith(runner).updatePiholeGravity(config: _config, onLog: (_) {});
+
+    test('connect or handshake: "Pi nicht erreichbar", as before', () async {
+      // With a duration, as the real handshake deadline carries one.
+      final runner = FakeSshRunner({},
+          connectError:
+              TimeoutException('handshake', const Duration(seconds: 15)));
+      await expectLater(
+        gravity(runner),
+        _err(UpdateErrorKind.connection,
+            'Zeitüberschreitung – Pi nicht erreichbar.'),
+      );
+    });
+
+    test('no output mid-action is its own outcome, not "Pi nicht erreichbar"',
+        () async {
+      // The Pi was reachable and took the command; a quiet step (tar) keeps
+      // running there. The UI drops the session only for connection errors.
+      final runner = FakeSshRunner({}, runErrors: {
+        piholeGravityCommand:
+            TimeoutException('keine Ausgabe', const Duration(minutes: 10)),
+      });
+      await expectLater(
+        gravity(runner),
+        _err(
+            UpdateErrorKind.outputTimeout,
+            'Seit 10 min keine Ausgabe – die Aktion läuft möglicherweise auf '
+                'dem Pi weiter, Ergebnis unbekannt.'),
+      );
+      expect(runner.closed, isTrue);
+    });
+
+    test('the silence it names is the one that was measured', () async {
+      Future<void> says(String span, TimeoutException e) => expectLater(
+            gravity(FakeSshRunner({}, runErrors: {piholeGravityCommand: e})),
+            _err(UpdateErrorKind.outputTimeout, startsWith('Seit $span keine ')),
+          );
+      // An exec request the Pi never answered (bounded by the connect timeout).
+      await says('15 s', TimeoutException('x', const Duration(seconds: 15)));
+      await says('90 s', TimeoutException('x', const Duration(seconds: 90)));
+      // No duration on the exception: the configured inactivity limit.
+      await says('10 min', TimeoutException('x'));
+    });
+
+    test('a probe that goes quiet is "not reachable", as before', () async {
+      final runner = FakeSshRunner({},
+          runErrors: {'true': TimeoutException('x', const Duration(seconds: 4))});
+      expect(
+          await _updaterWith(runner).probeConnection(config: _config), isFalse);
     });
   });
 

@@ -6245,6 +6245,47 @@ void main() {
     expect(u.runCalls, 1);
   });
 
+  // ---- Zeitüberschreitung mitten in einer Aktion ----
+
+  testWidgets(
+      'keine Ausgabe mitten in einer Aktion: die Meldung erscheint, die '
+      'Sitzung bleibt – der Pi war erreichbar', (tester) async {
+    useTallScreen(tester);
+    const message = 'Seit 10 min keine Ausgabe – die Aktion läuft '
+        'möglicherweise auf dem Pi weiter, Ergebnis unbekannt.';
+    final u = FakeEvccUpdater()
+      ..backupError =
+          const EvccUpdateException(UpdateErrorKind.outputTimeout, message);
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(message), findsOneWidget);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+    expect(u.runCalls, 0, reason: 'ohne Backup kein Update');
+  });
+
+  testWidgets(
+      'Pi nicht erreichbar mitten in einer Aktion: die Sitzung endet wie '
+      'bisher', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..backupError = const EvccUpdateException(UpdateErrorKind.connection,
+          'Zeitüberschreitung – Pi nicht erreichbar.');
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+  });
+
   // ---- Config-Editor: ungespeicherte Änderungen ----
 
   testWidgets(
