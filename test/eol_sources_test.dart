@@ -43,6 +43,36 @@ void main() {
     test('false otherwise', () {
       expect(isAptLocked('0 upgraded, 0 newly installed'), isFalse);
     });
+
+    // With DPkg::Lock::Timeout set, apt says "Waiting for cache lock: Could
+    // not get lock …" while it waits. A run that then got the lock and failed
+    // for another reason was not locked out.
+    const waiting = 'Waiting for cache lock: Could not get lock '
+        '/var/lib/dpkg/lock-frontend. It is held by process 1234 '
+        '(unattended-upgr)...';
+
+    test('apt\'s notice while it waits for the lock is not a lock error', () {
+      expect(isAptLocked('$waiting\nE: Unable to locate package foo\n'),
+          isFalse);
+      expect(isAptLocked('$waiting 3s\r$waiting 4s\rSetting up evcc …\n'),
+          isFalse);
+    });
+
+    test('the error after the wait ran out still is', () {
+      expect(
+          isAptLocked('$waiting\n'
+              'E: Could not get lock /var/lib/dpkg/lock-frontend. It is held '
+              'by process 1234 (unattended-upgr)\n'
+              'E: Unable to acquire the dpkg frontend lock '
+              '(/var/lib/dpkg/lock-frontend), is another process using it?\n'),
+          isTrue);
+      // stdout and stderr share the log: the error may follow the unfinished
+      // notice on the same line.
+      expect(
+          isAptLocked('${waiting}E: Could not get lock '
+              '/var/lib/dpkg/lock-frontend. It is held by process 1234 (apt)\n'),
+          isTrue);
+    });
   });
 
   group('eolSourcesFixScript', () {

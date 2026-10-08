@@ -116,7 +116,15 @@ String? parseDeadAptSource(String output) {
 /// True when apt/dpkg could not start because another package run holds the
 /// lock — typically the daily apt timer or unattended-upgrades right after
 /// boot. Transient: trying again a few minutes later is the remedy.
-bool isAptLocked(String output) =>
-    output.contains('Could not get lock') ||
-    output.contains('Unable to acquire the dpkg frontend lock') ||
-    output.contains('Unable to lock directory /var/lib/apt/lists');
+///
+/// Only apt's error lines (`E: …`) count. With `DPkg::Lock::Timeout` apt says
+/// "Waiting for cache lock: Could not get lock …" while it waits; a run that
+/// then got the lock and failed for another reason was not locked out.
+bool isAptLocked(String output) => _aptLockError.hasMatch(output);
+
+// Not anchored to the line start: stdout and stderr share one log, so the
+// error may follow an unfinished progress line. The letter check keeps a
+// word ending in "E" (NOTE: …) from passing as apt's error prefix.
+final RegExp _aptLockError = RegExp(r'(?<![A-Za-z])E: (?:Could not get lock'
+    r'|Unable to acquire the dpkg frontend lock'
+    r'|Unable to lock directory /var/lib/apt/lists)');
