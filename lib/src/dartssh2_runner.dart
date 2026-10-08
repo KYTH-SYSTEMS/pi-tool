@@ -223,7 +223,13 @@ class Dartssh2Runner implements SshRunner {
       throw StateError('connect() must be called before run()');
     }
 
-    final session = await client.execute(command);
+    // Until the Pi has confirmed the channel and the exec request, nothing
+    // below is listening and the inactivity timeout has not started. dartssh2
+    // ends this wait on a transport error and on close(), but over a link that
+    // died silently neither comes before the TCP stack gives up. Bounded like
+    // the handshake; a session that still opens later is closed again.
+    final session = await withinOrDiscard(
+        client.execute(command), config.timeout, (opened) => opened.close());
 
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();
@@ -266,13 +272,20 @@ class Dartssh2Runner implements SshRunner {
     if (stdin != null) {
       session.stdin.add(Uint8List.fromList(utf8.encode(stdin)));
     }
-    await session.stdin.close();
+    // Not awaited on its own: close() completes once all of stdin is handed to
+    // the transport, and input beyond the peer's window only goes out as the
+    // Pi reads it — over a dead link, never. So it is waited for under the
+    // inactivity timeout below, together with the output. That limit and not
+    // the short connect timeout: an upload legitimately takes minutes. Once
+    // stdin is out the silence counts from there, as it always did.
+    final stdinSent =
+        session.stdin.close().whenComplete(() => lastActivity = DateTime.now());
 
     // Inactivity timeout, not a total cap: a multi-minute upgrade that keeps
     // streaming progress must run to completion, but a command that produces no
     // output for [commandTimeout] (stalled/dropped connection) aborts.
-    final drained =
-        Future.wait([outSub.asFuture<void>(), errSub.asFuture<void>()]);
+    final drained = Future.wait(
+        [stdinSent, outSub.asFuture<void>(), errSub.asFuture<void>()]);
     final idle = Completer<void>();
     final ticker = Timer.periodic(const Duration(seconds: 5), (t) {
       if (DateTime.now().difference(lastActivity) >= config.commandTimeout) {
@@ -375,6 +388,20 @@ Future<T> withinActiveTime<T>(
   });
   return result.future.whenComplete(timer.cancel);
 }
+
+/// Completes with [pending], or with a [TimeoutException] once [limit] has
+/// passed. What [pending] still delivers after that is handed to [discard] —
+/// it holds something (an open channel) nobody is waiting for any more. A late
+/// error is dropped.
+Future<T> withinOrDiscard<T>(
+  Future<T> pending,
+  Duration limit,
+  void Function(T value) discard,
+) =>
+    pending.timeout(limit, onTimeout: () {
+      unawaited(pending.then(discard).catchError((Object _) {}));
+      throw TimeoutException('keine Antwort', limit);
+    });
 
 /// Decodes UTF-8 that arrives in arbitrary byte chunks. A character whose bytes
 /// are split across two chunks is held back until it is complete; bytes that

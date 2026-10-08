@@ -54,6 +54,7 @@ void _tests() {
     String password = _password,
     String privateKey = '',
     Duration timeout = const Duration(seconds: 15),
+    Duration commandTimeout = const Duration(minutes: 10),
   }) =>
       SshConfig(
         host: '127.0.0.1',
@@ -62,6 +63,7 @@ void _tests() {
         password: password,
         privateKey: privateKey,
         timeout: timeout,
+        commandTimeout: commandTimeout,
       );
 
   /// Connects with a store that already trusts the server.
@@ -253,6 +255,82 @@ void _tests() {
         expect(error, isNotNull);
       }
       await runner.close(); // must complete without throwing
+    });
+  });
+
+  // `pitool-test freeze <s>`: the server answers nothing for that long — what
+  // a link that died without a word looks like from here.
+  group('a peer that stops answering', () {
+    test('an exec request without an answer ends as a TimeoutException',
+        () async {
+      final runner =
+          await connected(cfg: config(timeout: const Duration(seconds: 1)));
+      final frozen = runner.run('pitool-test freeze 3');
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      // The channel for this one is not confirmed before the thaw.
+      final watch = Stopwatch()..start();
+      await expectLater(
+        runner.run('echo late'),
+        throwsA(isA<TimeoutException>().having(
+            (e) => e.duration, 'duration', const Duration(seconds: 1))),
+      );
+      expect(watch.elapsed, lessThan(const Duration(milliseconds: 2200)));
+      // The connection itself was fine: the first command still ends.
+      final r = await frozen;
+      await runner.close();
+      expect(r.stdout, 'thawed\n');
+      expect(r.exitCode, 0);
+    });
+
+    test('close() ends a run() whose exec request is still unanswered',
+        () async {
+      // The cancel path. With dartssh2 2.22.5 this run() never returned.
+      final runner = await connected(); // exec deadline 15 s: not what ends it
+      final frozen = runner.run('pitool-test freeze 2');
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      Object? error;
+      final waiting = runner
+          .run('echo late')
+          .then<void>((_) {}, onError: (Object e) => error = e);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final closing = runner.close();
+      await waiting.timeout(const Duration(seconds: 1));
+      expect(error, isNotNull);
+      expect(error, isNot(isA<TimeoutException>()));
+      await closing;
+      await frozen.then<void>((_) {}, onError: (Object _) {});
+      // Leave only once the server answers again.
+      await (await connected()).close();
+    });
+
+    test('stdin the peer does not take ends under the inactivity timeout',
+        () async {
+      final runner = await connected(
+          cfg: config(commandTimeout: const Duration(seconds: 1)));
+      // More than the channel window, for a command that never reads it. The
+      // inactivity check ticks every 5 s; without it this returned when the
+      // command ended, and over a dead link not at all.
+      final input = 'x' * (6 * 1024 * 1024);
+      final watch = Stopwatch()..start();
+      await expectLater(
+        runner.run('sleep 9', stdin: input),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(watch.elapsed, lessThan(const Duration(seconds: 8)));
+      await runner.close();
+    });
+
+    test('stdin that takes longer than the connect timeout is not cut off',
+        () async {
+      // An upload: the peer takes its time. The connect timeout must not be
+      // what bounds it, or every larger file would fail.
+      final runner =
+          await connected(cfg: config(timeout: const Duration(seconds: 1)));
+      final input = 'x' * (6 * 1024 * 1024);
+      final r = await runner.run('sleep 3; wc -c', stdin: input);
+      await runner.close();
+      expect(int.parse(r.stdout.trim()), input.length);
+      expect(r.exitCode, 0);
     });
   });
 }

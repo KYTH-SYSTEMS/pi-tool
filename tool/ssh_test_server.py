@@ -11,11 +11,13 @@ is skipped unless PITOOL_TEST_SSHD_PYTHON points at a Python that has it.
 Usage: python tool/ssh_test_server.py <authorized_keys file>
 Prints one line when ready: LISTENING <port> <SHA256 host-key fingerprint>
 
-Two commands are answered by the server itself instead of bash, because they
+Three commands are answered by the server itself instead of bash, because they
 need control over the wire:
   pitool-test split-utf8   sends "grün" with the two bytes of "ü" in separate
                            SSH packets
   pitool-test reset        sends one line, then resets the TCP connection (RST)
+  pitool-test freeze <s>   answers nothing at all for <s> seconds (no channel
+                           open, no exec reply), then prints "thawed"
 """
 
 import asyncio
@@ -23,6 +25,7 @@ import os
 import socket
 import struct
 import sys
+import time
 
 import asyncssh
 
@@ -81,6 +84,16 @@ async def handle(process):
         # ERROR (as on a dropped Wi-Fi link), not a clean end of stream.
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('HH', 1, 0))
         conn.abort()
+        return
+    if command.startswith('pitool-test freeze '):
+        # Let the reply to this very exec request go out first.
+        await asyncio.sleep(0.2)
+        # Blocks the event loop on purpose: the server reads and answers
+        # nothing meanwhile, on any connection — to the client that is a link
+        # that died without a word.
+        time.sleep(float(command.split()[2]))
+        process.stdout.write(b'thawed\n')
+        process.exit(0)
         return
 
     child = await asyncio.create_subprocess_exec(

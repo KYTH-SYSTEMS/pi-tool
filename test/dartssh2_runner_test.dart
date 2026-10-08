@@ -237,6 +237,67 @@ void main() {
     });
   });
 
+  // run() opens the channel with it: an exec request the Pi never answers
+  // must end, and a channel that opens after all must not be left behind.
+  group('withinOrDiscard (exec start deadline)', () {
+    test('an answer in time is returned and kept', () async {
+      final discarded = <String>[];
+      final r = await withinOrDiscard(
+          Future<String>.delayed(const Duration(milliseconds: 20), () => 'ok'),
+          const Duration(seconds: 5),
+          discarded.add);
+      expect(r, 'ok');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(discarded, isEmpty);
+    });
+
+    test('no answer within the limit is a TimeoutException with that limit',
+        () async {
+      const limit = Duration(milliseconds: 100);
+      final watch = Stopwatch()..start();
+      await expectLater(
+        withinOrDiscard(Completer<String>().future, limit, (_) {}),
+        throwsA(isA<TimeoutException>()
+            .having((e) => e.duration, 'duration', limit)),
+      );
+      expect(watch.elapsed, lessThan(const Duration(seconds: 3)));
+    });
+
+    test('an answer after the limit is handed to discard', () async {
+      final discarded = <String>[];
+      final opening = Completer<String>();
+      await expectLater(
+        withinOrDiscard(
+            opening.future, const Duration(milliseconds: 50), discarded.add),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(discarded, isEmpty);
+      opening.complete('session');
+      await Future<void>.delayed(Duration.zero);
+      expect(discarded, ['session']);
+    });
+
+    test('an error after the limit is dropped, not left unhandled', () async {
+      final opening = Completer<String>();
+      await expectLater(
+        withinOrDiscard(
+            opening.future, const Duration(milliseconds: 50), (_) {}),
+        throwsA(isA<TimeoutException>()),
+      );
+      // An unhandled asynchronous error would fail this test.
+      opening.completeError(StateError('SSH client closed'));
+      await Future<void>.delayed(Duration.zero);
+    });
+
+    test('an error in time passes through', () async {
+      await expectLater(
+        withinOrDiscard(Future<String>.error(StateError('refused')),
+            const Duration(seconds: 5), (_) {}),
+        throwsStateError,
+      );
+    });
+  });
+
   // dartssh2 closes stdout on CHANNEL_EOF; the exit status can arrive after
   // it. run() therefore waits for it (resolveExitCode) instead of reading a
   // premature null — null means "unknown" to every caller, never success.
