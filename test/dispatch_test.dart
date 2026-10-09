@@ -5536,6 +5536,75 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // The key derivation takes seconds, and nothing else is on screen meanwhile.
+  testWidgets(
+      'Profil-Export: läuft die Verschlüsselung, sagt die App das — und ein '
+      'zweiter Export startet nicht daneben', (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<String>();
+    var encryptions = 0;
+    final saved = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(_ready),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+        apiClient: EvccApiClient(
+            getJson: (_) async =>
+                throw const EvccApiException('kein Netz im Test')),
+        evccReleaseFetcher: () async => null,
+        haVersionFetcher: () async => null,
+        fileSaver: (name, bytes) async => saved.add(name),
+        exportEncryptor: (json, passphrase) {
+          encryptions++;
+          return gate.future;
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    Future<void> tapExport() async {
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Einstellungen'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Profile exportieren'));
+      await tester.tap(find.text('Profile exportieren'));
+      await tester.pumpAndSettle();
+    }
+
+    await tapExport();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Passphrase'), '1234567890');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Passphrase wiederholen'), '1234567890');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'OK'));
+    await tester.pumpAndSettle();
+
+    expect(encryptions, 1);
+    expect(find.text('Export wird verschlüsselt …'), findsOneWidget);
+    expect(saved, isEmpty);
+
+    // A second tap while the first export is still at work: no second
+    // passphrase dialog, no second derivation next to the first.
+    await tapExport();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(encryptions, 1);
+
+    gate.complete('{"v":1}');
+    await tester.pumpAndSettle();
+    expect(saved, ['pi-tool-profile.pitool']);
+    expect(find.text('Export erstellt — sicher aufbewahren.'), findsOneWidget);
+
+    // Done: the next export starts as usual.
+    await tapExport();
+    expect(find.byType(AlertDialog), findsOneWidget);
+  });
+
   testWidgets('Passphrase-Dialog: der Sichtbarkeits-Schalter sagt, was er tut',
       (tester) async {
     await openExportPassphrase(tester);

@@ -210,6 +210,7 @@
       }
     }
   },
+  "snackExportEncrypting": "Encrypting the export …",
   "snackExportCreated": "Export created — keep it safe.",
   "snackExportFailed": "Export failed.",
   "snackFilePickFailed": "File selection failed.",

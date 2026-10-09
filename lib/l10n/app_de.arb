@@ -131,6 +131,7 @@
   "loadFailedResetFailed": "Zurücksetzen fehlgeschlagen. Als letzter Weg lassen sich die App-Daten in den Android-Einstellungen löschen.",
   "exportProfilesTitle": "Profile exportieren",
   "exportProfilesBody": "Die Datei enthält deine Pi-Zugangsdaten (Passwörter/SSH-Keys) — verschlüsselt. Wähle eine Passphrase mit mindestens {n} Zeichen; ohne sie ist die Datei wertlos. Das Verschlüsseln dauert einige Sekunden.",
+  "snackExportEncrypting": "Export wird verschlüsselt …",
   "snackExportCreated": "Export erstellt — sicher aufbewahren.",
   "snackExportFailed": "Export fehlgeschlagen.",
   "snackFilePickFailed": "Dateiauswahl fehlgeschlagen.",

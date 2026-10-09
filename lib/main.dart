@@ -237,6 +237,7 @@ class UpdaterPage extends StatefulWidget {
     this.keepAlive,
     this.filePicker,
     this.fileSaver,
+    this.exportEncryptor,
     this.textSharer,
     this.appLauncher,
     this.urlOpener,
@@ -280,6 +281,12 @@ class UpdaterPage extends StatefulWidget {
   /// Saves downloaded bytes to the phone (default: temp file + share sheet).
   /// Injectable so widget tests record instead of hitting platform channels.
   final Future<void> Function(String name, Uint8List bytes)? fileSaver;
+
+  /// Seals the profile export under the passphrase (default:
+  /// [encryptProfileExport]). Injectable because the real key derivation runs
+  /// for seconds in a background isolate, which a widget test cannot wait for.
+  final Future<String> Function(String json, String passphrase)?
+      exportEncryptor;
 
   /// Hands a text to other apps (default: the system share sheet). Injectable
   /// so widget tests record instead of hitting the platform channel.
@@ -353,6 +360,12 @@ class _UpdaterPageState extends State<UpdaterPage>
       widget.fileSaver ?? _saveAndShareBytes;
   late final Future<void> Function(String text) _textSharer =
       widget.textSharer ?? _shareText;
+  late final Future<String> Function(String json, String passphrase)
+      _exportEncryptor = widget.exportEncryptor ?? encryptProfileExport;
+  // An export is sealing its file. That takes seconds and shows nothing but a
+  // snack — a second one started meanwhile would run next to it and end in a
+  // second share sheet.
+  bool _exporting = false;
   late final AppLauncher _appLauncher =
       widget.appLauncher ?? const ChannelAppLauncher();
   late final Future<bool> Function(Uri uri) _urlOpener = widget.urlOpener ??
@@ -992,21 +1005,27 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// it to the share sheet. The file contains credentials — hence the explicit
   /// warning + authenticated encryption (see profile_transfer.dart).
   Future<void> _exportProfiles() async {
+    if (_exporting) return;
     final pass = await _promptPassphrase(
       context.l10n.exportProfilesTitle,
       context.l10n.exportProfilesBody(kExportMinPassphraseLength),
       confirm: true,
     );
-    if (pass == null || !mounted) return;
+    if (pass == null || !mounted || _exporting) return;
+    _exporting = true;
+    // The key derivation runs for seconds: say that something is happening.
+    _snack(context.l10n.snackExportEncrypting);
     try {
       final envelope =
-          await encryptProfileExport(encodeAppConfig(_currentConfig()), pass);
+          await _exportEncryptor(encodeAppConfig(_currentConfig()), pass);
       if (!mounted) return;
       await _fileSaver('pi-tool-profile.pitool',
           Uint8List.fromList(utf8.encode(envelope)));
       if (mounted) _snack(context.l10n.snackExportCreated);
     } catch (_) {
       if (mounted) _snack(context.l10n.snackExportFailed);
+    } finally {
+      _exporting = false;
     }
   }
 
