@@ -13,6 +13,13 @@ final String? _bash = Platform.isWindows
     : (Process.runSync('bash', ['-c', 'command -v bash']).stdout as String)
         .trim();
 
+/// [path] as Git Bash spells it (`C:/x` becomes `/c/x`); unchanged elsewhere.
+String _posixPath(String path) {
+  final s = path.replaceAll(r'\', '/');
+  final m = RegExp(r'^([A-Za-z]):/').firstMatch(s);
+  return m == null ? s : '/${m.group(1)!.toLowerCase()}/${s.substring(3)}';
+}
+
 /// A throwaway Pi for [systemAptRefreshCommand]: `sudo` and `apt-get` are
 /// stubs, PATH holds only the stub directory, and /var/lib/apt/lists is a
 /// directory in the sandbox whose package lists are ten days old.
@@ -74,9 +81,11 @@ exit 0''');
   /// Puts the stub directory first from INSIDE the shell. The environment
   /// alone is not enough on Windows: Git Bash's launcher puts its own
   /// directories in front of an inherited PATH, so a real binary of the same
-  /// name would win over the stub.
+  /// name would win over the stub. The entry in bash's own spelling (`/c/…`):
+  /// a `C:/…` is split at its colon, and the stubs end up BEHIND the
+  /// launcher's directories after all.
   String _stubsFirst(String command) =>
-      "export PATH='$root/bin':\"\$PATH\"; $command";
+      "export PATH='${_posixPath('$root/bin')}':\"\$PATH\"; $command";
 
   /// Whether the apt-get stub was called at all.
   bool get aptRan => File('$root/calls').existsSync();

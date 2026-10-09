@@ -222,7 +222,9 @@ void main() {
       p.stderr.drain<void>();
       // The stubs first, set inside the shell: Git Bash's launcher puts its own
       // directories in front of an inherited PATH.
-      p.stdin.write("export PATH='${_posixArg(tmp.path)}/bin':\"\$PATH\"\n");
+      // In bash's own spelling (`/c/…`): a `C:/…` entry is split at its colon
+      // and the stubs end up behind the launcher's directories after all.
+      p.stdin.write("export PATH='${_posixPath(tmp.path)}/bin':\"\$PATH\"\n");
       p.stdin.write('${buildDetectBatch([
             ('TAILSCALE', tailscaleStatusCommand),
             ('TS_SELF', tailscaleSelfCommand),
@@ -1522,6 +1524,14 @@ final String? _bashAbsolute = Platform.isLinux
 
 /// Forward slashes: Git Bash reads `C:/…` paths as given.
 String _posixArg(String path) => path.replaceAll(r'\', '/');
+
+/// [path] as Git Bash spells it (`C:/x` becomes `/c/x`); unchanged elsewhere.
+/// For entries of PATH, where a drive colon would split the entry in two.
+String _posixPath(String path) {
+  final s = _posixArg(path);
+  final m = RegExp(r'^([A-Za-z]):/').firstMatch(s);
+  return m == null ? s : '/${m.group(1)!.toLowerCase()}/${s.substring(3)}';
+}
 
 /// A `tailscale` that answers the three detection calls like the real CLI in
 /// backend state `$TS_STATE` (`old`: running, but a client whose `status` does
