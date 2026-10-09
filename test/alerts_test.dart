@@ -13,6 +13,12 @@ import 'on_pi_sandbox.dart';
 final String? _bash =
     Platform.isWindows ? Platform.environment['PITOOL_TEST_BASH'] : 'bash';
 
+/// What `sh` gets to run from a `sh -c '<argument>'` command line.
+String _shC(String command) {
+  expect(command, startsWith("sh -c '"));
+  return command.substring(7, command.length - 1).replaceAll(r"'\''", "'");
+}
+
 /// A path the sandbox bash understands (Git Bash wants /c/... on Windows).
 String _posix(String p) {
   final s = p.replaceAll(r'\', '/');
@@ -152,32 +158,41 @@ void main() {
   });
 
   group('buildTestAlertCommand', () {
-    test('sends a test push to server/topic, shell-quoted', () {
+    test('one `sh -c` with one argument, whatever the login shell is', () {
       final c = buildTestAlertCommand(
-          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42');
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: "a';reboot;'");
+      expect(c, startsWith("sh -c '"));
+      expect(c, endsWith("'"));
+      // Every quote inside is escaped: nothing ends the argument early.
+      final body = c.substring(7, c.length - 1);
+      expect(body.replaceAll(r"'\''", ''), isNot(contains("'")));
+    });
+    test('sends a test push to server/topic, shell-quoted', () {
+      final c = _shC(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
       expect(c, contains('curl'));
       expect(c, contains("'https://ntfy.sh/my-pi-42'"));
     });
     test('quotes a hostile topic', () {
-      final c = buildTestAlertCommand(
-          ntfyServer: 'https://ntfy.sh', ntfyTopic: "a';reboot;'");
+      final c = _shC(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: "a';reboot;'"));
       expect(c, contains(r"'\''"));
       expect(c, isNot(contains("/a';reboot")));
     });
     test('fails on an HTTP error and names the reason, within a time limit',
         () {
-      final c = buildTestAlertCommand(
-          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42');
+      final c = _shC(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
       // -f: HTTP >= 400 is an exit code, not a silent success. -sS: no
       // progress meter, but the error text. --max-time: a dead server cannot
-      // hang the action.
-      expect(c, startsWith('curl -fsS --max-time 15 '));
+      // hang the action. Last on the line: its exit code is the command's.
+      expect(c.split('; ').last, startsWith('curl -fsS --max-time 15 '));
     });
     test('strips whitespace like the install script does', () {
       // A pasted server with a trailing blank or a topic with a line break
       // must test the destination the timer will really use.
-      final c = buildTestAlertCommand(
-          ntfyServer: ' https://ntfy.sh \n', ntfyTopic: ' my-pi\t-42\n');
+      final c = _shC(buildTestAlertCommand(
+          ntfyServer: ' https://ntfy.sh \n', ntfyTopic: ' my-pi\t-42\n'));
       expect(c, endsWith(" 'https://ntfy.sh/my-pi-42'"));
       final s = buildAlertsInstallScript(
           ntfyServer: ' https://ntfy.sh \n', ntfyTopic: ' my-pi\t-42\n');
@@ -196,7 +211,7 @@ void main() {
         .split('\n')
         .first;
     String tested(String server) =>
-        buildTestAlertCommand(ntfyServer: server, ntfyTopic: 't')
+        _shC(buildTestAlertCommand(ntfyServer: server, ntfyTopic: 't'))
             .split(' -- ')
             .last;
 
@@ -279,9 +294,16 @@ void main() {
           'fi\n');
       File('${tmp.path}/bin/reboot')
           .writeAsStringSync('#!/bin/sh\n: > "\$STUB/rebooted"\n');
+      // The command runs through `sh -c`; PATH stays the stub directory.
+      File('${tmp.path}/bin/sh')
+          .writeAsStringSync('#!/bin/sh\nexec /bin/sh "\$@"\n');
       if (!Platform.isWindows) {
-        Process.runSync(
-            'chmod', ['+x', '${tmp.path}/bin/curl', '${tmp.path}/bin/reboot']);
+        Process.runSync('chmod', [
+          '+x',
+          '${tmp.path}/bin/curl',
+          '${tmp.path}/bin/reboot',
+          '${tmp.path}/bin/sh',
+        ]);
       }
     });
     tearDown(() => tmp.deleteSync(recursive: true));
@@ -300,20 +322,73 @@ void main() {
 
     List<String> args() => File('${tmp.path}/args').readAsLinesSync();
 
+    /// The Pi answers `hostname` with [output] (single-quoted for the stub).
+    void hostname(String output) {
+      final f = File('${tmp.path}/bin/hostname')
+        ..writeAsStringSync('#!/bin/sh\n'
+            "printf '%s\\n' '${output.replaceAll("'", "'\\''")}'\n");
+      if (!Platform.isWindows) Process.runSync('chmod', ['+x', f.path]);
+    }
+
     test('curl gets the flags, the title, the message and ONE url argument',
         () async {
+      hostname('zirkel');
       final r = await run(buildTestAlertCommand(
           ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
       expect(r.code, 0, reason: r.err);
       final a = args();
+      // Which Pi: several can push to one topic.
       expect(a.sublist(0, 5),
-          ['-fsS', '--max-time', '15', '-H', 'Title: Pi-Tool']);
+          ['-fsS', '--max-time', '15', '-H', 'Title: Pi-Tool (zirkel)']);
       expect(a[5], '-d');
       expect(a[6], startsWith('Test-Benachrichtigung'));
       // `--` ends the options: whatever the URL starts with, it is the URL.
       expect(a[7], '--');
       expect(a.last, 'https://ntfy.sh/my-pi-42');
       expect(a, hasLength(9));
+    });
+
+    test('a Pi without a `hostname` command: the plain title, nothing on '
+        'stderr', () async {
+      final r = await run(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
+      expect(r.code, 0, reason: r.err);
+      expect(r.err, isEmpty);
+      expect(args()[4], 'Title: Pi-Tool');
+      expect(args(), hasLength(9));
+    });
+
+    // The title is an HTTP header. Whatever the Pi answers, it stays ONE
+    // argument of one line, and the shell runs nothing of it.
+    test('a hostname that is none stays out of the title and runs nothing',
+        () async {
+      for (final answer in [
+        '',
+        'mein pi',
+        'pi\nPriority: max',
+        "x';reboot;'",
+        r'$(reboot)',
+        '`reboot`',
+        'pi"; reboot; "',
+        'zirkel;reboot',
+        'büro-pi',
+      ]) {
+        hostname(answer);
+        final r = await run(buildTestAlertCommand(
+            ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
+        expect(r.code, 0, reason: '$answer: ${r.err}');
+        expect(args()[4], 'Title: Pi-Tool', reason: answer);
+        expect(args(), hasLength(9), reason: answer);
+        expect(File('${tmp.path}/rebooted').existsSync(), isFalse,
+            reason: answer);
+      }
+    });
+
+    test('every character a hostname may have gets through', () async {
+      hostname('Pi-4.fritz.box_2');
+      await run(buildTestAlertCommand(
+          ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-pi-42'));
+      expect(args()[4], 'Title: Pi-Tool (Pi-4.fritz.box_2)');
     });
 
     test('a hostile topic stays one argument and runs nothing', () async {
@@ -361,6 +436,9 @@ void main() {
       pi.stub('apt-get', _aptGet);
       pi.stub('timeout', _timeout);
       pi.stub('curl', _curl);
+      // The Pi's name: `$S/hostname` as it is, "zirkel" without the file.
+      pi.stub('hostname', r'cat "$S/hostname" 2>/dev/null || echo zirkel',
+          log: false);
       // A healthy Pi: root mounted read-write, 45 °C.
       pi.put('/proc/mounts', '/dev/root / ext4 rw,noatime 0 0\n');
       pi.put('/sys/class/thermal/thermal_zone0/temp', '45000\n');
@@ -640,6 +718,107 @@ void main() {
       expect(args.sublist(args.length - 2),
           ['--', 'https://ntfy.example/pi-tool-test']);
       expect(args, contains('--max-time'));
+    });
+
+    /// What curl got for the one push of a check, one argument per line.
+    List<String> pushArgs() => pi.read('/state/curl-args').trim().split('\n');
+
+    /// The arguments of a push titled [title]; nothing else may vary.
+    List<String> argsWith(String title) => [
+          '-fsS',
+          '--connect-timeout',
+          '10',
+          '--max-time',
+          '30',
+          '-H',
+          'Title: $title',
+          '-H',
+          'Priority: high',
+          '--data-binary',
+          '@-',
+          '--',
+          'https://ntfy.example/pi-tool-test',
+        ];
+
+    // Several Pis can push to one topic: "Dienst aus: evcc" alone names none.
+    test('the push names the Pi in its title — one header, one argument',
+        () async {
+      disk(95);
+      await check();
+      expect(pushArgs(), argsWith('Pi-Tool (zirkel)'));
+      // The message itself is unchanged.
+      expect(message().split('\n'),
+          ['Pi-Tool hat Probleme erkannt:', 'Speicher: 95% belegt']);
+    });
+
+    test('a hostname that is none stays out of the title and runs nothing',
+        () async {
+      for (final answer in [
+        '',
+        'mein pi\n',
+        'pi\nPriority: max\n',
+        "x';touch ${pi.root}/state/pwned1;'\n",
+        '\$(touch ${pi.root}/state/pwned2)\n',
+        '`touch ${pi.root}/state/pwned3`\n',
+        'pi"; touch ${pi.root}/state/pwned4; "\n',
+        'büro-pi\n',
+      ]) {
+        pi.put('/state/hostname', answer);
+        pi.remove(last);
+        disk(95);
+        await check();
+        expect(pushArgs(), argsWith('Pi-Tool'), reason: answer);
+      }
+      expect(pi.ls('/state').where((n) => n.startsWith('pwned')), isEmpty);
+    });
+
+    test('a Pi without a `hostname` command pushes with the plain title',
+        () async {
+      pi.remove('/bin/hostname');
+      disk(95);
+      await check();
+      expect(pushArgs(), argsWith('Pi-Tool'));
+    });
+
+    test('the Pi\'s name does not go into what makes a problem new: a renamed '
+        'Pi pushes nothing for the same problem', () async {
+      disk(95);
+      await check();
+      pi.put('/state/hostname', 'garage\n');
+      await check();
+      expect(pushes(), hasLength(1));
+    });
+
+    test('under dash the title is built the same way', () async {
+      disk(95);
+      await check(shell: sandboxDash);
+      expect(pushArgs(), argsWith('Pi-Tool (zirkel)'));
+      pi.put('/state/hostname', 'mein pi\n');
+      pi.remove(last);
+      await check(shell: sandboxDash);
+      expect(pushArgs(), argsWith('Pi-Tool'));
+    }, skip: needsDash);
+
+    // Switched off, nothing of the timer's runs stays: turned on again later,
+    // the sheet would otherwise show a check from before as its last one.
+    test('removing takes the state of the checks along', () async {
+      await pi.setAge(lists, '2 days ago');
+      disk(95);
+      await check();
+      pi.put('/var/lib/pi-tool/job.status', 'other state of the app\n');
+      expect(pi.ls('/var/lib/pi-tool'),
+          ['alerts.aptupdate', 'alerts.last', 'alerts.status', 'job.status']);
+      expect(parseAlertsStatus((await pi.run(alertsStatusCommand)).out).lastCheck,
+          isNotNull);
+
+      final r = await pi.run(buildAlertsRemoveScript());
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines.last, 'ALERTS_REMOVED');
+      expect(pi.ls('/var/lib/pi-tool'), ['job.status']);
+      final st = parseAlertsStatus((await pi.run(alertsStatusCommand)).out);
+      expect(st.enabled, isFalse);
+      expect(st.lastCheck, isNull);
+      expect(st.wrapperOutdated, isFalse);
     });
 
     test('the ntfy destination lies in a file only root reads, not in the '

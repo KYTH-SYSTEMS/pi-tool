@@ -13,6 +13,7 @@ import 'package:evcc_updater/src/evcc_updater.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/pi_job.dart';
+import 'package:evcc_updater/src/scheduled_backup.dart';
 import 'package:evcc_updater/src/security_check.dart';
 import 'package:evcc_updater/src/ssh_keys.dart';
 import 'package:evcc_updater/src/services/apt_services.dart';
@@ -1815,6 +1816,29 @@ void main() {
           .readAutoUpdateStatus(config: _config, onLog: (_) {});
       expect(st.enabled, isTrue);
       expect(st.lastResult, contains('ok'));
+    });
+
+    // What the sheets open with: one probe, no second round trip.
+    test('the status readers hand on what is installed on the Pi', () async {
+      final runner = FakeSshRunner({
+        autoUpdateStatusCommand: [
+          _r('ENABLED enabled\nNEXT Wed 2026-10-14 22:00:00\nSTATUS \n'
+              'WRAPPER old\nONCALENDAR Wed *-*-* 22:00:00\n')
+        ],
+        scheduledBackupStatusCommand: [
+          _r('ENABLED enabled\nNEXT Sat 2026-10-10 01:00:00\nSTATUS \n'
+              'WRAPPER current\nONCALENDAR *-*-* 01:00:00\nDROP 31\n')
+        ],
+      });
+      final u = _updaterWith(runner);
+      final auto = await u.readAutoUpdateStatus(config: _config, onLog: (_) {});
+      expect(auto.schedule, (weekly: true, hour: 22, weekday: 3));
+      expect(auto.wrapperOutdated, isTrue);
+      final backup =
+          await u.readScheduledBackupStatus(config: _config, onLog: (_) {});
+      expect(backup.hour, 1);
+      expect(backup.keep, 30);
+      expect(backup.wrapperOutdated, isFalse);
     });
   });
 

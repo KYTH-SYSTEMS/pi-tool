@@ -85,6 +85,19 @@ String _ntfyServer(String server) {
   return 'http://$s';
 }
 
+/// Shell that sets `title` to the title of a push: `Pi-Tool (<hostname>)`.
+/// Several Pis can push to one ntfy topic — a profile without a topic of its
+/// own uses the app-wide one — and "Dienst aus: evcc" alone names none of
+/// them.
+///
+/// The hostname is whatever the Pi answers. It goes into the title only when
+/// it consists of the characters of a hostname; with anything else in it (a
+/// blank, a line break, a quote) the title stays `Pi-Tool`. The characters
+/// are listed one by one: what a range like `a-z` covers depends on the
+/// locale. All ASCII, the brackets included — the title travels as an HTTP
+/// header, and what a server makes of other bytes there was not measured.
+const String _titleSh = r'''host=$(hostname 2>/dev/null); case "$host" in ''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]*) title='Pi-Tool' ;; *) title="Pi-Tool ($host)" ;; esac''';
+
 /// Root script that installs the health-check wrapper + timer and enables it.
 /// [ntfyServer] + [ntfyTopic] are the ntfy destination; both are shell-quoted.
 String buildAlertsInstallScript({
@@ -107,7 +120,7 @@ mkdir -p /var/lib/pi-tool
 rm -f /var/lib/pi-tool/alerts.last
 cat > /usr/local/lib/$alertsUnit.sh <<'WRAP'
 #!/bin/sh
-$wrapperStampLine
+$alertsWrapperStamp
 mkdir -p /var/lib/pi-tool
 WRAP
 # The destination gets a file of its own that only root can read; the wrapper
@@ -164,12 +177,15 @@ pend=\$(LC_ALL=C apt-get -s upgrade 2>/dev/null | grep -c '^Inst ')
 hash=\$(printf '%s' "\$classes" | md5sum | awk '{print \$1}')
 last=\$(cat /var/lib/pi-tool/alerts.last 2>/dev/null)
 if [ -n "\$problems" ] && [ "\$hash" != "\$last" ]; then
+  # Which Pi this is goes into the title — not into the hash above: a renamed
+  # Pi has no new problem.
+  $_titleSh
   # Remember the hash only once the push went out: a failed one (no DNS or
   # internet, an HTTP error — hence -f) is tried again at the next run instead
   # of counting as sent. The timeouts bound the oneshot unit, which has no
   # start timeout of its own.
   if printf 'Pi-Tool hat Probleme erkannt:%b' "\$problems" | \\
-    curl -fsS --connect-timeout 10 --max-time 30 -H 'Title: Pi-Tool' -H 'Priority: high' --data-binary @- -- "\$URL/\$TOPIC" >/dev/null 2>&1; then
+    curl -fsS --connect-timeout 10 --max-time 30 -H "Title: \$title" -H 'Priority: high' --data-binary @- -- "\$URL/\$TOPIC" >/dev/null 2>&1; then
     printf '%s' "\$hash" > /var/lib/pi-tool/alerts.last
   fi
 elif [ -z "\$problems" ]; then
@@ -223,8 +239,11 @@ echo ALERTS_INSTALLED
 }
 
 /// Root script that removes the alerts timer, service, wrapper and destination
-/// file — and systemd's stamp of the timer ([timerStampPath]). `set -e`: a
-/// failing `rm` (read-only root) must end without the marker.
+/// file — and systemd's stamp of the timer ([timerStampPath]). What the checks
+/// left in /var/lib/pi-tool goes too (last check, what was last sent, the
+/// last try to refresh the package lists): alerts turned on again later start
+/// without a check from before. `set -e`: a failing `rm` (read-only root)
+/// must end without the marker.
 String buildAlertsRemoveScript() {
   return '''
 set -e
@@ -233,7 +252,9 @@ rm -f /etc/systemd/system/$alertsUnit.timer \\
   /etc/systemd/system/$alertsUnit.service \\
   /usr/local/lib/$alertsUnit.sh \\
   $alertsDestinationPath \\
-  ${timerStampPath(alertsUnit)}
+  ${timerStampPath(alertsUnit)} \\
+  /var/lib/pi-tool/alerts.status /var/lib/pi-tool/alerts.last \\
+  /var/lib/pi-tool/alerts.aptupdate
 systemctl daemon-reload
 echo ALERTS_REMOVED
 ''';
@@ -245,7 +266,9 @@ echo ALERTS_REMOVED
 /// `--max-time` keeps an unreachable server from hanging the action.
 /// Whitespace is stripped and the server checked like in
 /// [buildAlertsInstallScript], so the test hits the destination the timer will
-/// use.
+/// use — under the title the timer will use ([_titleSh]). curl comes last:
+/// its exit code is the command's. The whole runs through `sh -c`: the title
+/// takes a `case`, and the SSH user's login shell need not be a Bourne shell.
 String buildTestAlertCommand({
   required String ntfyServer,
   required String ntfyTopic,
@@ -254,14 +277,15 @@ String buildTestAlertCommand({
   final topic = ntfyTopic.replaceAll(RegExp(r'\s'), '');
   final url = shSingleQuote('$server/$topic');
   final msg = shSingleQuote('Test-Benachrichtigung ✓ von Pi-Tool');
-  return "curl -fsS --max-time 15 -H 'Title: Pi-Tool' -d $msg -- $url";
+  return 'sh -c ${shSingleQuote('$_titleSh; '
+      'curl -fsS --max-time 15 -H "Title: \$title" -d $msg -- $url')}';
 }
 
 /// No-sudo status command parsed by [parseAlertsStatus].
 const String alertsStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $alertsUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "LAST \$(cat /var/lib/pi-tool/alerts.status 2>/dev/null)"; '
-    '$wrapperProbeHead$alertsUnit$wrapperProbeTail';
+    '$wrapperProbeHead$alertsUnit$wrapperProbeMid$alertsWrapperStamp$wrapperProbeTail';
 
 /// [wrapperOutdated]: the wrapper on the Pi is from an older app release (see
 /// on_pi_wrapper.dart).

@@ -34,22 +34,45 @@ void main() {
     autoUpdateUnit: autoUpdateStatusCommand,
     alertsUnit: alertsStatusCommand,
   };
+  // Each wrapper has a generation of its own.
+  const generations = {
+    scheduledBackupUnit: scheduledBackupWrapperGeneration,
+    autoUpdateUnit: autoUpdateWrapperGeneration,
+    alertsUnit: alertsWrapperGeneration,
+  };
+  const stamps = {
+    scheduledBackupUnit: scheduledBackupWrapperStamp,
+    autoUpdateUnit: autoUpdateWrapperStamp,
+    alertsUnit: alertsWrapperStamp,
+  };
 
   group('wrapper stamp', () {
-    test('every wrapper carries it as its second line', () {
+    test('every wrapper carries its own as its second line', () {
       for (final MapEntry(key: unit, value: script) in wrappers.entries) {
         final lines = _firstHeredoc(script).split('\n');
         expect(lines.first, startsWith('#!/bin/'), reason: unit);
-        expect(lines[1], wrapperStampLine, reason: unit);
+        expect(lines[1], stamps[unit], reason: unit);
+        expect(stamps[unit], '# pi-tool-wrapper ${generations[unit]}',
+            reason: unit);
       }
-      expect(wrapperStampLine, '# pi-tool-wrapper $wrapperGeneration');
     });
 
-    test('every status probe asks for its own wrapper', () {
+    test('every status probe asks for its own wrapper and its own stamp', () {
       for (final MapEntry(key: unit, value: probe) in probes.entries) {
         expect(probe, contains('f=/usr/local/lib/$unit.sh;'), reason: unit);
-        expect(probe, contains("grep -qxF '$wrapperStampLine'"), reason: unit);
+        expect(probe, contains("grep -qxF '${stamps[unit]}'"), reason: unit);
       }
+    });
+
+    // Compared with tag v0.71.0, which wrote generation 2 into all three: the
+    // alerts and the auto-update wrapper changed since, the backup wrapper
+    // did not. A hint to set the backup timer up again would change nothing.
+    test('only the wrappers that changed since v0.71.0 moved on', () {
+      expect(generations, {
+        scheduledBackupUnit: 2,
+        autoUpdateUnit: 3,
+        alertsUnit: 3,
+      });
     });
   });
 
@@ -116,24 +139,81 @@ void main() {
         expect(await probe(unit), 'WRAPPER old');
       });
 
-      test('$unit: an earlier generation is old', () async {
-        File('${tmp.path}/$unit.sh')
-            .writeAsStringSync('#!/bin/sh\n# pi-tool-wrapper 1\n');
-        expect(await probe(unit), 'WRAPPER old');
+      test('$unit: every earlier generation is old', () async {
+        for (var g = 1; g < generations[unit]!; g++) {
+          File('${tmp.path}/$unit.sh')
+              .writeAsStringSync('#!/bin/sh\n# pi-tool-wrapper $g\n');
+          expect(await probe(unit), 'WRAPPER old', reason: 'generation $g');
+        }
       });
 
-      test('$unit: the wrapper v0.71.0 installed (generation 2) is old',
+      test('$unit: a stamp that is not the whole line does not count',
           () async {
-        File('${tmp.path}/$unit.sh')
-            .writeAsStringSync('#!/bin/sh\n# pi-tool-wrapper 2\n');
-        expect(await probe(unit), 'WRAPPER old');
+        final stamp = stamps[unit]!;
+        for (final line in ['${stamp}0', ' $stamp', '$stamp x', 'x$stamp']) {
+          File('${tmp.path}/$unit.sh').writeAsStringSync('#!/bin/sh\n$line\n');
+          expect(await probe(unit), 'WRAPPER old', reason: line);
+        }
       });
 
       test('$unit: no wrapper at all', () async {
         expect(await probe(unit), 'WRAPPER none');
       });
     }
+
+    // What v0.71.0 wrote into every wrapper.
+    for (final (unit, state) in [
+      (scheduledBackupUnit, 'current'),
+      (autoUpdateUnit, 'old'),
+      (alertsUnit, 'old'),
+    ]) {
+      test('$unit: the wrapper v0.71.0 installed (generation 2) is $state',
+          () async {
+        File('${tmp.path}/$unit.sh')
+            .writeAsStringSync('#!/bin/sh\n# pi-tool-wrapper 2\n');
+        expect(await probe(unit), 'WRAPPER $state');
+        expect(parseWrapperOutdated(await probe(unit)), state == 'old');
+      });
+    }
   }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
+
+  group('parseInstalledOnCalendar', () {
+    test('hands on every schedule the app builds, as written', () {
+      for (final onCalendar in [
+        '*-*-* 03:00:00',
+        '*-*-* 23:00:00',
+        'Mon *-*-* 05:00:00',
+        'Sun *-*-* 04:00:00',
+      ]) {
+        expect(
+            parseInstalledOnCalendar(
+                'ENABLED enabled\nONCALENDAR $onCalendar\nWRAPPER current\n'),
+            onCalendar);
+      }
+      // A unit file with DOS line ends.
+      expect(parseInstalledOnCalendar('ONCALENDAR *-*-* 03:00:00\r\n'),
+          '*-*-* 03:00:00');
+    });
+
+    test('nothing installed, nothing readable, nothing the app builds: null',
+        () {
+      for (final out in [
+        '',
+        'ENABLED disabled\nNEXT \nSTATUS \nWRAPPER none\n',
+        // The probe ran, the unit is missing or unreadable.
+        'ONCALENDAR \n',
+        'ONCALENDAR\n',
+        // Edited by hand.
+        'ONCALENDAR daily\n',
+        'ONCALENDAR *-*-* 04:00\n',
+        'ONCALENDAR Mon,Thu *-*-* 04:00:00\n',
+        // Only a line of its own counts.
+        'STATUS ONCALENDAR *-*-* 03:00:00\n',
+      ]) {
+        expect(parseInstalledOnCalendar(out), isNull, reason: out);
+      }
+    });
+  });
 
   group('checkOnCalendar', () {
     test('passes every schedule the app builds, unchanged', () {

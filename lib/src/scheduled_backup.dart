@@ -17,6 +17,18 @@ const String scheduledBackupUnit = 'pi-tool-backup';
 String scheduledBackupOnCalendar({required int hour}) =>
     '*-*-* ${hour.clamp(0, 23).toString().padLeft(2, '0')}:00:00';
 
+final RegExp _dailyRe = RegExp(r'^\*-\*-\* ([01][0-9]|2[0-3]):00:00$');
+
+/// The inverse of [scheduledBackupOnCalendar]: the hour of [onCalendar]. Null
+/// for anything the sheet's picker cannot produce, and for no schedule.
+int? scheduledBackupHourOf(String? onCalendar) {
+  final m = onCalendar == null ? null : _dailyRe.firstMatch(onCalendar);
+  return m == null ? null : int.parse(m.group(1)!);
+}
+
+/// The retentions the sheet offers — the same in every app version so far.
+const List<int> scheduledBackupKeepChoices = [3, 5, 7, 14, 30];
+
 /// Root script: installs the wrapper + service + timer and enables it. [keep] =
 /// how many backups per service to retain (older ones are pruned each run).
 /// [onCalendar] must be a schedule from [scheduledBackupOnCalendar]
@@ -32,7 +44,7 @@ set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 cat > /usr/local/lib/$scheduledBackupUnit.sh <<'WRAP'
 #!/bin/sh
-$wrapperStampLine
+$scheduledBackupWrapperStamp
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 ts=\$(date '+%Y-%m-%d %H:%M:%S')
 stamp=\$(date +%Y%m%d-%H%M%S)
@@ -120,7 +132,9 @@ echo BACKUP_TIMER_INSTALLED
 }
 
 /// Root script: removes the timer, service and wrapper again — and systemd's
-/// stamp of the timer ([timerStampPath]). `set -e`: a failing `rm` (read-only
+/// stamp of the timer ([timerStampPath]). The status line of the last run
+/// goes too: the sheet must not show the last run of a timer that is off. The
+/// archives in /var/backups/pi-tool stay. `set -e`: a failing `rm` (read-only
 /// root) must end without the marker.
 String buildScheduledBackupRemoveScript() {
   return '''
@@ -129,18 +143,27 @@ systemctl disable --now $scheduledBackupUnit.timer 2>/dev/null || true
 rm -f /etc/systemd/system/$scheduledBackupUnit.timer \\
   /etc/systemd/system/$scheduledBackupUnit.service \\
   /usr/local/lib/$scheduledBackupUnit.sh \\
-  ${timerStampPath(scheduledBackupUnit)}
+  ${timerStampPath(scheduledBackupUnit)} \\
+  /var/lib/pi-tool/backup.status
 systemctl daemon-reload
 echo BACKUP_TIMER_REMOVED
 ''';
 }
 
-/// No-sudo status probe (enabled / next run / last result).
+/// No-sudo status probe (enabled / next run / last result / installed
+/// schedule and retention).
+///
+/// `DROP <n>`: the retention is nowhere but in the wrapper, as the `n` of the
+/// `tail -n +n` that prunes the evcc archives — written like this by every
+/// app version, so the probe reads it from there (the wrappers are
+/// world-readable). Empty without a wrapper.
 const String scheduledBackupStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $scheduledBackupUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "NEXT \$(systemctl list-timers --all $scheduledBackupUnit.timer --no-legend 2>/dev/null | awk \'{print \$1, \$2, \$3}\')"; '
     'echo "STATUS \$(cat /var/lib/pi-tool/backup.status 2>/dev/null)"; '
-    '$wrapperProbeHead$scheduledBackupUnit$wrapperProbeTail';
+    '$wrapperProbeHead$scheduledBackupUnit$wrapperProbeMid$scheduledBackupWrapperStamp$wrapperProbeTail; '
+    '$onCalendarProbeHead$scheduledBackupUnit$onCalendarProbeTail; '
+    'echo "DROP \$(grep -m 1 \'sched-evcc-.*tail -n +[0-9]\' /usr/local/lib/$scheduledBackupUnit.sh 2>/dev/null | sed \'s/.*tail -n +//; s/[^0-9].*//\')"';
 
 /// [lastResult] is the wrapper's status line as written, shown to the user
 /// unchanged: `<time> ok: evcc pihole`, `<time> ok: nichts` (nothing to back
@@ -148,17 +171,26 @@ const String scheduledBackupStatusCommand =
 ///
 /// [wrapperOutdated]: the wrapper on the Pi is from an older app release, so
 /// fixes made since only apply once the timer is set up again.
+///
+/// [hour] and [keep]: what is installed on the Pi, for the sheet to open
+/// with. Null when there is no timer or the probe could not read it; [hour]
+/// also when the schedule is not a daily one on the hour. [keep] is the
+/// installed number even where the picker does not offer it
+/// ([scheduledBackupKeepChoices]).
 typedef ScheduledBackupStatus = ({
   bool enabled,
   String? nextRun,
   String? lastResult,
   bool wrapperOutdated,
+  int? hour,
+  int? keep,
 });
 
 ScheduledBackupStatus parseScheduledBackupStatus(String out) {
   var enabled = false;
   String? nextRun;
   String? lastResult;
+  int? keep;
   for (final line in out.split('\n')) {
     final t = line.trim();
     if (t.startsWith('ENABLED ')) {
@@ -169,6 +201,11 @@ ScheduledBackupStatus parseScheduledBackupStatus(String out) {
     } else if (t.startsWith('STATUS ')) {
       final v = t.substring(7).trim();
       lastResult = v.isEmpty ? null : v;
+    } else if (t.startsWith('DROP ')) {
+      // `tail -n +n` deletes from the n-th newest on: n - 1 are kept. The
+      // install script writes 2 to 1000.
+      final n = int.tryParse(t.substring(5).trim());
+      if (n != null && n >= 2 && n <= 1000) keep = n - 1;
     }
   }
   return (
@@ -176,5 +213,7 @@ ScheduledBackupStatus parseScheduledBackupStatus(String out) {
     nextRun: nextRun,
     lastResult: lastResult,
     wrapperOutdated: parseWrapperOutdated(out),
+    hour: scheduledBackupHourOf(parseInstalledOnCalendar(out)),
+    keep: keep,
   );
 }

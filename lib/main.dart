@@ -489,6 +489,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   // in). The topic works like a password — it never goes into a log line.
   String _piAlertsServer = '';
   String _piAlertsTopic = '';
+  // The ntfy destination set up in the demo. In memory only, like the demo
+  // Pi's timers (DemoPi): its sample Pi is not the profile's.
+  ({String server, String topic})? _demoAlerts;
   // The app build (versionCode) first seen by this install — Pro grandfathering
   // marker; null until stamped once at startup. See early_adopter.dart.
   int? _firstSeenVersionCode;
@@ -917,8 +920,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       );
 
   /// The ntfy destination of the active Pi's Health-Alerts as far as the app
-  /// knows it: its own, else the app-wide one of older releases.
+  /// knows it: its own, else the app-wide one of older releases. In the demo,
+  /// once alerts were set up there, the destination of its sample Pi.
   ({String server, String topic}) get _alertsDestination =>
+      (_demoMode ? _demoAlerts : null) ??
       effectiveNtfyDestination(
         profileServer: _piAlertsServer,
         profileTopic: _piAlertsTopic,
@@ -3592,11 +3597,14 @@ class _UpdaterPageState extends State<UpdaterPage>
         // pushes to from here on must not be lost if the app goes away
         // midway. Plain field writes — no setState needed, so no
         // setState-after-unmount risk across the awaits below. Not in the
-        // demo: its sample Pi is not the profile's.
+        // demo: its sample Pi is not the profile's — the demo keeps its own
+        // destination, so its sheet shows the topic again like a real Pi's.
         if (!_demoMode) {
           _piAlertsServer = choice.server;
           _piAlertsTopic = choice.topic;
           _persistSettings();
+        } else {
+          _demoAlerts = (server: choice.server, topic: choice.topic);
         }
         await _updater.enableAlerts(
             config: config,
@@ -3729,9 +3737,13 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<({bool enable, bool weekly, int hour, int weekday})?>
       _showAutoUpdateSheet(AutoUpdateStatus status) {
-    var weekly = false;
-    var hour = 4;
-    var weekday = 7;
+    // What is installed on the Pi, where the probe could read it: "Zeitplan
+    // ändern" without re-selecting must write the same schedule back, not
+    // these defaults.
+    final installed = status.schedule;
+    var weekly = installed?.weekly ?? false;
+    var hour = installed?.hour ?? 4;
+    var weekday = installed?.weekday ?? 7;
     final days = [
       context.l10n.dayMon,
       context.l10n.dayTue,
@@ -3770,7 +3782,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                           : null,
                       fontWeight: FontWeight.w600),
                 ),
-                if (status.lastResult != null)
+                // Only of a timer that is on: a status file can outlive one
+                // that an older app version switched off.
+                if (status.enabled && status.lastResult != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(ctx.l10n.labelLastRun(status.lastResult!),
@@ -3908,8 +3922,13 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<({bool enable, int hour, int keep})?> _showScheduledBackupSheet(
       ScheduledBackupStatus status) {
-    var hour = 3;
-    var keep = 7;
+    // What is installed on the Pi, where the probe could read it and the
+    // pickers can show it: "Zeitplan ändern" without re-selecting must not
+    // cut a retention of 30 down to this default — the next run would delete
+    // the older archives.
+    var hour = status.hour ?? 3;
+    var keep =
+        scheduledBackupKeepChoices.contains(status.keep) ? status.keep! : 7;
     return showModalBottomSheet<({bool enable, int hour, int keep})>(
       context: context,
       showDragHandle: true,
@@ -3938,7 +3957,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                           : null,
                       fontWeight: FontWeight.w600),
                 ),
-                if (status.lastResult != null)
+                // Only of a timer that is on, as in the auto-update sheet.
+                if (status.enabled && status.lastResult != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(ctx.l10n.labelLast(status.lastResult!),
@@ -3975,7 +3995,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                     DropdownButton<int>(
                       value: keep,
                       items: [
-                        for (final k in [3, 5, 7, 14, 30])
+                        for (final k in scheduledBackupKeepChoices)
                           DropdownMenuItem(value: k, child: Text('$k')),
                       ],
                       onChanged: (v) => setSheet(() => keep = v ?? 7),

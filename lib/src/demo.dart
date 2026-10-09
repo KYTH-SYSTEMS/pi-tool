@@ -3,31 +3,54 @@
 /// WITHOUT a real Raspberry Pi. Never opens a socket, never runs anything. Used
 /// to satisfy Google Play's "reviewers must be able to access the app" rule
 /// without shipping demo SSH credentials, and as a "try before you connect"
-/// feature. Everything here is static; the pure parsing layer turns the canned
+/// feature. Everything here is static — except the three on-Pi timers, which
+/// the demo Pi remembers ([DemoPi]); the pure parsing layer turns the canned
 /// stdout into real-looking service cards, so no UI faking is needed.
 library;
 
 import 'dart:convert';
 
+import 'alerts.dart' show alertsStatusCommand;
+import 'auto_update.dart' show autoUpdateScheduleOf, autoUpdateStatusCommand;
 import 'commands.dart'
     show
         detectEndKey,
         detectShellCommand,
         dockerListCommand,
+        installShellCommand,
         serviceStatus,
         versionQuery;
 import 'evcc_api.dart';
 import 'evcc_updater.dart';
 import 'pi_job.dart';
+import 'scheduled_backup.dart' show scheduledBackupStatusCommand;
 import 'ssh_runner.dart';
+
+/// What the demo Pi remembers between two actions: its three on-Pi timers
+/// (Automatik tab). A sheet reads the timer's state before it opens — without
+/// this, a timer switched on a moment ago would read as off. Everything else
+/// in the demo is static. One per demo updater ([buildDemoUpdater]).
+class DemoPi {
+  /// `OnCalendar` of the automatic updates while they are on.
+  String? autoUpdate;
+
+  /// `OnCalendar` of the scheduled backups and the `n` of their wrapper's
+  /// `tail -n +n` while they are on.
+  ({String onCalendar, String drop})? backup;
+
+  /// Whether the Health-Alerts are on.
+  bool alerts = false;
+}
 
 /// A fake [SshRunner] backing demo mode: [connect]/[close] are no-ops, and
 /// [run] returns canned stdout via [demoResponseFor]. Constructed per action by
-/// the demo [EvccUpdater]'s factory, exactly like the real runner.
+/// the demo [EvccUpdater]'s factory, exactly like the real runner; [pi] is
+/// what that factory's runners share.
 class DemoSshRunner implements SshRunner {
-  DemoSshRunner(this.config);
+  DemoSshRunner(this.config, [DemoPi? pi]) : pi = pi ?? DemoPi();
 
   final SshConfig config;
+  final DemoPi pi;
 
   @override
   Future<void> connect() async {}
@@ -41,7 +64,7 @@ class DemoSshRunner implements SshRunner {
     String? stdin,
     void Function(String chunk)? onOutput,
   }) async {
-    final out = demoResponseFor(command, stdin: stdin);
+    final out = demoResponseFor(command, stdin: stdin, pi: pi);
     // Stream whole lines, mirroring the real runner's line-buffered callback so
     // the terminal/log shows output as it "arrives".
     if (onOutput != null && out.isNotEmpty) {
@@ -55,19 +78,26 @@ class DemoSshRunner implements SshRunner {
 
 /// A ready-to-inject demo [EvccUpdater] whose runner is a [DemoSshRunner]. Every
 /// SSH action funnels through this one factory, so the whole app is faked here.
-EvccUpdater buildDemoUpdater() =>
-    EvccUpdater(runnerFactory: (config) => DemoSshRunner(config));
+EvccUpdater buildDemoUpdater() {
+  final pi = DemoPi();
+  return EvccUpdater(runnerFactory: (config) => DemoSshRunner(config, pi));
+}
 
 /// A demo [EvccApiClient] for the evcc "Live-Status" sheet, which uses HTTP (not
 /// SSH) and therefore needs its own fake.
 EvccApiClient buildDemoApiClient() =>
     EvccApiClient(getJson: (_) async => demoEvccState);
 
-/// Pure `command` → canned-stdout mapping. Unit-tested against the real parsers,
+/// `command` → canned-stdout mapping. Unit-tested against the real parsers,
 /// so the canned output must satisfy their format expectations. [stdin] is
-/// only read for Pi-Jobs (which kind of job the launcher carries).
-String demoResponseFor(String command, {String? stdin}) {
+/// only read for Pi-Jobs (which kind of job the launcher carries) and for the
+/// root scripts of the on-Pi timers. [pi] holds those timers — the one thing
+/// the answers depend on besides the command (a Pi without timers when
+/// omitted); [now] is for tests of a timer's next run.
+String demoResponseFor(String command,
+    {String? stdin, DemoPi? pi, DateTime? now}) {
   final c = command;
+  final timers = pi ?? DemoPi();
 
   // 0. Pi-Jobs (updates, repair): a short log that ends like a real job —
   //    RC 0 with the kind's markers. Without this the demo would report every
@@ -103,7 +133,29 @@ String demoResponseFor(String command, {String? stdin}) {
   //    off, but no automatic updates → one honest warning with a Fix button.
   if (c.contains('__SEC_SSHD__')) return _securityReport;
 
-  // 5. Benign default: succeed quietly. NEVER emit a sudo-failure token
+  // 6. The on-Pi timers of the Automatik tab. Setting one up or removing it
+  //    counts as done only with the script's marker — without it every
+  //    "Einschalten" ended as "fehlgeschlagen" — and the status probes answer
+  //    what was set up.
+  if (c == installShellCommand && stdin != null) {
+    final marker = _timerScript(stdin, timers);
+    if (marker != null) return '$marker\n';
+  }
+  if (c == autoUpdateStatusCommand) {
+    return _timerStatus(timers.autoUpdate, now);
+  }
+  if (c == scheduledBackupStatusCommand) {
+    return '${_timerStatus(timers.backup?.onCalendar, now)}'
+        'DROP ${timers.backup?.drop ?? ''}\n';
+  }
+  if (c == alertsStatusCommand) {
+    // No LAST: the first check of alerts just switched on is still to come.
+    return 'ENABLED ${timers.alerts ? 'enabled' : 'disabled'}\n'
+        'LAST \n'
+        'WRAPPER ${timers.alerts ? 'current' : 'none'}\n';
+  }
+
+  // 7. Benign default: succeed quietly. NEVER emit a sudo-failure token
   //    ("incorrect password"/"sorry, try again") — that would trip
   //    isSudoPasswordFailure and surface a fake auth error.
   return '';
@@ -230,6 +282,65 @@ const String _detectDoc = '$_m'
     // The end marker of a batch that ran through — without it detection takes
     // the document for a cut-off one and shows nothing.
     '$_m$detectEndKey$_m\n';
+
+final RegExp _onCalendarLine = RegExp(r'^OnCalendar=(.+)$', multiLine: true);
+final RegExp _backupDrop = RegExp(r'sched-evcc-.*tail -n \+(\d+)');
+
+/// The marker a root [script] ends with when it sets up or removes one of the
+/// three timers, after noting the change in [pi]. Null for any other script —
+/// the demo has no sample backend for those, and a made-up "done" would lie.
+String? _timerScript(String script, DemoPi pi) {
+  final last = script.trimRight().split('\n').last;
+  String? first(RegExp re) => re.firstMatch(script)?.group(1);
+  switch (last) {
+    case 'echo AUTOUPDATE_INSTALLED':
+      pi.autoUpdate = first(_onCalendarLine) ?? '';
+    case 'echo AUTOUPDATE_REMOVED':
+      pi.autoUpdate = null;
+    case 'echo BACKUP_TIMER_INSTALLED':
+      pi.backup = (
+        onCalendar: first(_onCalendarLine) ?? '',
+        drop: first(_backupDrop) ?? '',
+      );
+    case 'echo BACKUP_TIMER_REMOVED':
+      pi.backup = null;
+    case 'echo ALERTS_INSTALLED':
+      pi.alerts = true;
+    case 'echo ALERTS_REMOVED':
+      pi.alerts = false;
+    default:
+      return null;
+  }
+  return last.substring(5);
+}
+
+/// The answer of a status probe for a timer with the schedule [onCalendar]
+/// (null = the timer is off), as far as auto-update and backups share it:
+/// the next run, no last run (the timer was only just set up), this version's
+/// wrapper and the schedule in the unit.
+String _timerStatus(String? onCalendar, DateTime? now) => onCalendar == null
+    ? 'ENABLED disabled\nNEXT \nSTATUS \nWRAPPER none\nONCALENDAR \n'
+    : 'ENABLED enabled\n'
+        'NEXT ${_nextRun(onCalendar, now ?? DateTime.now())}\n'
+        'STATUS \n'
+        'WRAPPER current\n'
+        'ONCALENDAR $onCalendar\n';
+
+/// The next run of [onCalendar] after [now], in the three fields the status
+/// probes take from `systemctl list-timers` ("Sun 2026-10-11 04:00:00").
+/// Empty for a schedule the app does not build.
+String _nextRun(String onCalendar, DateTime now) {
+  final s = autoUpdateScheduleOf(onCalendar);
+  if (s == null) return '';
+  var next = DateTime(now.year, now.month, now.day, s.hour);
+  while (!next.isAfter(now) || (s.weekly && next.weekday != s.weekday)) {
+    next = DateTime(next.year, next.month, next.day + 1, s.hour);
+  }
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${days[next.weekday - 1]} '
+      '${next.year}-${two(next.month)}-${two(next.day)} ${two(s.hour)}:00:00';
+}
 
 /// Canned output of [buildSecurityProbe] for the demo Pi: hardened SSH, but
 /// automatic updates off and no fail2ban — so the traffic light shows what it

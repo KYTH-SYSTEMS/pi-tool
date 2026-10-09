@@ -226,7 +226,9 @@ class FakeEvccUpdater extends EvccUpdater {
         enabled: false,
         nextRun: null,
         lastResult: null,
-        wrapperOutdated: false
+        wrapperOutdated: false,
+        hour: null,
+        keep: null
       );
   String? scheduledBackupOnCal;
   int? scheduledBackupKeep;
@@ -491,7 +493,8 @@ class FakeEvccUpdater extends EvccUpdater {
         enabled: false,
         nextRun: null,
         lastResult: null,
-        wrapperOutdated: false
+        wrapperOutdated: false,
+        schedule: null
       );
 
   @override
@@ -3512,7 +3515,8 @@ void main() {
         enabled: true,
         nextRun: 'So 04:00',
         lastResult: 'ok',
-        wrapperOutdated: false
+        wrapperOutdated: false,
+        schedule: null
       );
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();
@@ -5312,6 +5316,253 @@ void main() {
     expect(u.scheduledBackupKeep, 7);
   });
 
+  // ---- the sheets open with what is installed on the Pi ----
+  //
+  // A new wrapper generation tells every user with a timer to set it up
+  // again. Whoever follows that without re-selecting must get the schedule
+  // and the retention back that the Pi had — not the defaults of the sheet:
+  // a weekly update would turn daily, and 30 archives would be cut to 7 at
+  // the next run.
+
+  /// The values the sheet's dropdowns show, in their order on screen.
+  List<int?> pickerValues(WidgetTester tester) => [
+        for (final p in tester.widgetList<DropdownButton<int>>(
+            inSheet(find.byType(DropdownButton<int>))))
+          p.value
+      ];
+
+  testWidgets(
+      'Automatische Updates: das Sheet öffnet mit dem installierten Zeitplan, '
+      '„Zeitplan ändern“ schreibt ihn unverändert zurück', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..autoStatus = (
+        enabled: true,
+        nextRun: 'Wed 2026-10-14 22:00:00',
+        lastResult: null,
+        wrapperOutdated: true,
+        schedule: (weekly: true, hour: 22, weekday: 3)
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Automatische Updates'));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester
+            .widget<SegmentedButton<bool>>(find.byType(SegmentedButton<bool>))
+            .selected,
+        {true});
+    expect(pickerValues(tester), [22, 3]);
+    expect(inSheet(find.text('22:00 Uhr')), findsOneWidget);
+    expect(inSheet(find.text('Mi')), findsOneWidget);
+
+    // The hint that sends people here names this button.
+    expect(find.byKey(const Key('wrapperOutdatedHint')), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Zeitplan ändern'));
+    await tester.pumpAndSettle();
+    expect(u.enabledOnCalendar, 'Wed *-*-* 22:00:00');
+  });
+
+  testWidgets(
+      'Automatische Updates: ein täglicher Zeitplan zu anderer Stunde bleibt '
+      'täglich zu dieser Stunde', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..autoStatus = (
+        enabled: true,
+        nextRun: 'Sat 2026-10-10 01:00:00',
+        lastResult: null,
+        wrapperOutdated: false,
+        schedule: (weekly: false, hour: 1, weekday: 7)
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Automatische Updates'));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester
+            .widget<SegmentedButton<bool>>(find.byType(SegmentedButton<bool>))
+            .selected,
+        {false});
+    expect(pickerValues(tester), [1]); // no weekday picker for "Täglich"
+    await tester.tap(find.widgetWithText(FilledButton, 'Zeitplan ändern'));
+    await tester.pumpAndSettle();
+    expect(u.enabledOnCalendar, '*-*-* 01:00:00');
+  });
+
+  testWidgets(
+      'Automatische Updates: Zeitplan nicht lesbar oder von Hand geändert — '
+      'das Sheet öffnet wie bisher mit täglich 04:00', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..autoStatus = (
+        enabled: true,
+        nextRun: 'Sat 2026-10-10 04:30:00',
+        lastResult: null,
+        wrapperOutdated: false,
+        schedule: null
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Automatische Updates'));
+    await tester.pumpAndSettle();
+
+    expect(pickerValues(tester), [4]);
+    await tester.tap(find.widgetWithText(FilledButton, 'Zeitplan ändern'));
+    await tester.pumpAndSettle();
+    expect(u.enabledOnCalendar, '*-*-* 04:00:00');
+  });
+
+  testWidgets(
+      'Geplante Backups: das Sheet öffnet mit installierter Uhrzeit und '
+      'Aufbewahrung, „Zeitplan ändern“ schreibt beide unverändert zurück',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..scheduledBackupStatus = (
+        enabled: true,
+        nextRun: 'Sat 2026-10-10 01:00:00',
+        lastResult: null,
+        wrapperOutdated: true,
+        hour: 1,
+        keep: 30
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Geplante Backups'));
+    await tester.pumpAndSettle();
+
+    expect(pickerValues(tester), [1, 30]);
+    expect(inSheet(find.text('01:00 Uhr')), findsOneWidget);
+    expect(inSheet(find.text('30')), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Zeitplan ändern'));
+    await tester.pumpAndSettle();
+    expect(u.scheduledBackupOnCal, '*-*-* 01:00:00');
+    expect(u.scheduledBackupKeep, 30);
+  });
+
+  testWidgets(
+      'Geplante Backups: eine Aufbewahrung, die die Auswahl nicht kennt — '
+      'das Sheet öffnet ohne Fehler mit 7, die Uhrzeit bleibt', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..scheduledBackupStatus = (
+        enabled: true,
+        nextRun: 'Sat 2026-10-10 05:00:00',
+        lastResult: null,
+        wrapperOutdated: false,
+        hour: 5,
+        keep: 10 // edited by hand on the Pi
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Geplante Backups'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(pickerValues(tester), [5, 7]);
+  });
+
+  testWidgets(
+      'Geplante Backups: Uhrzeit bekannt, Aufbewahrung nicht (Skript nicht '
+      'lesbar) — jede für sich', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..scheduledBackupStatus = (
+        enabled: true,
+        nextRun: 'Sat 2026-10-10 23:00:00',
+        lastResult: null,
+        wrapperOutdated: false,
+        hour: 23,
+        keep: null
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    await tester.tap(find.text('Geplante Backups'));
+    await tester.pumpAndSettle();
+
+    expect(pickerValues(tester), [23, 7]);
+  });
+
+  // A status file outlives a timer that an older app version switched off.
+  // The last run of a timer that is off is not shown as if it were its state.
+  testWidgets(
+      'Automatik-Sheets: der letzte Lauf steht nur bei einem aktiven Timer da',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..autoStatus = (
+        enabled: false,
+        nextRun: null,
+        lastResult: '2026-08-02 04:00:12 ok',
+        wrapperOutdated: false,
+        schedule: null
+      )
+      ..scheduledBackupStatus = (
+        enabled: false,
+        nextRun: null,
+        lastResult: '2026-08-02 03:00:01 ok: evcc',
+        wrapperOutdated: false,
+        hour: null,
+        keep: null
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    Future<void> open(String tile) async {
+      await tester.tap(find.text(tile));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> close() async {
+      Navigator.of(tester.element(find.byType(BottomSheet))).pop();
+      await tester.pumpAndSettle();
+    }
+
+    for (final tile in ['Automatische Updates', 'Geplante Backups']) {
+      await open(tile);
+      expect(inSheet(find.text('Aktuell aus.')), findsOneWidget, reason: tile);
+      expect(inSheet(find.textContaining('2026-08-02')), findsNothing,
+          reason: tile);
+      await close();
+    }
+
+    u
+      ..autoStatus = (
+        enabled: true,
+        nextRun: 'So 04:00',
+        lastResult: '2026-08-02 04:00:12 ok',
+        wrapperOutdated: false,
+        schedule: null
+      )
+      ..scheduledBackupStatus = (
+        enabled: true,
+        nextRun: 'Mo 03:00',
+        lastResult: '2026-08-02 03:00:01 ok: evcc',
+        wrapperOutdated: false,
+        hour: null,
+        keep: null
+      );
+    await open('Automatische Updates');
+    expect(inSheet(find.text('Zuletzt gelaufen: 2026-08-02 04:00:12 ok')),
+        findsOneWidget);
+    await close();
+    await open('Geplante Backups');
+    expect(inSheet(find.text('Zuletzt: 2026-08-02 03:00:01 ok: evcc')),
+        findsOneWidget);
+    await close();
+  });
+
   // A wrapper lives on the Pi: fixes in the app reach it only when the timer
   // is set up again, so an active timer with an older wrapper has to say so.
   testWidgets(
@@ -5323,13 +5574,16 @@ void main() {
         enabled: true,
         nextRun: 'Mo 03:00',
         lastResult: '2026-10-07 03:00:01 ok: nichts',
-        wrapperOutdated: true
+        wrapperOutdated: true,
+        hour: null,
+        keep: null
       )
       ..autoStatus = (
         enabled: true,
         nextRun: 'So 04:00',
         lastResult: 'ok',
-        wrapperOutdated: true
+        wrapperOutdated: true,
+        schedule: null
       )
       ..alertsStatus =
           (enabled: true, lastCheck: '12:00', wrapperOutdated: true);
@@ -5370,13 +5624,16 @@ void main() {
           enabled: true,
           nextRun: 'Mo 03:00',
           lastResult: null,
-          wrapperOutdated: false
+          wrapperOutdated: false,
+          hour: null,
+          keep: null
         )
         ..autoStatus = (
           enabled: true,
           nextRun: 'So 04:00',
           lastResult: null,
-          wrapperOutdated: false
+          wrapperOutdated: false,
+          schedule: null
         )
         ..alertsStatus =
             (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
@@ -5693,14 +5950,17 @@ void main() {
         enabled: true,
         nextRun: 'Mo 03:00',
         lastResult: null,
-        wrapperOutdated: false
+        wrapperOutdated: false,
+        hour: null,
+        keep: null
       )
       // Switched off with the old file still lying around: nothing to renew.
       ..autoStatus = (
         enabled: false,
         nextRun: null,
         lastResult: null,
-        wrapperOutdated: true
+        wrapperOutdated: true,
+        schedule: null
       );
     await tester.pumpWidget(page(u));
     await tester.pumpAndSettle();

@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:evcc_updater/src/auto_update.dart';
+import 'package:evcc_updater/src/pi_job.dart'
+    show jobKindSystemUpgrade, jobRuntimeLimit;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'on_pi_sandbox.dart';
@@ -52,6 +54,88 @@ echo "$n" > "$S/fuser-n"
 const String _o = '-o Dpkg::Use-Pty=0 -o DPkg::Lock::Timeout=300 '
     '-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold';
 
+/// systemd for the status probe: a timer is enabled when its unit file is
+/// there, and `list-timers` names its next run.
+const String _systemctlForProbe = r'''
+case "$1" in
+  is-enabled)
+    [ -e "$R/etc/systemd/system/$2" ] && { echo enabled; exit 0; }
+    exit 1 ;;
+  list-timers)
+    [ -e "$R/etc/systemd/system/$3" ] &&
+      echo "Sun 2026-10-11 04:00:00 CEST 2 days left n/a n/a $3 pi-tool.service" ;;
+esac
+exit 0''';
+
+/// The install script of v0.71.0 (wrapper generation 2) as it went over the
+/// wire, the wrapper cut short after its first lines — nothing here runs it.
+/// `@ONCALENDAR@` stands for the schedule.
+const String _installV071 = r'''
+set -e
+mkdir -p /var/lib/pi-tool /var/backups/pi-tool
+cat > /usr/local/lib/pi-tool-autoupdate.sh <<'WRAP'
+#!/bin/bash
+# pi-tool-wrapper 2
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /var/lib/pi-tool /var/backups/pi-tool
+ts=$(date '+%Y-%m-%d %H:%M:%S')
+was=$(systemctl is-active evcc 2>/dev/null)
+WRAP
+chmod +x /usr/local/lib/pi-tool-autoupdate.sh
+cat > /etc/systemd/system/pi-tool-autoupdate.service <<'SVC'
+[Unit]
+Description=Pi-Tool automatische Updates
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pi-tool-autoupdate.sh
+SVC
+cat > /etc/systemd/system/pi-tool-autoupdate.timer <<'TMR'
+[Unit]
+Description=Pi-Tool automatische Updates (Timer)
+[Timer]
+OnCalendar=@ONCALENDAR@
+Persistent=true
+[Install]
+WantedBy=timers.target
+TMR
+systemctl daemon-reload
+systemctl enable --now pi-tool-autoupdate.timer
+echo AUTOUPDATE_INSTALLED
+''';
+
+/// The same for v0.24.0 up to v0.54: no stamp in the wrapper, and the timer
+/// unit in an unquoted heredoc.
+const String _installV024 = r'''
+set -e
+mkdir -p /var/lib/pi-tool /var/backups/pi-tool
+cat > /usr/local/lib/pi-tool-autoupdate.sh <<'WRAP'
+#!/bin/sh
+mkdir -p /var/lib/pi-tool /var/backups/pi-tool
+ts=$(date '+%Y-%m-%d %H:%M:%S')
+was=$(systemctl is-active evcc 2>/dev/null)
+WRAP
+chmod +x /usr/local/lib/pi-tool-autoupdate.sh
+cat > /etc/systemd/system/pi-tool-autoupdate.service <<'SVC'
+[Unit]
+Description=Pi-Tool automatische Updates
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pi-tool-autoupdate.sh
+SVC
+cat > /etc/systemd/system/pi-tool-autoupdate.timer <<TMR
+[Unit]
+Description=Pi-Tool automatische Updates (Timer)
+[Timer]
+OnCalendar=@ONCALENDAR@
+Persistent=true
+[Install]
+WantedBy=timers.target
+TMR
+systemctl daemon-reload
+systemctl enable --now pi-tool-autoupdate.timer
+echo AUTOUPDATE_INSTALLED
+''';
+
 void main() {
   group('autoUpdateOnCalendar', () {
     test('daily at a padded hour', () {
@@ -63,6 +147,42 @@ void main() {
           'Sun *-*-* 03:00:00');
       expect(autoUpdateOnCalendar(weekly: true, hour: 5, weekday: 1),
           'Mon *-*-* 05:00:00');
+    });
+  });
+
+  // The sheet opens with what is installed. Whatever it cannot show must not
+  // be turned into something similar.
+  group('autoUpdateScheduleOf', () {
+    test('is the inverse of autoUpdateOnCalendar for every schedule the '
+        'pickers can produce', () {
+      for (var hour = 0; hour < 24; hour++) {
+        expect(
+            autoUpdateScheduleOf(
+                autoUpdateOnCalendar(weekly: false, hour: hour)),
+            (weekly: false, hour: hour, weekday: 7));
+        for (var day = 1; day <= 7; day++) {
+          expect(
+              autoUpdateScheduleOf(autoUpdateOnCalendar(
+                  weekly: true, hour: hour, weekday: day)),
+              (weekly: true, hour: hour, weekday: day));
+        }
+      }
+    });
+
+    test('a schedule the pickers cannot show, or none: null', () {
+      for (final other in [
+        null,
+        '',
+        'daily',
+        '*-*-* 04:30:00',
+        '*-*-* 04:00:30',
+        '*-*-* 4:00:00',
+        '*-*-01 04:00:00',
+        'Mon,Thu *-*-* 04:00:00',
+        'Sun *-*-* 04:00:00 UTC',
+      ]) {
+        expect(autoUpdateScheduleOf(other), isNull, reason: '$other');
+      }
     });
   });
 
@@ -127,7 +247,11 @@ void main() {
       }
     });
 
-    test('the service waits for the network and is not cut off mid-run', () {
+    // A oneshot unit is "activating" for its whole run, and while it is, the
+    // app refuses reboot and shutdown and starts no Pi-Job. RuntimeMaxSec does
+    // not apply to that state; TimeoutStartSec does.
+    test('the service waits for the network, is not cut off mid-run and has '
+        'the runtime cap of a system-upgrade job', () {
       expect(heredocBody(s, 'SVC').split('\n'), [
         '[Unit]',
         'Description=Pi-Tool automatische Updates',
@@ -136,9 +260,11 @@ void main() {
         '[Service]',
         'Type=oneshot',
         'ExecStart=/usr/local/lib/pi-tool-autoupdate.sh',
+        'TimeoutStartSec=6h',
         'KillMode=mixed',
         'TimeoutStopSec=30min',
       ]);
+      expect(jobRuntimeLimit(jobKindSystemUpgrade), '6h');
     });
   });
 
@@ -151,6 +277,143 @@ void main() {
       expect(s, contains('AUTOUPDATE_REMOVED'));
     });
   });
+
+  // The probe exactly as the app sends it — one command line, no sudo —
+  // against the files an install script left in the sandbox.
+  group('auto-update status probe in bash', () {
+    late PiSandbox pi;
+
+    setUp(() {
+      pi = PiSandbox();
+      pi.stub('systemctl', _systemctlForProbe, log: false);
+    });
+    tearDown(() => pi.dispose());
+
+    Future<AutoUpdateStatus> probe() async {
+      final r = await pi.run(autoUpdateStatusCommand);
+      expect(r.code, 0, reason: r.err);
+      expect(r.err, isEmpty);
+      return parseAutoUpdateStatus(r.out);
+    }
+
+    Future<void> install(String script) async {
+      final r = await pi.run(script);
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines.last, 'AUTOUPDATE_INSTALLED');
+    }
+
+    test('no timer on the Pi: off, no schedule, nothing to renew', () async {
+      final st = await probe();
+      expect(st.enabled, isFalse);
+      expect(st.nextRun, isNull);
+      expect(st.lastResult, isNull);
+      expect(st.schedule, isNull);
+      expect(st.wrapperOutdated, isFalse);
+    });
+
+    test('every schedule the sheet can set comes back as it was set',
+        () async {
+      for (final wanted in [
+        (weekly: false, hour: 4, weekday: 7),
+        (weekly: false, hour: 23, weekday: 7),
+        (weekly: true, hour: 22, weekday: 3),
+        (weekly: true, hour: 0, weekday: 1),
+        (weekly: true, hour: 4, weekday: 7),
+      ]) {
+        await install(buildAutoUpdateInstallScript(
+            onCalendar: autoUpdateOnCalendar(
+                weekly: wanted.weekly,
+                hour: wanted.hour,
+                weekday: wanted.weekday)));
+        final st = await probe();
+        expect(st.schedule, wanted);
+        expect(st.enabled, isTrue);
+        expect(st.nextRun, 'Sun 2026-10-11 04:00:00');
+        expect(st.wrapperOutdated, isFalse);
+      }
+    });
+
+    test('a timer set up by v0.71.0: its weekly schedule is read, and the '
+        'wrapper is the one to renew', () async {
+      await install(
+          _installV071.replaceAll('@ONCALENDAR@', 'Sat *-*-* 02:00:00'));
+      final st = await probe();
+      expect(st.schedule, (weekly: true, hour: 2, weekday: 6));
+      expect(st.enabled, isTrue);
+      expect(st.wrapperOutdated, isTrue);
+    });
+
+    test('a timer from before the stamps (v0.24.0, unquoted unit heredoc): '
+        'the same', () async {
+      await install(
+          _installV024.replaceAll('@ONCALENDAR@', 'Mon *-*-* 05:00:00'));
+      final st = await probe();
+      expect(st.schedule, (weekly: true, hour: 5, weekday: 1));
+      expect(st.wrapperOutdated, isTrue);
+    });
+
+    test('a unit edited by hand to something the pickers cannot show: no '
+        'schedule, the rest of the status stands', () async {
+      await install(buildAutoUpdateInstallScript(onCalendar: '*-*-* 04:00:00'));
+      const unit = '/etc/systemd/system/$autoUpdateUnit.timer';
+      pi.put(
+          unit,
+          pi.read(unit).replaceFirst(
+              'OnCalendar=*-*-* 04:00:00', 'OnCalendar=*-*-* 04:30:00'));
+      final st = await probe();
+      expect(st.schedule, isNull);
+      expect(st.enabled, isTrue);
+    });
+  }, skip: needsBash);
+
+  // Switched off, the sheet must not go on showing the last run of a timer
+  // that is no longer there.
+  group('auto-update remove script in bash', () {
+    late PiSandbox pi;
+
+    setUp(() {
+      pi = PiSandbox();
+      pi.stub('systemctl', _systemctlForProbe, log: false);
+    });
+    tearDown(() => pi.dispose());
+
+    test('takes status, log and setup time along — and leaves the backups',
+        () async {
+      final r = await pi
+          .run(buildAutoUpdateInstallScript(onCalendar: 'Sun *-*-* 04:00:00'));
+      expect(r.lines.last, 'AUTOUPDATE_INSTALLED', reason: r.err);
+      pi.put('/var/lib/pi-tool/autoupdate.status', '2026-10-04 04:00:12 ok\n');
+      pi.put('/var/lib/pi-tool/autoupdate.log', 'Reading package lists...\n');
+      // Left by a run that was killed before it could move the log into place.
+      pi.put('/var/lib/pi-tool/autoupdate.log.new', 'Reading\n');
+      pi.put('/var/lib/pi-tool/job.status', 'other state of the app\n');
+      pi.put('/var/backups/pi-tool/autoupdate-evcc-20261004-040000.tar.gz');
+      expect(
+          parseAutoUpdateStatus((await pi.run(autoUpdateStatusCommand)).out)
+              .lastResult,
+          '2026-10-04 04:00:12 ok');
+
+      final off = await pi.run(buildAutoUpdateRemoveScript());
+      expect(off.code, 0, reason: off.err);
+      expect(off.lines.last, 'AUTOUPDATE_REMOVED');
+      expect(pi.ls('/var/lib/pi-tool'), ['job.status']);
+      expect(pi.ls('/var/backups/pi-tool'),
+          ['autoupdate-evcc-20261004-040000.tar.gz']);
+
+      final st =
+          parseAutoUpdateStatus((await pi.run(autoUpdateStatusCommand)).out);
+      expect(st.enabled, isFalse);
+      expect(st.lastResult, isNull);
+      expect(st.schedule, isNull);
+    });
+
+    test('nothing of it there (never ran): still ends with the marker',
+        () async {
+      final off = await pi.run(buildAutoUpdateRemoveScript());
+      expect(off.code, 0, reason: off.err);
+      expect(off.lines.last, 'AUTOUPDATE_REMOVED');
+    });
+  }, skip: needsBash);
 
   // The wrapper as the install script writes it, run under its own shebang on
   // a sandboxed Pi.
@@ -374,6 +637,29 @@ void main() {
       expect(st.enabled, isFalse);
       expect(st.nextRun, isNull);
       expect(st.lastResult, isNull);
+      expect(st.schedule, isNull);
+    });
+    test('the installed schedule is handed on as the pickers show it', () {
+      const head = 'ENABLED enabled\nNEXT Wed 2026-10-14 22:00:00\nSTATUS \n'
+          'WRAPPER old\n';
+      expect(
+          parseAutoUpdateStatus('${head}ONCALENDAR Wed *-*-* 22:00:00\n')
+              .schedule,
+          (weekly: true, hour: 22, weekday: 3));
+      expect(
+          parseAutoUpdateStatus('${head}ONCALENDAR *-*-* 05:00:00\n').schedule,
+          (weekly: false, hour: 5, weekday: 7));
+      // Not known (a probe answer without the line) or not one of ours.
+      expect(parseAutoUpdateStatus(head).schedule, isNull);
+      expect(parseAutoUpdateStatus('${head}ONCALENDAR \n').schedule, isNull);
+      expect(
+          parseAutoUpdateStatus('${head}ONCALENDAR *-*-* 04:30:00\n').schedule,
+          isNull);
+      // The rest of the status does not depend on it.
+      final st = parseAutoUpdateStatus('${head}ONCALENDAR hourly\n');
+      expect(st.enabled, isTrue);
+      expect(st.nextRun, 'Wed 2026-10-14 22:00:00');
+      expect(st.wrapperOutdated, isTrue);
     });
     test('status lines of every wrapper generation are handed on as written',
         () {

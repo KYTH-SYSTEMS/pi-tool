@@ -5,7 +5,8 @@
 library;
 
 import 'on_pi_wrapper.dart';
-import 'pi_job.dart' show aptBuildingBlocks;
+import 'pi_job.dart'
+    show aptBuildingBlocks, jobKindSystemUpgrade, jobRuntimeLimit;
 
 const String autoUpdateUnit = 'pi-tool-autoupdate';
 
@@ -14,14 +15,37 @@ const String autoUpdateUnit = 'pi-tool-autoupdate';
 /// see [buildAutoUpdateInstallScript].
 const String autoUpdateSetupPath = '/var/lib/pi-tool/autoupdate.setup';
 
+const List<String> _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 /// systemd `OnCalendar` for the schedule. [weekday]: 1=Mon … 7=Sun (weekly).
 String autoUpdateOnCalendar(
     {required bool weekly, required int hour, int weekday = 7}) {
   final hh = hour.toString().padLeft(2, '0');
   if (!weekly) return '*-*-* $hh:00:00';
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  final d = days[(weekday - 1).clamp(0, 6)];
+  final d = _days[(weekday - 1).clamp(0, 6)];
   return '$d *-*-* $hh:00:00';
+}
+
+/// A schedule as the pickers of the sheet hold it. [weekday]: 1=Mon … 7=Sun;
+/// for a daily schedule it is the sheet's default, Sunday.
+typedef AutoUpdateSchedule = ({bool weekly, int hour, int weekday});
+
+final RegExp _scheduleRe = RegExp(
+    r'^(?:(Mon|Tue|Wed|Thu|Fri|Sat|Sun) )?\*-\*-\* ([01][0-9]|2[0-3]):00:00$');
+
+/// The inverse of [autoUpdateOnCalendar]: [onCalendar] as the pickers show
+/// it. Null for anything they cannot produce (and for no schedule at all) —
+/// never something merely similar, which "Zeitplan ändern" would then write
+/// to the Pi.
+AutoUpdateSchedule? autoUpdateScheduleOf(String? onCalendar) {
+  final m = onCalendar == null ? null : _scheduleRe.firstMatch(onCalendar);
+  if (m == null) return null;
+  final day = m.group(1);
+  return (
+    weekly: day != null,
+    hour: int.parse(m.group(2)!),
+    weekday: day == null ? 7 : _days.indexOf(day) + 1,
+  );
 }
 
 /// Root script (sudo shell) that installs the wrapper + service + timer and
@@ -49,6 +73,13 @@ String autoUpdateOnCalendar(
 /// is started within five minutes of it (enough for a start that first waits
 /// for network-online). A run scheduled inside those minutes is skipped too.
 ///
+/// A run is capped like a system-upgrade Pi-Job ([jobRuntimeLimit]) — for a
+/// oneshot unit with `TimeoutStartSec`, `RuntimeMaxSec` does not apply to it.
+/// At the cap systemd sends SIGTERM to the wrapper alone (`KillMode=mixed`);
+/// its handler lets a step that still makes progress finish and write the
+/// status line. What has not ended after `TimeoutStopSec` is killed, the
+/// unit ends as failed, and the status file keeps the line of the run before.
+///
 /// [onCalendar] must be a schedule from [autoUpdateOnCalendar]
 /// ([checkOnCalendar]).
 String buildAutoUpdateInstallScript({required String onCalendar}) {
@@ -58,7 +89,7 @@ set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
 cat > /usr/local/lib/$autoUpdateUnit.sh <<'WRAP'
 #!/bin/bash
-$wrapperStampLine
+$autoUpdateWrapperStamp
 # Set up or re-scheduled a moment ago: then this start is systemd catching up
 # on the timer, not a scheduled run.
 setup=\$(cat $autoUpdateSetupPath 2>/dev/null)
@@ -142,6 +173,11 @@ chmod +x /usr/local/lib/$autoUpdateUnit.sh
 # otherwise start before the network is there. KillMode/TimeoutStopSec: a
 # reboot or "systemctl stop" during a run signals the wrapper alone and gives
 # it 30 minutes to finish, instead of killing apt and dpkg at once.
+# TimeoutStartSec: a oneshot unit has no start timeout of its own and is
+# "activating" for its whole run — a run that hangs would stay so for good,
+# and the app refuses reboot, shutdown and every Pi-Job while it is. At the
+# cap systemd stops the unit the same way: SIGTERM to the wrapper, 30 minutes,
+# then SIGKILL to whatever is left.
 cat > /etc/systemd/system/$autoUpdateUnit.service <<'SVC'
 [Unit]
 Description=Pi-Tool automatische Updates
@@ -150,6 +186,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/$autoUpdateUnit.sh
+TimeoutStartSec=${jobRuntimeLimit(jobKindSystemUpgrade)}
 KillMode=mixed
 TimeoutStopSec=30min
 SVC
@@ -175,7 +212,10 @@ echo AUTOUPDATE_INSTALLED
 
 /// Root script that removes the timer, service and wrapper again — and
 /// systemd's stamp of the timer: left behind, turning the updates on again
-/// later would start a full upgrade on the spot ([timerStampPath]).
+/// later would start a full upgrade on the spot ([timerStampPath]). What the
+/// runs left in /var/lib/pi-tool goes too (status line, log, setup time): the
+/// sheet must not show the last run of a timer that is off. The evcc backups
+/// in /var/backups/pi-tool stay.
 /// `set -e`: a failing `rm` (read-only root) must end without the marker.
 String buildAutoUpdateRemoveScript() {
   return '''
@@ -184,27 +224,34 @@ systemctl disable --now $autoUpdateUnit.timer 2>/dev/null || true
 rm -f /etc/systemd/system/$autoUpdateUnit.timer \\
   /etc/systemd/system/$autoUpdateUnit.service \\
   /usr/local/lib/$autoUpdateUnit.sh \\
-  ${timerStampPath(autoUpdateUnit)}
+  ${timerStampPath(autoUpdateUnit)} \\
+  /var/lib/pi-tool/autoupdate.status \\
+  /var/lib/pi-tool/autoupdate.log /var/lib/pi-tool/autoupdate.log.new \\
+  $autoUpdateSetupPath
 systemctl daemon-reload
 echo AUTOUPDATE_REMOVED
 ''';
 }
 
-/// No-sudo command that reports the timer state, next run and last result in a
-/// marker format parsed by [parseAutoUpdateStatus].
+/// No-sudo command that reports the timer state, next run, last result and
+/// installed schedule in a marker format parsed by [parseAutoUpdateStatus].
 const String autoUpdateStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $autoUpdateUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "NEXT \$(systemctl list-timers --all $autoUpdateUnit.timer --no-legend 2>/dev/null | awk \'{print \$1, \$2, \$3}\')"; '
     'echo "STATUS \$(cat /var/lib/pi-tool/autoupdate.status 2>/dev/null)"; '
-    '$wrapperProbeHead$autoUpdateUnit$wrapperProbeTail';
+    '$wrapperProbeHead$autoUpdateUnit$wrapperProbeMid$autoUpdateWrapperStamp$wrapperProbeTail; '
+    '$onCalendarProbeHead$autoUpdateUnit$onCalendarProbeTail';
 
 /// Parsed auto-update status. [wrapperOutdated]: the wrapper on the Pi is from
-/// an older app release (see on_pi_wrapper.dart).
+/// an older app release (see on_pi_wrapper.dart). [schedule]: what is
+/// installed on the Pi, for the sheet to open with — null when there is no
+/// timer, the probe could not read it, or the pickers cannot show it.
 typedef AutoUpdateStatus = ({
   bool enabled,
   String? nextRun,
   String? lastResult,
   bool wrapperOutdated,
+  AutoUpdateSchedule? schedule,
 });
 
 /// Parses [autoUpdateStatusCommand] output.
@@ -229,5 +276,6 @@ AutoUpdateStatus parseAutoUpdateStatus(String out) {
     nextRun: nextRun,
     lastResult: lastResult,
     wrapperOutdated: parseWrapperOutdated(out),
+    schedule: autoUpdateScheduleOf(parseInstalledOnCalendar(out)),
   );
 }

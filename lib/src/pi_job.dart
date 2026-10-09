@@ -765,7 +765,8 @@ String _aptPrelude({bool eol = true, bool update = true}) => [
 /// `pitool_repair` — for the on-Pi auto-update wrapper (auto_update.dart), so
 /// the unattended run upgrades the way an update started in the app does.
 /// Bash. That wrapper stays on the Pi: a change to these blocks changes it
-/// too, so raise `wrapperGeneration` (on_pi_wrapper.dart) along with it.
+/// too, so raise `autoUpdateWrapperGeneration` (on_pi_wrapper.dart) along
+/// with it.
 String aptBuildingBlocks() => _aptPrelude(update: false);
 
 /// `system-upgrade`: EOL fix, repair, lists, `apt-get full-upgrade`.
