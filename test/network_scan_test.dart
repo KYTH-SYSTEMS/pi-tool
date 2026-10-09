@@ -70,4 +70,118 @@ void main() {
       expect(found, ['10.0.0.1']);
     });
   });
+
+  group('lanAddresses', () {
+    test('keeps Wi-Fi, Ethernet and hotspot, drops VPN and mobile data', () {
+      expect(
+        lanAddresses(const [
+          (interface: 'wlan0', address: '192.168.178.20'),
+          (interface: 'eth0', address: '10.0.0.7'),
+          (interface: 'swlan0', address: '192.168.43.1'), // the phone's hotspot
+          (interface: 'tun0', address: '10.8.0.2'), // OpenVPN / WireGuard app
+          (interface: 'tap0', address: '10.9.0.2'),
+          (interface: 'ppp0', address: '10.64.64.64'),
+          (interface: 'wg0', address: '10.7.0.2'),
+          (interface: 'ipsec1', address: '10.20.0.5'),
+          (interface: 'rmnet_data0', address: '10.44.5.6'), // Qualcomm
+          (interface: 'ccmni1', address: '10.133.7.9'), // MediaTek
+          (interface: 'wwan0', address: '10.55.1.2'),
+          (interface: 'v4-rmnet_data0', address: '10.1.2.3'), // CLAT
+        ]),
+        ['192.168.178.20', '10.0.0.7', '192.168.43.1'],
+      );
+    });
+
+    test('drops CGNAT (Tailscale) and 192.0.0.0/24 whatever the name', () {
+      expect(
+        lanAddresses(const [
+          (interface: 'wlan0', address: '192.168.178.20'),
+          (interface: 'tailscale0', address: '100.101.102.103'),
+          (interface: 'wlan0', address: '192.0.0.4'),
+          (interface: 'unknown7', address: '100.64.0.1'),
+        ]),
+        ['192.168.178.20'],
+      );
+    });
+
+    test('the ranges end where they should', () {
+      List<String> kept(String ip) =>
+          lanAddresses([(interface: 'wlan0', address: ip)]);
+      // 100.64.0.0/10 = 100.64.0.0 – 100.127.255.255
+      expect(kept('100.63.255.254'), ['100.63.255.254']);
+      expect(kept('100.64.0.1'), isEmpty);
+      expect(kept('100.127.255.254'), isEmpty);
+      expect(kept('100.128.0.1'), ['100.128.0.1']);
+      // 192.0.0.0/24 only — not 192.0.2.x, let alone 192.168.x.x
+      expect(kept('192.0.0.2'), isEmpty);
+      expect(kept('192.0.1.2'), ['192.0.1.2']);
+      expect(kept('192.168.0.2'), ['192.168.0.2']);
+    });
+
+    test('an interface name is matched from its start, in any case', () {
+      expect(
+        lanAddresses(const [
+          (interface: 'TUN0', address: '10.8.0.2'),
+          // "tun" somewhere inside the name is no VPN marker.
+          (interface: 'wlan-fortune0', address: '192.168.1.5'),
+        ]),
+        ['192.168.1.5'],
+      );
+    });
+  });
+
+  group('findSshHosts', () {
+    test('sweeps the Wi-Fi /24 only, not the VPN or the mobile network',
+        () async {
+      final probed = <String>[];
+      final found = await findSshHosts(
+        addresses: () async => const [
+          (interface: 'wlan0', address: '192.168.178.20'),
+          (interface: 'tun0', address: '100.101.102.103'),
+          (interface: 'rmnet_data0', address: '10.44.5.6'),
+          (interface: 'v4-rmnet_data0', address: '192.0.0.4'),
+        ],
+        probe: (ip) async {
+          probed.add(ip);
+          return ip == '192.168.178.64';
+        },
+      );
+      expect(found, ['192.168.178.64']);
+      expect(probed, hasLength(253));
+      expect(probed.every((ip) => ip.startsWith('192.168.178.')), isTrue);
+    });
+
+    test('with only VPN and mobile addresses nothing is probed', () async {
+      var probes = 0;
+      final found = await findSshHosts(
+        addresses: () async => const [
+          (interface: 'tun0', address: '100.101.102.103'),
+          (interface: 'rmnet_data0', address: '10.44.5.6'),
+        ],
+        probe: (ip) async {
+          probes++;
+          return true;
+        },
+      );
+      expect(found, isEmpty);
+      expect(probes, 0);
+    });
+
+    test('two local networks (Wi-Fi and Ethernet) are both swept', () async {
+      final probed = <String>{};
+      await findSshHosts(
+        addresses: () async => const [
+          (interface: 'wlan0', address: '192.168.178.20'),
+          (interface: 'eth0', address: '10.0.0.7'),
+        ],
+        probe: (ip) async {
+          probed.add(ip);
+          return false;
+        },
+      );
+      expect(probed, hasLength(506));
+      expect(probed, contains('10.0.0.1'));
+      expect(probed, contains('192.168.178.1'));
+    });
+  });
 }

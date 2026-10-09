@@ -73,8 +73,54 @@ Future<List<String>> scanHosts(
   ];
 }
 
-/// The phone's non-loopback IPv4 addresses (e.g. its Wi-Fi address).
-Future<List<String>> localIPv4s() async {
+/// One IPv4 address of the device and the interface it sits on.
+typedef LocalAddress = ({String interface, String address});
+
+/// Lists the device's IPv4 addresses. Injected for tests.
+typedef AddressLister = Future<List<LocalAddress>> Function();
+
+/// Name prefixes of interfaces that are no local network: VPN tunnels (`tun0`
+/// is what Tailscale, WireGuard and OpenVPN get on Android), mobile data
+/// (`rmnet*` Qualcomm, `ccmni*` MediaTek) and the `v4-*` CLAT interface
+/// Android adds on an IPv6-only network.
+const List<String> _nonLanInterfacePrefixes = [
+  'tun', 'tap', 'ppp', 'wg', 'ipsec', // VPN
+  'rmnet', 'ccmni', 'wwan', // mobile data
+  'v4-', // CLAT (464XLAT)
+];
+
+bool _isNonLanInterface(String name) {
+  final n = name.toLowerCase();
+  return _nonLanInterfacePrefixes.any(n.startsWith);
+}
+
+/// Whether [ip] lies in a range no home network uses: 100.64.0.0/10
+/// (carrier-grade NAT — mobile networks, and every Tailscale address) or
+/// 192.0.0.0/24 (reserved for protocol use, e.g. a phone's CLAT address).
+bool _isNonLanAddress(String ip) {
+  final parts = ip.split('.');
+  if (parts.length != 4) return false;
+  final a = int.tryParse(parts[0]);
+  final b = int.tryParse(parts[1]);
+  final c = int.tryParse(parts[2]);
+  if (a == 100 && b != null && b >= 64 && b <= 127) return true;
+  return a == 192 && b == 0 && c == 0;
+}
+
+/// The addresses out of [addresses] whose /24 is worth sweeping for a Pi:
+/// those of a local network (Wi-Fi, Ethernet, the phone's own hotspot). VPN
+/// and mobile-data addresses are left out — a sweep there costs 253 connection
+/// attempts into a tailnet or a carrier network and is not what "search the
+/// Wi-Fi" promises. An interface this list does not know is swept as before.
+List<String> lanAddresses(List<LocalAddress> addresses) => [
+      for (final a in addresses)
+        if (!_isNonLanInterface(a.interface) && !_isNonLanAddress(a.address))
+          a.address,
+    ];
+
+/// The phone's non-loopback IPv4 addresses (e.g. its Wi-Fi address), each with
+/// the name of its interface.
+Future<List<LocalAddress>> localIPv4s() async {
   try {
     final interfaces = await NetworkInterface.list(
       type: InternetAddressType.IPv4,
@@ -83,7 +129,8 @@ Future<List<String>> localIPv4s() async {
     );
     return [
       for (final iface in interfaces)
-        for (final addr in iface.addresses) addr.address,
+        for (final addr in iface.addresses)
+          (interface: iface.name, address: addr.address),
     ];
   } catch (_) {
     return const [];
@@ -107,14 +154,16 @@ Future<bool> probeSshPort(
   }
 }
 
-/// Discovers reachable SSH hosts across every local /24 the phone sits on.
-/// Best-effort and fail-soft: returns an empty list when offline or on Wi-Fi
-/// without peers. [probe] is injectable for tests.
+/// Discovers reachable SSH hosts across every local /24 the phone sits on
+/// ([lanAddresses]: not the VPN, not mobile data). Best-effort and fail-soft:
+/// returns an empty list when offline or on Wi-Fi without peers. [probe] and
+/// [addresses] are injectable for tests.
 Future<List<String>> findSshHosts({
   HostProbe? probe,
+  AddressLister? addresses,
   int concurrency = 48,
 }) async {
-  final locals = await localIPv4s();
+  final locals = lanAddresses(await (addresses ?? localIPv4s)());
   final candidates = <String>{};
   for (final ip in locals) {
     candidates.addAll(subnetHosts(ip));
