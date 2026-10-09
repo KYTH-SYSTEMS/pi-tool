@@ -285,7 +285,8 @@ void _tests() {
       final watch = Stopwatch()..start();
       await expectLater(
         runner.run('echo late'),
-        throwsA(isA<TimeoutException>().having(
+        // Its own kind of timeout: the command never started (see reboot).
+        throwsA(isA<CommandNotStartedException>().having(
             (e) => e.duration, 'duration', const Duration(seconds: 1))),
       );
       expect(watch.elapsed, lessThan(const Duration(milliseconds: 2200)));

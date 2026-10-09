@@ -1170,6 +1170,41 @@ void main() {
       );
     });
 
+    // A connection that drops is the reboot at work. A Pi that never took
+    // the command is not: nothing says it is going down.
+    for (final (name, command, act) in [
+      (
+        'reboot',
+        rebootCommand,
+        (EvccUpdater u) => u.reboot(config: _config, onLog: (_) {}),
+      ),
+      (
+        'shutdown',
+        shutdownCommand,
+        (EvccUpdater u) => u.shutdown(config: _config, onLog: (_) {}),
+      ),
+    ]) {
+      test('$name: a command the Pi never took is no success', () async {
+        final runner = FakeSshRunner({}, runErrors: {
+          command: CommandNotStartedException(const Duration(seconds: 15)),
+        });
+        await expectLater(
+          act(_updaterWith(runner)),
+          throwsA(isA<EvccUpdateException>()
+              .having((e) => e.kind, 'kind', UpdateErrorKind.outputTimeout)
+              .having((e) => e.message, 'message',
+                  contains('Ergebnis unbekannt'))),
+        );
+      });
+
+      test('$name: a Pi that goes quiet after taking the command went down',
+          () async {
+        final runner = FakeSshRunner({}, runErrors: {
+          command: TimeoutException('keine Ausgabe', const Duration(minutes: 10)),
+        });
+        await act(_updaterWith(runner)); // must not throw
+      });
+    }
   });
 
   group('EvccUpdater.backup', () {

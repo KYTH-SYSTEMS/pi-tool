@@ -2901,6 +2901,9 @@ class EvccUpdater {
           );
           combined = '${result.stdout}\n${result.stderr}';
           exitCode = result.exitCode;
+        } on CommandNotStartedException {
+          // The Pi never took the command: nothing says it is going down.
+          rethrow;
         } catch (_) {
           // The reboot drops the SSH connection — expected, treat as success.
           disconnected = true;
@@ -3326,6 +3329,9 @@ class EvccUpdater {
           );
           combined = '${result.stdout}\n${result.stderr}';
           exitCode = result.exitCode;
+        } on CommandNotStartedException {
+          // The Pi never took the command: nothing says it is going down.
+          rethrow;
         } catch (_) {
           // poweroff drops the SSH connection — expected, treat as success.
           disconnected = true;

@@ -241,8 +241,15 @@ class Dartssh2Runner implements SshRunner {
     // ends this wait on a transport error and on close(), but over a link that
     // died silently neither comes before the TCP stack gives up. Bounded like
     // the handshake; a session that still opens later is closed again.
-    final session = await withinOrDiscard(
-        client.execute(command), config.timeout, (opened) => opened.close());
+    final SSHSession session;
+    try {
+      session = await withinOrDiscard(
+          client.execute(command), config.timeout, (opened) => opened.close());
+    } on TimeoutException catch (e) {
+      // Its own type: who takes a lost connection for the command at work
+      // (reboot, shutdown) has to tell this apart — nothing was started.
+      throw CommandNotStartedException(e.duration ?? config.timeout);
+    }
 
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();

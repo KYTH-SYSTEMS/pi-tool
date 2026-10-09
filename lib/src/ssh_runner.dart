@@ -5,6 +5,8 @@
 /// in `dartssh2_runner.dart`.
 library;
 
+import 'dart:async';
+
 /// Immutable connection parameters entered by the user.
 class SshConfig {
   final String host;
@@ -99,6 +101,15 @@ class HostKeyDeclinedException implements Exception {
   const HostKeyDeclinedException();
   @override
   String toString() => 'HostKeyDeclinedException';
+}
+
+/// Thrown by [SshRunner.run] when the host did not confirm the command within
+/// [SshConfig.timeout]: as far as this side can tell it never started. A
+/// [TimeoutException] like the one for a command that went quiet — but a
+/// caller that reads a lost connection as the command at work (reboot,
+/// shutdown) must not read this one that way.
+class CommandNotStartedException extends TimeoutException {
+  CommandNotStartedException(Duration limit) : super('keine Antwort', limit);
 }
 
 /// Minimal SSH surface used by the updater.
