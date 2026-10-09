@@ -1268,9 +1268,10 @@ exit 0''');
       final s = buildHomeAssistantRestoreScript(
           archivePath: '/a.tar.gz', configPath: '/c', containerName: 'ha');
       expectOrder(s, [
-        "trap \"docker start 'ha'",
+        "ha_name='ha'",
+        "trap 'docker start \"\$ha_name\"",
         "docker stop 'ha'",
-        'tar -xzf',
+        "-xzf '/a.tar.gz' -C '/c'",
         'trap - EXIT',
         "docker start 'ha'\n",
         'echo "RESTORE_OK"',

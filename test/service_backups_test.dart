@@ -32,9 +32,29 @@ void main() {
     test('tars the config dir into the backup dir, shell-quoted', () {
       final s = buildHomeAssistantBackupScript('/opt/homeassistant/config');
       expect(s, contains('/var/backups/pi-tool'));
-      expect(s, contains('tar --warning=no-file-changed -czf'));
+      expect(s, contains('tar --warning=no-file-changed '));
       expect(s, contains("-C '/opt/homeassistant/config'"));
       expect(s, contains('BACKUP_OK'));
+    });
+
+    // The whole tar line: what is left out, how progress is reported and at
+    // which interval (25600 records of 10 KiB = 250 MiB). The bash groups in
+    // homeassistant_service_test.dart run it with a smaller interval.
+    test('the tar call: exclusions, a progress line per 250 MiB', () {
+      final s = buildHomeAssistantBackupScript('/opt/homeassistant/config');
+      expect(
+          s.split('\n'),
+          contains('tar --warning=no-file-changed --exclude=./backups '
+              '--exclude=./tmp_backups --checkpoint=25600 '
+              "--checkpoint-action=exec='echo \"Home Assistant: "
+              r'$((TAR_CHECKPOINT * TAR_BLOCKING_FACTOR / 2048))'
+              " MiB verarbeitet\"' "
+              r'''-czf "$out" -C '/opt/homeassistant/config' .'''));
+    });
+
+    test('the container keeps running: no stop, no pause', () {
+      final s = buildHomeAssistantBackupScript('/opt/homeassistant/config');
+      expect(s, isNot(contains('docker')));
     });
 
     test('a tar warning (exit 1) on a live HA is NOT a failure; only >1 is', () {
@@ -213,6 +233,36 @@ void main() {
       );
       // docker start must be guaranteed via trap, not only on the happy path.
       expect(s, contains('trap'));
+    });
+
+    test('the trap is single-quoted and reads the name from a variable', () {
+      final s = buildHomeAssistantRestoreScript(
+        archivePath: '/a.tar.gz',
+        configPath: '/c',
+        containerName: 'ha',
+      );
+      final lines = s.split('\n');
+      final trap = lines.indexOf(
+          r'''trap 'docker start "$ha_name" >/dev/null 2>&1 || true' EXIT''');
+      expect(trap, greaterThan(0));
+      expect(lines[trap - 1], "ha_name='ha'");
+      // Nothing app-supplied inside a double-quoted trap string any more.
+      expect(s, isNot(contains('trap "')));
+    });
+
+    test('the tar call reports progress like the backup does', () {
+      final s = buildHomeAssistantRestoreScript(
+        archivePath: '/a.tar.gz',
+        configPath: '/c',
+        containerName: 'ha',
+      );
+      expect(
+          s.split('\n'),
+          contains('tar --checkpoint=25600 '
+              "--checkpoint-action=exec='echo \"Home Assistant: "
+              r'$((TAR_CHECKPOINT * TAR_BLOCKING_FACTOR / 2048))'
+              " MiB verarbeitet\"' "
+              "-xzf '/a.tar.gz' -C '/c'"));
     });
   });
 

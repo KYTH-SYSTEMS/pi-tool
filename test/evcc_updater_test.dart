@@ -1411,6 +1411,40 @@ void main() {
       final stdin = runner.stdinByCommand[installShellCommand]!;
       expect(stdin, contains("-C '/opt/homeassistant/config'"));
     });
+
+    test('backupHomeAssistant: the notes and tar\'s progress lines go to the '
+        'log, the path is still read', () async {
+      final inspectCmd = dockerInspectJsonCommand('homeassistant');
+      final runner = FakeSshRunner({
+        dockerListCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+        inspectCmd: [
+          _r('[{"Name":"/homeassistant","Mounts":['
+              '{"Type":"bind","Source":"/opt/homeassistant/config","Destination":"/config"}]}]')
+        ],
+        // As the script prints it on a /config of a bit more than 500 MiB.
+        installShellCommand: [
+          _r('Hinweis: Home Assistant läuft während der Sicherung weiter.\n'
+              'Nicht im Archiv: Home Assistants eigene Backups (backups/, '
+              'tmp_backups/).\n'
+              'Home Assistant: 250 MiB verarbeitet\n'
+              'Home Assistant: 500 MiB verarbeitet\n'
+              'BACKUP_OK /var/backups/pi-tool/homeassistant-backup-x.tar.gz\n')
+        ],
+      });
+      final log = <String>[];
+      final path = await _updaterWith(runner)
+          .backupHomeAssistant(config: _config, onLog: log.add);
+      expect(path, '/var/backups/pi-tool/homeassistant-backup-x.tar.gz');
+      final text = log.join('\n');
+      expect(text, contains('Nicht im Archiv: Home Assistants eigene Backups'));
+      expect(text, contains('Home Assistant: 500 MiB verarbeitet'));
+      // The script that ran is the one that prints them.
+      final stdin = runner.stdinByCommand[installShellCommand]!;
+      expect(stdin, contains('--exclude=./backups --exclude=./tmp_backups'));
+      expect(stdin, contains('MiB verarbeitet'));
+    });
   });
 
   group('EvccUpdater file browser writes', () {
@@ -1678,6 +1712,36 @@ void main() {
       expect(stdin, contains("docker stop 'homeassistant'"));
       expect(stdin, contains("-C '/opt/ha/config'"));
       expect(stdin, contains('trap'));
+    });
+
+    test('restoreHomeAssistantBackup: tar\'s progress lines in front of the '
+        'marker are logged and are no failure', () async {
+      final inspectCmd = dockerInspectJsonCommand('homeassistant');
+      final runner = FakeSshRunner({
+        dockerListCommand: [
+          _r('homeassistant|ghcr.io/home-assistant/home-assistant:stable\n')
+        ],
+        inspectCmd: [
+          _r('[{"Name":"/homeassistant","Mounts":['
+              '{"Type":"bind","Source":"/opt/ha/config","Destination":"/config"}]}]')
+        ],
+        installShellCommand: [
+          _r('homeassistant\n'
+              'Home Assistant: 250 MiB verarbeitet\n'
+              'Home Assistant: 500 MiB verarbeitet\n'
+              'homeassistant\n'
+              'RESTORE_OK\n')
+        ],
+      });
+      final log = <String>[];
+      await _updaterWith(runner).restoreHomeAssistantBackup(
+          config: _config,
+          path: '/var/backups/pi-tool/homeassistant-backup-1.tar.gz',
+          onLog: log.add);
+      expect(log.join('\n'), contains('Home Assistant: 500 MiB verarbeitet'));
+      expect(log.last, 'Home Assistant wiederhergestellt.');
+      expect(runner.stdinByCommand[installShellCommand],
+          contains('MiB verarbeitet'));
     });
   });
 

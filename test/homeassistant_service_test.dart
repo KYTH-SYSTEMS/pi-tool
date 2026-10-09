@@ -1,8 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:evcc_updater/src/commands.dart' show parseServiceBackupPath;
+import 'package:evcc_updater/src/parsing.dart' show isSudoPasswordFailure;
 import 'package:evcc_updater/src/services/homeassistant_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'on_pi_sandbox.dart';
 
 /// A real bash for the script tests: Git Bash on Windows (never the WSL
 /// launcher `bash.exe` may resolve to), plain `bash` elsewhere. Null = skip.
@@ -679,4 +683,341 @@ void main() {
       expectRefused(await run(purge: true), 'Docker');
     });
   }, skip: _bash == null ? 'needs bash (Git Bash on Windows)' : false);
+
+  // The install script on a sandboxed 64-bit Pi that already has Docker: only
+  // the `docker run` it ends in is looked at. `readlink` is a stub that answers
+  // for /etc/localtime from `$S/localtime` (no link without that file).
+  group('Home Assistant install: time zone in bash', () {
+    late PiSandbox pi;
+
+    setUp(() {
+      pi = PiSandbox();
+      pi.stub('dpkg', 'echo arm64', log: false);
+      pi.stub('docker', 'exit 0');
+      pi.stub('readlink', r'[ -f "$S/localtime" ] && cat "$S/localtime"',
+          log: false);
+      pi.stub('reboot', 'exit 0');
+    });
+    tearDown(() => pi.dispose());
+
+    late SandboxRun last;
+
+    /// Runs the install and returns the arguments of its `docker run`.
+    Future<String> dockerRun() async {
+      last = await pi.run(buildHomeAssistantInstallScript()
+          .replaceAll('/opt/homeassistant', '${pi.root}/opt/homeassistant'));
+      expect(last.code, 0, reason: '${last.out}\n${last.err}');
+      return pi.calls.singleWhere((c) => c.startsWith('docker run '));
+    }
+
+    /// The one `-e TZ=…` of the container.
+    Future<String> zone() async {
+      final env = RegExp(r' -e (\S+)').allMatches(await dockerRun()).toList();
+      expect(env, hasLength(1));
+      return env.single.group(1)!;
+    }
+
+    void localtime(String target) => pi.put('/state/localtime', '$target\n');
+
+    for (final (target, tz) in [
+      ('/usr/share/zoneinfo/America/New_York', 'America/New_York'),
+      // timedatectl writes the link relative.
+      ('../usr/share/zoneinfo/Europe/Vienna', 'Europe/Vienna'),
+      ('/usr/share/zoneinfo/America/Argentina/Buenos_Aires',
+          'America/Argentina/Buenos_Aires'),
+      ('/usr/share/zoneinfo/Etc/GMT+2', 'Etc/GMT+2'),
+      ('/usr/share/zoneinfo/Etc/UTC', 'Etc/UTC'),
+    ]) {
+      test('/etc/localtime -> $target: the container gets $tz', () async {
+        localtime(target);
+        expect(await zone(), 'TZ=$tz');
+      });
+    }
+
+    test('the link wins over a stale /etc/timezone', () async {
+      localtime('/usr/share/zoneinfo/Asia/Tokyo');
+      pi.put('/etc/timezone', 'Europe/Berlin\n');
+      expect(await zone(), 'TZ=Asia/Tokyo');
+    });
+
+    test('no link: /etc/timezone names the zone', () async {
+      pi.put('/etc/timezone', 'Australia/Sydney\n');
+      expect(await zone(), 'TZ=Australia/Sydney');
+    });
+
+    test('a link that does not lead into zoneinfo falls back to /etc/timezone',
+        () async {
+      localtime('/etc/alternatives/localtime');
+      pi.put('/etc/timezone', 'Europe/Lisbon\n');
+      expect(await zone(), 'TZ=Europe/Lisbon');
+    });
+
+    test('nothing to read the zone from: UTC, and the log says so', () async {
+      expect(await zone(), 'TZ=UTC');
+      expect(last.lines, contains('Zeitzone des Containers: UTC'));
+    });
+
+    for (final junk in [
+      'Europe/Berlin # set by hand',
+      r'Europe/$(reboot)',
+      '/etc/passwd',
+      'Europe/Berlin\nEurope/Paris',
+      '',
+    ]) {
+      test('/etc/timezone that is no plain zone name '
+          '(${jsonEncode(junk)}): UTC', () async {
+        pi.put('/etc/timezone', '$junk\n');
+        expect(await zone(), 'TZ=UTC');
+        expect(pi.calls.where((c) => c.startsWith('reboot')), isEmpty);
+      });
+    }
+
+    test('the rest of the docker run is unchanged', () async {
+      localtime('/usr/share/zoneinfo/Europe/Zurich');
+      expect(
+          await dockerRun(),
+          'docker run -d --name homeassistant --restart=unless-stopped '
+          '--privileged -e TZ=Europe/Zurich '
+          '-v ${pi.root}/opt/homeassistant/config:/config '
+          '-v /run/dbus:/run/dbus:ro --network=host $homeAssistantImage');
+    });
+  }, skip: needsBash);
+
+  // Backup and restore on a sandboxed Pi with the real tar: /config lives in
+  // the sandbox, /var/backups/pi-tool is rebased into it, docker is a stub.
+  group('Home Assistant backup and restore in bash', () {
+    late PiSandbox pi;
+    late String cfg; // the /config bind source as the scripts see it
+    const cfgDir = '/opt/homeassistant/config';
+    const backupDir = '/var/backups/pi-tool';
+    const mib = 1024 * 1024;
+
+    /// A tar line that reports every 5 MiB instead of every 250 MiB.
+    String fastProgress(String script) {
+      expect(script, contains(' --checkpoint=25600 '));
+      return script.replaceFirst(' --checkpoint=25600 ', ' --checkpoint=512 ');
+    }
+
+    /// Member names of [archive], sorted.
+    Future<List<String>> members(String archive) async {
+      final r = await pi.run("tar -tzf '$archive'", rebase: false);
+      expect(r.code, 0, reason: r.err);
+      return r.lines..sort();
+    }
+
+    /// docker as the restore uses it: every call is noted with its argument
+    /// count, `inspect` answers from `$S/inspect` (a clean start without).
+    void docker() => pi.stub(
+        'docker',
+        'printf \'%s\\n\' "\$# \$*" >> "\$S/docker"\n'
+            'case "\$1" in\n'
+            '  inspect) cat "\$S/inspect" 2>/dev/null || echo "running|0" ;;\n'
+            'esac\n'
+            'exit 0',
+        log: false);
+
+    List<String> dockerCalls() => pi.exists('/state/docker')
+        ? pi.read('/state/docker').trim().split('\n')
+        : const [];
+
+    setUp(() {
+      pi = PiSandbox();
+      cfg = '${pi.root}$cfgDir';
+      pi.put('$cfgDir/configuration.yaml', 'default_config:\n');
+      pi.put('$cfgDir/.storage/auth', '{}\n');
+      pi.put('$cfgDir/home-assistant_v2.db', 'db');
+    });
+    tearDown(() => pi.dispose());
+
+    test('backup: /config without Home Assistant\'s own backups', () async {
+      pi.put('$cfgDir/backups/Automatic_backup_2026.9.2.tar', 'x' * 4096);
+      pi.put('$cfgDir/tmp_backups/in-progress.tar', 'x' * 4096);
+      // Same names further down or as a prefix are ordinary data.
+      pi.put('$cfgDir/www/backups/keep.txt');
+      pi.put('$cfgDir/backups.yaml');
+      final r = await pi.run(buildHomeAssistantBackupScript(cfg));
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      final path = parseServiceBackupPath(r.out);
+      expect(path, startsWith('${pi.root}$backupDir/homeassistant-backup-'));
+      expect(r.lines.last, 'BACKUP_OK $path');
+      expect(await members(path!), [
+        './',
+        './.storage/',
+        './.storage/auth',
+        './backups.yaml',
+        './configuration.yaml',
+        './home-assistant_v2.db',
+        './www/',
+        './www/backups/',
+        './www/backups/keep.txt',
+      ]);
+    });
+
+    test('backup: the log says what the archive is and is not', () async {
+      final r = await pi.run(buildHomeAssistantBackupScript(cfg));
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      expect(r.err, isEmpty);
+      // A small /config: no progress line, the two notes, then the marker.
+      expect(r.lines, [
+        'Hinweis: Home Assistant läuft während der Sicherung weiter. Die '
+            'Verlaufsdatenbank (home-assistant_v2.db) wird im laufenden '
+            'Betrieb kopiert und kann im Archiv inkonsistent sein.',
+        'Nicht im Archiv: Home Assistants eigene Backups (backups/, '
+            'tmp_backups/).',
+        'BACKUP_OK ${parseServiceBackupPath(r.out)}',
+      ]);
+    });
+
+    test('backup: a long tar reports progress, the result is still read',
+        () async {
+      pi.put('$cfgDir/home-assistant_v2.db', 'x' * (11 * mib));
+      final r =
+          await pi.run(fastProgress(buildHomeAssistantBackupScript(cfg)));
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      expect(r.err, isEmpty);
+      expect(r.lines.where((l) => l.contains('MiB')), [
+        'Home Assistant: 5 MiB verarbeitet',
+        'Home Assistant: 10 MiB verarbeitet',
+      ]);
+      // What the updater does with this output.
+      final path = parseServiceBackupPath('${r.out}\n${r.err}');
+      expect(path, isNotNull);
+      expect(r.lines.last, 'BACKUP_OK $path');
+      expect(isSudoPasswordFailure(r.out), isFalse);
+      expect(await members(path!), contains('./home-assistant_v2.db'));
+    });
+
+    /// Packs [files] (name → content) the way the backup does; the archive.
+    Future<String> archive(Map<String, String> files) async {
+      files.forEach((name, content) => pi.put('/src/$name', content));
+      final path = '${pi.root}$backupDir/homeassistant-backup-x.tar.gz';
+      final r = await pi.run(
+          "mkdir -p '${pi.root}$backupDir' && "
+          "tar -czf '$path' -C '${pi.root}/src' .",
+          rebase: false);
+      expect(r.code, 0, reason: r.err);
+      return path;
+    }
+
+    String restore(String archivePath, {String name = 'homeassistant'}) =>
+        buildHomeAssistantRestoreScript(
+            archivePath: archivePath, configPath: cfg, containerName: name);
+
+    const inspect = '4 inspect -f {{.State.Status}}|{{.RestartCount}} ';
+
+    test('restore: stop, extract over /config, start, verified', () async {
+      docker();
+      pi.put('$cfgDir/untouched.yaml', 'mine');
+      final a = await archive(
+          {'configuration.yaml': 'restored:\n', '.storage/auth': '{"a":1}\n'});
+      final r = await pi.run(restore(a));
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      expect(r.lines, ['RESTORE_OK']);
+      expect(pi.read('$cfgDir/configuration.yaml'), 'restored:\n');
+      expect(pi.read('$cfgDir/.storage/auth'), '{"a":1}\n');
+      // No wipe: what the archive does not hold stays.
+      expect(pi.read('$cfgDir/untouched.yaml'), 'mine');
+      expect(dockerCalls(), [
+        '2 stop homeassistant',
+        '2 start homeassistant',
+        '${inspect}homeassistant',
+      ]);
+    });
+
+    test('restore: a failing tar still brings the container back (trap)',
+        () async {
+      docker();
+      pi.put('$backupDir/homeassistant-backup-bad.tar.gz', 'not an archive');
+      final r = await pi
+          .run(restore('${pi.root}$backupDir/homeassistant-backup-bad.tar.gz'));
+      expect(r.code, isNot(0), reason: r.out);
+      expect(r.out, isNot(contains('RESTORE_OK')));
+      expect(dockerCalls(), ['2 stop homeassistant', '2 start homeassistant']);
+    });
+
+    test('restore: a container that does not come up clean is reported',
+        () async {
+      docker();
+      pi.put('/state/inspect', 'restarting|3\n');
+      final r = await pi.run(restore(await archive({'a.yaml': 'a'})));
+      expect(r.code, 1, reason: r.out);
+      expect(r.lines, ['RESTORE_FAIL_START']);
+    });
+
+    // Docker only allows [a-zA-Z0-9_.-] in names, so this cannot happen today;
+    // the script must not depend on that.
+    test('restore: a container name with shell syntax is one argument, '
+        'evaluated nowhere — not even when the trap is set', () async {
+      docker();
+      final name = 'a\$(touch ${pi.root}/state/p1)`touch ${pi.root}/state/p2`b';
+      final a = await archive({'a.yaml': 'a'});
+      final r = await pi.run(restore(a, name: name));
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      expect(pi.exists('/state/p1'), isFalse);
+      expect(pi.exists('/state/p2'), isFalse);
+      expect(dockerCalls(), ['2 stop $name', '2 start $name', '$inspect$name']);
+
+      // The same through the trap: tar fails, the trap starts the container.
+      pi.remove('/state/docker');
+      pi.put('$backupDir/homeassistant-backup-bad.tar.gz', 'not an archive');
+      final bad = await pi.run(restore(
+          '${pi.root}$backupDir/homeassistant-backup-bad.tar.gz',
+          name: name));
+      expect(bad.code, isNot(0), reason: bad.out);
+      expect(pi.exists('/state/p1'), isFalse);
+      expect(pi.exists('/state/p2'), isFalse);
+      expect(dockerCalls(), ['2 stop $name', '2 start $name']);
+    });
+
+    test('restore: a long tar reports progress, the marker stays last',
+        () async {
+      docker();
+      final a = await archive({'home-assistant_v2.db': 'y' * (11 * mib)});
+      final r = await pi.run(fastProgress(restore(a)));
+      expect(r.code, 0, reason: '${r.out}\n${r.err}');
+      expect(r.err, isEmpty);
+      expect(r.lines, [
+        'Home Assistant: 5 MiB verarbeitet',
+        'Home Assistant: 10 MiB verarbeitet',
+        'RESTORE_OK',
+      ]);
+      expect(pi.read('$cfgDir/home-assistant_v2.db').length, 11 * mib);
+    });
+
+    // The progress lines must not make tar depend on the SSH channel: before
+    // them a restore whose channel was gone (cancel, lost connection) ran to
+    // its end in silence. Here nobody reads the script's output.
+    test('restore: with the channel gone tar still extracts everything and '
+        'the container is started on the normal path', () async {
+      docker();
+      final a = await archive({'home-assistant_v2.db': 'y' * (11 * mib)});
+      await pi.run('(\n${fastProgress(restore(a))}\n) 2>&1 | true');
+      expect(pi.read('$cfgDir/home-assistant_v2.db').length, 11 * mib);
+      // `inspect` is only reached when tar ended with status 0.
+      expect(dockerCalls(), [
+        '2 stop homeassistant',
+        '2 start homeassistant',
+        '${inspect}homeassistant',
+      ]);
+    });
+
+    // The same for the backup: the reader takes the two notes and goes away.
+    // tar must still end clean, so the archive is finished and the rotation
+    // runs (five older archives: one of them has to go).
+    test('backup: with the channel gone the archive is complete and the '
+        'rotation still runs', () async {
+      pi.put('$cfgDir/home-assistant_v2.db', 'x' * (11 * mib));
+      for (var i = 1; i <= 5; i++) {
+        pi.put('$backupDir/homeassistant-backup-20000101-00000$i.tar.gz');
+      }
+      await pi.run(
+          '(\n${fastProgress(buildHomeAssistantBackupScript(cfg))}\n) 2>&1 '
+          '| head -n 2');
+      final left = pi.ls(backupDir);
+      expect(left, hasLength(5));
+      // Sorted by name the new one (today's date) is last.
+      expect(await members('${pi.root}$backupDir/${left.last}'),
+          contains('./home-assistant_v2.db'));
+    });
+  }, skip: needsBash);
 }

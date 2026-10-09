@@ -89,8 +89,30 @@ String? homeAssistantConfigPath(String inspectJson) {
   return null;
 }
 
+/// tar options that make a long backup or restore report its progress, so the
+/// app's inactivity timeout (10 min without output) does not cut off a tar
+/// that is still working: one line per 25600 records of 20 × 512 bytes, i.e.
+/// per 250 MiB of archive data before compression.
+///
+/// The line comes from a child shell (`exec=`), not from tar (`echo=`): with
+/// the SSH channel gone (cancel, lost connection) only that child fails and
+/// tar ends as it would without the option. tar writing to the dead channel
+/// itself is killed in the middle of an extraction (SIGPIPE), or ends with
+/// status 2 where it ignores the signal.
+const String _haTarProgress = '--checkpoint=25600 --checkpoint-action=exec='
+    "'echo \"Home Assistant: "
+    r'$((TAR_CHECKPOINT * TAR_BLOCKING_FACTOR / 2048))'
+    " MiB verarbeitet\"'";
+
 /// Root/bash script (sudo shell) that tars the HA config dir [configPath] into
 /// the backup dir. Prints `BACKUP_OK <path>` on success.
+///
+/// Left out: `backups/` and `tmp_backups/`, where Home Assistant keeps its own
+/// backups — each of them holds the configuration and, unless switched off
+/// there, the database once more. The container is neither stopped nor paused
+/// (an interrupted home automation is the worse trade), so the recorder
+/// database is copied while it is written to and can be inconsistent in the
+/// archive; the script says so in the log.
 String buildHomeAssistantBackupScript(String configPath) {
   final src = shSingleQuote(configPath);
   // HA keeps running during the backup, so its DB/.storage files change while
@@ -102,9 +124,11 @@ set -e
 mkdir -p /var/backups/pi-tool
 chmod 0755 /var/backups/pi-tool 2>/dev/null || true
 if [ ! -d $src ]; then echo "BACKUP_FAIL"; exit 1; fi
+echo "Hinweis: Home Assistant läuft während der Sicherung weiter. Die Verlaufsdatenbank (home-assistant_v2.db) wird im laufenden Betrieb kopiert und kann im Archiv inkonsistent sein."
+echo "Nicht im Archiv: Home Assistants eigene Backups (backups/, tmp_backups/)."
 out="/var/backups/pi-tool/homeassistant-backup-\$(date +%Y%m%d-%H%M%S).tar.gz"
 set +e
-tar --warning=no-file-changed -czf "\$out" -C $src .
+tar --warning=no-file-changed --exclude=./backups --exclude=./tmp_backups $_haTarProgress -czf "\$out" -C $src .
 rc=\$?
 set -e
 if [ "\$rc" -gt 1 ]; then echo "BACKUP_FAIL"; rm -f "\$out"; exit 1; fi
@@ -137,13 +161,17 @@ String buildHomeAssistantRestoreScript({
   // RESTORE_OK — a swallowed start failure would otherwise leave HA down while
   // we report success (it runs with --restart=unless-stopped, so a manual stop
   // persists across reboots).
+  // The trap string is single-quoted and reads the name from a variable: in a
+  // double-quoted one the shell would expand `$(…)` or backticks of the name
+  // when the trap is set, whatever shSingleQuote put around it.
   return '''
 set -e
 if [ ! -f $a ]; then echo "RESTORE_FAIL_MISSING"; exit 1; fi
 if [ ! -d $c ]; then echo "RESTORE_FAIL_NOCONF"; exit 1; fi
-trap "docker start $n >/dev/null 2>&1 || true" EXIT
+ha_name=$n
+trap 'docker start "\$ha_name" >/dev/null 2>&1 || true' EXIT
 docker stop $n
-tar -xzf $a -C $c
+tar $_haTarProgress -xzf $a -C $c
 trap - EXIT
 docker start $n
 sleep 2
@@ -202,6 +230,10 @@ HomeAssistantContainer? parseHomeAssistant(String dockerPs) {
 /// a pre-existing `homeassistant` container is left untouched. Experimental —
 /// the user finishes onboarding in the browser on port 8123.
 ///
+/// The container's `TZ` is the Pi's time zone (UTC when it cannot be read). It
+/// is set once, here: an update recreates the container with the environment
+/// it already has.
+///
 /// 64-bit only: Home Assistant publishes its container for arm64 and amd64
 /// (32-bit builds ended with 2025.12), and Docker pulls for the architecture of
 /// the installed system — a 64-bit kernel under a 32-bit Raspberry Pi OS does
@@ -240,11 +272,19 @@ if docker ps -a --format '{{.Names}}' | grep -qx homeassistant; then
   fi
   exit 0
 fi
+# The new container gets the Pi's time zone: the zone /etc/localtime links to,
+# else the one named in /etc/timezone, else UTC. Anything that is not a plain
+# zone name counts as unknown.
+tz=$(readlink /etc/localtime 2>/dev/null </dev/null || true)
+case "$tz" in */zoneinfo/*) tz=${tz##*/zoneinfo/} ;; *) tz= ;; esac
+case "$tz" in ''|/*|*[!A-Za-z0-9_+/-]*) tz=$(cat /etc/timezone 2>/dev/null </dev/null || true) ;; esac
+case "$tz" in ''|/*|*[!A-Za-z0-9_+/-]*) tz=UTC ;; esac
+echo "Zeitzone des Containers: $tz"
 docker run -d \
   --name homeassistant \
   --restart=unless-stopped \
   --privileged \
-  -e TZ=Europe/Berlin \
+  -e "TZ=$tz" \
   -v /opt/homeassistant/config:/config \
   -v /run/dbus:/run/dbus:ro \
   --network=host \
