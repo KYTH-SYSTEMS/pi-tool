@@ -118,7 +118,10 @@ mkdir -p /var/lib/pi-tool
 # A new destination has not heard of the current problems yet: forget what the
 # previous one was sent, so the first run pushes them again.
 rm -f /var/lib/pi-tool/alerts.last
-cat > /usr/local/lib/$alertsUnit.sh <<'WRAP'
+# Written next to the wrapper and moved into place at the end: a check that is
+# running keeps reading the file it opened. Rewritten in place, its shell
+# would go on at the old offset in the new text.
+cat > /usr/local/lib/$alertsUnit.sh.new <<'WRAP'
 #!/bin/sh
 $alertsWrapperStamp
 mkdir -p /var/lib/pi-tool
@@ -135,7 +138,7 @@ TOPIC=$topic
 WRAP
 )
 chmod 600 $alertsDestinationPath
-cat >> /usr/local/lib/$alertsUnit.sh <<'WRAP'
+cat >> /usr/local/lib/$alertsUnit.sh.new <<'WRAP'
 URL="" TOPIC=""
 [ -r $alertsDestinationPath ] && . $alertsDestinationPath
 problems=""
@@ -215,7 +218,10 @@ if [ "\$(age /var/lib/apt/lists)" -ge 86400 ] && [ "\$(age /var/lib/pi-tool/aler
 fi
 exit "\$rc"
 WRAP
-chmod +x /usr/local/lib/$alertsUnit.sh
+# Modes by number, not "+x": the status probe reads the wrapper's stamp and
+# the timer unit without sudo, whatever root's umask is.
+chmod 755 /usr/local/lib/$alertsUnit.sh.new
+mv -f /usr/local/lib/$alertsUnit.sh.new /usr/local/lib/$alertsUnit.sh
 cat > /etc/systemd/system/$alertsUnit.service <<'SVC'
 [Unit]
 Description=Pi-Tool Health-Alerts
@@ -232,6 +238,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 TMR
+chmod 644 /etc/systemd/system/$alertsUnit.service /etc/systemd/system/$alertsUnit.timer
 systemctl daemon-reload
 systemctl enable --now $alertsUnit.timer
 echo ALERTS_INSTALLED

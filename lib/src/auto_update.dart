@@ -89,7 +89,10 @@ String buildAutoUpdateInstallScript({required String onCalendar}) {
   return '''
 set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
-cat > /usr/local/lib/$autoUpdateUnit.sh <<'WRAP'
+# Written next to the wrapper and moved into place: an update that is running
+# keeps reading the file it opened. Rewritten in place, its shell would go on
+# at the old offset in the new text — as root, in the middle of another line.
+cat > /usr/local/lib/$autoUpdateUnit.sh.new <<'WRAP'
 #!/bin/bash
 $autoUpdateWrapperStamp
 # Set up or re-scheduled a moment ago: then this start is systemd catching up
@@ -170,7 +173,10 @@ echo "\$ts \$res\$heal\$bak" > /var/lib/pi-tool/autoupdate.status
 (umask 077; tail -n 200 "\$log.new" > "\$log")
 rm -f "\$log.new"
 WRAP
-chmod +x /usr/local/lib/$autoUpdateUnit.sh
+# Modes by number, not "+x": the status probe reads the wrapper's stamp and
+# the timer unit without sudo, whatever root's umask is.
+chmod 755 /usr/local/lib/$autoUpdateUnit.sh.new
+mv -f /usr/local/lib/$autoUpdateUnit.sh.new /usr/local/lib/$autoUpdateUnit.sh
 # network-online: a run caught up right after boot (Persistent=true) would
 # otherwise start before the network is there. KillMode/TimeoutStopSec: a
 # reboot or "systemctl stop" during a run signals the wrapper alone and gives
@@ -201,6 +207,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 TMR
+chmod 644 /etc/systemd/system/$autoUpdateUnit.service /etc/systemd/system/$autoUpdateUnit.timer
 # The stamp first: if it cannot be removed (set -e), the old timer keeps
 # running.
 rm -f ${timerStampPath(autoUpdateUnit)}

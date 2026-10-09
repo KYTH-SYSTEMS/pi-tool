@@ -310,6 +310,40 @@ exit 0''', log: false);
       });
     }
 
+    // A wrapper that is running keeps reading the file it opened. Rewritten in
+    // place, its shell would go on at the old offset in the new text — as
+    // root, in the middle of some other line. Put into place as a new file,
+    // the run in progress keeps the old one to its end.
+    for (final t in timers) {
+      test('${t.unit}: setting up again replaces the wrapper instead of '
+          'rewriting the file a run in progress reads', () async {
+        final wrapper = '/usr/local/lib/${t.unit}.sh';
+        Future<String> inode() async =>
+            (await pi.run("stat -c %i '${pi.root}$wrapper'", rebase: false))
+                .out
+                .trim();
+        pi.put(wrapper, '#!/bin/sh\n# the wrapper of an earlier setup\n');
+        final before = await inode();
+        expect(before, matches(r'^\d+$'));
+
+        // Under a root umask that keeps files to their owner: the status
+        // probes read wrapper and timer unit without sudo.
+        final r = await pi.run('umask 077\n${t.install}');
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines.last, t.installed);
+
+        expect(await inode(), isNot(before));
+        expect(pi.read(wrapper).split('\n')[1], stamps[t.unit]);
+        expect(pi.exists('$wrapper.new'), isFalse);
+        // Git Bash does not keep POSIX modes; the Linux run does.
+        if (!Platform.isWindows) {
+          expect(await pi.mode(wrapper), '755');
+          expect(await pi.mode('/etc/systemd/system/${t.unit}.timer'), '644');
+          expect(await pi.mode('/etc/systemd/system/${t.unit}.service'), '644');
+        }
+      });
+    }
+
     // An upgrade started the moment the user taps is the one harmful case.
     test('$autoUpdateUnit: setting up drops the stamp, stops the timer and '
         'notes the time — all before the reload', () async {

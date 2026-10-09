@@ -42,7 +42,10 @@ String buildScheduledBackupInstallScript({
   return '''
 set -e
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
-cat > /usr/local/lib/$scheduledBackupUnit.sh <<'WRAP'
+# Written next to the wrapper and moved into place: a backup that is running
+# keeps reading the file it opened. Rewritten in place, its shell would go on
+# at the old offset in the new text.
+cat > /usr/local/lib/$scheduledBackupUnit.sh.new <<'WRAP'
 #!/bin/sh
 $scheduledBackupWrapperStamp
 mkdir -p /var/lib/pi-tool /var/backups/pi-tool
@@ -108,7 +111,10 @@ else
 fi
 echo "\$ts \$res" > /var/lib/pi-tool/backup.status
 WRAP
-chmod +x /usr/local/lib/$scheduledBackupUnit.sh
+# Modes by number, not "+x": the status probe reads the wrapper's stamp, its
+# retention and the timer unit without sudo, whatever root's umask is.
+chmod 755 /usr/local/lib/$scheduledBackupUnit.sh.new
+mv -f /usr/local/lib/$scheduledBackupUnit.sh.new /usr/local/lib/$scheduledBackupUnit.sh
 cat > /etc/systemd/system/$scheduledBackupUnit.service <<'SVC'
 [Unit]
 Description=Pi-Tool geplante Backups
@@ -125,6 +131,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 TMR
+chmod 644 /etc/systemd/system/$scheduledBackupUnit.service /etc/systemd/system/$scheduledBackupUnit.timer
 systemctl daemon-reload
 systemctl enable --now $scheduledBackupUnit.timer
 echo BACKUP_TIMER_INSTALLED
