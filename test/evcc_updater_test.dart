@@ -3747,6 +3747,24 @@ void main() {
       await expectLater(f, _err(UpdateErrorKind.cancelled, 'Abgebrochen.'));
     });
 
+    test('cancel of a detection whose login shell had printed something: '
+        'still "Abgebrochen.", and nothing about it in the log', () async {
+      // No section, but a message of the shell: without the cancel that is a
+      // detection that did not start. After "Abbrechen" it is neither
+      // reported nor logged — the batch is missing because the user stopped
+      // it.
+      final runner = _HangingRunner(
+          partial: 'bash: warning: setlocale: LC_ALL: cannot change locale '
+              '(de_DE.UTF-8)\n');
+      final updater = EvccUpdater(runnerFactory: (_) => runner);
+      final log = <String>[];
+      final f = updater.detectServices(config: _config, onLog: log.add);
+      await runner.runStarted.future;
+      await updater.cancel();
+      await expectLater(f, _err(UpdateErrorKind.cancelled, 'Abgebrochen.'));
+      expect(log, ['Erkenne Dienste …']);
+    });
+
     test('cancel during connect: plain "Abgebrochen."', () async {
       final runner = _ConnectHangRunner();
       final updater = EvccUpdater(runnerFactory: (_) => runner);
