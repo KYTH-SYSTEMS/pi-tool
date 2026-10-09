@@ -1,3 +1,4 @@
+import 'package:evcc_updater/src/commands.dart' show autoUpdateBusyWayOut;
 import 'package:evcc_updater/src/l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,5 +58,29 @@ void main() {
     final de = await l10nFor(tester, const Locale('de'));
     expect(de.logMigrationTarget('Keller', '10.0.0.7'),
         '— Ziel-Pi „Keller“ (10.0.0.7) —');
+  });
+
+  // A unit set up by v0.71.0 or earlier has no runtime cap: while such a run
+  // hangs, "try again in a few minutes" alone would come back for good. The
+  // way out is named by the labels the app shows.
+  testWidgets('the refusal while the automatic updates run names the way out, '
+      'de + en', (tester) async {
+    final de = await l10nFor(tester, const Locale('de'));
+    expect(de.statusAutoUpdateBusy, contains('Es wurde nichts gestartet.'));
+    expect(de.statusAutoUpdateBusy, contains('Tab „${de.tabAutomation}“'));
+    expect(de.statusAutoUpdateBusy, contains('(„${de.changeSchedule}“)'));
+    expect(de.statusAutoUpdateBusy,
+        contains('„sudo systemctl stop pi-tool-autoupdate.service“'));
+    // The logic layer's sentence for reboot and shutdown is the same one, in
+    // that layer's quotes.
+    expect(de.statusAutoUpdateBusy,
+        endsWith(autoUpdateBusyWayOut.replaceAll('"', '“')));
+
+    final en = await l10nFor(tester, const Locale('en'));
+    expect(en.statusAutoUpdateBusy, contains('Nothing was started.'));
+    expect(en.statusAutoUpdateBusy, contains('“${en.tabAutomation}” tab'));
+    expect(en.statusAutoUpdateBusy, contains('(“${en.changeSchedule}”)'));
+    expect(en.statusAutoUpdateBusy,
+        contains('“sudo systemctl stop pi-tool-autoupdate.service”'));
   });
 }

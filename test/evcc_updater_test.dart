@@ -3301,6 +3301,8 @@ void main() {
             .having((e) => e.message, 'message',
                 allOf(startsWith('Neustart abgelehnt: '),
                     contains('automatischen Updates'),
+                    // A hung run of a unit without a runtime cap never ends.
+                    endsWith(autoUpdateBusyWayOut),
                     isNot(contains('Exit 75'))))),
       );
     });
@@ -3555,7 +3557,8 @@ void main() {
             .having((e) => e.kind, 'kind', UpdateErrorKind.jobBusy)
             .having((e) => e.message, 'message',
                 allOf(startsWith('Herunterfahren abgelehnt: '),
-                    contains('automatischen Updates')))),
+                    contains('automatischen Updates'),
+                    endsWith(autoUpdateBusyWayOut)))),
       );
     });
 
@@ -4043,7 +4046,8 @@ void main() {
                 .having((e) => e.ref, 'ref', isNull)
                 .having((e) => e.jobKind, 'jobKind', 'autoupdate')
                 .having((e) => e.message, 'message',
-                    contains('automatischen Updates')))));
+                    allOf(contains('automatischen Updates'),
+                        endsWith(autoUpdateBusyWayOut))))));
 
     test('noStart → nothing changed', () => upgradeWith(
         _r('PITOOL_JOB_NOSTART $_jobId timeout\n'),

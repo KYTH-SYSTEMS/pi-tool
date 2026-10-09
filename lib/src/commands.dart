@@ -755,6 +755,18 @@ const String jobRefusedBootMarker = 'PITOOL_REFUSED_BOOT_INCOMPLETE';
 /// (auto_update.dart) runs: a reboot would stop apt and dpkg half-way.
 const String jobRefusedAutoUpdateMarker = 'PITOOL_REFUSED_AUTOUPDATE_RUNNING';
 
+/// The way out of a refusal because the on-Pi auto-update runs, as the last
+/// sentence of each such message (reboot, shutdown, a Pi-Job). A unit set up
+/// by v0.71.0 or earlier has no runtime cap: while such a run hangs, "try
+/// again in a few minutes" alone never ends. The unit the app writes since
+/// has one (auto_update.dart), and setting the timer up again puts it in
+/// place. `statusAutoUpdateBusy` in the .arb files says the same.
+const String autoUpdateBusyWayOut =
+    'Hängt der Lauf seit Stunden: im Tab „Automatik" die automatischen '
+    'Updates neu einrichten („Zeitplan ändern") – danach beendet der Pi einen '
+    'hängenden Lauf selbst – oder auf dem Pi '
+    '„sudo systemctl stop pi-tool-autoupdate.service" ausführen.';
+
 /// Refuses a reboot/poweroff from the app while a job runs (flock probe on
 /// /var/lib/pi-tool/jobs/lock — `-E 75` separates "held" from any open
 /// error), while the on-Pi auto-update runs, or while the kernel diversion is

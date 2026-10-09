@@ -211,6 +211,22 @@ void main() {
     });
   });
 
+  // A unit set up by v0.71.0 or earlier has no runtime cap: while such a run
+  // hangs, the refusal comes back for good.
+  group('autoUpdateBusyWayOut', () {
+    test('names both ways out, for the unit the guard asks about', () {
+      final asked = RegExp(r'ActiveState --value ([\w.-]+) ')
+          .firstMatch(jobPowerGuard)!
+          .group(1)!;
+      expect(asked, 'pi-tool-autoupdate.service');
+      expect(autoUpdateBusyWayOut,
+          contains('„sudo systemctl stop $asked" ausführen'));
+      // The button of the auto-update sheet, as app_de.arb names it.
+      expect(autoUpdateBusyWayOut, contains('(„Zeitplan ändern")'));
+      expect(autoUpdateBusyWayOut, contains('Tab „Automatik"'));
+    });
+  });
+
   group('apt without a pty', () {
     // apt hands dpkg a pty even with no terminal attached (Debian #860931), and
     // dpkg then repaints "(Reading database ... N%" ~20× per package. Over SSH

@@ -3710,7 +3710,8 @@ class EvccUpdater {
           return const JobException(
               UpdateErrorKind.jobBusy,
               'Auf dem Pi laufen gerade die automatischen Updates – bitte in '
-              'ein paar Minuten erneut versuchen. Es wurde nichts gestartet.',
+              'ein paar Minuten erneut versuchen. Es wurde nichts gestartet. '
+              '$autoUpdateBusyWayOut',
               jobKind: 'autoupdate');
         }
         final at = since == null ? '' : ', seit ${_hhmm(since)}';
@@ -3801,7 +3802,7 @@ class EvccUpdater {
           UpdateErrorKind.jobBusy,
           '$action abgelehnt: Auf dem Pi laufen gerade die automatischen '
           'Updates – das würde sie mitten in der Paketinstallation abbrechen. '
-          'Bitte in ein paar Minuten erneut versuchen.');
+          'Bitte in ein paar Minuten erneut versuchen. $autoUpdateBusyWayOut');
     }
     if (output.contains(jobRefusedBootMarker)) {
       throw EvccUpdateException(
