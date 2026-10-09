@@ -75,10 +75,12 @@ AutoUpdateSchedule? autoUpdateScheduleOf(String? onCalendar) {
 ///
 /// A run is capped like a system-upgrade Pi-Job ([jobRuntimeLimit]) — for a
 /// oneshot unit with `TimeoutStartSec`, `RuntimeMaxSec` does not apply to it.
-/// At the cap systemd sends SIGTERM to the wrapper alone (`KillMode=mixed`);
-/// its handler lets a step that still makes progress finish and write the
-/// status line. What has not ended after `TimeoutStopSec` is killed, the
-/// unit ends as failed, and the status file keeps the line of the run before.
+/// At the cap systemd stops the unit like on any other stop: SIGTERM to the
+/// wrapper alone (`KillMode=mixed`), which notes it and runs on. A run that
+/// ends within `TimeoutStopSec` still writes its status line; what is left
+/// after that is killed, and the status file keeps the line of the run
+/// before. Either way the unit ends as failed, no longer "activating". Not
+/// measured on a device.
 ///
 /// [onCalendar] must be a schedule from [autoUpdateOnCalendar]
 /// ([checkOnCalendar]).
