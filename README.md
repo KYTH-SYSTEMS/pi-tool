@@ -54,13 +54,20 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Dienste auto-erkennen** — „Verbindung herstellen" findet evcc, Pi-hole,
   Home Assistant und das System in *einer* SSH-Sitzung und zeigt pro Dienst eine
   Karte (Status, Version, Aktualisieren/Installieren, „Oberfläche öffnen").
+  Reißt die Verbindung mitten in der Erkennung ab, meldet die App das als
+  unbekanntes Ergebnis, statt einen halben Stand zu zeigen — fehlende Dienste
+  sähen sonst aus wie „nicht installiert". Ein Docker-Container (evcc, Home
+  Assistant), der in einer Neustart-Schleife hängt oder pausiert ist, steht
+  als „inaktiv" mit einem Hinweis auf der Karte.
 - **evcc aktualisieren** — erkennt automatisch, ob evcc als **apt-Paket**
   oder im **Docker-Container** läuft, und nimmt den passenden Weg.
 - **Pi-hole** — aktualisieren (`pihole -up`), Blocklisten erneuern (`pihole -g`),
   DNS neustarten, installieren (experimentell), `/admin` öffnen.
 - **Home Assistant** — als **Docker-Container** installieren (installiert bei
   Bedarf zuerst Docker, experimentell) und aktualisieren (Image-Pull + Neuanlage,
-  Daten im `/config`-Volume bleiben erhalten), Web-UI auf Port 8123 öffnen.
+  Daten im `/config`-Volume bleiben erhalten; Details und Grenzen unter
+  [Docker-Installation](#was-die-app-macht)), Web-UI auf Port 8123 öffnen. Ein
+  neu angelegter Container übernimmt die Zeitzone des Pi.
 - **AdGuard Home, Node-RED & Zigbee2MQTT** — werden erkannt, wenn sie als
   systemd-Dienst laufen: eigene Karte mit Weboberfläche öffnen, Logs und
   Neustart. (Installation überlässt die App bewusst dir.)
@@ -132,30 +139,65 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Pi OS Bookworm; per Link mit der Raspberry Pi ID anmelden) und **Tailscale**
   (VPN/Mesh, per Login-Link verbinden). Beides installieren/verbinden/trennen
   direkt in der App; die Tailnet-IP (100.x) lässt sich mit einem Tap ins
-  Host-Feld übernehmen — so erreichst du den Pi von überall. Beide Karten
+  Host-Feld übernehmen — so erreichst du den Pi von überall. „Trennen" und
+  „Abmelden" lehnt die App ab, solange die Verbindung zum Pi selbst über
+  Tailscale läuft (sie würde dabei abreißen). Beide Karten
   **melden verfügbare apt-Updates**: Steht eines an, wird „Aktualisieren" zum
   Hauptknopf der Karte (die sonstige Aktion rückt ins ⋮-Menü) — dieselbe Regel
   wie bei evcc, Pi-hole, Grafana, InfluxDB und Mosquitto: *Der Knopf zeigt, was
   als Nächstes dran ist.*
 - **Geplante Backups** — nächtliche evcc- + Pi-hole-Sicherung mit Rotation als
-  On-Pi-systemd-Timer (Pro).
+  On-Pi-systemd-Timer (Pro). Die Archive stehen in den Backup-Listen der evcc-
+  und der Pi-hole-Karte, gekennzeichnet als „Geplantes Backup", und lassen sich
+  dort wiederherstellen, herunterladen und löschen. Das evcc-Archiv des Timers
+  enthält `/etc/evcc.yaml` und `/var/lib/evcc`; eine Datenbank an einem anderen
+  Ort ist nicht darin.
 - **Automatik** (läuft autonom auf dem Pi, **kein** Handy-Hintergrunddienst) —
   **geplante Updates** per systemd-Timer (mit evcc-Sicherung + Selbstheilung) und
   **Health-Alerts** als Push via [ntfy](https://ntfy.sh) bei voller Platte,
-  totem Dienst, Hitze oder anstehenden Updates. Das ntfy-Thema ist faktisch das
-  Passwort (ntfy kennt kein Konto), deshalb schlägt die App ein langes
-  Zufallsthema vor und warnt vor leicht erratbaren Namen. Die Timer-Skripte
-  liegen auf dem Pi: Änderungen aus einer neueren App-Version gelten erst,
-  wenn der jeweilige Timer neu eingerichtet wird — läuft noch ein älteres
-  Skript, weist der Dialog des Timers darauf hin.
+  totem Dienst, Hitze oder anstehenden Updates.
+  - *Geplante Updates:* Der Lauf schließt vorher eine unterbrochene
+    Paketinstallation ab, wartet auf andere apt-Läufe und lädt die
+    Paketlisten. Die Zeile zum letzten Lauf nennt das Ergebnis in Kürzeln:
+    `ok` oder `fehler(rc=N)`, dazu `paketlisten-fehler(rc=N)` (die Paketlisten
+    wurden nicht vollständig geladen), `evcc-neustart` (evcc lief nach dem
+    Update nicht mehr und wurde neu gestartet) und `backup-fehler(rc=N)` (die
+    evcc-Sicherung vor dem Update wurde nicht geschrieben). Die Ursache eines
+    Fehlers steht in `/var/lib/pi-tool/autoupdate.log` auf dem Pi (über den
+    Dateien-Tab lesbar). Die evcc-Sicherung vor dem Update erscheint in der
+    Backup-Liste der evcc-Karte als „Vor automatischem Update". Ein Neustart
+    oder Herunterfahren während eines Laufs wartet auf dessen Ende, höchstens
+    30 Minuten — so lange ist der Pi nicht erreichbar; aus der App heraus
+    werden beide in dieser Zeit abgelehnt. Das Einrichten oder Ändern des
+    Zeitplans startet kein Update.
+  - *Health-Alerts:* Das ntfy-Thema ist faktisch das Passwort (ntfy kennt
+    kein Konto), deshalb schlägt die App ein langes Zufallsthema vor und warnt
+    vor leicht erratbaren Namen. Das Thema wird **je Pi** gespeichert und
+    reist im Profil-Export mit; sind auf einem Pi Alerts aktiv, ohne dass die
+    App das Thema kennt, bleibt das Feld leer, und der Dialog sagt das. Ein
+    Problem wird einmal gemeldet, bis sich die Menge der Probleme ändert —
+    nicht bei jeder Änderung eines Messwerts. Ein Dienst, der gerade startet,
+    gilt nicht als ausgefallen. Für die Meldung „Updates verfügbar" lädt der
+    Timer die Paketlisten einmal täglich selbst. Das Ergebnis der
+    Test-Benachrichtigung erscheint im Dialog.
+  - Die Timer-Skripte liegen auf dem Pi: Änderungen aus einer neueren
+    App-Version gelten erst, wenn der jeweilige Timer neu eingerichtet wird —
+    läuft noch ein älteres Skript, weist der Dialog des Timers darauf hin.
 - **Dateien** — der Datei-Browser deines Pi im eigenen Tab: Ordner durchsuchen,
   Dateien ansehen (Vorschau), **Textdateien direkt bearbeiten** (atomar mit
   Backup; Binärdateien bleiben schreibgeschützt), **vom Handy hochladen** und
-  löschen — alles über die normale SSH-Sitzung, ohne SFTP-Server.
+  löschen — alles über die normale SSH-Sitzung, ohne SFTP-Server. Ein Upload
+  fragt nach, bevor er eine Datei gleichen Namens ersetzt, und übernimmt dann
+  deren Besitzer und Rechte; einen Ordner gleichen Namens ersetzt er nicht.
+  Verlinkte Ordner (etwa `/bin`) lassen sich öffnen. Fehler nennen die Ursache
+  (abgelehntes sudo-Passwort, nicht lesbare Datei, Pi nicht erreichbar) statt
+  einer leeren Liste oder „Leere Datei".
 - **Config-Editor** — Konfigdateien (z. B. `evcc.yaml`) direkt in der App
   bearbeiten; gespeichert wird **atomar mit automatischem Backup** (die fünf
   neuesten je Datei bleiben). Bearbeitet werden nur UTF-8-Dateien; wer den
-  Editor mit ungespeicherten Änderungen verlässt, wird vorher gefragt.
+  Editor mit ungespeicherten Änderungen verlässt, wird vorher gefragt. Ist die
+  Datei ein Symlink, bleibt der Link erhalten — geschrieben wird die Datei
+  dahinter.
 - **Terminal** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
   unterstützt; das Pi-Passwort geht nur dann über stdin an sudo, wenn sudo
   danach fragt), Ausgabe live, mit
@@ -165,6 +207,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
 - **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten,
   Pi herunterfahren (mit Sicherheitsabfrage — der Pi bleibt danach aus).
+  Neustart und Herunterfahren setzen eine bestehende Verbindung voraus; auf
+  einer Karte mit dem „Stand von vorhin" sind beide Einträge ausgegraut.
 - **Sicherheits-Check mit „Beheben"** — Nur-Lesen-Prüfung mit Ampel: SSH-Root-
   Login, Passwort- vs. Key-Login, automatische Sicherheitsupdates, fail2ban,
   offene Ports, dazu — wenn vorhanden — ob die Pi-hole-Weboberfläche ein
@@ -173,14 +217,29 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   mit `sshd -t` geprüft und bei Problemen automatisch zurückgenommen — sowie ein
   zufälliges Pi-hole-Passwort setzen, das einmalig angezeigt wird); danach
   läuft die Prüfung neu. Das Abschalten des Passwort-Logins bleibt bewusst
-  Handarbeit (Aussperr-Risiko ohne bewiesenen Key-Login).
+  Handarbeit (Aussperr-Risiko ohne bewiesenen Key-Login). Auf einem 32-Bit
+  Raspberry Pi OS erkennt die Prüfung, wenn `unattended-upgrades` zwar läuft,
+  die Paketquelle „Raspbian" aber nicht einschließt und deshalb nichts
+  installiert; „Beheben" ergänzt sie (Kernel-, Firmware- und
+  Bootloader-Pakete bleiben ein manuelles Update). Der fail2ban-Fix meldet
+  Erfolg erst, wenn fail2ban danach auch weiterläuft, und stellt es auf
+  Systemen ohne `/var/log/auth.log` (Bookworm ohne rsyslog) auf das
+  systemd-Journal um.
 - **Speicherplatz-Explorer** — „Was frisst meinen Platz?": größte Ordner/Dateien
-  nach Größe, zum Reinzoomen antippbar.
+  nach Größe, zum Reinzoomen antippbar. Lässt sich ein Ordner nicht lesen,
+  bleibt die Liste stehen, und der Abruf lässt sich wiederholen.
 - **Docker-Übersicht** — alle Container (laufend/gestoppt) mit Status + Image;
   pro Container neustarten, Logs ansehen und **aktualisieren** (Image-Pull +
   Neuanlage mit Rollback; Compose-Container via `docker compose`, experimentell).
+  Zeigt das Tag kein neueres Image, wird nichts neu angelegt, und die App sagt
+  das. Container, die sich nicht verlustfrei nachbauen lassen, lehnt sie mit
+  Begründung ab, bevor etwas gezogen wird (Details unter
+  [Docker-Installation](#was-die-app-macht)).
 - **Live-Logs** — die Log-Ansicht hat einen „Live"-Schalter, der die Ausgabe
-  alle paar Sekunden neu lädt (Polling, kein Hintergrunddienst).
+  alle paar Sekunden neu lädt (Polling, kein Hintergrunddienst). Sie öffnet am
+  neuesten Eintrag; schlägt ein Abruf fehl, bleibt der letzte Stand stehen und
+  ist als solcher gekennzeichnet. Bei eingeschalteter App-Sperre pausiert das
+  Nachladen, solange die App gesperrt ist.
 - **Pi-Gesundheit** — die System-Karte zeigt Temperatur, freien Speicher, RAM
   und Uptime; bei knappem Speicher (<1 GB frei — oder ≥90 % belegt **und**
   zugleich <5 GB frei) warnt sie, bevor ein Update daran scheitert.
@@ -192,11 +251,21 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Zugriffs-Token auf dem Pi erzeugen (verlässt ihn nie), `influx:`-Block in die
   `evcc.yaml` (mit Backup und automatischem Rückbau bei Ablehnung) und in
   Grafana Datenquelle + fertiges evcc-Dashboard provisionieren. Charts ab
-  Minute eins statt leerer Dienste (experimentell).
+  Minute eins statt leerer Dienste (experimentell). Ein zweiter Lauf lässt
+  eine bereits verdrahtete `evcc.yaml` unverändert. Hat evcc keine `evcc.yaml`
+  (Einrichtung über die evcc-Weboberfläche), legt die App keine an und nennt,
+  was dort einzutragen ist.
 - **Umzugshelfer** — „Auf anderen Pi umziehen" (System-Karte): frische Backups
   von evcc + Pi-hole, aufs Handy geholt, auf dem Ziel-Profil fehlende Dienste
   installiert und die Backups eingespielt. Der Quell-Pi bleibt unverändert
-  (experimentell; apt-evcc und Pi-hole).
+  (experimentell; apt-evcc und Pi-hole). Pi-hole v5 zieht nicht mit um — sein
+  Backup lässt sich nur über die Pi-hole-Weboberfläche importieren; am Ziel
+  wird dann kein Pi-hole installiert, evcc zieht trotzdem um. Wurde Pi-hole am
+  Ziel neu installiert, das Backup aber nicht eingespielt, zeigt die App
+  einmalig das Web-Passwort des Ziels. Der Monitoring-Stack zieht nicht mit
+  um: Bringt die `evcc.yaml` den InfluxDB-Block der alten Verdrahtung mit,
+  muss er am Ziel vor „Mit evcc verdrahten" gelöscht werden — die Verdrahtung
+  sagt das im Log.
 - **Release-Notes** — die evcc-Karte zeigt die vollständigen GitHub-Release-
   Notes der neuesten Version im ⋮ — lesbar, ohne ein Update zu starten.
 - **Probelauf** (`--dry-run`) — zeigt gefahrlos, ob ein Update verfügbar ist.
@@ -205,19 +274,30 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   fehl, wird der Fehler angezeigt und das Update gestoppt. Automatische
   Rotation: die zehn neuesten evcc-Backups unter `/var/backups/evcc/` bleiben,
   ältere werden beim nächsten Backup gelöscht.
-- **Backup wiederherstellen** — listet die vorhandenen evcc-Backups auf dem Pi,
-  eines auswählen → Archiv prüfen, evcc stoppen, entpacken, neu starten (mit
-  Sicherheitsabfrage). Ein beschädigtes Archiv wird abgelehnt, bevor etwas
-  geändert ist.
+- **evcc-Backups verwalten** — „Backups verwalten" im ⋮ der evcc-Karte listet
+  die evcc-Backups auf dem Pi. Antippen stellt eines wieder her: Archiv
+  prüfen, evcc stoppen, entpacken, neu starten (mit Sicherheitsabfrage; ein
+  beschädigtes Archiv wird abgelehnt, bevor etwas geändert ist). Die Symbole
+  daneben laden ein Backup aufs Handy oder löschen es vom Pi. In der Liste
+  stehen auch die Archive der Timer auf dem Pi, gekennzeichnet als „Geplantes
+  Backup" bzw. „Vor automatischem Update". Ein evcc-Backup auf Knopfdruck gibt
+  es nicht: Archive entstehen vor einem Update (Schalter „Backup vor Update"),
+  durch die beiden Timer oder im Umzugshelfer.
 - **Pi-hole- & Home-Assistant-Backup** — Pi-hole per Teleporter-Export (offizielles,
   importierbares Format), Home Assistant als Tar des `/config`-Verzeichnisses;
   landet unter `/var/backups/pi-tool/` auf dem Pi. **Wiederherstellen und
   Verwalten direkt in der App** (Pi-hole-Import via `pihole-FTL --teleporter`,
   nur v6; HA: Container stoppen → entpacken → starten). Automatische Rotation:
-  die letzten 5 Backups je Dienst bleiben.
-- **Backups aufs Handy** — jedes Backup lässt sich aus der Verwaltung
-  herunterladen und per Teilen-Dialog sichern (Dateien, Drive, …) — so
-  überleben Backups auch einen SD-Karten-Ausfall.
+  die letzten 5 Backups je Dienst bleiben. Das Home-Assistant-Archiv enthält
+  `/config` ohne `backups/` und `tmp_backups/` (Home Assistants eigene
+  Backups). Der Container läuft während der Sicherung weiter; die
+  Verlaufsdatenbank `home-assistant_v2.db` wird dabei im laufenden Betrieb
+  kopiert und kann im Archiv inkonsistent sein. Bei einem großen `/config`
+  melden Backup und Restore ihren Fortschritt im Log.
+- **Backups aufs Handy** — jedes Backup (evcc, Pi-hole, Home Assistant) lässt
+  sich aus der Verwaltung herunterladen und per Teilen-Dialog sichern
+  (Dateien, Drive, …) — so überleben Backups auch einen SD-Karten-Ausfall.
+  Grenze: 48 MB je Archiv.
 - **Aufräumen** — die System-Karte gibt Speicher frei (apt autoremove/clean,
   ungenutzte Docker-Images, Journal >7 Tage) und zeigt, wie viel frei wurde.
 - **Updates laufen auf dem Pi weiter** — System-Update, evcc-Update,
@@ -229,8 +309,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   „Mitlesen"** zeigt später das vollständige Log und das echte Ergebnis, die
   System-Karte den letzten Job. Erfolg meldet die App nur mit Beleg vom Pi;
   eine abgerissene Verbindung gilt bei keiner Aktion als Erfolg. Neustart und
-  Herunterfahren werden abgelehnt, solange ein Job läuft oder ein Kernel-Update
-  nur halb installiert ist.
+  Herunterfahren werden abgelehnt, solange ein Job läuft, die automatischen
+  Updates auf dem Pi laufen oder ein Kernel-Update nur halb installiert ist.
+  Lässt sich ein Job gar nicht erst starten, meldet die App das mit dem
+  Exit-Code — es wurde dann nichts gestartet.
 - **Paketzustand reparieren** — wurde ein apt-/dpkg-Lauf einmal abgewürgt
   (Stromausfall, abgebrochenes Update), verweigert apt danach **jede**
   Installation. Die App erkennt das, sagt es im Klartext statt „Exit 100" und
@@ -249,10 +331,20 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   rechnen gegen den lokalen Index, und der wird auf einem Standard-Raspberry-Pi-OS
   oft wochenlang nicht erneuert. Ist er älter als drei Tage, sagt die App „Stand
   unbekannt" statt „Aktuell" — lieber keine Auskunft als eine falsche. Die
-  System-Karte bietet dann im ⋮-Menü **„Paketlisten aktualisieren"**.
+  System-Karte bietet dann im ⋮-Menü **„Paketlisten aktualisieren"**; läuft
+  auf dem Pi gerade eine andere Paketinstallation oder reißt die Verbindung
+  dabei ab, meldet die App das als Fehler. Ein Update per Pi-Job setzt den
+  Stand der Paketlisten ebenfalls zurück. Schlägt die Update-Prüfung selbst
+  fehl, steht auf der System-Karte „Update-Prüfung fehlgeschlagen — Stand
+  unbekannt". Eine evcc-Installation aus dem nightly-Kanal gilt nicht schon
+  deshalb als „Aktuell", weil sie neuer ist als das Stable-Release.
 - **Abbrechen** — eine laufende Aktion lässt sich abbrechen (schließt die
-  SSH-Verbindung). Läuft bereits ein Pi-Job, heißt der Knopf **„Nicht mehr
-  mitlesen"**: die App hört auf mitzulesen, der Job läuft auf dem Pi weiter.
+  SSH-Verbindung). Ein Schritt, der auf dem Pi bereits als root lief, kann
+  dort noch zu Ende laufen — die App sagt das dann. Läuft bereits ein Pi-Job,
+  heißt der Knopf **„Nicht mehr mitlesen"**: die App hört auf mitzulesen, der
+  Job läuft auf dem Pi weiter. Bleibt eine Aktion zehn Minuten ohne Ausgabe,
+  meldet die App „keine Ausgabe … Ergebnis unbekannt" statt „Pi nicht
+  erreichbar" und behält die Sitzung.
 - **Verbindung herstellen** — Host/Zugang in Sekunden prüfen, ohne etwas zu ändern.
 - **evcc installieren** auf einem frischen Pi (offizielles apt-Repo).
 - **evcc-Status (Live)** — die evcc-Karte zeigt die aktuellen Werte direkt auf
@@ -260,12 +352,14 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Ladepunkt), gelesen aus der evcc-Web-API. Das vollständige Bild inklusive
   aller Ladepunkte liegt im App-⋮ unter „evcc-Status (Live)". Rein lesend.
 - **Pi im WLAN suchen** — findet im selben WLAN Geräte mit offenem
-  SSH-Port und übernimmt die IP per Tippen. Wird beim ersten Start und nach
-  „Profil hinzufügen" (solange noch kein Host eingetragen ist) prominent als
-  Knopf angeboten; sonst jederzeit über das ⋮-Menü.
+  SSH-Port und übernimmt die IP per Tippen. Durchsucht werden nur lokale
+  Netze, nicht ein VPN (Tailscale) oder das Mobilfunknetz. Wird beim ersten
+  Start und nach „Profil hinzufügen" (solange noch kein Host eingetragen ist)
+  prominent als Knopf angeboten; sonst jederzeit über das ⋮-Menü.
 - **Updates im Hintergrund** — lange Aktionen (Update/Installation) laufen über
   einen Vordergrunddienst weiter, auch wenn du die App in den Hintergrund legst
-  oder den Bildschirm ausschaltest (Benachrichtigung „Pi-Tool …").
+  oder den Bildschirm ausschaltest (Benachrichtigung „Pi-Tool …"). Das gilt
+  auch für „Alle aktualisieren" im Überblick über mehrere Pis.
 - **Mehrere Pi-Profile** — pro Pi ein benanntes Profil, schnell umschaltbar.
 - **Alle Pis auf einen Blick** — „Alle Pis (Überblick)" im ⋮-Menü (ab zwei
   Profilen) prüft jeden Pi der Reihe nach und zeigt eine Ampel: grün (alles gut),
@@ -274,7 +368,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   (nacheinander, fail-soft, Fortschritt pro Zeile).
 - **Profil-Export/-Import** — alle Profile (inkl. Zugangsdaten) als
   **passphrase-verschlüsselte** Datei (AES-256-GCM) sichern und auf einem neuen
-  Handy importieren. Für den Gerätewechsel.
+  Handy importieren. Für den Gerätewechsel. Die Passphrase braucht mindestens
+  10 Zeichen; die Schlüsselableitung ist bewusst rechenaufwendig (600 000
+  PBKDF2-Runden). Exporte älterer Versionen lassen sich weiter importieren.
 - **SSH-Key mit einem Tap** — im Verbindungsformular auf „SSH-Key" tippen (wenn
   noch keiner hinterlegt ist) und „SSH-Key automatisch einrichten" wählen: erzeugt
   ein Ed25519-Schlüsselpaar **auf dem Handy**, hinterlegt den Public Key (einmalig
@@ -282,7 +378,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Key-Login um. Der private Schlüssel verlässt das Handy nie (nur verschlüsselt
   im Android Keystore). Pro Pi, direkt am Profil — nicht im globalen Menü.
 - **SSH-Key- oder Passwort-Login**, **App-Sperre** (Biometrie/PIN),
-  **stable/nightly**-Kanal, **Update-Verlauf**, **In-App-Update-Hinweis**.
+  **stable/nightly**-Kanal, **Update-Verlauf** (bei mehreren Profilen mit dem
+  Namen des Pi), **In-App-Update-Hinweis**.
 - **Dienst-/System-Aktionen:** evcc-Dienst neustarten, Pi neustarten,
   Terminal-Log teilen.
 
@@ -318,11 +415,23 @@ ihn passend zum Setup:
 - **`docker run`** (ohne compose): zieht das neue Image und legt den Container
   **aus `docker inspect` rekonstruiert** neu an (Ports, Volumes, Env,
   Restart-Policy, Netzwerk sowie `--device`/`--privileged`/`--group-add` für
-  USB-/RS485-Zähler). Der alte Container wird dabei nur **umbenannt**
+  USB-/RS485-Zähler; außerdem `--cap-drop`, `--security-opt`, `--tmpfs`,
+  `--shm-size`, `--sysctl`, die Speicher-, CPU- und pids-Limits und der
+  pid-Modus). Der alte Container wird dabei nur **umbenannt**
   (`<name>-evccpitool-old`, geparkt ohne Autostart), nie gelöscht — schlägt die
   Neuanlage fehl oder hängt der neue Container in einer Neustart-Schleife, wird
-  der alte mit seiner ursprünglichen Restart-Policy automatisch zurückgerollt. **Experimentell**, nicht gegen jede Konfiguration
-  getestet.
+  der alte mit seiner ursprünglichen Restart-Policy automatisch zurückgerollt.
+  Zeigt das Tag nach dem Pull kein neueres Image, bleibt der Container
+  unangetastet, und die App meldet das — bei einem versionsfesten Tag (z. B.
+  `:2026.6.3`) mit dem Hinweis, dass eine neuere Version ein anderes Tag
+  braucht. **Abgelehnt** wird das Update mit Begründung, bevor etwas gezogen
+  wird, für Container mit `--rm`, `--mount`-Einträgen, mehreren Netzwerken,
+  fester IP-Adresse, selbst gesetztem Netzwerk-Alias, eigenem seccomp-Profil
+  oder einem per Digest gepinnten Image. **Experimentell**, nicht gegen jede
+  Konfiguration getestet.
+
+Dasselbe gilt für das Update des Home-Assistant-Containers und für
+„Aktualisieren" in der Docker-Übersicht.
 
 Docker-Befehle laufen bei Bedarf automatisch über `sudo`.
 
@@ -352,7 +461,9 @@ Zwei Orte, dieselbe Quelle:
 ⋮-Menü → **„Pi im WLAN suchen"** scannt das lokale `/24`-Netz nach Geräten
 mit offenem **SSH-Port (22)** und listet sie auf — Tippen übernimmt die IP ins
 Host-Feld. Funktioniert nur im **selben WLAN**; findet die App nichts, einfach
-die IP von Hand eintragen.
+die IP von Hand eintragen. Gescannt werden nur lokale Netze (WLAN, Ethernet,
+der eigene Hotspot) — nicht die Adressen eines VPN wie Tailscale und nicht das
+Mobilfunknetz.
 
 ### evcc installieren
 
@@ -396,7 +507,8 @@ Einstellungen lässt sich vorab der **nightly-Kanal** (unstable) wählen.
 
 Mehrere Pis verwaltest du über die **Profilleiste** oben (umschalten, anlegen,
 umbenennen, löschen). In den **Einstellungen** (⋮-Menü): App-Sperre per
-Biometrie/PIN, Sprache, Backup vor Update, HTTPS + Port der evcc-Oberfläche,
+Biometrie/PIN, Sprache, Backup vor Update, HTTPS + Port der evcc-Oberfläche
+(der HTTPS-Schalter gilt nur für evcc; Pi-hole wird immer über http geöffnet),
 Design (System/Hell/Dunkel), nightly-Kanal, Profil-Export/-Import, **Support
 kontaktieren** (support@kyth.systems). „Beim Start automatisch verbinden" ist
 keine globale Einstellung, sondern ein Schalter je Pi in der
@@ -404,14 +516,25 @@ Zugangsdaten-Karte.
 
 Alle Eingaben werden **verschlüsselt im Android Keystore** gespeichert
 (`flutter_secure_storage`) und automatisch gesichert — einmal eintragen, danach
-nur noch tippen.
+nur noch tippen. Lässt sich der Speicher beim Start nicht lesen, überschreibt
+die App nichts: Sie bietet „Erneut versuchen" und, als letzten Ausweg,
+„Gespeicherte Daten zurücksetzen" (löscht Profile, Verlauf und gemerkte
+Host-Keys auf dem Handy; auf den Pis ändert sich nichts). Die App-Daten sind
+von Cloud-Backup und Gerät-zu-Gerät-Übertragung ausgenommen — der Weg auf ein
+neues Handy ist der Profil-Export.
 
 ## Sicherheit
 
 - Passwort und SSH-Key liegen **nur verschlüsselt** im Keystore, nie im Klartext.
 - Das `sudo`-Passwort wird der Abfrage **über stdin** übergeben (`sudo -S`),
   **nie** als Teil der Befehlszeile — und aus dem sichtbaren Log
-  **herausgefiltert**.
+  **herausgefiltert**; steht es innerhalb eines längeren Wortes, wird das
+  ganze Wort maskiert.
+- **Backups liegen auf dem Pi für alle lokalen Benutzer lesbar** (0644), damit
+  der Download aufs Handy ohne `sudo` auskommt. Das gilt auch für das
+  Home-Assistant-Archiv, das `/config` und damit `.storage/auth` und
+  `secrets.yaml` enthält. Eine bewusste Grenze; wer das nicht will, löscht
+  das Archiv nach dem Herunterladen über „Backups verwalten".
 - Der **Live-Status** nutzt nur lesendes HTTP gegen die evcc-Oberfläche — dabei
   werden **keine** Zugangsdaten gesendet.
 - Kein Account, kein Cloud-Backend. Annahme: LAN-Nutzung (zuhause im WLAN).
@@ -422,18 +545,29 @@ nur noch tippen.
   höchstens alle 120 Tage und insgesamt dreimal, nie im Demo-Modus; ob der
   Dialog erscheint, entscheidet Google Play, und die App erfährt weder das noch
   eine abgegebene Bewertung. Die Sideload-APK fragt nie.
-- Optionale **App-Sperre** per Biometrie/PIN. Screenshots, Bildschirmaufnahmen
-  und die Vorschau in der App-Übersicht (Recents) sind nur dort gesperrt, wo
-  Zugangsdaten zu sehen sein können (`FLAG_SECURE`): auf dem Sperrbildschirm und
-  bei aufgeklappter Zugangsdaten-Karte. Dienst-Karten, Logs, Terminal,
-  Datei-Vorschau und Config-Editor sind seit v0.65.0 **nicht** mehr geschützt —
-  was dort steht, kann in einem Screenshot und in der Recents-Vorschau
-  erscheinen.
+- Optionale **App-Sperre** per Biometrie/PIN. Die Sperre liegt über der ganzen
+  App: Offene Dialoge, Sheets und Seiten bleiben darunter erhalten — auch
+  ungespeicherter Text im Config-Editor — und sind nach dem Entsperren wieder
+  da; nichts, was im Hintergrund aufgeht, erscheint über dem Sperrbildschirm.
+  Ein Dateiwähler, der länger als fünf Minuten offen bleibt, hält die App
+  nicht entsperrt: Bei der Rückkehr wird gesperrt.
+  **Vorschau in der App-Übersicht (Recents):** Ist die Sperre eingeschaltet,
+  zeigt die Übersicht **ab Android 13** kein Bild der App. **Unter Android 12
+  und älter** kann sie den zuletzt gezeigten Bildschirm weiter zeigen, obwohl
+  die App gesperrt ist — Android nimmt das Bild auf, bevor die Sperre greift.
+  **Screenshots und Bildschirmaufnahmen** sind unabhängig davon nur dort
+  gesperrt, wo Zugangsdaten zu sehen sein können (`FLAG_SECURE`): auf dem
+  Sperrbildschirm und bei aufgeklappter Zugangsdaten-Karte. Dienst-Karten,
+  Logs, Terminal, Datei-Vorschau und Config-Editor sind seit v0.65.0 **nicht**
+  mehr geschützt — was dort steht, kann in einem Screenshot und, ohne
+  eingeschaltete App-Sperre, in der Recents-Vorschau erscheinen.
 - **Host-Key-Verifizierung (TOFU):** Beim ersten Connect zeigt die App den
   SSH-Fingerprint zur **Bestätigung** an und merkt ihn erst nach Zustimmung;
   danach wird er geprüft. Ändert er sich (möglicher MITM oder neu aufgesetzter
   Pi), **blockiert** die App und sendet kein Passwort — erst nach bewusstem
-  „neuen Key vertrauen".
+  „neuen Key vertrauen". Lässt sich ein gemerkter Fingerprint nicht lesen,
+  behandelt die App das nicht als ersten Kontakt: Sie meldet es, sendet kein
+  Passwort und lässt den Key neu bestätigen.
 
 ## Build & Releases (CI)
 
@@ -559,6 +693,7 @@ Die Architektur trennt **testbare reine Logik** von I/O:
 - `lib/src/evcc_api.dart` — read-only evcc-Web-API-Client + defensiver Parser
 - `lib/src/network_scan.dart` — Subnetz-Scan für „Pi finden"
 - `lib/src/profiles.dart` / `settings_store.dart` — verschlüsselte Config
+- `lib/src/app_lock.dart` — App-Sperre als Schicht über dem Navigator
 - `lib/main.dart` — UI
 
 Tests: `flutter test` (reine Logik via TDD, Updater via `FakeSshRunner`,
@@ -566,9 +701,11 @@ Widget-Tests mit injizierten Fakes). Zwei Gruppen brauchen etwas von außen und
 werden sonst übersprungen:
 
 - **Skripte in echter bash** — die On-Pi-Skripte (Backup, Restore, Timer,
-  Installer) laufen gegen einen Sandbox-Pi mit Stubs. Unter Linux genügt `bash`;
-  unter Windows den Pfad zu Git Bash setzen
-  (`PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe`).
+  Installer, Sicherheits-Fixes, Datei-Befehle) laufen gegen einen Sandbox-Pi
+  mit Stubs; die gemeinsame Sandbox ist `test/on_pi_sandbox.dart`. Unter Linux
+  genügt `bash`; unter Windows den Pfad zu Git Bash setzen
+  (`PITOOL_TEST_BASH=C:\Program Files\Git\bin\bash.exe`). Wo ein `dash`
+  installiert ist, laufen die `#!/bin/sh`-Skripte zusätzlich darunter.
 - **SSH-Integrationstest** — `test/ssh_integration_test.dart` lässt den echten
   SSH-Adapter gegen einen lokalen SSH-Server laufen
   (`tool/ssh_test_server.py`, braucht Python 3 mit `asyncssh`). Aktiv nur mit
@@ -584,5 +721,7 @@ werden sonst übersprungen:
 ## Roadmap
 
 - iOS: bewusst später. Die Flutter-Codebasis hält die Tür offen.
-- Docker-`run`-Rekonstruktion deckt die gängigen Fälle ab; exotische Flags
-  (z. B. `--mount type=volume`) werden noch nicht übernommen.
+- Docker-`run`-Rekonstruktion deckt die gängigen Fälle ab. Was sie nicht
+  verlustfrei nachbauen kann (z. B. `--mount`-Einträge, mehrere Netzwerke,
+  feste IP-Adressen), übernimmt sie nicht — solche Container lehnt das Update
+  mit Begründung ab, statt sie verändert neu anzulegen.

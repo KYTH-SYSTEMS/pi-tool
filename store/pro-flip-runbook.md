@@ -46,6 +46,60 @@ Versprechens, dessen Bruch man erst Monate später merken würde.
   `a9a55def-8a3d-8414-84d0-3f6b21e9cff5`.
 - **Data Safety / Play-Angaben** auf den Kauf hin durchsehen.
 
+### 1a. Gating-Lücken schließen, BEVOR Billing eingeschaltet wird
+
+Aus dem Code-Audit 2026-10 (Befund PRO_GATING), am Code nach v0.71.0
+nachgeprüft. Solange `DormantEntitlement` aktiv ist, wirkt nichts davon — jede
+Stelle wird erst sichtbar, wenn `isPro()` zum ersten Mal `false` liefert. Alle
+drei müssen entschieden und umgesetzt sein, bevor das Billing-Release gebaut
+wird.
+
+- **„Fernzugriff einrichten" / „Fernzugriff prüfen": frei lassen oder sauber
+  als Pro führen.** Beide laufen heute durch `_proGate` — an drei Stellen in
+  `lib/main.dart`: die Angebotszeile und die Karte in `_remoteAccessCard()`
+  sowie „Fernzugriff einrichten" im ⋮ der Tailscale-Karte. Sie tragen aber
+  **keinen Schloss-Hinweis** (die Knöpfe der Karte haben keinen, der
+  ⋮-Eintrag ist ein `_CardAction` ohne `pro: true`), es gibt **keinen
+  `ProFeature`-Eintrag** (`backups, console, cleanup, multiPi, automation,
+  files`) und **keine Zeile in der Paywall** (`_showPaywall` listet Backups,
+  Automatik, Dateien, Terminal, Profile, Aufräumen). Ein Free-Nutzer tippte
+  also auf einen unmarkierten Knopf und landete in einer Paywall, die die
+  Funktion nicht nennt. Entscheidung:
+  - **entweder frei lassen** — `_proGate` an den drei Stellen entfernen (die
+    Folgeschritte „Heimnetz-Freigabe prüfen/beenden" sind es schon);
+  - **oder als Pro führen** — `ProFeature` um einen Eintrag ergänzen,
+    Paywall-Zeile in `app_de.arb` **und** `app_en.arb`, Schloss-Hinweis an
+    allen drei Einstiegen, und die Store-Texte/README entsprechend.
+
+  Dieselbe Prüfung für **„Heimnetz freigeben"**: gated mit Schloss
+  (`pro: true`), der zweite Einstieg über `_offerLanShare` läuft ebenfalls
+  durch `_proGate` — aber auch dafür gibt es weder `ProFeature`-Eintrag noch
+  Paywall-Zeile. Ebenso ohne eigene Paywall-Zeile: „Auf anderen Pi umziehen"
+  und der Config-Editor der evcc-Karte (beide `pro: true`).
+  Hinweis: Der Enum `ProFeature` ist heute nur die dokumentierte Liste — in
+  `lib/` liest ihn außerhalb von `entitlement.dart` nichts, die Gates fragen
+  `_unlocked`. „Als ProFeature führen" heißt also: Liste, Paywall-Zeile und
+  Schloss-Hinweis stimmen überein.
+- **Profil-Import an das 1-Profil-Limit binden.** `_addProfile` prüft
+  `isAddProfileLocked` und öffnet sonst die Paywall; `_importProfiles` hängt
+  die importierten Profile ohne diese Prüfung an (`profilesForImport`). Ein
+  Free-Nutzer käme über eine Export-Datei zu beliebig vielen Profilen —
+  „Mehrere Pis" wäre damit umgangen. Vor dem Flip festlegen, was ein Import
+  für Free-Nutzer darf (z. B. nur ein Profil übernehmen bzw. das vorhandene
+  ersetzen), und `isAddProfileLocked` im Import anwenden. Der Gerätewechsel
+  per Export/Import muss für Free-Nutzer mit einem Profil weiter
+  funktionieren.
+- **Entitlement fail-closed laden.** `_isPro` startet in `_UpdaterPageState`
+  mit `true`, und `_loadEntitlement()` ruft `await _entitlement.isPro()` ohne
+  `try/catch`: Wirft der Aufruf (Billing nicht erreichbar, Plugin-Fehler),
+  bleibt `_isPro` auf `true` — alles wäre frei —, und die Ausnahme ist
+  unbehandelt. Auch ohne Fehler ist bis zur Antwort alles freigeschaltet. Mit
+  echtem Billing: mit „nicht Pro" starten (bzw. Pro-pflichtige Einstiege bis
+  zur Antwort sperren), den Fehlerfall abfangen und als „nicht Pro" werten,
+  das Grandfathering davon unabhängig aus dem lokalen Marker lesen, und den
+  Fehlerfall testen (`_FakeEntitlement`, das wirft). Nichts davon darf den
+  Startpfad blockieren oder die App abstürzen lassen (v0.20.0-Lektion).
+
 ### 2. Play Console (nur Stefan)
 
 - In-App-Produkt anlegen: einmaliger Kauf, ~5 €, Produkt-ID festlegen
@@ -101,4 +155,8 @@ Versprechens, dessen Bruch man erst Monate später merken würde.
 | Grandfathering-Logik | `lib/src/early_adopter.dart` |
 | Marker-Stempel | `lib/main.dart` `_stampFirstSeenMarker()` |
 | Gate im UI | `lib/main.dart` `_proGate`, `_CardAction.pro`, `_AutomationTile` |
+| Paywall-Liste | `lib/main.dart` `_showPaywall` (`paywallFeature*` in `lib/l10n/app_{de,en}.arb`) |
+| Fernzugriff-Einstiege (§1a) | `lib/main.dart` `_remoteAccessCard()`, Tailscale-Karte in `_serviceCards()` |
+| 1-Profil-Limit (§1a) | `lib/src/entitlement.dart` `isAddProfileLocked`; `lib/main.dart` `_addProfile` (prüft), `_importProfiles` (prüft nicht) |
+| Entitlement laden (§1a) | `lib/main.dart` `_isPro`, `_loadEntitlement()` |
 | Design-Spec Marker | `docs/superpowers/specs/2026-07-16-early-adopter-marker-design.md` |
