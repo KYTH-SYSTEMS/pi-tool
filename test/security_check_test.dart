@@ -40,7 +40,7 @@ Unattended-Upgrade::Origins-Pattern {
 
 void main() {
   group('buildSecurityProbe', () {
-    test('is a single read-only sudo probe with all section markers', () {
+    test('is a single sudo probe with all section markers', () {
       final cmd = buildSecurityProbe();
       expect(cmd, startsWith('LC_ALL=C sudo -S sh -c '));
       // The inner script is single-quoted as one argument.
@@ -52,7 +52,8 @@ void main() {
       ]) {
         expect(cmd, contains(m));
       }
-      // Read-only: no mutating verbs.
+      // That it changes nothing is run in bash below ("the probe only asks");
+      // these two only catch the obvious where there is no bash.
       expect(cmd, isNot(contains('systemctl start')));
       expect(cmd, isNot(contains('rm ')));
     });
@@ -165,6 +166,64 @@ __SEC_PORTS__
       expect(r, isNotEmpty);
       // Nothing can be asserted → no false "ok"/"warn"; unknowns are info.
       expect(r.every((f) => f.level == SecurityLevel.info), isTrue);
+    });
+
+    // Without an answer from `sshd -T` the probe greps the configuration
+    // files: the keywords as written there — any case, indented, and the same
+    // one from sshd_config and from a drop-in.
+    test('grep fallback: keywords as the files spell them are read', () {
+      final r = parseSecurityReport('__SEC_SSHD__\n'
+          'PermitRootLogin yes\n'
+          '\tPasswordAuthentication no\n');
+      expect(by(r, 'root').level, SecurityLevel.warn);
+      expect(securityFixFor(by(r, 'root')), SecurityFix.rootLogin);
+      expect(by(r, 'passwort').level, SecurityLevel.ok);
+    });
+
+    test('grep fallback: a keyword found twice is still one finding', () {
+      final r = parseSecurityReport('__SEC_SSHD__\n'
+          'PermitRootLogin prohibit-password\n'
+          'PasswordAuthentication yes\n'
+          '  permitrootlogin prohibit-password\n');
+      expect(r.where((f) => f.title == 'SSH-Root-Login'), hasLength(1));
+      expect(by(r, 'root').level, SecurityLevel.ok);
+      expect(by(r, 'passwort').level, SecurityLevel.info);
+      expect(by(r, 'passwort').detail, startsWith('Passwort-Login ist an'));
+    });
+
+    test('grep fallback without a hit: undetermined, no fix on offer', () {
+      // Debian ships both keywords commented out; grep then prints nothing.
+      final r = parseSecurityReport('__SEC_SSHD__\n__SEC_UNATT__\n');
+      for (final needle in ['root', 'passwort']) {
+        expect(by(r, needle).level, SecurityLevel.info, reason: needle);
+        expect(by(r, needle).detail, 'Konnte nicht ermittelt werden.');
+        expect(securityFixFor(by(r, needle)), isNull);
+      }
+    });
+
+    test('open ports: each port once, in numeric order', () {
+      // The fourth column of `ss -H -tln`. By text, 443 would sort before 53.
+      final r = parseSecurityReport('__SEC_PORTS__\n'
+          '0.0.0.0:8080\n'
+          '[::]:22\n'
+          '0.0.0.0:22\n'
+          '127.0.0.1:53\n'
+          '*:443\n'
+          '[::1]:53\n'
+          '192.168.178.64%eth0:7070\n');
+      expect(by(r, 'ports').detail,
+          'Lauschende TCP-Ports: 22, 53, 443, 7070, 8080');
+      expect(by(r, 'ports').level, SecurityLevel.info);
+    });
+
+    test('open ports: a line without a port number is left out', () {
+      final some = parseSecurityReport('__SEC_PORTS__\n'
+          'Local Address:Port\n'
+          '*:*\n'
+          '0.0.0.0:22\n');
+      expect(by(some, 'ports').detail, 'Lauschende TCP-Ports: 22');
+      final none = parseSecurityReport('__SEC_PORTS__\n*:*\n');
+      expect(by(none, 'ports').detail, 'Keine ermittelt.');
     });
   });
 
@@ -378,7 +437,16 @@ __SEC_PORTS__
     test('every fix ends in the success marker', () {
       for (final fix in SecurityFix.values) {
         if (fix == SecurityFix.piholePassword) continue; // own builder, below
-        expect(buildSecurityFixScript(fix), contains('SECFIX_OK'));
+        final lines = buildSecurityFixScript(fix)
+            .split('\n')
+            .where((l) => l.trim().isNotEmpty)
+            .toList();
+        // The last command prints it, and nothing before that does: a branch
+        // that left early has said nothing that reads like success. (That a
+        // failing branch really leaves is run in bash below.)
+        expect(lines.last, 'echo SECFIX_OK', reason: '$fix');
+        expect(lines.where((l) => l.contains('SECFIX_OK')), hasLength(1),
+            reason: '$fix');
       }
     });
 
@@ -482,8 +550,10 @@ __SEC_PORTS__
       // And the effective value is verified afterwards (Include might miss).
       expect(s, contains('sshd -T'));
       expect(s, contains('permitrootlogin'));
-      // No set -e: the script must reach its own rollback branches.
-      expect(s.split('\n').first.trim(), isNot('set -e'));
+      // No set -e, on no line and in no spelling: the script must reach its
+      // own rollback branches.
+      expect(
+          RegExp(r'\bset\s+(-\w*e\w*|-o\s+errexit)\b').hasMatch(s), isFalse);
     });
   });
 
@@ -612,6 +682,86 @@ if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
     const aptInstall = 'apt-get -o Dpkg::Use-Pty=0 '
         '-o Dpkg::Options::=--force-confdef '
         '-o Dpkg::Options::=--force-confold install -y';
+
+    group('the probe', () {
+      /// Every entry below the Pi's own directories with size and mtime. The
+      /// stubs' state directory — the call log grows there — is left out.
+      Future<String> tree() async {
+        final r = await pi.run(
+            "ls -lRA --time-style=full-iso '${pi.root}/etc' '${pi.root}/var' "
+            "'${pi.root}/usr' '${pi.root}/tmp' '${pi.root}/bin'",
+            rebase: false);
+        expect(r.code, 0, reason: r.err);
+        return r.out;
+      }
+
+      // "Read-only" as behaviour: questions are all that reaches the stubs,
+      // and the files are the ones the probe found.
+      test('only asks, and leaves the Pi as it found it', () async {
+        // Raspbian and a Pi-hole: the branches with the most commands.
+        pi.put('/state/policy', _policyRaspbian);
+        pi.put('/state/unattended-on');
+        pi.stub('sshd', 'echo "permitrootlogin yes"');
+        pi.stub('ss', 'echo "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*"');
+        pi.stub('pihole-FTL',
+            r"echo '$BALLOON-SHA256$v=1$s=1024,t=32$c2FsdA==$aGFzaA=='");
+        final before = await tree();
+
+        final r = await pi.run(buildSecurityProbe());
+        expect(r.code, 0, reason: r.err);
+        expect(r.err, isEmpty);
+        expect(pi.calls, [
+          'sshd -T',
+          'systemctl is-enabled unattended-upgrades',
+          'systemctl is-active unattended-upgrades',
+          'systemctl is-active fail2ban',
+          'ss -H -tln',
+          'pihole-FTL --config -q webserver.api.pwhash',
+        ]);
+        expect(await tree(), before);
+        // The Pi-hole section is the verdict alone, never the hash.
+        expect(r.lines.sublist(r.lines.indexOf('__SEC_PIHOLE__')),
+            ['__SEC_PIHOLE__', 'pwhash-set']);
+        expect(r.out, isNot(contains('BALLOON')));
+      });
+
+      test('no answer from sshd -T: the keywords are read from sshd_config '
+          'and its drop-ins', () async {
+        pi.stub('sshd', 'echo "sshd: no hostkeys available -- exiting." >&2\n'
+            'exit 1');
+        pi.put(
+            '/etc/ssh/sshd_config',
+            '# This is the sshd server system-wide configuration file.\n'
+            'Include /etc/ssh/sshd_config.d/*.conf\n'
+            '#PermitRootLogin prohibit-password\n'
+            'PermitRootLogin yes\n'
+            '#PasswordAuthentication yes\n'
+            'UsePAM yes\n');
+        pi.put('/etc/ssh/sshd_config.d/50-cloud-init.conf',
+            '  PasswordAuthentication no\n');
+        // As the files spell them; a commented-out line is no setting.
+        expect(await section('__SEC_SSHD__'),
+            ['PermitRootLogin yes', 'PasswordAuthentication no']);
+        final root = await finding('Root');
+        expect(root.level, SecurityLevel.warn);
+        expect(securityFixFor(root), SecurityFix.rootLogin);
+        expect((await finding('Passwort')).level, SecurityLevel.ok);
+      });
+
+      test('listening ports: the local address column of ss, each port once, '
+          'sorted', () async {
+        pi.stub('ss', r'''
+echo "LISTEN 0      4096       127.0.0.1:8080       0.0.0.0:*"
+echo "LISTEN 0      128          0.0.0.0:22         0.0.0.0:*"
+echo "LISTEN 0      511                *:80               *:*"
+echo "LISTEN 0      128             [::]:22            [::]:*"''',
+            log: false);
+        expect(await section('__SEC_PORTS__'),
+            ['127.0.0.1:8080', '0.0.0.0:22', '*:80', '[::]:22']);
+        expect((await finding('Ports')).detail,
+            'Lauschende TCP-Ports: 22, 80, 8080');
+      });
+    });
 
     group('automatic updates', () {
       const periodic = 'APT::Periodic::Update-Package-Lists "1";\n'
@@ -863,6 +1013,133 @@ if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
         expect(r.code, 1);
         expect(pi.read(jailFile),
             '[sshd]\nenabled = true\nbackend = systemd\n');
+      });
+    });
+
+    // sshd and systemd as the root-login fix asks them:
+    //  - `sshd -t` takes the configuration unless /state/sshd-rejects exists;
+    //  - `sshd -T` reports `permitrootlogin no` when the drop-in says so —
+    //    unless /state/sshd-ignores-dropins exists (an sshd_config without
+    //    the Include line) — and nothing at all with /state/sshd-T-silent;
+    //  - the unit is called `ssh`, or with /state/unit-is-sshd `sshd`.
+    // How sshd itself reads its drop-ins is not measured on a Pi here.
+    group('root login', () {
+      const dropIn = '/etc/ssh/sshd_config.d/60-pitool-hardening.conf';
+
+      setUp(() {
+        pi.stub('sshd', r'''
+f="$R/etc/ssh/sshd_config.d/60-pitool-hardening.conf"
+case "$1" in
+  -t)
+    if [ -e "$S/sshd-rejects" ]; then
+      echo "$f: line 1: Bad configuration option" >&2
+      exit 255
+    fi ;;
+  -T)
+    [ -e "$S/sshd-T-silent" ] && exit 255
+    echo "port 22"
+    if [ ! -e "$S/sshd-ignores-dropins" ] &&
+      "$REAL_GREP" -qx 'PermitRootLogin no' "$f" 2>/dev/null; then
+      echo "permitrootlogin no"
+    else
+      echo "permitrootlogin yes"
+    fi
+    echo "passwordauthentication yes" ;;
+esac
+exit 0''');
+        pi.stub('systemctl', r'''
+case "$*" in
+  "reload ssh") [ ! -e "$S/unit-is-sshd" ] || exit 5 ;;
+  "reload sshd") [ -e "$S/unit-is-sshd" ] || exit 5 ;;
+esac
+exit 0''');
+      });
+
+      test('sshd takes it: drop-in written, checked before the reload, the '
+          'effect read back', () async {
+        final open = await finding('Root');
+        expect(open.level, SecurityLevel.warn);
+        expect(securityFixFor(open), SecurityFix.rootLogin);
+        pi.clearCalls();
+
+        final r = await fix(SecurityFix.rootLogin);
+        expect(r.code, 0, reason: r.err);
+        expect(r.err, isEmpty);
+        expect(r.lines, ['SECFIX_OK']);
+        expect(pi.read(dropIn), 'PermitRootLogin no\n');
+        expect(changes(), ['sshd -t', 'systemctl reload ssh', 'sshd -T']);
+
+        final fixed = await finding('Root');
+        expect(fixed.level, SecurityLevel.ok);
+        expect(securityFixFor(fixed), isNull);
+      });
+
+      test('a unit called sshd: the second reload is tried, then the same',
+          () async {
+        pi.put('/state/unit-is-sshd');
+        final r = await fix(SecurityFix.rootLogin);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines, ['SECFIX_OK']);
+        expect(changes(), [
+          'sshd -t',
+          'systemctl reload ssh',
+          'systemctl reload sshd',
+          'sshd -T',
+        ]);
+      });
+
+      test('sshd -t refuses the configuration: drop-in gone, nothing '
+          'reloaded, exit 1, no marker', () async {
+        pi.put('/state/sshd-rejects');
+        final r = await fix(SecurityFix.rootLogin);
+        expect(r.code, 1);
+        expect(r.lines, [
+          'sshd -t lehnt die Konfiguration ab - Aenderung zurueckgenommen.',
+        ]);
+        expect(pi.exists(dropIn), isFalse);
+        // The script ends there: sshd was never told to load anything.
+        expect(changes(), ['sshd -t']);
+      });
+
+      test('the effective value stays yes: drop-in gone, reloaded once more, '
+          'exit 1, no marker', () async {
+        pi.put('/state/sshd-ignores-dropins');
+        final r = await fix(SecurityFix.rootLogin);
+        expect(r.code, 1);
+        expect(r.lines, [
+          "PermitRootLogin blieb 'yes' (sshd_config.d greift nicht?) - "
+              'Aenderung zurueckgenommen.',
+        ]);
+        expect(pi.exists(dropIn), isFalse);
+        expect(changes(), [
+          'sshd -t',
+          'systemctl reload ssh',
+          'sshd -T',
+          'systemctl reload ssh',
+        ]);
+        // Still the finding it was, with its fix on offer.
+        final f = await finding('Root');
+        expect(f.level, SecurityLevel.warn);
+        expect(securityFixFor(f), SecurityFix.rootLogin);
+      });
+
+      test('no effective value to read back: taken back just the same',
+          () async {
+        pi.put('/state/sshd-T-silent');
+        final r = await fix(SecurityFix.rootLogin);
+        expect(r.code, 1);
+        expect(r.lines, [
+          "PermitRootLogin blieb '' (sshd_config.d greift nicht?) - "
+              'Aenderung zurueckgenommen.',
+        ]);
+        expect(pi.exists(dropIn), isFalse);
+      });
+
+      test('a drop-in directory that is not there yet is made', () async {
+        expect(pi.exists('/etc/ssh'), isFalse);
+        final r = await fix(SecurityFix.rootLogin);
+        expect(r.lines, ['SECFIX_OK']);
+        expect(pi.ls('/etc/ssh/sshd_config.d'), ['60-pitool-hardening.conf']);
       });
     });
   }, skip: needsBash);
