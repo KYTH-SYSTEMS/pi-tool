@@ -1404,7 +1404,12 @@ int? parseCleanupFreed(String output) {
 
 /// Shell that runs the batched detection script (fed via stdin). LC_ALL=C for
 /// stable parsing, and distinct from the plain `bash -s` used elsewhere.
-const String detectShellCommand = 'LC_ALL=C bash -s';
+///
+/// Through `env`, so the line starts with a program: sshd hands it to the
+/// user's login shell, and one without `NAME=value command` (fish before 3.1,
+/// csh, tcsh) takes a leading `LC_ALL=C` for the name of a program — the
+/// batch never ran, and every connect ended there.
+const String detectShellCommand = 'env LC_ALL=C bash -s';
 
 /// Reads a config file as root (many live under /etc, root-owned).
 String buildConfigReadCommand(String path) =>

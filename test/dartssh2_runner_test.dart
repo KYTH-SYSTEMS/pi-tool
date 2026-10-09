@@ -329,6 +329,40 @@ void main() {
     });
   });
 
+  // The limit run() opens the channel under. Its own, not the connect
+  // timeout: that one is short on the probes (4 s, 8 s, 12 s), and a Pi that
+  // takes its time behind a successful login is slow, not out of reach.
+  group('SshConfig.startTimeout (exec start limit)', () {
+    test('60 s unless set, whatever the connect timeout', () {
+      expect(_config.startTimeout, const Duration(seconds: 60));
+      const probe = SshConfig(
+          host: '192.168.178.64',
+          port: 22,
+          username: 'pi',
+          password: 'pw',
+          timeout: Duration(seconds: 4));
+      expect(probe.startTimeout, const Duration(seconds: 60));
+    });
+
+    test('copyWith with another address and a short deadline keeps it', () {
+      const base = SshConfig(
+          host: '192.168.178.64',
+          port: 2222,
+          username: 'pi',
+          password: 'pw',
+          startTimeout: Duration(seconds: 7),
+          commandTimeout: Duration(minutes: 3));
+      final probe = base.copyWith(
+          host: '100.64.0.5', timeout: const Duration(seconds: 4));
+      expect(probe.host, '100.64.0.5');
+      expect(probe.timeout, const Duration(seconds: 4));
+      expect(probe.startTimeout, const Duration(seconds: 7));
+      // …and the rest as it was.
+      expect(probe.port, 2222);
+      expect(probe.commandTimeout, const Duration(minutes: 3));
+    });
+  });
+
   // run() hands stdin to the channel with it, and counts every piece taken as
   // activity: an upload that still moves must not hit the inactivity timeout.
   group('inPieces (stdin handed over on demand)', () {

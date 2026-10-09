@@ -239,16 +239,19 @@ class Dartssh2Runner implements SshRunner {
     // Until the Pi has confirmed the channel and the exec request, nothing
     // below is listening and the inactivity timeout has not started. dartssh2
     // ends this wait on a transport error and on close(), but over a link that
-    // died silently neither comes before the TCP stack gives up. Bounded like
-    // the handshake; a session that still opens later is closed again.
+    // died silently neither comes before the TCP stack gives up. So it is
+    // bounded — by a limit of its own, not by the connect timeout: sshd sets
+    // the session up (PAM) only after the login it has already reported as
+    // successful, and a Pi that takes 25 s for that is slow but usable. A
+    // session that still opens later is closed again.
     final SSHSession session;
     try {
-      session = await withinOrDiscard(
-          client.execute(command), config.timeout, (opened) => opened.close());
+      session = await withinOrDiscard(client.execute(command),
+          config.startTimeout, (opened) => opened.close());
     } on TimeoutException catch (e) {
       // Its own type: who takes a lost connection for the command at work
       // (reboot, shutdown) has to tell this apart — nothing was started.
-      throw CommandNotStartedException(e.duration ?? config.timeout);
+      throw CommandNotStartedException(e.duration ?? config.startTimeout);
     }
 
     final stdoutBuf = StringBuffer();

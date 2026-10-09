@@ -222,11 +222,14 @@ class _CloseThrowsRunner extends FakeSshRunner {
 /// run() RETURNS a partial result (exitCode null) rather than throwing, and a
 /// subsequent run() throws because the client is gone.
 class _HangingRunner implements SshRunner {
-  _HangingRunner({this.hangOn});
+  _HangingRunner({this.hangOn, this.partial = ''});
 
   /// Only this command hangs; the others are answered at once (the sudo probe
   /// with "a password is required"). Null = every command hangs.
   final String? hangOn;
+
+  /// What the hanging command had written to stderr when the close came.
+  final String partial;
   final runStarted = Completer<void>();
   Completer<CommandResult>? _gate;
   bool closed = false;
@@ -252,7 +255,32 @@ class _HangingRunner implements SshRunner {
     closed = true;
     if (_gate != null && !_gate!.isCompleted) {
       _gate!.complete(
-          const CommandResult(exitCode: null, stdout: '', stderr: ''));
+          CommandResult(exitCode: null, stdout: '', stderr: partial));
+    }
+  }
+}
+
+/// A runner whose command the Pi has not confirmed yet when [close] comes.
+/// dartssh2 ends that wait with an error ("SSH client closed"): run() throws
+/// there, where [_HangingRunner] — a command at work — returns what it has.
+class _UnconfirmedRunner implements SshRunner {
+  final runStarted = Completer<void>();
+  final _gate = Completer<CommandResult>();
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<CommandResult> run(String command,
+      {String? stdin, void Function(String chunk)? onOutput}) {
+    if (!runStarted.isCompleted) runStarted.complete();
+    return _gate.future;
+  }
+
+  @override
+  Future<void> close() async {
+    if (runStarted.isCompleted && !_gate.isCompleted) {
+      _gate.completeError(SSHStateError('SSH client closed'));
     }
   }
 }
@@ -575,7 +603,7 @@ echo "Mem:            3792         842        1934          62        1015      
   }
 
   /// Runs [script] the way the app runs the detection batch — on the stdin of
-  /// `LC_ALL=C bash -s` — and returns what the channel would deliver.
+  /// `env LC_ALL=C bash -s` — and returns what the channel would deliver.
   Future<CommandResult> run(String script,
       {Map<String, String> env = const {}}) async {
     final p = await Process.start(_bashAbsolute!, ['-s'], environment: {
@@ -1185,16 +1213,17 @@ void main() {
         (EvccUpdater u) => u.shutdown(config: _config, onLog: (_) {}),
       ),
     ]) {
-      test('$name: a command the Pi never took is no success', () async {
+      test('$name: a command the Pi never took is no success — and nothing '
+          'of it is running', () async {
         final runner = FakeSshRunner({}, runErrors: {
-          command: CommandNotStartedException(const Duration(seconds: 15)),
+          command: CommandNotStartedException(const Duration(seconds: 60)),
         });
         await expectLater(
           act(_updaterWith(runner)),
-          throwsA(isA<EvccUpdateException>()
-              .having((e) => e.kind, 'kind', UpdateErrorKind.outputTimeout)
-              .having((e) => e.message, 'message',
-                  contains('Ergebnis unbekannt'))),
+          _err(
+              UpdateErrorKind.commandNotStarted,
+              'Der Pi hat die Anmeldung angenommen, den Befehl aber nicht '
+                  'innerhalb von 1 min gestartet – er wurde nicht ausgeführt.'),
         );
       });
 
@@ -3730,6 +3759,96 @@ void main() {
     });
   });
 
+  // "Pi neu starten" and "Pi herunterfahren" run under the running bar, so
+  // they have an "Abbrechen". Closing the connection takes nothing back from
+  // a Pi that already has the command: it goes down, and "Abgebrochen." would
+  // leave the page with a session to a Pi that is restarting or off.
+  group('EvccUpdater.cancel on a power action', () {
+    for (final (name, act, done) in [
+      (
+        'reboot',
+        (EvccUpdater u, void Function(String) log) =>
+            u.reboot(config: _config, onLog: log),
+        'Neustart ausgelöst – der Pi ist gleich kurz offline.',
+      ),
+      (
+        'shutdown',
+        (EvccUpdater u, void Function(String) log) =>
+            u.shutdown(config: _config, onLog: log),
+        'Der Pi fährt herunter – er bleibt aus, bis du ihn wieder einschaltest.',
+      ),
+    ]) {
+      test('$name: once the Pi has the command it goes down, cancel or not',
+          () async {
+        final runner = _HangingRunner();
+        final updater = EvccUpdater(runnerFactory: (_) => runner);
+        final log = <String>[];
+        final f = act(updater, log.add);
+        await runner.runStarted.future; // the command is at work on the Pi
+        await updater.cancel();
+        await f; // completes like the action nobody cancelled
+        expect(log.last, done);
+        expect(runner.closed, isTrue);
+      });
+
+      test('$name: what the Pi said before the cancel still counts', () async {
+        // sudo turned the password down, then the user tapped "Abbrechen":
+        // the Pi stays up, and the reason is the password, not the cancel.
+        final runner = _HangingRunner(partial: 'Sorry, try again.\n');
+        final updater = EvccUpdater(runnerFactory: (_) => runner);
+        final log = <String>[];
+        final f = act(updater, log.add);
+        await runner.runStarted.future;
+        await updater.cancel();
+        await expectLater(f, _err(UpdateErrorKind.sudo));
+        expect(log, isNot(contains(done)));
+      });
+
+      test('$name: cancel before the Pi confirmed the command is a cancel',
+          () async {
+        // Still waiting for the session (a slow session setup): the close
+        // ends that wait with an error, which is not the Pi going down.
+        final runner = _UnconfirmedRunner();
+        final updater = EvccUpdater(runnerFactory: (_) => runner);
+        final log = <String>[];
+        final f = act(updater, log.add);
+        await runner.runStarted.future;
+        await updater.cancel();
+        await expectLater(f, _err(UpdateErrorKind.cancelled, 'Abgebrochen.'));
+        expect(log, isNot(contains(done)));
+      });
+
+      test('$name: cancel during connect is a cancel, nothing was sent',
+          () async {
+        final runner = _ConnectHangRunner();
+        final updater = EvccUpdater(runnerFactory: (_) => runner);
+        final f = act(updater, (_) {});
+        await runner.connectStarted.future;
+        await updater.cancel();
+        await expectLater(f, _err(UpdateErrorKind.cancelled, 'Abgebrochen.'));
+        expect(runner.bodyRan, isFalse);
+      });
+    }
+
+    test('the exemption ends with the power action: what follows on the same '
+        'runner is cancelled as ever', () async {
+      // Only a test hands one runner out twice — which is what shows that the
+      // mark does not outlive its connection.
+      final runner = _GatedRunner({
+        rebootCommand: [_r('')],
+        piholeGravityCommand: [_r('')],
+      }, piholeGravityCommand);
+      final updater = EvccUpdater(runnerFactory: (_) => runner);
+      await updater.reboot(config: _config, onLog: (_) {});
+
+      final f = updater.updatePiholeGravity(config: _config, onLog: (_) {});
+      await runner.reached.future;
+      await updater.cancel();
+      runner.release.complete(); // the command comes back as if it had ended
+      await expectLater(f, _err(UpdateErrorKind.cancelled));
+    });
+  });
+
   group('Pi-Jobs: transport failures after the start', () {
     for (final (name, error) in <(String, Object)>[
       ('TimeoutException', TimeoutException('keine Ausgabe')),
@@ -4688,11 +4807,43 @@ void main() {
             gravity(FakeSshRunner({}, runErrors: {piholeGravityCommand: e})),
             _err(UpdateErrorKind.outputTimeout, startsWith('Seit $span keine ')),
           );
-      // An exec request the Pi never answered (bounded by the connect timeout).
+      // Spans that are no whole minutes stay in seconds.
       await says('15 s', TimeoutException('x', const Duration(seconds: 15)));
       await says('90 s', TimeoutException('x', const Duration(seconds: 90)));
       // No duration on the exception: the configured inactivity limit.
       await says('10 min', TimeoutException('x'));
+    });
+
+    // The Pi took the login and then did not confirm the command within the
+    // start limit (a session setup that hangs). It is there, so not "nicht
+    // erreichbar" — and the command never ran, so not "läuft möglicherweise
+    // weiter" either.
+    test('a command the Pi never started is its own outcome: reachable, and '
+        'nothing of it running', () async {
+      final runner = FakeSshRunner({}, runErrors: {
+        piholeGravityCommand:
+            CommandNotStartedException(const Duration(seconds: 60)),
+      });
+      await expectLater(
+        gravity(runner),
+        _err(
+            UpdateErrorKind.commandNotStarted,
+            'Der Pi hat die Anmeldung angenommen, den Befehl aber nicht '
+                'innerhalb von 1 min gestartet – er wurde nicht ausgeführt.'),
+      );
+      expect(runner.closed, isTrue);
+    });
+
+    test('the limit it names is the one the runner waited for', () async {
+      Future<void> says(String span, Duration limit) => expectLater(
+            gravity(FakeSshRunner({}, runErrors: {
+              piholeGravityCommand: CommandNotStartedException(limit),
+            })),
+            _err(UpdateErrorKind.commandNotStarted,
+                contains(' nicht innerhalb von $span gestartet ')),
+          );
+      await says('45 s', const Duration(seconds: 45));
+      await says('2 min', const Duration(minutes: 2));
     });
 
     test('a probe that goes quiet is "not reachable", as before', () async {
@@ -4700,6 +4851,16 @@ void main() {
           runErrors: {'true': TimeoutException('x', const Duration(seconds: 4))});
       expect(
           await _updaterWith(runner).probeConnection(config: _config), isFalse);
+    });
+
+    test('a probe whose command never started ends, as "not reachable"',
+        () async {
+      final runner = FakeSshRunner({}, runErrors: {
+        'true': CommandNotStartedException(const Duration(seconds: 60)),
+      });
+      expect(
+          await _updaterWith(runner).probeConnection(config: _config), isFalse);
+      expect(runner.closed, isTrue);
     });
   });
 
@@ -5107,6 +5268,9 @@ void main() {
   group('detectServices: a batch that did not run to its end', () {
     const unknown = 'Verbindung während der Aktion abgerissen – Ergebnis '
         'unbekannt. Details im Log.';
+    String notStarted(String status) =>
+        'Die Erkennung ließ sich auf dem Pi nicht starten (Exit-Status '
+        '$status). Details im Log.';
     const endMarker = '@@PT@@$detectEndKey@@PT@@';
 
     _DetectOutputRunner pi(
@@ -5204,12 +5368,53 @@ void main() {
       final log = <String>[];
       await expectLater(
         _updaterWith(runner).detectServices(config: _config, onLog: log.add),
-        _err(UpdateErrorKind.unknown, unknown),
+        _err(UpdateErrorKind.unknown, notStarted('2')),
       );
       expect(log[1], startsWith('Erkennung unvollständig: 0 von '));
       expect(log[1], endsWith(' Abschnitten angekommen, Exit-Status 2.'));
       expect(log[2], 'Meldung der Shell: $refused');
       expect(log, hasLength(3));
+    });
+
+    // Not one section, but an answer of the shell — a status, or words: the
+    // batch never ran on the Pi (no bash there, a login shell that could not
+    // run the line). No connection was cut, and saying so sends the user
+    // after their network.
+    for (final (name, exitCode, stderr, status)
+        in <(String, int?, String, String)>[
+      (
+        'the login shell could not run the line',
+        127,
+        "fish: Unknown command 'LC_ALL=C'\n",
+        '127',
+      ),
+      ('the shell ended at once, without a word', 1, '', '1'),
+      ('the shell said why, its status got lost', null, 'nologin\n', 'fehlt'),
+    ]) {
+      test('$name: the detection did not start, nothing was cut', () async {
+        final log = <String>[];
+        await expectLater(
+          _updaterWith(pi(
+                  cutAt: '@@PT@@DOCKER@@PT@@',
+                  exitCode: exitCode,
+                  stderr: stderr))
+              .detectServices(config: _config, onLog: log.add),
+          _err(UpdateErrorKind.unknown, notStarted(status)),
+        );
+        expect(log.join('\n'), isNot(contains('Erkannt:')));
+      });
+    }
+
+    test('sections that did arrive make it a cut-off batch, whatever the '
+        'shell said', () async {
+      await expectLater(
+        _updaterWith(pi(
+                cutAt: '@@PT@@PIHOLE_V@@PT@@',
+                exitCode: 1,
+                stderr: 'bash: line 9: something: command not found\n'))
+            .detectServices(config: _config, onLog: (_) {}),
+        _err(UpdateErrorKind.unknown, unknown),
+      );
     });
 
     test('a complete batch logs nothing about it', () async {

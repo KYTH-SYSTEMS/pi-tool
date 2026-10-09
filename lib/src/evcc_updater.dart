@@ -56,6 +56,12 @@ enum UpdateErrorKind {
   /// the result is unknown, and this is NOT a connection failure (the UI keeps
   /// the session).
   outputTimeout,
+
+  /// The Pi took the login but did not confirm a command within the start
+  /// limit ([SshConfig.startTimeout]): that command never ran. The Pi was
+  /// reachable, so this is NOT a connection failure either (the UI keeps the
+  /// session) — and unlike [outputTimeout], nothing of it is at work there.
+  commandNotStarted,
 }
 
 /// A failure during the update, carrying a user-facing German [message].
@@ -222,10 +228,22 @@ class EvccUpdater {
   /// sudo) or a root command went out — see [_cancelledError].
   final Expando<bool> _rootWorkSent = Expando<bool>('root-work');
 
+  /// Connections on which the Pi took a reboot or poweroff command: the
+  /// command came back with a result, so its channel was open. A cancel after
+  /// that closes the connection and takes nothing back — the Pi goes down.
+  final Expando<bool> _powerTaken = Expando<bool>('power-taken');
+
+  /// Whether the action on [runner] keeps its own verdict when a cancel closed
+  /// its connection: after a Pi-Job command (the job runs on, only the
+  /// following stopped) and after a power command the Pi took.
+  bool _verdictStands(SshRunner runner) =>
+      _jobTouched[runner] == true || _powerTaken[runner] == true;
+
   /// Cancels the in-flight SSH actions by closing their connections; each then
-  /// completes with [UpdateErrorKind.cancelled]. No-op when idle. This closes
-  /// connections and nothing else: what the Pi was already told to do is not
-  /// stopped by it (see [_cancelledError]).
+  /// completes with [UpdateErrorKind.cancelled], unless its own verdict stands
+  /// ([_verdictStands]). No-op when idle. This closes connections and nothing
+  /// else: what the Pi was already told to do is not stopped by it (see
+  /// [_cancelledError]).
   Future<void> cancel() async {
     // Mark all, then close: the closes are awaited one after the other, and an
     // action must find its request as soon as its connection is gone.
@@ -624,6 +642,7 @@ class EvccUpdater {
         // decides: the exit status travels after the output and can get lost
         // behind a batch that did finish.
         if (!sec.containsKey(detectEndKey)) {
+          final shell = batch.stderr.trim();
           // The message points to the log, so the log says how far the batch
           // came and what the shell itself printed (the probes' own stderr is
           // in their sections) — a cut connection and a batch bash did not
@@ -634,12 +653,21 @@ class EvccUpdater {
                 'Abschnitten angekommen'
                 '${sec.isEmpty ? '' : ' (zuletzt ${sec.keys.last})'}, '
                 'Exit-Status ${batch.exitCode ?? 'fehlt'}.');
-            final shell = batch.stderr.trim();
             if (shell.isNotEmpty) {
               final said =
                   shell.length > 300 ? '${shell.substring(0, 300)} …' : shell;
               log('Meldung der Shell: $said');
             }
+          }
+          // Not one section, but the shell answered — with a status, or in
+          // words: the batch never ran on the Pi (no bash there, a login
+          // shell that could not run the line). Nothing was cut, and saying
+          // so would send the user after their network.
+          if (sec.isEmpty && (batch.exitCode != null || shell.isNotEmpty)) {
+            throw EvccUpdateException(
+                UpdateErrorKind.unknown,
+                'Die Erkennung ließ sich auf dem Pi nicht starten (Exit-Status '
+                '${batch.exitCode ?? 'fehlt'}). Details im Log.');
           }
           throw const EvccUpdateException(
               UpdateErrorKind.unknown, _resultUnknown);
@@ -1276,6 +1304,12 @@ class EvccUpdater {
   /// Returns false instead of throwing — "not reachable" is an answer, not an
   /// error. The one exception is [HostKeyChangedException]: a changed host key
   /// is a security event and must never be flattened into "unreachable".
+  ///
+  /// The short deadline the callers pass ([SshConfig.timeout]) is for reaching
+  /// the Pi. Once the login went through, `true` waits for its start under
+  /// [SshConfig.startTimeout] like any command: a Pi that is slow to set the
+  /// session up is reachable, and reporting it otherwise made the fallback
+  /// pick the other address.
   Future<bool> probeConnection({
     required SshConfig config,
     void Function(String line)? onLog,
@@ -2985,12 +3019,18 @@ class EvccUpdater {
               if (t.isNotEmpty) log(t);
             },
           );
+          // A result means the channel was open: the Pi has the command, and
+          // an "Abbrechen" from here on no longer decides what is reported.
+          _powerTaken[runner] = true;
           combined = '${result.stdout}\n${result.stderr}';
           exitCode = result.exitCode;
         } on CommandNotStartedException {
           // The Pi never took the command: nothing says it is going down.
           rethrow;
         } catch (_) {
+          // "Abbrechen" while the Pi had not confirmed the command yet ends
+          // that wait with an error, too: a cancel, not the Pi going down.
+          if (_cancelRequested(runner)) rethrow;
           // The reboot drops the SSH connection — expected, treat as success.
           disconnected = true;
         }
@@ -3422,12 +3462,16 @@ class EvccUpdater {
               if (t.isNotEmpty) log(t);
             },
           );
+          // As in [reboot]: the Pi has the command, a cancel changes nothing.
+          _powerTaken[runner] = true;
           combined = '${result.stdout}\n${result.stderr}';
           exitCode = result.exitCode;
         } on CommandNotStartedException {
           // The Pi never took the command: nothing says it is going down.
           rethrow;
         } catch (_) {
+          // As in [reboot]: ended by "Abbrechen" before the Pi confirmed it.
+          if (_cancelRequested(runner)) rethrow;
           // poweroff drops the SSH connection — expected, treat as success.
           disconnected = true;
         }
@@ -3800,14 +3844,24 @@ class EvccUpdater {
               'dem Pi bereits lief, kann dort noch zu Ende laufen.'
           : 'Abgebrochen.');
 
+  /// [d] as the messages below name it: whole minutes, else seconds.
+  static String _span(Duration d) {
+    final s = d.inSeconds;
+    return s >= 60 && s % 60 == 0 ? '${s ~/ 60} min' : '$s s';
+  }
+
   /// The message of [UpdateErrorKind.outputTimeout]; [silence] is how long
   /// nothing came.
-  static String _noOutputMessage(Duration silence) {
-    final s = silence.inSeconds;
-    final span = s >= 60 && s % 60 == 0 ? '${s ~/ 60} min' : '$s s';
-    return 'Seit $span keine Ausgabe – die Aktion läuft möglicherweise auf dem '
-        'Pi weiter, Ergebnis unbekannt.';
-  }
+  static String _noOutputMessage(Duration silence) =>
+      'Seit ${_span(silence)} keine Ausgabe – die Aktion läuft möglicherweise '
+      'auf dem Pi weiter, Ergebnis unbekannt.';
+
+  /// The message of [UpdateErrorKind.commandNotStarted]; [limit] is how long
+  /// the Pi was given. About the one command: an action may have run others
+  /// before it.
+  static String _notStartedMessage(Duration limit) =>
+      'Der Pi hat die Anmeldung angenommen, den Befehl aber nicht innerhalb '
+      'von ${_span(limit)} gestartet – er wurde nicht ausgeführt.';
 
   Future<T> _withConnection<T>({
     required SshConfig config,
@@ -3822,6 +3876,7 @@ class EvccUpdater {
     _cancelled[runner] = null;
     _rootWorkSent[runner] = null;
     _sudoNeedsPw[runner] = null;
+    _powerTaken[runner] = null;
     var connected = false;
     // The one seam every log line passes through — so the pty progress painting
     // apt/dpkg emit (see [stripProgressNoise]) is filtered once here, for every
@@ -3850,17 +3905,20 @@ class EvccUpdater {
       // would otherwise return a partial result and look "successful". Treat a
       // requested cancel as cancelled regardless of how the body finished —
       // except after a Pi-Job: its result came with positive proof (RC line),
-      // and a cancel there only ever stopped the following.
-      if (_cancelRequested(runner) && _jobTouched[runner] != true) {
+      // and a cancel there only ever stopped the following. And except after
+      // a reboot or poweroff the Pi took: "Abgebrochen." for a Pi that is
+      // going down would leave the page with a session to it.
+      if (_cancelRequested(runner) && !_verdictStands(runner)) {
         throw _cancelledError(runner);
       }
       return result;
     } catch (e) {
       // A job that runs on (or a busy Pi) is never "Abgebrochen." — that
       // would claim the update stopped while dpkg keeps working. Same for any
-      // verdict reached after a job command went out.
+      // verdict reached after a job command went out, or after the Pi took a
+      // power command (sudo refused, the guard refused).
       if (e is JobException) rethrow;
-      if (_jobTouched[runner] == true && e is EvccUpdateException) rethrow;
+      if (_verdictStands(runner) && e is EvccUpdateException) rethrow;
       // A user-requested cancel closed the connection mid-action; whatever low
       // -level error that surfaced (socket/SSH) is reported as a clean cancel.
       if (_cancelRequested(runner)) throw _cancelledError(runner);
@@ -3918,6 +3976,14 @@ class EvccUpdater {
           UpdateErrorKind.connection,
           'Verbindung fehlgeschlagen – IP/Port korrekt, Pi online im Netz?',
         );
+      }
+      if (e is CommandNotStartedException) {
+        // The login went through, so the Pi is there; what it did not do in
+        // time is confirm the command (a session setup that hangs). Neither
+        // "Pi nicht erreichbar" nor, as for the silence below, "läuft
+        // möglicherweise weiter": as far as this side can tell it never ran.
+        throw EvccUpdateException(UpdateErrorKind.commandNotStarted,
+            _notStartedMessage(e.duration ?? config.startTimeout));
       }
       if (e is TimeoutException) {
         // Raised by the body: the Pi was reachable and took commands. What

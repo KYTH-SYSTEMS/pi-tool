@@ -121,6 +121,86 @@ void main() {
     });
   }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
 
+  group('detectShellCommand', () {
+    test('starts with a program, not with an assignment', () {
+      // `LC_ALL=C bash -s` is syntax of sh-like shells. A login shell without
+      // it (fish before 3.1, csh, tcsh) takes `LC_ALL=C` for the name of a
+      // program, and the batch never runs.
+      expect(detectShellCommand, 'env LC_ALL=C bash -s');
+    });
+  });
+
+  // The line as a login shell without prefix assignments runs it: its words as
+  // they are, the first one being the program. Played by a bash that takes
+  // them from "$@" — an assignment that comes out of an expansion is none,
+  // there as in those shells. `env` and `bash` are stubs in a temp directory
+  // that is first in PATH from inside the shell (on Windows a `bash` further
+  // down PATH may be the WSL launcher); they lead to the env and the bash the
+  // tests run with. The probes are shell builtins.
+  group('detectShellCommand in bash', () {
+    late Directory dir;
+    late String root;
+
+    setUp(() {
+      dir = Directory.systemTemp.createTempSync('pitool-detect-shell');
+      root = dir.path.replaceAll(r'\', '/');
+      final real = const LineSplitter()
+          .convert(Process.runSync(
+                  _bash!, ['-c', r'echo "$BASH"; command -v env']).stdout
+              as String)
+          .map((l) => l.trim())
+          .toList();
+      expect(real, hasLength(2), reason: '$real');
+      File('$root/bash')
+          .writeAsStringSync('#!/bin/sh\nexec \'${real[0]}\' "\$@"\n');
+      File('$root/env')
+          .writeAsStringSync('#!/bin/sh\nexec \'${real[1]}\' "\$@"\n');
+      Process.runSync(_bash!, ['-c', r'chmod +x "$0"/*', root]);
+    });
+
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    Future<({int code, Map<String, String> sec})> runWords(
+        List<String> words, List<(String, String)> probes) async {
+      final p = await Process.start(
+          _bash!,
+          [
+            '-c',
+            // $0 is the stub directory, as bash names it (a `C:/…` in PATH
+            // would be split at its colon); "$@" are the words of the line.
+            r'cd "$0" && PATH="$(pwd):$PATH" && export PATH && "$@"',
+            root,
+            ...words,
+          ],
+          // Not C: what the batch sees has to come from the line itself.
+          environment: {'LC_ALL': 'POSIX'});
+      final out = p.stdout.transform(utf8.decoder).join();
+      p.stderr.drain<void>();
+      p.stdin.write('${buildDetectBatch(probes)}\n');
+      // A line that did not run leaves nobody to read the batch.
+      await p.stdin.close().catchError((Object _) {});
+      return (code: await p.exitCode, sec: splitDetectSections(await out));
+    }
+
+    test('runs where the first word has to be a program, with LC_ALL=C',
+        () async {
+      final r = await runWords(detectShellCommand.split(' '),
+          [('LC', r'echo "lc=$LC_ALL"'), ('B', 'echo b')]);
+      expect(r.code, 0);
+      expect(r.sec.keys.toList(), ['LC', 'B', detectEndKey]);
+      expect(r.sec['LC'], 'lc=C');
+      expect(r.sec['B'], 'b');
+    });
+
+    test('the line it replaces does not get that far: no program of that name',
+        () async {
+      // The other half of the harness: what such a shell made of the old line.
+      final r = await runWords(['LC_ALL=C', 'bash', '-s'], [('A', 'echo a')]);
+      expect(r.code, 127);
+      expect(r.sec, isEmpty);
+    });
+  }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
+
   group('dockerListStateCommand', () {
     test('asks for the state, and for the plain listing if that fails', () {
       expect(

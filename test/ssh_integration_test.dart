@@ -54,6 +54,7 @@ void _tests() {
     String password = _password,
     String privateKey = '',
     Duration timeout = const Duration(seconds: 15),
+    Duration startTimeout = const Duration(seconds: 60),
     Duration commandTimeout = const Duration(minutes: 10),
   }) =>
       SshConfig(
@@ -63,6 +64,7 @@ void _tests() {
         password: password,
         privateKey: privateKey,
         timeout: timeout,
+        startTimeout: startTimeout,
         commandTimeout: commandTimeout,
       );
 
@@ -277,8 +279,8 @@ void _tests() {
   group('a peer that stops answering', () {
     test('an exec request without an answer ends as a TimeoutException',
         () async {
-      final runner =
-          await connected(cfg: config(timeout: const Duration(seconds: 1)));
+      final runner = await connected(
+          cfg: config(startTimeout: const Duration(seconds: 1)));
       final frozen = runner.run('pitool-test freeze 3');
       await Future<void>.delayed(const Duration(milliseconds: 600));
       // The channel for this one is not confirmed before the thaw.
@@ -297,10 +299,29 @@ void _tests() {
       expect(r.exitCode, 0);
     });
 
+    test('a command the peer confirms late still runs: the connect timeout '
+        'does not bound its start', () async {
+      // A Pi whose session setup takes longer than the connect timeout (the
+      // 4 s of an address probe, here 1 s): it answered the login, so it is
+      // there, and the command waits for it under the start limit.
+      final runner =
+          await connected(cfg: config(timeout: const Duration(seconds: 1)));
+      final frozen = runner.run('pitool-test freeze 3');
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      final watch = Stopwatch()..start();
+      final late = await runner.run('echo late');
+      // Confirmed only after the thaw, well past the connect timeout.
+      expect(watch.elapsed, greaterThan(const Duration(milliseconds: 1500)));
+      expect(late.stdout, 'late\n');
+      expect(late.exitCode, 0);
+      await frozen;
+      await runner.close();
+    });
+
     test('close() ends a run() whose exec request is still unanswered',
         () async {
       // The cancel path. With dartssh2 2.22.5 this run() never returned.
-      final runner = await connected(); // exec deadline 15 s: not what ends it
+      final runner = await connected(); // start limit 60 s: not what ends it
       final frozen = runner.run('pitool-test freeze 2');
       await Future<void>.delayed(const Duration(milliseconds: 600));
       Object? error;
@@ -316,6 +337,20 @@ void _tests() {
       await frozen.then<void>((_) {}, onError: (Object _) {});
       // Leave only once the server answers again.
       await (await connected()).close();
+    });
+
+    test('close() while a command is at work returns what came, without an '
+        'exit status', () async {
+      // The other side of the test above, and what reboot/shutdown tell the
+      // two apart by: a result means the peer had the command, an error that
+      // it had not confirmed it yet.
+      final runner = await connected();
+      final running = runner.run('echo started; sleep 5', stdin: 'pw\n');
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      await runner.close();
+      final r = await running.timeout(const Duration(seconds: 5));
+      expect(r.stdout, 'started\n');
+      expect(r.exitCode, isNull);
     });
 
     test('stdin the peer does not take ends under the inactivity timeout',

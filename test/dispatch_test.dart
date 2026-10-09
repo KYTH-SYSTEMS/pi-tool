@@ -9641,6 +9641,27 @@ void main() {
   });
 
   testWidgets(
+      'Befehl vom Pi nicht gestartet: die Meldung erscheint, die Sitzung '
+      'bleibt – der Pi hat die Anmeldung angenommen', (tester) async {
+    useTallScreen(tester);
+    const message = 'Der Pi hat die Anmeldung angenommen, den Befehl aber '
+        'nicht innerhalb von 1 min gestartet – er wurde nicht ausgeführt.';
+    final u = FakeEvccUpdater()
+      ..backupError = const EvccUpdateException(
+          UpdateErrorKind.commandNotStarted, message);
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(message), findsOneWidget);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+    expect(u.runCalls, 0, reason: 'ohne Backup kein Update');
+  });
+
+  testWidgets(
       'Pi nicht erreichbar mitten in einer Aktion: die Sitzung endet wie '
       'bisher', (tester) async {
     useTallScreen(tester);
