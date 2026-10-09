@@ -6402,6 +6402,38 @@ void main() {
       );
     });
 
+    test('restartPiholeDns runs the DNS command with the password via stdin',
+        () async {
+      final runner = FakeSshRunner({
+        piholeRestartCommand: [_r('  [✓] Flushing DNS cache\n')]
+      });
+      final log = <String>[];
+      await _updaterWith(runner)
+          .restartPiholeDns(config: _config, onLog: log.add);
+      expect(runner.commandsRun, contains(piholeRestartCommand));
+      expect(runner.stdinByCommand[piholeRestartCommand], 'sekret\n');
+      expect(runner.commandsRun.any((c) => c.contains('sekret')), isFalse);
+      expect(log.last, 'Pi-hole-DNS neu gestartet.');
+      expect(runner.closed, isTrue);
+    });
+
+    test('restartPiholeDns: a failing command is an error, not "neu gestartet"',
+        () async {
+      final runner = FakeSshRunner({
+        piholeRestartCommand: [
+          _r('', stderr: 'sh: 1: pihole: not found', exitCode: 127)
+        ]
+      });
+      final log = <String>[];
+      await expectLater(
+        _updaterWith(runner).restartPiholeDns(config: _config, onLog: log.add),
+        _err(UpdateErrorKind.unknown,
+            'DNS-Neustart fehlgeschlagen (Exit 127). Details im Log.'),
+      );
+      expect(log, isNot(contains('Pi-hole-DNS neu gestartet.')));
+      expect(runner.closed, isTrue);
+    });
+
     test('upgradeSystem runs full-upgrade and tolerates a failed apt update',
         () async {
       final runner = FakeSshRunner({

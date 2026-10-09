@@ -132,7 +132,28 @@ class _RecordingHistory extends HistoryStore {
 /// Updater test double — overrides the public surface the UI dispatches to.
 class FakeEvccUpdater extends EvccUpdater {
   FakeEvccUpdater() : super(runnerFactory: _noRunner);
-  static SshRunner _noRunner(SshConfig c) => throw UnimplementedError();
+
+  /// Calls that fell through to the real [EvccUpdater]: a method the UI
+  /// dispatches to and this fake does not override. The real method asks for
+  /// a connection and lands in [_noRunner]. Its UnimplementedError alone does
+  /// not fail a test — `_guard` turns it into the banner "Unerwarteter
+  /// Fehler" — so the calls are kept here and the tearDown in main() fails
+  /// the test that made them.
+  static final List<String> unexpectedCalls = [];
+
+  static SshRunner _noRunner(SshConfig c) {
+    // The first public method of the updater on the stack is the one the fake
+    // lacks. Where an await has cut the stack before it, the top frames stand
+    // in for the name.
+    final frames = StackTrace.current.toString().split('\n');
+    final method = RegExp(r'EvccUpdater\.([a-zA-Z]\w*)');
+    final name = frames
+        .map((f) => method.firstMatch(f)?.group(1))
+        .firstWhere((m) => m != null, orElse: () => null);
+    unexpectedCalls.add(name ?? frames.take(6).join(' | '));
+    throw UnimplementedError(
+        'FakeEvccUpdater has no override for ${name ?? 'this call'}');
+  }
 
   List<ServiceStatus> services = const [
     ServiceStatus(
@@ -887,6 +908,26 @@ class FakeEvccUpdater extends EvccUpdater {
     return summary;
   }
 
+  final installHosts = <String>[]; // which Pi got evcc installed
+  final installChannels = <String>[]; // … and from which release channel
+  InstallResult installResult =
+      const InstallResult(version: '0.311.0', serviceActive: true);
+
+  /// What the next detection sees after the install (the Pi's new state).
+  List<ServiceStatus>? servicesAfterInstall;
+
+  @override
+  Future<InstallResult> install({
+    required SshConfig config,
+    required void Function(String line) onLog,
+    String channel = 'stable',
+  }) async {
+    installHosts.add(config.host);
+    installChannels.add(channel);
+    if (servicesAfterInstall != null) services = servicesAfterInstall!;
+    return installResult;
+  }
+
   @override
   Future<DockerUpdateOutcome> updateDocker({
     required SshConfig config,
@@ -922,6 +963,22 @@ class FakeEvccUpdater extends EvccUpdater {
     piholeUpdateCalls++;
     await _jobHooks(onJobStarted);
   }
+
+  int piholeGravityCalls = 0, piholeDnsRestartCalls = 0;
+
+  @override
+  Future<void> updatePiholeGravity({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      piholeGravityCalls++;
+
+  @override
+  Future<void> restartPiholeDns({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      piholeDnsRestartCalls++;
 
   SystemUpgradeResult systemUpgradeResult = const SystemUpgradeResult();
 
@@ -1072,6 +1129,29 @@ const _readyNoOffer = AppConfig(
 );
 
 void main() {
+  // A call the fake has no override for fails the test that made it (see
+  // [FakeEvccUpdater.unexpectedCalls]) — whatever that test asserts itself.
+  setUp(FakeEvccUpdater.unexpectedCalls.clear);
+  tearDown(() => expect(FakeEvccUpdater.unexpectedCalls, isEmpty,
+      reason: 'the UI called EvccUpdater methods FakeEvccUpdater does not '
+          'override — add the override (and a counter) to the fake'));
+
+  test('FakeEvccUpdater: a call without an override is kept, by name',
+      () async {
+    // What a missing override amounts to: the real method on the fake's
+    // runner factory.
+    final real = EvccUpdater(runnerFactory: FakeEvccUpdater._noRunner);
+    await expectLater(
+        real.restartPiholeDns(
+            config: const SshConfig(
+                host: '192.0.2.1', port: 22, username: 'pi', password: 'pw'),
+            onLog: (_) {}),
+        throwsUnimplementedError);
+    expect(FakeEvccUpdater.unexpectedCalls, ['restartPiholeDns']);
+    // Made on purpose here — the tearDown above must not count it.
+    FakeEvccUpdater.unexpectedCalls.clear();
+  });
+
   void useTallScreen(WidgetTester tester) {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
@@ -1359,6 +1439,7 @@ void main() {
           Future<bool> Function(Uri uri)? urlOpener,
           Authenticator? authenticator,
           SecureScreen? secureScreen,
+          HistoryStore? history,
           Future<void> Function(String name, Uint8List bytes)? fileSaver}) =>
       MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -1385,6 +1466,7 @@ void main() {
           urlOpener: urlOpener,
           authenticator: authenticator,
           secureScreen: secureScreen,
+          historyStore: history,
           fileSaver: fileSaver,
         ),
       );
@@ -2494,6 +2576,39 @@ void main() {
     expect(ka.endCount, 0);
   });
 
+  testWidgets(
+      'evcc ⋮ → „Dienst neu starten": Rückfrage → Aufruf → Status und '
+      'Verlaufseintrag', (tester) async {
+    useTallScreen(tester);
+    final history = _RecordingHistory();
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u, history: history));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    Future<void> ask() async {
+      await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dienst neu starten'));
+      await tester.pumpAndSettle();
+    }
+
+    // Declined: nothing reaches the Pi.
+    await ask();
+    expect(find.text('evcc-Dienst neu starten?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.restartServiceCalls, 0);
+    expect(history.added, isEmpty);
+
+    await ask();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.restartServiceCalls, 1);
+    expect(find.text('evcc-Dienst neu gestartet.'), findsOneWidget);
+    expect(history.added, ['evcc-Dienst neu gestartet.']);
+  });
+
   // ---- running bar: narrow display, large font ----
 
   // An ordinary phone at the default font size keeps the labelled button.
@@ -3209,6 +3324,61 @@ void main() {
     // Pi-hole ships no official Android app — a third-party one must never be
     // offered as "the official app", so that entry stays away.
     expect(find.text('Offizielle App'), findsNothing);
+  });
+
+  // The two quick Pi-hole actions start right from the menu, without a
+  // question in between.
+  const piholeOnly = [
+    ServiceStatus(
+        id: 'pihole',
+        name: 'Pi-hole',
+        installed: true,
+        version: 'v6.0.4',
+        active: true),
+  ];
+
+  testWidgets(
+      'Pi-hole ⋮ → „Blocklisten aktualisieren": Aufruf hinter dem Keep-Alive, '
+      'dann der Status', (tester) async {
+    useTallScreen(tester);
+    final ka = _FakeKeepAlive();
+    final u = FakeEvccUpdater()..services = piholeOnly;
+    await tester.pumpWidget(page(u, keepAlive: ka));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Blocklisten aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(u.piholeGravityCalls, 1);
+    expect(u.piholeDnsRestartCalls, 0);
+    expect(find.text('Pi-hole-Blocklisten aktualisiert.'), findsOneWidget);
+    // Rebuilding the lists can take minutes: foreground service, released.
+    expect(ka.lastMessage, 'Blocklisten werden aktualisiert …');
+    expect((ka.beginCount, ka.endCount), (1, 1));
+  });
+
+  testWidgets('Pi-hole ⋮ → „DNS neu starten": Aufruf, dann der Status',
+      (tester) async {
+    useTallScreen(tester);
+    final ka = _FakeKeepAlive();
+    final u = FakeEvccUpdater()..services = piholeOnly;
+    await tester.pumpWidget(page(u, keepAlive: ka));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DNS neu starten'));
+    await tester.pumpAndSettle();
+
+    expect(u.piholeDnsRestartCalls, 1);
+    expect(u.piholeGravityCalls, 0);
+    expect(find.text('Pi-hole-DNS neu gestartet.'), findsOneWidget);
+    // A short action: no foreground service for it.
+    expect(ka.beginCount, 0);
   });
 
   // ---- „Oberfläche öffnen": the address each card hands to the browser ----
@@ -4401,6 +4571,70 @@ void main() {
     expect(find.text('evcc installieren?'), findsOneWidget);
   });
 
+  // … and from that dialog on: nothing without the confirmation, then the
+  // install, its banner and history entry, and a fresh detection.
+  testWidgets(
+      'evcc installieren: Rückfrage → Installation → Status, Verlaufseintrag '
+      'und neue Erkennung', (tester) async {
+    useTallScreen(tester);
+    const system = ServiceStatus(
+        id: 'system', name: 'System (Pi)', installed: true, active: true);
+    final history = _RecordingHistory();
+    final ka = _FakeKeepAlive();
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(id: 'evcc', name: 'evcc', installed: false),
+        system,
+      ]
+      ..servicesAfterInstall = const [
+        ServiceStatus(
+            id: 'evcc',
+            name: 'evcc',
+            installed: true,
+            version: '0.311.0',
+            active: true,
+            detail: 'apt · Dienst aktiv'),
+        system,
+      ];
+    await tester.pumpWidget(page(u, history: history, keepAlive: ka));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    expect(find.byKey(const ValueKey('menu-evcc')), findsNothing);
+
+    Future<void> openInstall() async {
+      await tester
+          .tap(find.widgetWithText(OutlinedButton, 'Dienst hinzufügen'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('evcc')); // picker row
+      await tester.pumpAndSettle();
+    }
+
+    // Declined: nothing reaches the Pi.
+    await openInstall();
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.installHosts, isEmpty);
+    expect(history.added, isEmpty);
+
+    // Confirmed: one install on the active Pi, from the stable channel.
+    await openInstall();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.installHosts, ['192.168.178.64']);
+    expect(u.installChannels, ['stable']);
+    expect(
+        find.text('evcc 0.311.0 installiert, Dienst aktiv. '
+            'Jetzt im Browser einrichten.'),
+        findsOneWidget);
+    expect(history.added, ['evcc 0.311.0 installiert.']);
+    // A long action: it ran behind the foreground service, released again.
+    expect(ka.lastMessage, 'evcc wird installiert …');
+    expect((ka.beginCount, ka.endCount), (1, 1));
+    // The detection that follows shows the new card.
+    expect(u.detectCalls, 2);
+    expect(find.byKey(const ValueKey('menu-evcc')), findsOneWidget);
+  });
+
   testWidgets('installed services are not offered in the add picker',
       (tester) async {
     useTallScreen(tester);
@@ -4813,6 +5047,41 @@ void main() {
     await tester.pumpAndSettle();
     expect(u.rebootCalls, 1);
     expect(u.shutdownCalls, 0);
+  });
+
+  testWidgets(
+      'System ⋮ → „Pi neu starten": Rückfrage → Aufruf → Status und '
+      'Verlaufseintrag', (tester) async {
+    useTallScreen(tester);
+    final history = _RecordingHistory();
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u, history: history));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    Future<void> ask() async {
+      await tester.tap(find.byKey(const ValueKey('menu-system')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pi neu starten'));
+      await tester.pumpAndSettle();
+    }
+
+    // Declined: nothing reaches the Pi.
+    await ask();
+    expect(find.text('Pi neu starten?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.rebootCalls, 0);
+    expect(history.added, isEmpty);
+
+    await ask();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.rebootCalls, 1);
+    expect(u.shutdownCalls, 0);
+    expect(find.text('Neustart ausgelöst – der Pi ist gleich kurz offline.'),
+        findsOneWidget);
+    expect(history.added, ['Pi-Neustart ausgelöst.']);
   });
 
   testWidgets(
