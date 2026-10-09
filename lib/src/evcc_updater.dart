@@ -1092,7 +1092,8 @@ class EvccUpdater {
     );
   }
 
-  /// Lists one service's backups under /var/backups/pi-tool (newest first).
+  /// Lists one service's backups under /var/backups/pi-tool (newest first),
+  /// the backup timer's included.
   Future<List<String>> listServiceBackups({
     required SshConfig config,
     required String servicePrefix,
@@ -2718,7 +2719,8 @@ class EvccUpdater {
     );
   }
 
-  /// Lists the evcc backup archives present on the Pi, newest first (no sudo).
+  /// Lists the evcc backup archives present on the Pi, newest first (no sudo):
+  /// the app's own and the evcc archives of the on-Pi timers.
   Future<List<String>> listBackups({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -2737,13 +2739,14 @@ class EvccUpdater {
 
   /// Restores a previously created backup [path]: stops evcc, extracts the
   /// archive back to `/`, restarts evcc. Throws on a rejected sudo password or
-  /// any failure. Rejects a path outside the backup dir as defense-in-depth.
+  /// any failure. Rejects a path that is no evcc archive ([isEvccRestorePath])
+  /// as defense-in-depth.
   Future<void> restoreBackup({
     required SshConfig config,
     required String path,
     required void Function(String line) onLog,
   }) async {
-    if (!path.startsWith('$evccBackupDir/') || !path.endsWith('.tar.gz')) {
+    if (!isEvccRestorePath(path)) {
       throw const EvccUpdateException(
         UpdateErrorKind.unknown,
         'Ungültiger Backup-Pfad.',

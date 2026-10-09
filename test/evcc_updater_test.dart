@@ -1273,6 +1273,58 @@ void main() {
       expect(list.length, 2);
     });
 
+    test('listBackups: a pattern without a match (ls exits 2) still lists '
+        'the archives that are there, timer archives included', () async {
+      const paths = [
+        '/var/backups/pi-tool/sched-evcc-20260630-030000.tar.gz',
+        '/var/backups/evcc/evcc-backup-20260628-090000.tar.gz',
+      ];
+      final runner = FakeSshRunner({
+        listBackupsCommand: [_r('${paths.join('\n')}\n', exitCode: 2)],
+      });
+      final list =
+          await _updaterWith(runner).listBackups(config: _config, onLog: (_) {});
+      expect(list, paths);
+    });
+
+    test('restoreBackup runs the restore on the evcc archives of the timers',
+        () async {
+      for (final path in [
+        '/var/backups/pi-tool/sched-evcc-20260630-030000.tar.gz',
+        '/var/backups/pi-tool/autoupdate-evcc-20260630-040000.tar.gz',
+      ]) {
+        final runner = FakeSshRunner({
+          installShellCommand: [_r('RESTORE_OK\n')],
+          _svc: [_r('active\n')],
+        });
+        await _updaterWith(runner)
+            .restoreBackup(config: _config, path: path, onLog: (_) {});
+        expect(runner.stdinByCommand[installShellCommand],
+            contains("tar -xzf '$path' -C /"),
+            reason: path);
+      }
+    });
+
+    test('restoreBackup rejects every other file of the shared directory',
+        () async {
+      for (final path in [
+        // Another service's archive: extracted to `/` it would land anywhere.
+        '/var/backups/pi-tool/homeassistant-backup-20260630-120000.tar.gz',
+        '/var/backups/pi-tool/sched-pihole-20260630-030000.tar.gz',
+        '/var/backups/pi-tool/sched-evcc-20260630-030000.tar.gz.part',
+        '/var/backups/pi-tool/../../tmp/sched-evcc-20260630-030000.tar.gz',
+      ]) {
+        final runner = FakeSshRunner({});
+        await expectLater(
+          _updaterWith(runner)
+              .restoreBackup(config: _config, path: path, onLog: (_) {}),
+          throwsA(isA<EvccUpdateException>()),
+          reason: path,
+        );
+        expect(runner.commandsRun, isEmpty, reason: path);
+      }
+    });
+
     test('restoreBackup runs the restore as root and verifies evcc is active',
         () async {
       const path = '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz';

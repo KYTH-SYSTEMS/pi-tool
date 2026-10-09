@@ -59,13 +59,21 @@ void main() {
   });
 
   group('service backup management', () {
-    test('list command targets one service prefix, newest first, no sudo', () {
-      final c = serviceBackupListCommand('pihole');
-      expect(c, contains('ls -1t'));
-      // The prefix is single-quoted (defense-in-depth); the glob stays outside.
-      expect(c, contains("/var/backups/pi-tool/'pihole'-backup-*"));
-      expect(c, contains('2>/dev/null'));
-      expect(c, isNot(contains('sudo')));
+    // What the command lists is checked in a real shell, see 'backup list
+    // commands in bash' in backup_scripts_test.dart.
+    test('list command: one `sh -c` word, newest first, no sudo', () {
+      expect(
+          serviceBackupListCommand('pihole'),
+          "sh -c 'ls -1t /var/backups/pi-tool/'\\''pihole'\\''-backup-* "
+          "/var/backups/pi-tool/sched-'\\''pihole'\\''-* 2>/dev/null'");
+    });
+
+    test('evcc list command: the app\'s directory and both timer patterns', () {
+      expect(
+          listBackupsCommand,
+          "sh -c 'ls -1t /var/backups/evcc/*.tar.gz "
+          '/var/backups/pi-tool/sched-evcc-*.tar.gz '
+          "/var/backups/pi-tool/autoupdate-evcc-*.tar.gz 2>/dev/null'");
     });
 
     test('parseServiceBackupList keeps .tar.gz and .zip archives only', () {
@@ -81,6 +89,60 @@ void main() {
       final c = serviceBackupDeleteCommand("/var/backups/pi-tool/a'b.zip");
       expect(c, startsWith('LC_ALL=C sudo -S rm -f --'));
       expect(c, contains(r"'/var/backups/pi-tool/a'\''b.zip'")); // quoted
+    });
+  });
+
+  group('timer archives', () {
+    const dir = '/var/backups/pi-tool';
+
+    test('backupOrigin tells them from the app\'s own by the file name', () {
+      for (final (path, origin) in [
+        ('/var/backups/evcc/evcc-backup-20260630-120000.tar.gz',
+            BackupOrigin.app),
+        ('$dir/pihole-backup-20260706-090000.zip', BackupOrigin.app),
+        ('$dir/homeassistant-backup-20260706-090000.tar.gz', BackupOrigin.app),
+        ('$dir/sched-evcc-20260630-030000.tar.gz', BackupOrigin.scheduled),
+        ('$dir/sched-pihole-20260630-030000.zip', BackupOrigin.scheduled),
+        ('$dir/autoupdate-evcc-20260630-040000.tar.gz',
+            BackupOrigin.autoUpdate),
+      ]) {
+        expect(backupOrigin(path), origin, reason: path);
+      }
+    });
+
+    test('isEvccRestorePath: the evcc directory and the two timer names', () {
+      for (final path in [
+        '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz',
+        '/var/backups/evcc/x.tar.gz', // the migration helper's upload
+        '$dir/sched-evcc-20260630-030000.tar.gz',
+        '$dir/autoupdate-evcc-20260630-040000.tar.gz',
+      ]) {
+        expect(isEvccRestorePath(path), isTrue, reason: path);
+      }
+    });
+
+    test('isEvccRestorePath: nothing else from the shared backup directory',
+        () {
+      for (final path in [
+        // Other services' archives: a different layout.
+        '$dir/homeassistant-backup-20260630-120000.tar.gz',
+        '$dir/pihole-backup-20260630-120000.tar.gz',
+        '$dir/sched-pihole-20260630-030000.tar.gz',
+        // Not the name the wrappers write.
+        '$dir/sched-evcc-20260630-030000.tar.gz.part',
+        '$dir/sched-evcc-latest.tar.gz',
+        '$dir/sched-evcc-20260630-030000.zip',
+        '$dir/sub/sched-evcc-20260630-030000.tar.gz',
+        '$dir/../../tmp/sched-evcc-20260630-030000.tar.gz',
+        '$dir/sched-evcc-20260630-030000.tar.gz\n',
+        '/tmp/sched-evcc-20260630-030000.tar.gz',
+        // Through the evcc directory into the shared one.
+        '/var/backups/evcc/../pi-tool/homeassistant-backup-20260630-120000.tar.gz',
+        '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz.part',
+        '/etc/passwd',
+      ]) {
+        expect(isEvccRestorePath(path), isFalse, reason: path);
+      }
     });
   });
 

@@ -956,8 +956,50 @@ fi
 /// Where pre-update evcc backups are written (see [buildBackupScript]).
 const String evccBackupDir = '/var/backups/evcc';
 
-/// Where on-demand Pi-hole / Home Assistant backups are written.
+/// Where on-demand Pi-hole / Home Assistant backups are written — and the
+/// archives of the on-Pi timers (see [BackupOrigin]).
 const String serviceBackupDir = '/var/backups/pi-tool';
+
+/// Who wrote a listed backup archive.
+enum BackupOrigin {
+  /// The app: on demand, before an update, or the migration helper.
+  app,
+
+  /// The backup timer on the Pi (scheduled_backup.dart): `sched-<service>-…`.
+  scheduled,
+
+  /// The update timer on the Pi, before its upgrade (auto_update.dart):
+  /// `autoupdate-evcc-…`.
+  autoUpdate,
+}
+
+/// The origin of the backup archive [path], told by its file name.
+BackupOrigin backupOrigin(String path) {
+  final name = path.split('/').last;
+  if (name.startsWith('sched-')) return BackupOrigin.scheduled;
+  if (name.startsWith('autoupdate-')) return BackupOrigin.autoUpdate;
+  return BackupOrigin.app;
+}
+
+/// The evcc archives the on-Pi timers write into [serviceBackupDir]:
+/// `/etc/evcc.yaml` and `/var/lib/evcc`, stored relative to `/` like
+/// [buildBackupScript]'s own — so [buildRestoreScript] restores them as is.
+final RegExp _evccTimerArchive = RegExp(
+    '^$serviceBackupDir/(?:sched|autoupdate)-evcc-'
+    r'\d{8}-\d{6}\.tar\.gz$');
+
+/// Whether [buildRestoreScript] may run on [path]: an archive directly in
+/// [evccBackupDir], or a timer's evcc archive by its exact name. Nothing else
+/// from [serviceBackupDir] — the Pi-hole and Home Assistant archives next to
+/// them have another layout and must never be extracted to `/`.
+bool isEvccRestorePath(String path) {
+  const own = '$evccBackupDir/';
+  if (path.startsWith(own)) {
+    return path.endsWith('.tar.gz') &&
+        !path.substring(own.length).contains('/');
+  }
+  return _evccTimerArchive.hasMatch(path);
+}
 
 /// Extracts the archive path from a service-backup success marker
 /// (`BACKUP_OK <path>`), or null when no backup was written.
@@ -1048,11 +1090,17 @@ String? interactiveCommandHint(String command) {
   }
 }
 
-/// Lists one service's backups under /var/backups/pi-tool, newest first. No
-/// sudo: the dir is 0755 and the archives 0644 (see the backup scripts).
-String serviceBackupListCommand(String servicePrefix) =>
-    'ls -1t /var/backups/pi-tool/${shSingleQuote(servicePrefix)}-backup-* '
-    '2>/dev/null';
+/// Lists one service's backups under /var/backups/pi-tool, newest first: the
+/// on-demand ones and those of the backup timer (`sched-<service>-…`; it
+/// writes them for Pi-hole — the same Teleporter export). No sudo: the dir is
+/// 0755 and the archives 0644 (see the backup scripts). Under `sh -c` for the
+/// pattern without a match, see [listBackupsCommand].
+String serviceBackupListCommand(String servicePrefix) {
+  final p = shSingleQuote(servicePrefix);
+  final ls = 'ls -1t $serviceBackupDir/$p-backup-* '
+      '$serviceBackupDir/sched-$p-* 2>/dev/null';
+  return 'sh -c ${shSingleQuote(ls)}';
+}
 
 /// Parses [serviceBackupListCommand] output into archive paths (newest first).
 List<String> parseServiceBackupList(String lsOutput) => lsOutput
@@ -1250,10 +1298,16 @@ Map<String, String> splitDetectSections(String output) {
   return map;
 }
 
-/// Lists existing evcc backups, newest first. No sudo: the dir + archives are
-/// created by root with a standard umask, so they're world-readable.
-const String listBackupsCommand =
-    'ls -1t /var/backups/evcc/*.tar.gz 2>/dev/null';
+/// Lists existing evcc backups, newest first: the app's own in
+/// [evccBackupDir] and the timers' evcc archives in [serviceBackupDir] (the
+/// names [isEvccRestorePath] accepts). No sudo: the dirs + archives are
+/// created by root with a standard umask, so they're world-readable. Under
+/// `sh -c`: there a pattern without a match is a name `ls` reports (muted)
+/// next to the files of the others — a login shell like zsh refuses the whole
+/// line instead.
+const String listBackupsCommand = "sh -c 'ls -1t $evccBackupDir/*.tar.gz "
+    '$serviceBackupDir/sched-evcc-*.tar.gz '
+    "$serviceBackupDir/autoupdate-evcc-*.tar.gz 2>/dev/null'";
 
 /// Parses [listBackupsCommand] output into archive paths (newest first).
 List<String> parseBackupList(String lsOutput) => lsOutput

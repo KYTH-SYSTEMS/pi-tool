@@ -743,6 +743,213 @@ exec "$REAL_TAR" "$@"''');
     });
   }, skip: _needsBash);
 
+  group('backup list commands in bash', () {
+    late _Pi pi;
+    const evccDir = '/var/backups/evcc';
+    const dir = '/var/backups/pi-tool';
+
+    setUp(() {
+      pi = _Pi();
+      // The commands run under `sh -c`, and PATH holds only the sandbox's bin.
+      pi.stub('sh', r'exec /bin/sh "$@"', log: false);
+    });
+    tearDown(() => pi.dispose());
+
+    /// Runs [command] and returns the paths [parse] reads from its output, as
+    /// the Pi names them.
+    Future<List<String>> list(
+        String command, List<String> Function(String) parse) async {
+      final r = await pi.run(command);
+      return [for (final p in parse(r.out)) p.replaceFirst(pi.root, '')];
+    }
+
+    /// Files in the shared directory that are no evcc archive.
+    void putOthers() {
+      pi.putAged('$dir/sched-evcc-20260109-030000.tar.gz.part', 9);
+      pi.putAged('$dir/sched-pihole-20260109-030000.zip', 9);
+      pi.putAged('$dir/pihole-backup-20260109-120000.zip', 9);
+      pi.putAged('$dir/homeassistant-backup-20260109-120000.tar.gz', 9);
+      pi.putAged('$dir/config-evcc.yaml-20260109-120000.bak', 9);
+    }
+
+    test('evcc: the app\'s backups and both timers\' archives, newest first',
+        () async {
+      pi.putAged('$evccDir/evcc-backup-20260105-120000.tar.gz', 5);
+      pi.putAged('$dir/autoupdate-evcc-20260106-040000.tar.gz', 6);
+      pi.putAged('$dir/sched-evcc-20260107-030000.tar.gz', 7);
+      pi.putAged('$evccDir/evcc-backup-20260108-120000.tar.gz', 8);
+      putOthers();
+      expect(await list(listBackupsCommand, parseBackupList), [
+        '$evccDir/evcc-backup-20260108-120000.tar.gz',
+        '$dir/sched-evcc-20260107-030000.tar.gz',
+        '$dir/autoupdate-evcc-20260106-040000.tar.gz',
+        '$evccDir/evcc-backup-20260105-120000.tar.gz',
+      ]);
+    });
+
+    test('evcc: no timer archives (two patterns without a match): the app\'s '
+        'backups are still listed', () async {
+      pi.putAged('$evccDir/evcc-backup-20260105-120000.tar.gz', 5);
+      pi.putAged('$evccDir/evcc-backup-20260108-120000.tar.gz', 8);
+      putOthers();
+      expect(await list(listBackupsCommand, parseBackupList), [
+        '$evccDir/evcc-backup-20260108-120000.tar.gz',
+        '$evccDir/evcc-backup-20260105-120000.tar.gz',
+      ]);
+    });
+
+    test('evcc: only an archive of the update timer: it is listed', () async {
+      pi.putAged('$dir/autoupdate-evcc-20260106-040000.tar.gz', 6);
+      putOthers();
+      expect(await list(listBackupsCommand, parseBackupList),
+          ['$dir/autoupdate-evcc-20260106-040000.tar.gz']);
+    });
+
+    test('evcc: no archive at all: an empty list', () async {
+      putOthers();
+      expect(await list(listBackupsCommand, parseBackupList), isEmpty);
+    });
+
+    test('Pi-hole: on-demand and timer archives, newest first, nothing of '
+        'another service', () async {
+      pi.putAged('$dir/pihole-backup-20260103-120000.zip', 3);
+      pi.putAged('$dir/sched-pihole-20260104-030000.tar.gz', 4);
+      pi.putAged('$dir/sched-pihole-20260105-030000.zip', 5);
+      pi.putAged('$dir/sched-evcc-20260109-030000.tar.gz', 9);
+      pi.putAged('$dir/autoupdate-evcc-20260109-040000.tar.gz', 9);
+      pi.putAged('$dir/homeassistant-backup-20260109-120000.tar.gz', 9);
+      expect(
+          await list(serviceBackupListCommand('pihole'), parseServiceBackupList),
+          [
+            '$dir/sched-pihole-20260105-030000.zip',
+            '$dir/sched-pihole-20260104-030000.tar.gz',
+            '$dir/pihole-backup-20260103-120000.zip',
+          ]);
+    });
+
+    test('Home Assistant (the timer writes none): its on-demand archives',
+        () async {
+      pi.putAged('$dir/homeassistant-backup-20260103-120000.tar.gz', 3);
+      pi.putAged('$dir/sched-pihole-20260109-030000.zip', 9);
+      pi.putAged('$dir/sched-evcc-20260109-030000.tar.gz', 9);
+      expect(
+          await list(serviceBackupListCommand('homeassistant'),
+              parseServiceBackupList),
+          ['$dir/homeassistant-backup-20260103-120000.tar.gz']);
+    });
+
+    test('a prefix with a quote stays part of one word: nothing else runs',
+        () async {
+      pi.putAged('$dir/pihole-backup-20260103-120000.zip', 3);
+      // TMPDIR is the sandbox's /tmp in every shell of this run.
+      final r = await pi.run(serviceBackupListCommand(
+          "x'; echo yes > \"\$TMPDIR/injected\"; echo '"));
+      expect(pi.exists('/tmp/injected'), isFalse);
+      expect(r.out, isNot(contains('pihole-backup')));
+    });
+  }, skip: _needsBash);
+
+  // The archives the on-Pi timers write are offered for restore next to the
+  // app's own. These run the installed wrapper and then the restore on the
+  // archive it wrote — the layout the restore expects is the one they produce.
+  group('timer archives restore like the app\'s own, in bash', () {
+    late _Pi pi;
+    const dir = '/var/backups/pi-tool';
+    final sched = buildScheduledBackupInstallScript(
+        onCalendar: '*-*-* 03:00:00', keep: 7);
+
+    setUp(() {
+      pi = _Pi();
+      pi.stub('systemctl', r'''
+case "$1" in
+  is-active) cat "$S/evcc" ;;
+  stop) echo inactive > "$S/evcc" ;;
+  start) echo active > "$S/evcc" ;;
+esac
+exit 0''');
+      pi.put('/state/evcc', 'active\n');
+      pi.stub('dpkg-query', 'exit 0');
+      pi.stub('apt-get', 'exit 0');
+    });
+    tearDown(() => pi.dispose());
+
+    /// Installs a timer with [install], runs the wrapper of [unit] and returns
+    /// the one archive named [prefix]… it left behind (Pi path).
+    Future<String> archiveOf(String install, String unit, String prefix) async {
+      final i = await pi.run(install);
+      expect(i.code, 0, reason: i.err);
+      final w =
+          await pi.run("'${pi.root}/usr/local/lib/$unit.sh'", rebase: false);
+      expect(w.code, 0, reason: w.err);
+      return '$dir/${pi.ls(dir).singleWhere((n) => n.startsWith(prefix))}';
+    }
+
+    for (final (timer, install, unit, prefix) in [
+      ('backup timer', sched, scheduledBackupUnit, 'sched-evcc-'),
+      (
+        'update timer',
+        buildAutoUpdateInstallScript(onCalendar: '*-*-* 04:00:00'),
+        autoUpdateUnit,
+        'autoupdate-evcc-',
+      ),
+    ]) {
+      test('evcc archive of the $timer: config and database come back, a '
+          'stale -wal of the live database goes', () async {
+        pi.put('/etc/evcc.yaml', 'ARCHIVED');
+        pi.put('/var/lib/evcc/evcc.db', 'ADB');
+        final archive = await archiveOf(install, unit, prefix);
+        // The name is one the app runs the evcc restore on.
+        expect(isEvccRestorePath(archive), isTrue, reason: archive);
+        // The sandboxed wrapper archived sandbox paths, so every member name
+        // starts with the sandbox: extracting at `/` below stays inside it.
+        final raw = await pi.run("'${pi.realTar}' -tzf '${pi.root}$archive'",
+            rebase: false);
+        expect(raw.code, 0, reason: raw.err);
+        expect(raw.lines, isNotEmpty);
+        expect(raw.lines, everyElement(startsWith('${pi.root.substring(1)}/')));
+        expect(await pi.members(archive),
+            containsAll(['etc/evcc.yaml', 'var/lib/evcc/evcc.db']));
+
+        pi.put('/etc/evcc.yaml', 'LIVE');
+        pi.put('/var/lib/evcc/evcc.db', 'LIVEDB');
+        pi.put('/var/lib/evcc/evcc.db-wal', 'LIVEWAL');
+        pi.clearCalls();
+        final r = await pi.run(buildRestoreScript(archive));
+        expect(r.code, 0, reason: '${r.out}${r.err}');
+        expect(r.lines.last, 'RESTORE_OK');
+        expect(pi.read('/etc/evcc.yaml'), 'ARCHIVED');
+        expect(pi.read('/var/lib/evcc/evcc.db'), 'ADB');
+        expect(pi.exists('/var/lib/evcc/evcc.db-wal'), isFalse);
+        expect(pi.calls.where((c) => c.startsWith('systemctl ')),
+            ['systemctl stop evcc', 'systemctl start evcc']);
+        expect(pi.read('/state/evcc').trim(), 'active');
+      });
+    }
+
+    test('Pi-hole archive of the backup timer: the Teleporter zip the restore '
+        'imports', () async {
+      pi.stub('pihole', _piholeV6);
+      // v6 FTL: without a file an export into the working dir, with one the
+      // import of that file.
+      pi.stub('pihole-FTL', r'''
+[ "$1" = --teleporter ] || exit 1
+if [ -n "$2" ]; then cat "$2" > "$S/imported"; exit 0; fi
+echo ZIP > "pi-hole_pi_teleporter_2026-10-08_03-00-00_UTC.zip"''');
+      final archive =
+          await archiveOf(sched, scheduledBackupUnit, 'sched-pihole-');
+      expect(archive, endsWith('.zip'));
+      pi.clearCalls();
+      final r = await pi.run(buildPiholeRestoreScript(archive));
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'RESTORE_OK');
+      expect(pi.read('/state/imported').trim(), 'ZIP');
+      expect(pi.calls, [
+        'pihole-FTL --teleporter ${pi.root}$archive',
+        'pihole reloaddns',
+      ]);
+    });
+  }, skip: _needsBash);
+
   group('buildHomeAssistantRestoreScript in bash', () {
     late _Pi pi;
 
