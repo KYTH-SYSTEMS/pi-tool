@@ -970,10 +970,14 @@ void main() {
       await pumpApp(tester, auth: auth, filePicker: picker, clock: () => now);
 
       // Einstellungen → Profile importieren opens the system picker.
-      await openMenu(tester, 'Einstellungen');
-      await tester.ensureVisible(find.text('Profile importieren'));
-      await tester.tap(find.text('Profile importieren'));
-      await tester.pumpAndSettle();
+      Future<void> openPicker() async {
+        await openMenu(tester, 'Einstellungen');
+        await tester.ensureVisible(find.text('Profile importieren'));
+        await tester.tap(find.text('Profile importieren'));
+        await tester.pumpAndSettle();
+      }
+
+      await openPicker();
       auth.allow = false;
 
       // Picked a while, came back in time: no lock.
@@ -983,9 +987,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(unlock, findsNothing);
       expect(auth.prompts, 1); // only the one at the start
+      picker.closed.complete(null); // nothing picked
+      await tester.pumpAndSettle();
 
-      // Left open for longer: locked on the way back — with the first frame,
-      // before the app is in front again.
+      // Another one, left open for longer: locked on the way back — with the
+      // first frame, before the app is in front again.
+      await openPicker();
       toBackground(tester);
       now = now.add(const Duration(minutes: 6));
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
@@ -1084,6 +1091,126 @@ void main() {
 
       await tapUnlock(tester, auth);
       expect(find.byType(AlertDialog).hitTestable(), findsOneWidget);
+    });
+
+    // The picker's answer includes reading the file, and a slow provider can
+    // stretch that for minutes after the picker has closed. The hold-off is
+    // for the picker: it ends when the app is in front again, not when the
+    // bytes are there.
+    testWidgets(
+        'back from the picker while the file is still being read: leaving '
+        'the app again locks it, and the file that then arrives is not '
+        'uploaded', (tester) async {
+      var now = DateTime(2026, 10, 8, 12);
+      final auth = _Auth();
+      final updater = _Updater();
+      final picker = _OpenPicker();
+      PickedFile file() => (name: 'evcc.yaml', bytes: Uint8List.fromList([1]));
+      await pumpApp(tester,
+          auth: auth, updater: updater, filePicker: picker, clock: () => now);
+      await tester
+          .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.folder_outlined)); // Dateien
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.upload_file));
+      await tester.pump(); // the picker is open
+      auth.allow = false;
+
+      // Picked, and in front again — the answer is still out. No lock: this
+      // was the picker.
+      toBackground(tester);
+      now = now.add(const Duration(seconds: 20));
+      toForeground(tester);
+      await tester.pumpAndSettle();
+      expect(unlock, findsNothing);
+      expect(auth.prompts, 1); // only the one at the start
+
+      // Away again, far within the five minutes: no picker any more, so this
+      // locks like any other time.
+      toBackground(tester);
+      now = now.add(const Duration(seconds: 30));
+      toForeground(tester);
+      await tester.pumpAndSettle();
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(auth.prompts, 2);
+
+      // Now the bytes are there — beneath the lock.
+      picker.closed.complete(file());
+      await tester.pumpAndSettle();
+      expect(updater.uploadedTo, isEmpty);
+
+      // Dropped, not postponed — and after the unlock the upload works again.
+      await tapUnlock(tester, auth);
+      expect(updater.uploadedTo, isEmpty);
+      await tester.tap(find.byIcon(Icons.upload_file));
+      await tester.pump();
+      picker.closed.complete(file());
+      await tester.pumpAndSettle();
+      expect(updater.uploadedTo, ['/home/evcc.yaml']);
+      await tester.pump(const Duration(seconds: 5)); // let the snackbar expire
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'back from the picker while the export file is still being read: '
+        'leaving the app again locks it, and the passphrase dialog waits '
+        'beneath the lock', (tester) async {
+      var now = DateTime(2026, 10, 8, 12);
+      final auth = _Auth();
+      final picker = _OpenPicker();
+      await pumpApp(tester, auth: auth, filePicker: picker, clock: () => now);
+      await openMenu(tester, 'Einstellungen');
+      await tester.ensureVisible(find.text('Profile importieren'));
+      await tester.tap(find.text('Profile importieren'));
+      await tester.pumpAndSettle();
+      auth.allow = false;
+
+      toBackground(tester);
+      now = now.add(const Duration(seconds: 20));
+      toForeground(tester);
+      await tester.pumpAndSettle();
+      expect(unlock, findsNothing);
+
+      toBackground(tester);
+      now = now.add(const Duration(seconds: 30));
+      toForeground(tester);
+      await tester.pumpAndSettle();
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(auth.prompts, 2);
+
+      // The file is read: what follows the pick opens beneath the lock.
+      picker.closed.complete((name: 'p.pitool', bytes: Uint8List(0)));
+      await tester.pumpAndSettle();
+      expect(unlock.hitTestable(), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(AlertDialog, skipOffstage: false), findsOneWidget);
+
+      await tapUnlock(tester, auth);
+      expect(find.byType(AlertDialog).hitTestable(), findsOneWidget);
+    });
+
+    testWidgets(
+        'a picker that answers without the app ever leaving the front ends '
+        'the hold-off with its answer', (tester) async {
+      final auth = _Auth();
+      final picker = _OpenPicker();
+      await pumpApp(tester, auth: auth, filePicker: picker);
+      await openMenu(tester, 'Einstellungen');
+      await tester.ensureVisible(find.text('Profile importieren'));
+      await tester.tap(find.text('Profile importieren'));
+      await tester.pumpAndSettle();
+
+      // Nothing opened (the launch failed, say): no lifecycle change at all.
+      picker.closed.completeError(PlatformException(code: 'launch_failed'));
+      await tester.pumpAndSettle();
+      expect(find.text('Dateiauswahl fehlgeschlagen.'), findsOneWidget);
+
+      // Leaving the app now locks it as usual.
+      await lockByLeaving(tester, auth);
+      expect(unlock.hitTestable(), findsOneWidget);
+      await tester.pump(const Duration(seconds: 5)); // let the snackbar expire
+      await tester.pumpAndSettle();
     });
   });
 

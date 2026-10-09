@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Directory, File;
+import 'dart:io' show Directory, File, Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
@@ -144,23 +144,54 @@ ThemeData buildAppTheme(Brightness brightness, {String? fontFamily}) {
 /// it once [share] has returned — also when it threw. The share sheet works
 /// on a copy of its own by then (share_plus copies into its cache folder
 /// before it opens); ours would otherwise stay behind in the app cache, and a
-/// downloaded backup lies there unencrypted.
-Future<void> shareTemporaryFile(
+/// downloaded backup lies there unencrypted. Completes with what [share]
+/// returned.
+Future<T> shareTemporaryFile<T>(
   String name,
   Uint8List bytes, {
   required Directory dir,
-  required Future<void> Function(String path) share,
+  required Future<T> Function(String path) share,
 }) async {
   final f = File('${dir.path}/$name');
   try {
     await f.writeAsBytes(bytes, flush: true);
-    await share(f.path);
+    return await share(f.path);
   } finally {
     try {
       await f.delete();
     } catch (_) {
       // Never written, or already gone: nothing left to remove.
     }
+  }
+}
+
+/// Whether [name] is a file the file saver up to v0.71.0 can have left in
+/// the app's temp directory. It wrote every downloaded backup (`.tar.gz`, a
+/// Pi-hole v6 `.zip`) and every profile export (`.pitool`) there for the share
+/// sheet and never deleted one.
+bool isSharedFileLeftover(String name) =>
+    name.endsWith('.tar.gz') ||
+    name.endsWith('.zip') ||
+    name.endsWith('.pitool');
+
+/// Deletes those leftovers from [dir]: plain files directly in it — nothing
+/// in a folder beneath, and nothing a link points to. Best effort: what
+/// cannot be listed or deleted stays, and nothing is reported.
+Future<void> removeSharedFileLeftovers(Directory dir) async {
+  try {
+    await for (final entry in dir.list(followLinks: false)) {
+      if (entry is! File) continue;
+      if (!isSharedFileLeftover(entry.path.split(RegExp(r'[\\/]')).last)) {
+        continue;
+      }
+      try {
+        await entry.delete();
+      } catch (_) {
+        // Stays where it is; the next first share tries again.
+      }
+    }
+  } catch (_) {
+    // A directory that cannot be listed: nothing to clear from here.
   }
 }
 
@@ -238,6 +269,7 @@ class UpdaterPage extends StatefulWidget {
     this.filePicker,
     this.fileSaver,
     this.exportEncryptor,
+    this.importDecryptor,
     this.textSharer,
     this.appLauncher,
     this.urlOpener,
@@ -280,6 +312,10 @@ class UpdaterPage extends StatefulWidget {
 
   /// Saves downloaded bytes to the phone (default: temp file + share sheet).
   /// Injectable so widget tests record instead of hitting platform channels.
+  ///
+  /// A saver may complete with [ShareResultStatus.dismissed] — the default
+  /// one does when the share sheet was closed without a choice: the file went
+  /// nowhere then. Any other value, or none, counts as handed over.
   final Future<void> Function(String name, Uint8List bytes)? fileSaver;
 
   /// Seals the profile export under the passphrase (default:
@@ -287,6 +323,11 @@ class UpdaterPage extends StatefulWidget {
   /// for seconds in a background isolate, which a widget test cannot wait for.
   final Future<String> Function(String json, String passphrase)?
       exportEncryptor;
+
+  /// Opens a profile export with the passphrase (default:
+  /// [decryptProfileExport]). Injectable for the same reason.
+  final Future<String> Function(String envelope, String passphrase)?
+      importDecryptor;
 
   /// Hands a text to other apps (default: the system share sheet). Injectable
   /// so widget tests record instead of hitting the platform channel.
@@ -366,6 +407,14 @@ class _UpdaterPageState extends State<UpdaterPage>
   // snack — a second one started meanwhile would run next to it and end in a
   // second share sheet.
   bool _exporting = false;
+  late final Future<String> Function(String envelope, String passphrase)
+      _importDecryptor = widget.importDecryptor ?? decryptProfileExport;
+  // An import is on its way: file picker, passphrase, key derivation,
+  // confirmation. A second one started meanwhile would open a second picker.
+  bool _importing = false;
+  // The first file share since the app started has cleared what the file
+  // saver of older versions left behind (see [removeSharedFileLeftovers]).
+  bool _shareLeftoversCleared = false;
   late final AppLauncher _appLauncher =
       widget.appLauncher ?? const ChannelAppLauncher();
   late final Future<bool> Function(Uri uri) _urlOpener = widget.urlOpener ??
@@ -465,7 +514,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   bool _unlocking = false;
   // Suppress the auto-lock for an in-app modal that backgrounds us (e.g. the
   // system file picker) — otherwise you return from picking a file to the lock
-  // screen. Like _unlocking (which covers the biometric prompt).
+  // screen. Like _unlocking (which covers the biometric prompt). Over with
+  // the first `resumed` after it was set (see didChangeAppLifecycleState), or
+  // with the picker's answer, whichever comes first.
   bool _suppressLock = false;
   // Since when the app has been in the background with the lock held off
   // like that. A picker left open is no reason to stay unlocked for good:
@@ -528,7 +579,9 @@ class _UpdaterPageState extends State<UpdaterPage>
   // Pi-Job keeps running on the Pi.
   bool _statusWarn = false;
   bool _testing = false; // a "Verbindung herstellen" run is in flight
-  bool? _connectionOk; // null=untested, true=ok, false=failed (Test-Button color)
+  // null=untested, true=ok, false=failed (Test-Button color). True only next
+  // to [_connected]: the button must not claim what the session does not.
+  bool? _connectionOk;
   // Active, validated session to the active Pi (set by an explicit "Verbindung
   // herstellen"; survives per-action work — NOT reset in _beginBusy). Gates the
   // Automatik/Terminal/Dateien tabs. In-memory only; never persisted.
@@ -621,6 +674,11 @@ class _UpdaterPageState extends State<UpdaterPage>
         // A clock that was set back meanwhile counts as over the limit.
         if (away.isNegative || away >= _kSuppressLockLimit) _engageLock();
       }
+      // In front again: the picker is closed, and with it the reason to hold
+      // the lock off. Not only when its answer arrives — that includes
+      // reading the file, which a slow provider can stretch for minutes, and
+      // leaving the app in that time has to lock it like at any other time.
+      if (state == AppLifecycleState.resumed) _suppressLock = false;
       if (state == AppLifecycleState.resumed && _locked && !_unlocking) {
         _tryUnlock();
       }
@@ -1038,8 +1096,20 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   /// Imports profiles from an exported file (SAF picker → passphrase → merge).
+  /// One at a time, like the export: the key derivation takes seconds with
+  /// nothing but a snack on screen.
   Future<void> _importProfiles() async {
-    if (_busy) return;
+    if (_busy || _importing) return;
+    _importing = true;
+    try {
+      await _pickAndImportProfiles();
+    } finally {
+      _importing = false;
+    }
+  }
+
+  /// The import itself — only through [_importProfiles].
+  Future<void> _pickAndImportProfiles() async {
     final l10n = context.l10n;
     _suppressLock = true;
     PickedFile? picked;
@@ -1055,9 +1125,13 @@ class _UpdaterPageState extends State<UpdaterPage>
     final pass = await _promptPassphrase(l10n.importProfilesTitle,
         l10n.importProfilesBody);
     if (pass == null || !mounted) return;
+    // The key derivation runs for seconds: say that something is happening.
+    _snack(l10n.snackImportDecrypting);
     try {
-      final json =
-          await decryptProfileExport(utf8.decode(picked.bytes), pass);
+      final json = await _importDecryptor(utf8.decode(picked.bytes), pass);
+      if (!mounted) return;
+      // Done: the question below is not asked next to "wird entschlüsselt".
+      ScaffoldMessenger.of(context).clearSnackBars();
       final cfg = parseAppConfig(json);
       if (cfg.profiles.isEmpty) {
         _snack(l10n.snackFileNoProfiles);
@@ -1073,7 +1147,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       // Pi.
       if (!mounted) return;
       if (_busy) {
-        _snack(l10n.snackImportFailed);
+        // Nothing failed — said as what it is, with the way on.
+        _snack(l10n.snackImportBusy);
         return;
       }
       // Capture the outgoing profile's live edits (see _switchProfile): the
@@ -2688,6 +2763,25 @@ class _UpdaterPageState extends State<UpdaterPage>
             config: source, path: p, onLog: _appendLog);
         piFile = p.split('/').last;
       }
+      // A Pi-hole v5 backup (.tar.gz) cannot be imported from here (see
+      // restorePiholeBackup), and the file name just fetched says which one
+      // this is. So what moves is decided now, while the target is as it was
+      // — not found out once evcc has been installed and restored there.
+      var movePihole = srcPihole;
+      if (piFile != null && piholeRestoreRefusal(piFile) != null) {
+        // Nothing else to move: the helper ends before it reaches the target.
+        if (!srcEvcc) {
+          throw EvccUpdateException(
+              UpdateErrorKind.unknown, l10n.errorMigratePiholeV5);
+        }
+        if (!mounted) return;
+        if (!await _confirm(l10n.dialogMigratePiholeV5Title,
+            l10n.dialogMigratePiholeV5Body)) {
+          throw EvccUpdateException(
+              UpdateErrorKind.cancelled, l10n.statusMigrationCancelled);
+        }
+        movePihole = false;
+      }
       // -- Target: take stock, install what's missing, restore. --
       _appendLog(l10n.logMigrationTarget(target.name, target.host));
       // From here on the TARGET is the Pi at risk of a host-key problem (a
@@ -2711,15 +2805,10 @@ class _UpdaterPageState extends State<UpdaterPage>
               config: targetCfg, path: dest, onLog: _appendLog);
         }
       }
-      if (srcPihole) {
-        // A Pi-hole v5 backup (.tar.gz) cannot be imported from here (see
-        // restorePiholeBackup). Stop before anything is installed: the target
-        // would end up with a fresh Pi-hole, without the data and behind a
-        // password — while the only import left is its web interface.
-        if (piFile != null && !piFile.endsWith('.zip')) {
-          throw EvccUpdateException(
-              UpdateErrorKind.unknown, l10n.errorMigratePiholeV5);
-        }
+      // Not with a v5 backup: the target would end up with a fresh Pi-hole,
+      // without the data and behind a password — while the only import left
+      // is its web interface.
+      if (movePihole) {
         final has = targetServices.any((s) => s.id == 'pihole' && s.installed);
         if (!has) {
           targetWebPassword = await _updater.installPihole(
@@ -2735,11 +2824,16 @@ class _UpdaterPageState extends State<UpdaterPage>
         }
       }
       if (!mounted) return;
+      // The result names what happened. evcc alone is what was agreed to
+      // above, but not the whole move: amber, and both services are named.
+      final all = movePihole == srcPihole;
+      final result = all ? l10n.statusMigrated : l10n.statusMigratedEvccOnly;
       setState(() {
-        _statusMessage = l10n.statusMigrated;
-        _statusOk = true;
+        _statusMessage = result;
+        _statusOk = all;
+        _statusWarn = !all;
       });
-      _addHistory(l10n.statusMigrated);
+      _addHistory(result);
     }, backgroundMessage: l10n.busyMigrating);
     if (targetWebPassword != null && !piholeRestored && mounted) {
       await _showPiholePassword(targetWebPassword!, onPi: target.name);
@@ -2908,8 +3002,22 @@ class _UpdaterPageState extends State<UpdaterPage>
           config: config, path: path, onLog: _appendLog);
       if (!mounted) return;
       final name = path.split('/').last;
-      await _fileSaver(name, bytes);
+      // Typed void for the savers that have nothing to report; the default
+      // one completes with what the share sheet said (see the seam).
+      final Future<Object?> saving = _fileSaver(name, bytes);
+      final dismissed = await saving == ShareResultStatus.dismissed;
       if (!mounted) return;
+      if (dismissed) {
+        // The share sheet was closed without a choice: the archive went
+        // nowhere. No "heruntergeladen" and no history entry — both would
+        // make deleting it on the Pi look safe.
+        setState(() {
+          _statusMessage = context.l10n.statusBackupNotSaved(name);
+          _statusOk = false;
+          _statusWarn = true;
+        });
+        return;
+      }
       setState(() {
         _statusMessage = context.l10n.statusBackupDownloaded(name);
         _statusOk = true;
@@ -3356,7 +3464,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     }
     if (picked == null || !mounted) return false; // cancelled
     // The picker stayed open past the time limit and the app locked on the
-    // way back (see _kSuppressLockLimit): nothing goes to the Pi beneath the
+    // way back (see _kSuppressLockLimit), or the app was left again while the
+    // picked file was still being read: nothing goes to the Pi beneath the
     // lock. The pick is dropped; after the unlock the user picks again.
     if (_locked) return false;
     if (picked.bytes.length > kFileUploadLimit) {
@@ -4409,11 +4518,28 @@ class _UpdaterPageState extends State<UpdaterPage>
   /// (dart:io — on Android that's the app cache, no plugin needed) and opens
   /// the share sheet, so the user can save to Dateien/Drive/etc. The temp file
   /// is gone again once the sheet has closed ([shareTemporaryFile]).
-  Future<void> _saveAndShareBytes(String name, Uint8List bytes) =>
-      shareTemporaryFile(name, bytes,
-          dir: Directory.systemTemp,
-          share: (path) =>
-              SharePlus.instance.share(ShareParams(files: [XFile(path)])));
+  ///
+  /// Completes with what the share sheet reported. On Android that is whether
+  /// a target was chosen ([ShareResultStatus.success]) or the sheet was closed
+  /// without one ([ShareResultStatus.dismissed]) — not what the chosen app
+  /// then did with the file.
+  Future<ShareResultStatus> _saveAndShareBytes(
+      String name, Uint8List bytes) async {
+    if (!_shareLeftoversCleared) {
+      _shareLeftoversCleared = true;
+      // Only on Android is this directory the app's own. Anywhere else it is
+      // the temp folder every program shares, and archives lying there are
+      // not ours to delete.
+      if (Platform.isAndroid) {
+        await removeSharedFileLeftovers(Directory.systemTemp);
+      }
+    }
+    return shareTemporaryFile(name, bytes,
+        dir: Directory.systemTemp,
+        share: (path) async => (await SharePlus.instance
+                .share(ShareParams(files: [XFile(path)])))
+            .status);
+  }
 
   /// Default [UpdaterPage.textSharer]: the system share sheet.
   Future<void> _shareText(String text) async {
@@ -4729,7 +4855,11 @@ class _UpdaterPageState extends State<UpdaterPage>
           _servicesFromCache = false; // read just now, also without a session
           _rememberTailscaleIp(reconciled);
           _rememberLanHost();
-          _connectionOk = true; // a successful detect proves the Pi is reachable
+          // A successful detect proves the Pi is reachable — the connect
+          // button says "Verbunden" for it only where a session exists.
+          // Without one (an action on remembered cards, a followed Pi-Job)
+          // it would stand next to entries that say "connect first".
+          if (_connected) _connectionOk = true;
         });
       }
     } catch (_) {

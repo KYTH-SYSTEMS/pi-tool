@@ -87,4 +87,45 @@ void main() {
     expect(en.statusAutoUpdateBusy,
         contains('the Pi itself ends a run that takes longer than six hours'));
   });
+
+  // A Pi-hole v5 source: asked before the target is touched, and the result
+  // names both services. The question refers to its own button by its label.
+  testWidgets('the migration helper says what moves and what does not, de + en',
+      (tester) async {
+    final de = await l10nFor(tester, const Locale('de'));
+    expect(de.dialogMigratePiholeV5Body, contains('„${de.actionContinue}“'));
+    expect(de.dialogMigratePiholeV5Body,
+        contains('Bis jetzt wurde am Ziel-Pi nichts geändert.'));
+    expect(de.statusMigratedEvccOnly, startsWith('evcc ist umgezogen'));
+    expect(de.statusMigratedEvccOnly, contains('Pi-hole wurde nicht umgezogen'));
+    expect(de.errorMigratePiholeV5,
+        endsWith('Am Ziel-Pi wurde nichts geändert.'));
+
+    final en = await l10nFor(tester, const Locale('en'));
+    expect(en.dialogMigratePiholeV5Title, 'Move evcc only?');
+    expect(en.dialogMigratePiholeV5Body, contains('“${en.actionContinue}”'));
+    expect(en.dialogMigratePiholeV5Body,
+        contains('Nothing has been changed on the target Pi so far.'));
+    expect(en.statusMigratedEvccOnly, startsWith('evcc was moved'));
+    expect(en.statusMigratedEvccOnly, contains('Pi-hole was not moved'));
+    expect(en.statusMigrationCancelled,
+        'Migration cancelled — nothing was changed on the target Pi.');
+    expect(en.errorMigratePiholeV5,
+        endsWith('Nothing was changed on the target Pi.'));
+  });
+
+  // Neither is a failure, and neither text calls it one.
+  testWidgets('a dismissed share sheet and an import next to an action, en',
+      (tester) async {
+    final en = await l10nFor(tester, const Locale('en'));
+    expect(
+        en.statusBackupNotSaved('pihole-backup.zip'),
+        'Backup not saved: the share sheet was closed without a choice. '
+        'pihole-backup.zip is still on the Pi.');
+    expect(en.snackImportDecrypting, 'Decrypting the import …');
+    expect(
+        en.snackImportBusy,
+        'An action is running — the profiles were not imported. Start the '
+        'import again once it has finished.');
+  });
 }

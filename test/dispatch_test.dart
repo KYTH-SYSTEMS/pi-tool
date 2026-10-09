@@ -35,6 +35,7 @@ import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:share_plus/share_plus.dart' show ShareResultStatus;
 
 class _FakeFilePicker implements FilePickerService {
   _FakeFilePicker(this.file);
@@ -2782,6 +2783,80 @@ void main() {
     expect(u.restoreCalls, 0);
   });
 
+  // The share sheet can be closed without a choice. The archive went nowhere
+  // then — and the trash icon for the copy on the Pi is one tap away.
+  testWidgets(
+      'evcc backups: wird der Teilen-Dialog ohne Auswahl geschlossen, steht '
+      'da kein „heruntergeladen" und der Verlauf bekommt keinen Eintrag',
+      (tester) async {
+    useTallScreen(tester);
+    const archive = 'evcc-backup-20260630-120000.tar.gz';
+    final u = FakeEvccUpdater()
+      ..backups = const ['/var/backups/evcc/$archive']
+      ..downloadBytes = Uint8List.fromList([7, 7, 7, 7]);
+    final history = _RecordingHistory();
+    final shared = <String>[];
+    // What the share sheet reports for the next download.
+    var answer = ShareResultStatus.dismissed;
+    ShareResultStatus share(String name) {
+      shared.add(name);
+      return answer;
+    }
+
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(_ready),
+        updater: u,
+        updateChecker: _noUpdateChecker,
+        apiClient: EvccApiClient(
+            getJson: (_) async =>
+                throw const EvccApiException('kein Netz im Test')),
+        evccReleaseFetcher: () async => null,
+        haVersionFetcher: () async => null,
+        historyStore: history,
+        fileSaver: (name, bytes) async => share(name),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    Future<void> download() async {
+      await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Backups verwalten'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.download_outlined));
+      await tester.pumpAndSettle();
+    }
+
+    await download();
+    expect(shared, [archive]); // fetched and offered
+    expect(
+        find.text('Backup nicht gespeichert: Der Teilen-Dialog wurde ohne '
+            'Auswahl geschlossen. $archive liegt weiter auf dem Pi.'),
+        findsOneWidget);
+    expect(find.textContaining('heruntergeladen'), findsNothing);
+    expect(history.added, isEmpty);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+
+    // A target was chosen: the result and the history entry as before.
+    answer = ShareResultStatus.success;
+    await download();
+    expect(shared, [archive, archive]);
+    expect(find.text('Backup heruntergeladen: $archive'), findsOneWidget);
+    expect(find.textContaining('nicht gespeichert'), findsNothing);
+    expect(history.added, ['evcc-Backup aufs Handy geladen ($archive).']);
+
+    // A platform that cannot tell what the sheet did counts as before, too.
+    answer = ShareResultStatus.unavailable;
+    await download();
+    expect(find.text('Backup heruntergeladen: $archive'), findsOneWidget);
+    expect(history.added, hasLength(2));
+  });
+
   testWidgets('evcc backups: the trash icon deletes only after the confirm',
       (tester) async {
     useTallScreen(tester);
@@ -5428,6 +5503,126 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
     expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+  });
+
+  // The connect button and the entries bound to a session tell the same
+  // story. A detection that worked without a session used to turn the button
+  // green ("Verbunden") while restart and shutdown stayed greyed out with
+  // "connect first" right below it.
+  testWidgets(
+      'gemerkte Karten, „Updates installieren" ohne Verbinden: der '
+      'Verbinden-Knopf behauptet danach keine Verbindung, solange „Pi neu '
+      'starten" eine verlangt', (tester) async {
+    useTallScreen(tester);
+    const system = ServiceStatus(
+        id: 'system',
+        name: 'System (Pi)',
+        installed: true,
+        version: 'Debian 12',
+        active: true,
+        updateAvailable: true,
+        updateKnown: true,
+        detail: '3 Updates verfügbar');
+    final u = FakeEvccUpdater()..services = const [system];
+    await tester.pumpWidget(page(u,
+        config: AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                cachedServices: [system.toJson()]),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    final connect =
+        find.widgetWithText(OutlinedButton, 'Verbindung herstellen');
+    final connected = find.widgetWithText(OutlinedButton, 'Verbunden');
+    expect(connect, findsOneWidget);
+
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Updates installieren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 1);
+    expect(u.detectCalls, 1, reason: 'die Karten wurden danach neu gelesen');
+    expect(find.text('System aktualisiert.'), findsOneWidget);
+
+    // No session — and the button does not say there is one.
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    expect(connected, findsNothing);
+    expect(connect, findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    expect(find.text('Zuerst mit dem Pi verbinden'), findsNWidgets(2));
+    await tester.tapAt(const Offset(10, 600)); // dismiss the menu
+    await tester.pumpAndSettle();
+
+    // Connected, both agree the other way round — and still do once the next
+    // action has re-read the cards.
+    await tester.tap(connect);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+    expect(connected, findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    expect(find.text('Zuerst mit dem Pi verbinden'), findsNothing);
+    await tester.tap(find.text('Paketlisten aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(u.aptRefreshCalls, 1);
+    expect(connected, findsOneWidget);
+  });
+
+  testWidgets(
+      'nach einem fehlgeschlagenen Verbinden ist der Knopf rot wie bisher; '
+      'läuft danach eine Aktion ohne Sitzung durch, zeigt er kein „Verbunden"',
+      (tester) async {
+    useTallScreen(tester);
+    const system = ServiceStatus(
+        id: 'system',
+        name: 'System (Pi)',
+        installed: true,
+        version: 'Debian 12',
+        active: true,
+        detail: 'aktuell');
+    final u = FakeEvccUpdater()
+      ..services = const [system]
+      ..detectError =
+          const EvccUpdateException(UpdateErrorKind.connection, 'offline');
+    await tester.pumpWidget(page(u,
+        config: AppConfig(
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                cachedServices: [system.toJson()]),
+          ],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // The red state of the button after a failed connect is as before.
+    expect(find.widgetWithText(OutlinedButton, 'Keine Verbindung'),
+        findsOneWidget);
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+
+    // The Pi answers again; an action on the remembered card goes through.
+    u.detectError = null;
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paketlisten aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(u.aptRefreshCalls, 1);
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'Verbunden'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -9149,16 +9344,116 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // A source with evcc and a Pi-hole v5: its backup (.tar.gz) cannot be
+  // imported from here, and the file name says so before the target is
+  // touched.
+  FakeEvccUpdater piholeV5Source() => FakeEvccUpdater()
+    ..services = const [migrationSystem, migrationEvcc, migrationPihole]
+    // The target has evcc already, but no Pi-hole.
+    ..servicesByHost = const {
+      '192.168.178.99': [migrationSystem, migrationEvcc]
+    }
+    ..piholeBackupPath = '/var/backups/pi-tool/pihole-backup-x.tar.gz'
+    ..piholeWebPassword = 'Abc234xyzKLMN567'
+    ..downloadBytes = Uint8List.fromList([1, 2, 3]);
+
+  // Like [migrate], up to the question such a source raises. The helper is
+  // at work behind it — the running bar never settles.
+  Future<void> migrateUpToQuestion(WidgetTester tester) async {
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Auf anderen Pi umziehen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Zweiter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pump(); // the first question closes, the helper starts
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500)); // the second is up
+  }
+
   testWidgets(
-      'Umzugshelfer, Pi-hole v5 auf der Quelle: Pi-hole wird auf dem Ziel gar '
-      'nicht erst installiert, die Meldung nennt den Grund – evcc zieht um',
-      (tester) async {
+      'Umzugshelfer, Pi-hole v5 auf der Quelle: gefragt wird, bevor der '
+      'Ziel-Pi angefasst ist – „Weiter" zieht nur evcc um, das Ergebnis nennt '
+      'beide Dienste', (tester) async {
+    useTallScreen(tester);
+    final u = piholeV5Source();
+    await tester.pumpWidget(page(u, config: migrationProfiles));
+    await tester.pumpAndSettle();
+    await migrateUpToQuestion(tester);
+
+    // Both backups are fetched, and nothing has reached the target yet — not
+    // even the detection that takes stock there.
+    expect(find.text('Nur evcc umziehen?'), findsOneWidget);
+    expect(find.textContaining('Pi-hole kann nicht mit umziehen'),
+        findsOneWidget);
+    expect(find.textContaining('Pi-hole v5'), findsOneWidget);
+    expect(u.backupCalls, 1);
+    expect(u.piholeBackupCalls, 1);
+    expect(u.detectHosts, isNot(contains('192.168.178.99')));
+    expect(u.uploadedTo, isEmpty);
+    expect(u.restoreCalls, 0);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    // evcc went across.
+    expect(u.detectHosts, contains('192.168.178.99'));
+    expect(u.restoredPath, '/var/backups/evcc/x.tar.gz');
+    // Pi-hole: nothing was written to the target — no install (which would
+    // set a password nobody gets to see), no upload, no restore.
+    expect(u.piholeInstallCalls, 0);
+    expect(u.uploadedTo, ['/var/backups/evcc/x.tar.gz']);
+    expect(u.restorePiholeCalls, 0);
+    expect(find.text('Pi-hole-Passwort'), findsNothing);
+    // One result for both: what moved, what did not and why — and not the
+    // plain "finished".
+    expect(
+        find.text('evcc ist umgezogen — prüfe den Ziel-Pi über sein Profil. '
+            'Pi-hole wurde nicht umgezogen: Das Backup dieses Pi stammt von '
+            'Pi-hole v5 (.tar.gz) und lässt sich nur über die '
+            'Pi-hole-Weboberfläche importieren (Einstellungen → Teleporter).'),
+        findsOneWidget);
+    expect(find.textContaining('Umzug abgeschlossen'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets(
+      'Umzugshelfer, Pi-hole v5 auf der Quelle: „Abbrechen" in der Rückfrage '
+      'beendet den Umzug, der Ziel-Pi wurde nicht angefasst – und die Meldung '
+      'sagt das', (tester) async {
+    useTallScreen(tester);
+    final u = piholeV5Source();
+    await tester.pumpWidget(page(u, config: migrationProfiles));
+    await tester.pumpAndSettle();
+    await migrateUpToQuestion(tester);
+
+    await tester.tap(find.descendant(
+        of: find.byType(AlertDialog), matching: find.text('Abbrechen')));
+    await tester.pumpAndSettle();
+
+    expect(u.detectHosts, isNot(contains('192.168.178.99')));
+    expect(u.uploadedTo, isEmpty);
+    expect(u.restoreCalls, 0);
+    expect(u.piholeInstallCalls, 0);
+    expect(u.restorePiholeCalls, 0);
+    expect(find.text('Umzug abgebrochen — am Ziel-Pi wurde nichts geändert.'),
+        findsOneWidget);
+    expect(find.textContaining('umgezogen'), findsNothing);
+    // The helper is over: no running bar left.
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets(
+      'Umzugshelfer, nur ein Pi-hole v5 auf der Quelle: endet ohne Rückfrage, '
+      'bevor der Ziel-Pi angefasst ist, und sagt, dass dort nichts geändert '
+      'wurde', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
-      ..services = const [migrationSystem, migrationEvcc, migrationPihole]
-      // The target has evcc already, but no Pi-hole.
+      ..services = const [migrationSystem, migrationPihole]
       ..servicesByHost = const {
-        '192.168.178.99': [migrationSystem, migrationEvcc]
+        '192.168.178.99': [migrationSystem]
       }
       ..piholeBackupPath = '/var/backups/pi-tool/pihole-backup-x.tar.gz'
       ..piholeWebPassword = 'Abc234xyzKLMN567'
@@ -9167,17 +9462,18 @@ void main() {
     await tester.pumpAndSettle();
     await migrate(tester);
 
-    // evcc went across as before.
-    expect(u.restoredPath, '/var/backups/evcc/x.tar.gz');
-    // Pi-hole: nothing was written to the target — no install (which would
-    // set a password nobody gets to see), no upload, no restore.
+    expect(find.text('Nur evcc umziehen?'), findsNothing);
+    expect(u.detectHosts, isNot(contains('192.168.178.99')));
     expect(u.piholeInstallCalls, 0);
-    expect(u.uploadedTo, ['/var/backups/evcc/x.tar.gz']);
-    expect(u.restoredPihole, isEmpty);
+    expect(u.uploadedTo, isEmpty);
+    expect(u.restorePiholeCalls, 0);
     expect(find.text('Pi-hole-Passwort'), findsNothing);
-    // The banner says what did not happen and why — and no success claim.
-    expect(find.textContaining('Pi-hole wurde nicht umgezogen'), findsOneWidget);
-    expect(find.textContaining('Pi-hole v5'), findsOneWidget);
+    expect(
+        find.text('Pi-hole wurde nicht umgezogen: Das Backup dieses Pi stammt '
+            'von Pi-hole v5 (.tar.gz) und lässt sich nur über die '
+            'Pi-hole-Weboberfläche importieren (Einstellungen → Teleporter). '
+            'Am Ziel-Pi wurde nichts geändert.'),
+        findsOneWidget);
     expect(find.textContaining('Umzug abgeschlossen'), findsNothing);
   });
 
@@ -9989,6 +10285,152 @@ void main() {
         'pi-tool-aaaa2222bbbb33');
   });
 
+  // The key derivation takes seconds, and nothing else is on screen meanwhile
+  // — as with the export. [decrypted] is what the decryptor seam answers with.
+  final importedConfig = encodeAppConfig(const AppConfig(
+    profiles: [Profile(name: 'Neu', host: '10.0.0.9', password: 'x')],
+    activeIndex: 0,
+  ));
+
+  Future<void> tapImport(WidgetTester tester) async {
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile importieren'));
+    await tester.tap(find.text('Profile importieren'));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> enterImportPassphrase(WidgetTester tester) async {
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Passphrase'), 'geheim1');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'OK'));
+    await tester.pumpAndSettle();
+  }
+
+  Widget importPage(
+          {required AppConfigStore store,
+          required FakeEvccUpdater updater,
+          required void Function() onPick,
+          required Future<String> Function() decrypted}) =>
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('de'),
+        home: UpdaterPage(
+          store: store,
+          updater: updater,
+          updateChecker: _noUpdateChecker,
+          apiClient: EvccApiClient(
+              getJson: (_) async =>
+                  throw const EvccApiException('kein Netz im Test')),
+          evccReleaseFetcher: () async => null,
+          haVersionFetcher: () async => null,
+          filePicker: _BackgroundingPicker(
+              (name: 'pi-tool-profile.pitool', bytes: Uint8List(0)),
+              () async => onPick()),
+          importDecryptor: (envelope, passphrase) => decrypted(),
+        ),
+      );
+
+  testWidgets(
+      'Profil-Import: läuft die Entschlüsselung, sagt die App das — und ein '
+      'zweiter Import öffnet keinen zweiten Dateidialog daneben',
+      (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<String>();
+    var picks = 0;
+    var decryptions = 0;
+    final store = _FakeStore(_ready);
+    await tester.pumpWidget(importPage(
+        store: store,
+        updater: FakeEvccUpdater(),
+        onPick: () => picks++,
+        decrypted: () {
+          decryptions++;
+          return gate.future;
+        }));
+    await tester.pumpAndSettle();
+
+    await tapImport(tester);
+    expect(picks, 1);
+    await enterImportPassphrase(tester);
+
+    expect(decryptions, 1);
+    expect(find.text('Import wird entschlüsselt …'), findsOneWidget);
+
+    // A second tap while the first import is still at work: no second file
+    // dialog, no second passphrase dialog, no second derivation.
+    await tapImport(tester);
+    expect(picks, 1);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(decryptions, 1);
+
+    gate.complete(importedConfig);
+    await tester.pumpAndSettle();
+    // The question is asked — and "wird entschlüsselt" is over with it.
+    expect(find.text('Importieren?'), findsOneWidget);
+    expect(find.text('Import wird entschlüsselt …'), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+    expect(find.text('1 Profil(e) importiert.'), findsOneWidget);
+    expect(store.saved.profiles.map((p) => p.name), ['S', 'Neu']);
+
+    // Done: the next import starts as usual.
+    await tapImport(tester);
+    expect(picks, 2);
+    expect(find.byType(AlertDialog), findsOneWidget);
+  });
+
+  testWidgets(
+      'Profil-Import: läuft beim Bestätigen eine andere Aktion, sagt die '
+      'Meldung das — nicht „fehlgeschlagen" — und nichts wird importiert',
+      (tester) async {
+    useTallScreen(tester);
+    final gate = Completer<String>();
+    final connecting = Completer<void>();
+    final store = _FakeStore(_ready);
+    final u = FakeEvccUpdater()..detectGate = connecting;
+    await tester.pumpWidget(importPage(
+        store: store, updater: u, onPick: () {}, decrypted: () => gate.future));
+    await tester.pumpAndSettle();
+
+    await tapImport(tester);
+    await enterImportPassphrase(tester);
+
+    // While the key is derived the main view is in reach: a connect starts
+    // and stays at work.
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pump();
+    expect(u.detectCalls, 1);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    gate.complete(importedConfig);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500)); // the question is up
+    expect(find.text('Importieren?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500)); // the dialog is gone
+
+    expect(
+        find.text('Gerade läuft eine Aktion — die Profile wurden nicht '
+            'importiert. Starte den Import erneut, sobald sie fertig ist.'),
+        findsOneWidget);
+    expect(find.text('Import fehlgeschlagen.'), findsNothing);
+
+    connecting.complete();
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+    // The running action kept its Pi: nothing was added, nothing switched.
+    expect(store.saved.profiles.map((p) => p.name), ['S']);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+  });
+
   // ---- Datei-Auswahl: Fehlercode der nativen Seite ----
 
   testWidgets(
@@ -10666,6 +11108,10 @@ void main() {
       expect(u.followedJobId, jobId);
       expect(find.text('System aktualisiert.'), findsOneWidget);
       expect(find.text('Mitlesen'), findsNothing);
+      // The lost connection ended the session, and following the job opened
+      // none: the connect button does not claim one either.
+      expect(find.byKey(const Key('sessionConnected')), findsNothing);
+      expect(find.widgetWithText(OutlinedButton, 'Verbunden'), findsNothing);
     });
 
     testWidgets('Pi mit laufender Automatik: Hinweis, nichts gestartet',

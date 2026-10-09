@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io' show Directory, File, FileSystemException, HttpException;
+import 'dart:io'
+    show Directory, File, FileSystemException, HttpException, Link;
 import 'dart:typed_data';
 
 import 'package:evcc_updater/main.dart';
@@ -1415,6 +1416,103 @@ void main() {
           throwsA(isA<FileSystemException>()));
 
       expect(shared, isFalse);
+    });
+
+    test('what the share reported is handed on', () async {
+      final result = await shareTemporaryFile('pihole-backup.zip', bytes,
+          dir: dir, share: (_) async => 'dismissed');
+
+      expect(result, 'dismissed');
+      expect(dir.listSync(), isEmpty);
+    });
+  });
+
+  // ---- Teilen: was der Datei-Speicher bis v0.71.0 liegen ließ ----
+
+  group('removeSharedFileLeftovers', () {
+    late Directory dir;
+    setUp(() => dir = Directory.systemTemp.createTempSync('pitool_left_'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    void touch(String path) => File('${dir.path}/$path')
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([1]);
+
+    /// Everything beneath [dir], relative to it.
+    Set<String> content() => {
+          for (final e in dir.listSync(recursive: true, followLinks: false))
+            e.path.substring(dir.path.length + 1).replaceAll(r'\', '/')
+        };
+
+    test('the names the old file saver wrote, and no others', () {
+      // v0.71.0 wrote the profile export and whatever backup the Pi listed.
+      for (final name in const [
+        'pi-tool-profile.pitool',
+        'pihole-backup-20260706-090000.zip',
+        'pihole-backup-20250101-090000.tar.gz',
+        'homeassistant-backup-20260706-090000.tar.gz',
+      ]) {
+        expect(isSharedFileLeftover(name), isTrue, reason: name);
+      }
+      for (final name in const [
+        'notes.txt',
+        'settings.json',
+        'backup.zip.part',
+        'backup.tar',
+        'tar.gz',
+        'zip',
+      ]) {
+        expect(isSharedFileLeftover(name), isFalse, reason: name);
+      }
+    });
+
+    test('removes those files from the directory and nothing else', () async {
+      touch('pi-tool-profile.pitool');
+      touch('pihole-backup-20260706-090000.zip');
+      touch('pihole-backup-20250101-090000.tar.gz');
+      touch('homeassistant-backup-20260706-090000.tar.gz');
+      touch('notes.txt');
+      touch('backup.zip.part');
+      // A folder is none of ours — whatever it is called, whatever is in it.
+      touch('share_plus/pihole-backup-20260706-090000.zip');
+      touch('old.zip/inner.tar.gz');
+
+      await removeSharedFileLeftovers(dir);
+
+      expect(content(), {
+        'notes.txt',
+        'backup.zip.part',
+        'share_plus',
+        'share_plus/pihole-backup-20260706-090000.zip',
+        'old.zip',
+        'old.zip/inner.tar.gz',
+      });
+    });
+
+    test('a link is left alone, and so is the file it points to', () async {
+      final outside = Directory.systemTemp.createTempSync('pitool_out_');
+      addTearDown(() => outside.deleteSync(recursive: true));
+      final target = File('${outside.path}/evcc-backup.tar.gz')
+        ..writeAsBytesSync([1]);
+      try {
+        Link('${dir.path}/linked.tar.gz').createSync(target.path);
+      } on FileSystemException {
+        // Windows without the right to create links.
+        markTestSkipped('no symbolic links on this machine');
+        return;
+      }
+
+      await removeSharedFileLeftovers(dir);
+
+      expect(target.existsSync(), isTrue);
+      expect(content(), {'linked.tar.gz'});
+    });
+
+    test('a directory that is not there, or empty, is no error', () async {
+      await removeSharedFileLeftovers(Directory('${dir.path}/gone'));
+      await removeSharedFileLeftovers(dir);
+
+      expect(content(), isEmpty);
     });
   });
 

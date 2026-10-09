@@ -218,6 +218,7 @@
   "snackFilePickFailed": "File selection failed.",
   "importProfilesTitle": "Import profiles",
   "importProfilesBody": "Enter the export file's passphrase. Decrypting can take a few seconds.",
+  "snackImportDecrypting": "Decrypting the import …",
   "snackFileNoProfiles": "File contains no profiles.",
   "dialogImportTitle": "Import?",
   "dialogImportBody": "{count} profile(s) will be added to your existing ones.",
@@ -237,6 +238,7 @@
     }
   },
   "snackImportFailed": "Import failed.",
+  "snackImportBusy": "An action is running — the profiles were not imported. Start the import again once it has finished.",
   "paywallSubtitle": "Unlock once – no subscription:",
   "paywallFeatureBackups": "Back up, restore & manage backups",
   "paywallFeatureAutomation": "Automation – scheduled updates & health alerts",
@@ -467,6 +469,14 @@
   },
   "statusBackupDownloaded": "Backup downloaded: {name}",
   "@statusBackupDownloaded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "statusBackupNotSaved": "Backup not saved: the share sheet was closed without a choice. {name} is still on the Pi.",
+  "@statusBackupNotSaved": {
     "placeholders": {
       "name": {
         "type": "String"
@@ -1049,7 +1059,11 @@
     }
   },
   "statusMigrated": "Migration finished — check the target Pi via its profile.",
-  "errorMigratePiholeV5": "Pi-hole was not moved: this Pi's backup comes from Pi-hole v5 (.tar.gz) and can only be imported through the Pi-hole web interface (Settings → Teleporter). Nothing about Pi-hole was changed on the target Pi.",
+  "statusMigratedEvccOnly": "evcc was moved — check the target Pi via its profile. Pi-hole was not moved: this Pi's backup comes from Pi-hole v5 (.tar.gz) and can only be imported through the Pi-hole web interface (Settings → Teleporter).",
+  "statusMigrationCancelled": "Migration cancelled — nothing was changed on the target Pi.",
+  "dialogMigratePiholeV5Title": "Move evcc only?",
+  "dialogMigratePiholeV5Body": "Pi-hole cannot be moved along: this Pi's backup comes from Pi-hole v5 (.tar.gz) and can only be imported through the Pi-hole web interface (Settings → Teleporter).\n\n“Continue” moves evcc only; Pi-hole is neither installed nor changed on the target Pi. Nothing has been changed on the target Pi so far.",
+  "errorMigratePiholeV5": "Pi-hole was not moved: this Pi's backup comes from Pi-hole v5 (.tar.gz) and can only be imported through the Pi-hole web interface (Settings → Teleporter). Nothing was changed on the target Pi.",
   "actionBackupTeleporter": "Back up (Teleporter)",
   "actionManageBackups": "Manage backups",
   "actionUpdateBlocklists": "Update blocklists",
