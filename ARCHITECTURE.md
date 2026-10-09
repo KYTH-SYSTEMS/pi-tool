@@ -1,7 +1,7 @@
 # Pi-Tool — Architektur
 
 > Referenz-Doku der App. **Bei architektur-relevanten Änderungen mitpflegen**
-> (siehe `CLAUDE.md`). Stand: `main` nach v0.71.0.
+> (siehe `CLAUDE.md`). Stand: v0.72.0.
 
 Pi-Tool ist eine Flutter-**Android**-App, die einen Raspberry Pi (oder jedes
 Debian/Linux-Gerät) **per SSH** verwaltet: Dienste erkennen, installieren,

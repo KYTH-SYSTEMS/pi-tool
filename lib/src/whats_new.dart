@@ -18,6 +18,9 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.72.0': [
+    'Bug fixes and security improvements.',
+  ],
   '0.71.0': [
     'Bug fixes and security improvements.',
   ],
@@ -335,6 +338,9 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.72.0': [
+    'Fehlerbehebungen und Sicherheitsverbesserungen.',
+  ],
   '0.71.0': [
     'Fehlerbehebungen und Sicherheitsverbesserungen.',
   ],
