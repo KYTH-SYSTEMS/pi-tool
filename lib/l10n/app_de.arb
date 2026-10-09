@@ -126,7 +126,7 @@
   "loadFailedRetry": "Erneut versuchen",
   "loadFailedReset": "Gespeicherte Daten zurücksetzen",
   "loadFailedResetTitle": "Gespeicherte Daten zurücksetzen?",
-  "loadFailedResetBody": "Löscht alles, was Pi-Tool auf diesem Gerät gespeichert hat: Profile samt Passwörtern und SSH-Keys, Einstellungen, Verlauf und die gemerkten Host-Keys der Pis. Das kann nicht rückgängig gemacht werden. Auf den Pis selbst ändert sich nichts.\n\nMit einer Export-Datei holst du die Profile danach über Einstellungen → „Profile importieren“ zurück. Ohne Export-Datei trägst du die Zugangsdaten neu ein.\n\nIst der Speicher nur vorübergehend nicht lesbar, sind die Daten noch da – deshalb vor dem Zurücksetzen das Gerät neu starten und es erneut versuchen.",
+  "loadFailedResetBody": "Löscht alles, was Pi-Tool auf diesem Gerät gespeichert hat: Profile samt Passwörtern und SSH-Keys, Einstellungen, Verlauf und die gemerkten Host-Keys der Pis. Das kann nicht rückgängig gemacht werden. Auf den Pis selbst ändert sich nichts.\n\nMit einer Export-Datei holst du die Profile danach über Einstellungen → „Profile importieren“ zurück. Ohne Export-Datei trägst du die Zugangsdaten neu ein.\n\nIst der Speicher nur vorübergehend nicht lesbar, sind die Daten noch da – deshalb vor dem Zurücksetzen das Gerät neu starten und es erneut versuchen. Wurden die App-Daten von einem anderen Handy übertragen, lassen sie sich hier nicht entschlüsseln; dann bleibt nur das Zurücksetzen.",
   "loadFailedResetConfirm": "Zurücksetzen",
   "loadFailedResetFailed": "Zurücksetzen fehlgeschlagen. Als letzter Weg lassen sich die App-Daten in den Android-Einstellungen löschen.",
   "exportProfilesTitle": "Profile exportieren",

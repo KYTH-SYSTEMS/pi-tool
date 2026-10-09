@@ -198,7 +198,7 @@
     "description": "Destructive second action of the load error state: deletes everything the app has stored, after a confirmation"
   },
   "loadFailedResetTitle": "Reset stored data?",
-  "loadFailedResetBody": "Deletes everything Pi-Tool has stored on this device: profiles including passwords and SSH keys, settings, history and the remembered host keys of your Pis. This cannot be undone. Nothing changes on the Pis themselves.\n\nWith an export file you get the profiles back afterwards via Settings → \"Import profiles\". Without one you enter the credentials again.\n\nIf the storage is only temporarily unreadable, the data is still there — so restart the device and try again before you reset.",
+  "loadFailedResetBody": "Deletes everything Pi-Tool has stored on this device: profiles including passwords and SSH keys, settings, history and the remembered host keys of your Pis. This cannot be undone. Nothing changes on the Pis themselves.\n\nWith an export file you get the profiles back afterwards via Settings → \"Import profiles\". Without one you enter the credentials again.\n\nIf the storage is only temporarily unreadable, the data is still there — so restart the device and try again before you reset. If the app data was copied over from another phone, it cannot be decrypted here; then the reset is the only way.",
   "loadFailedResetConfirm": "Reset",
   "loadFailedResetFailed": "Reset failed. As a last resort, the app data can be cleared in the Android settings.",
   "exportProfilesTitle": "Export profiles",

@@ -2020,8 +2020,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         onLog: _appendLog,
       );
       // probeConnection reports a cancelled probe as "not reachable", and the
-      // next connection clears the updater's own cancel flag — without this
-      // the connect would simply carry on after "Abbrechen".
+      // updater's cancel state belongs to the connection that was open then —
+      // the next one knows nothing of it. Without this the connect would
+      // simply carry on after "Abbrechen".
       if (_cancelRequested) {
         throw EvccUpdateException(UpdateErrorKind.cancelled, l10n.logCancelled);
       }
