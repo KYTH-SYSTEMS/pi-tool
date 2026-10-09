@@ -30,6 +30,11 @@ const int autoUpdateWrapperGeneration = 3;
 /// in the title of a push.
 const int alertsWrapperGeneration = 3;
 
+/// A stamp line is this prefix and the number, nothing else — for good. The
+/// probe of this version reads the generation from lines of exactly that form
+/// ([wrapperProbeTail]). A later wrapper stamped any other way would count as
+/// generation 2 here, by its [wrapperStampOfV071] line: outdated again, on
+/// every phone still on this version.
 const String _stampPrefix = '# pi-tool-wrapper ';
 
 /// The stamp line of v0.71.0 — the only one that version accepts: its probe

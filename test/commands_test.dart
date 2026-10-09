@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:evcc_updater/src/commands.dart';
+import 'package:evcc_updater/src/pi_job.dart'
+    show jobKindSystemUpgrade, jobRuntimeLimit;
 
 import 'on_pi_sandbox.dart';
 
@@ -224,6 +226,18 @@ void main() {
       // The button of the auto-update sheet, as app_de.arb names it.
       expect(autoUpdateBusyWayOut, contains('(„Zeitplan ändern")'));
       expect(autoUpdateBusyWayOut, contains('Tab „Automatik"'));
+    });
+
+    // Setting the timer up again does not end a run at once: the unit then
+    // has the cap of a system-upgrade job (auto_update.dart), counted from
+    // the start of the run. The text names that cap instead of promising an
+    // end of whatever hangs.
+    test('says after which runtime the Pi ends a run by itself', () {
+      expect(jobRuntimeLimit(jobKindSystemUpgrade), '6h');
+      expect(
+          autoUpdateBusyWayOut,
+          contains('– danach beendet der Pi einen Lauf, der länger als sechs '
+              'Stunden dauert, selbst –'));
     });
   });
 

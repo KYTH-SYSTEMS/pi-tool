@@ -173,8 +173,15 @@ void main() {
 
     setUp(() {
       tmp = Directory.systemTemp.createTempSync('wrapperprobe');
-      dir = (Process.runSync(_bash!, ['-c', r'cd "$0" && pwd', tmp.path]).stdout
-              as String)
+      // A stub for systemctl, put first in PATH inside the shell: the status
+      // commands ask it as well (is-enabled, list-timers), and that must not
+      // be this machine's.
+      Directory('${tmp.path}/stubs').createSync();
+      File('${tmp.path}/stubs/systemctl')
+          .writeAsStringSync('#!/bin/sh\necho "\$*" >> "\$0.calls"\nexit 1\n');
+      dir = (Process.runSync(
+                  _bash!, ['-c', r'cd "$0" && chmod +x stubs/* && pwd', tmp.path])
+              .stdout as String)
           .trim();
     });
     tearDown(() => tmp.deleteSync(recursive: true));
@@ -183,7 +190,8 @@ void main() {
     Future<String> wrapperLine(String command) async {
       final r = await Process.run(_bash!, [
         '-c',
-        command.replaceAll('/usr/local/lib/', '$dir/'),
+        'PATH="$dir/stubs:\$PATH"; '
+            '${command.replaceAll('/usr/local/lib/', '$dir/')}',
       ]);
       return (r.stdout as String)
           .split('\n')
@@ -194,6 +202,17 @@ void main() {
     Future<String> probeV071(String unit) => wrapperLine(_probeV071(unit));
     void put(String unit, String wrapper) =>
         File('${tmp.path}/$unit.sh').writeAsStringSync(wrapper);
+
+    test('the status commands ask the stub, not this machine\'s systemd',
+        () async {
+      await probe(autoUpdateUnit);
+      await probe(alertsUnit);
+      expect(File('${tmp.path}/stubs/systemctl.calls').readAsLinesSync(), [
+        'is-enabled $autoUpdateUnit.timer',
+        'list-timers --all $autoUpdateUnit.timer --no-legend',
+        'is-enabled $alertsUnit.timer',
+      ]);
+    });
 
     for (final unit in [scheduledBackupUnit, autoUpdateUnit, alertsUnit]) {
       final own = generations[unit]!;

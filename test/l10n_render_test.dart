@@ -82,5 +82,9 @@ void main() {
     expect(en.statusAutoUpdateBusy, contains('(“${en.changeSchedule}”)'));
     expect(en.statusAutoUpdateBusy,
         contains('“sudo systemctl stop pi-tool-autoupdate.service”'));
+    // Not "a stuck run": the Pi ends a run at the unit's cap, counted from
+    // its start (commands_test ties the six hours to that cap).
+    expect(en.statusAutoUpdateBusy,
+        contains('the Pi itself ends a run that takes longer than six hours'));
   });
 }

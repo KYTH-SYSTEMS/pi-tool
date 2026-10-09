@@ -1531,7 +1531,7 @@
       }
     }
   },
-  "statusAutoUpdateBusy": "The automatic updates are running on the Pi right now – please try again in a few minutes. Nothing was started. If the run has been stuck for hours: set the automatic updates up again in the “Automation” tab (“Change schedule”) – after that the Pi ends a stuck run by itself – or run “sudo systemctl stop pi-tool-autoupdate.service” on the Pi.",
+  "statusAutoUpdateBusy": "The automatic updates are running on the Pi right now – please try again in a few minutes. Nothing was started. If the run has been stuck for hours: set the automatic updates up again in the “Automation” tab (“Change schedule”) – after that the Pi itself ends a run that takes longer than six hours – or run “sudo systemctl stop pi-tool-autoupdate.service” on the Pi.",
   "statusSystemUpdatedListsIncomplete": "System updated – but not all package lists could be loaded (details in the log).",
   "jobBarRunning": "Pi job “{label}” running (since {time})",
   "@jobBarRunning": {

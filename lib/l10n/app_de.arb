@@ -667,7 +667,7 @@
   "statusJobStartUnclear": "Verbindung abgerissen – ob der Pi-Job „{label}“ gestartet ist, ist unklar. Nach dem Verbinden zeigt die Job-Leiste, ob er läuft.",
   "statusJobBusy": "Auf dem Pi läuft noch der Pi-Job „{label}“ (seit {time}) – bitte warten, bis er fertig ist. Es wurde nichts gestartet.",
   "statusJobBusyNoTime": "Auf dem Pi läuft noch der Pi-Job „{label}“ – bitte warten, bis er fertig ist. Es wurde nichts gestartet.",
-  "statusAutoUpdateBusy": "Auf dem Pi laufen gerade die automatischen Updates – bitte in ein paar Minuten erneut versuchen. Es wurde nichts gestartet. Hängt der Lauf seit Stunden: im Tab „Automatik“ die automatischen Updates neu einrichten („Zeitplan ändern“) – danach beendet der Pi einen hängenden Lauf selbst – oder auf dem Pi „sudo systemctl stop pi-tool-autoupdate.service“ ausführen.",
+  "statusAutoUpdateBusy": "Auf dem Pi laufen gerade die automatischen Updates – bitte in ein paar Minuten erneut versuchen. Es wurde nichts gestartet. Hängt der Lauf seit Stunden: im Tab „Automatik“ die automatischen Updates neu einrichten („Zeitplan ändern“) – danach beendet der Pi einen Lauf, der länger als sechs Stunden dauert, selbst – oder auf dem Pi „sudo systemctl stop pi-tool-autoupdate.service“ ausführen.",
   "statusSystemUpdatedListsIncomplete": "System aktualisiert – aber nicht alle Paketlisten ließen sich laden (Details im Log).",
   "jobBarRunning": "Pi-Job „{label}“ läuft (seit {time})",
   "jobBarFollow": "Mitlesen",

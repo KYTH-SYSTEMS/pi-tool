@@ -761,10 +761,15 @@ const String jobRefusedAutoUpdateMarker = 'PITOOL_REFUSED_AUTOUPDATE_RUNNING';
 /// again in a few minutes" alone never ends. The unit the app writes since
 /// has one (auto_update.dart), and setting the timer up again puts it in
 /// place. `statusAutoUpdateBusy` in the .arb files says the same.
+///
+/// The cap is named, not "a hung run": systemd counts it from the start of
+/// the run in progress, so a run that hangs for two hours is not ended by
+/// the setup but four hours later (not measured on a device). Whoever cannot
+/// wait takes the second way.
 const String autoUpdateBusyWayOut =
     'Hängt der Lauf seit Stunden: im Tab „Automatik" die automatischen '
     'Updates neu einrichten („Zeitplan ändern") – danach beendet der Pi einen '
-    'hängenden Lauf selbst – oder auf dem Pi '
+    'Lauf, der länger als sechs Stunden dauert, selbst – oder auf dem Pi '
     '„sudo systemctl stop pi-tool-autoupdate.service" ausführen.';
 
 /// Refuses a reboot/poweroff from the app while a job runs (flock probe on
