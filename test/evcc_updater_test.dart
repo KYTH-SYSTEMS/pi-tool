@@ -2113,8 +2113,78 @@ void main() {
             path: '/etc/evcc.yaml',
             content: 'x',
             onLog: (_) {}),
-        throwsA(isA<EvccUpdateException>()),
+        _err(UpdateErrorKind.unknown,
+            'Speichern fehlgeschlagen (Details im Log).'),
       );
+    });
+
+    test('saveConfigFile: a refused link — the reason of the script is the '
+        'message, and it is in the log', () async {
+      const reason = 'Der Pfad ist eine Verknüpfung (Symlink) – nichts '
+          'gespeichert.';
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('$configWriteRefusedPrefix$reason\n', exitCode: 3)
+        ]
+      });
+      final log = <String>[];
+      await expectLater(
+        _updaterWith(runner).saveConfigFile(
+            config: _config,
+            path: '/home/svc/app.conf',
+            content: 'x',
+            onLog: log.add),
+        _err(UpdateErrorKind.unknown, reason),
+      );
+      expect(log, contains('$configWriteRefusedPrefix$reason'));
+    });
+
+    test('saveConfigFile: a rejected sudo password stays what it is, '
+        'whatever else was printed', () async {
+      final runner = FakeSshRunner({
+        installShellCommand: [
+          _r('${configWriteRefusedPrefix}x\n',
+              stderr: 'Sorry, try again.\n'
+                  'sudo: 1 incorrect password attempt\n',
+              exitCode: 1)
+        ]
+      });
+      await expectLater(
+        _updaterWith(runner).saveConfigFile(
+            config: _config,
+            path: '/etc/evcc.yaml',
+            content: 'x',
+            onLog: (_) {}),
+        _err(UpdateErrorKind.sudo, contains('Passwort')),
+      );
+    });
+
+    test('saveConfigFile: the script that goes out refuses a link with its '
+        'own line and exit status', () async {
+      final runner =
+          FakeSshRunner({installShellCommand: [_r('CONFIG_SAVED\n')]});
+      await _updaterWith(runner).saveConfigFile(
+          config: _config,
+          path: '/etc/evcc.yaml',
+          content: 'x',
+          onLog: (_) {});
+      final lines = runner.stdinByCommand[installShellCommand]!.split('\n');
+      final refusals = [
+        for (var i = 0; i < lines.length; i++)
+          if (lines[i].trimLeft().startsWith("echo '$configWriteRefusedPrefix"))
+            i
+      ];
+      // Before the first thing the script writes (the backup directory).
+      expect(refusals, hasLength(2));
+      for (final i in refusals) {
+        expect(lines[i + 1].trim(), 'exit 3');
+        expect(i, lessThan(lines.indexOf('mkdir -p /var/backups/pi-tool')));
+        // What the app would show: one sentence, nothing from the Pi in it.
+        final reason = parseConfigWriteRefusal(
+            lines[i].trim().substring("echo '".length).replaceAll("'", ''));
+        expect(reason, contains('nichts gespeichert'));
+        expect(reason, isNot(contains(r'$')));
+      }
     });
   });
 

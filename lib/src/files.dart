@@ -5,7 +5,7 @@ library;
 
 import 'dart:typed_data';
 
-import 'commands.dart' show shSingleQuote;
+import 'commands.dart' show rootReplaceFileLines, shSingleQuote;
 
 /// Max bytes for in-app editing of a file from the browser — keeps the editor
 /// and the base64 write payload bounded (config-sized files, not logs/dumps).
@@ -69,9 +69,12 @@ const int kFileUploadLimit = 8 * 1024 * 1024;
 /// Prints `UPLOAD_OK` — the caller verifies that marker, not the exit code.
 ///
 /// A new file is root's, 0644. One that replaces an existing file takes over
-/// that file's owner and mode — a service user's 0600 `.env` stays what it
-/// was. A directory at [path] is refused: `mv` would move the temp file INTO
-/// it and report success. The temp file never outlives a failure.
+/// that file's owner and permission bits — a service user's 0600 `.env` stays
+/// what it was. A symlink at [path] is replaced by a new file and hands on
+/// nothing. A directory at [path] is refused: `mv` would move the temp file
+/// INTO it and report success. The temp file never outlives a failure, and it
+/// is only ever reached through the descriptor it was created with — the
+/// directory may be another account's (see [rootReplaceFileLines]).
 String buildUploadScript({required String path, required String base64Content}) {
   return 'set -e\n'
       'dest=${shSingleQuote(path)}\n'
@@ -83,25 +86,11 @@ String buildUploadScript({required String path, required String base64Content}) 
       // The directory may legitimately not exist yet: the migration helper
       // uploads backups to /var/backups/… on a TARGET Pi that has never been
       // backed up (those dirs are created by the backup scripts, which run on
-      // the source). Without this, mktemp fails and the whole migration dies
-      // after the target was already installed. No-op for the file browser.
+      // the source). Without this, the temp file cannot be created and the
+      // whole migration dies after the target was already installed. No-op
+      // for the file browser.
       'mkdir -p "\$dir"\n'
-      'tmp=\$(mktemp "\$dir/.pitool-up.XXXXXX")\n'
-      'trap \'rm -f "\$tmp"\' EXIT\n'
-      'printf %s ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"\n'
-      // mktemp made the file 0600. One that replaces a file goes from there
-      // straight to that file's owner and mode — never through 0644, or the
-      // new content of a 0600 file would be readable for everyone meanwhile.
-      // Owner first: chown may clear mode bits that chmod then sets again.
-      'if [ -f "\$dest" ]; then\n'
-      '  chown --reference="\$dest" "\$tmp"\n'
-      '  chmod --reference="\$dest" "\$tmp"\n'
-      'else\n'
-      '  chmod 644 "\$tmp"\n'
-      'fi\n'
-      // -T: should a directory appear at the target after the check above,
-      // mv fails instead of moving into it.
-      'mv -fT "\$tmp" "\$dest"\n'
+      '${rootReplaceFileLines(tmpPrefix: '.pitool-up.', base64Content: base64Content, strict: true, newFileMode: '644')}'
       'echo UPLOAD_OK\n';
 }
 

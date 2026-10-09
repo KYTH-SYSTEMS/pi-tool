@@ -192,6 +192,25 @@ void main() {
     });
   });
 
+  group('parseConfigWriteRefusal', () {
+    test('reads the reason from the refusal line of the config write', () {
+      expect(
+          parseConfigWriteRefusal('Speichere /etc/evcc.yaml …\n'
+              '${configWriteRefusedPrefix}Der Pfad ist eine Verknüpfung.\n'),
+          'Der Pfad ist eine Verknüpfung.');
+    });
+
+    test('null without a refusal line or without a reason', () {
+      expect(parseConfigWriteRefusal('CONFIG_SAVED\n'), isNull);
+      expect(parseConfigWriteRefusal(configWriteRefusedPrefix), isNull);
+      expect(parseConfigWriteRefusal('${installRefusedPrefix}x'), isNull);
+    });
+
+    test('the prefix cannot be mistaken for the success marker', () {
+      expect(configWriteRefusedPrefix, isNot(contains('CONFIG_SAVED')));
+    });
+  });
+
   group('apt without a pty', () {
     // apt hands dpkg a pty even with no terminal attached (Debian #860931), and
     // dpkg then repaints "(Reading database ... N%" ~20× per package. Over SSH
@@ -1541,32 +1560,134 @@ esac'''
   }, skip: _needsBash);
 
   // The config editor's write script in a REAL bash on a sandboxed "Pi": where
-  // the content lands, what happens to a link or a directory at the target and
-  // what a failure leaves behind is checked. (The backup rotation of the same
-  // script is covered in backup_scripts_test.)
+  // the content lands, what happens to a link or a directory at the target,
+  // what a failure leaves behind — and that an account which owns the
+  // directory cannot steer what root writes, owns or opens up. (The backup
+  // rotation of the same script is covered in backup_scripts_test.)
   group('buildConfigWriteScript in bash', () {
     late PiSandbox pi;
 
+    /// The plain tools this script needs beyond the sandbox's own, by path.
+    final real = <String, String>{};
+
     setUp(() {
       pi = PiSandbox();
-      // The plain tools this script needs beyond the sandbox's own.
       for (final tool in ['base64', 'cp', 'chown', 'readlink', 'ln']) {
-        final real =
+        real[tool] =
             (Process.runSync(sandboxBash!, ['-c', 'command -v $tool']).stdout
                     as String)
                 .trim();
-        pi.stub(tool, 'exec "$real" "\$@"', log: false);
+        pi.stub(tool, 'exec "${real[tool]}" "\$@"', log: false);
       }
     });
     tearDown(() => pi.dispose());
 
-    Future<SandboxRun> write(String path, String content) =>
-        pi.run(buildConfigWriteScript(
-            path: path, base64Content: base64Encode(utf8.encode(content))));
+    /// Runs the script. [sudoUid] is the account that called sudo
+    /// (`$SUDO_UID`); without one only root owns a directory in the script's
+    /// eyes. The script's own descriptor (/proc/self/fd/3) is no Pi path and
+    /// stays what it is.
+    Future<SandboxRun> write(String path, String content, {int? sudoUid}) {
+      final script = pi
+          .rebase(buildConfigWriteScript(
+              path: path, base64Content: base64Encode(utf8.encode(content))))
+          .replaceAll('${pi.root}/proc/self/fd/', '/proc/self/fd/');
+      return pi.run(
+          '${sudoUid == null ? 'unset SUDO_UID' : 'export SUDO_UID=$sudoUid'}\n'
+          '$script',
+          rebase: false);
+    }
 
     /// Temp files of the script still lying in [absDir].
     List<String> leftovers(String absDir) =>
         pi.ls(absDir).where((n) => n.startsWith('.pitool-cfg.')).toList();
+
+    /// Lets `stat` answer the script's two questions from a list instead of
+    /// the host, which under Git Bash knows neither owners nor real modes:
+    /// the directory check (`-L -c '%f %u' -- <dir>`) from [dirs] — raw mode
+    /// in hex and owner, `'/home/svc': '41ed 999'`; a directory not listed is
+    /// root's, 0755, as on a Pi — and owner and mode of the file being
+    /// replaced (`-c '%f +%u:+%g' -- <file>`) from [files]; a file not listed
+    /// goes to the real stat, like any other question.
+    ///
+    /// With [realDirs] the directories of the sandbox are answered by the
+    /// real stat too. Those above it never are: they are the host's (/tmp is
+    /// open to everyone) and stand for the root of the Pi, which is root's.
+    void fakeStat({
+      Map<String, String> dirs = const {},
+      Map<String, String> files = const {},
+      bool realDirs = false,
+    }) {
+      String lines(Map<String, String> m) =>
+          m.entries.map((e) => '${e.key}|${e.value}\n').join();
+      pi.put('/state/stat-dirs', lines(dirs));
+      pi.put('/state/stat-files', lines(files));
+      pi.stub('stat', '''
+last=
+for a in "\$@"; do last=\$a; done
+case "\$*" in
+  "-L -c %f %u -- "*)
+    case "\$R" in "\${last%/}"/*) echo "41ed 0"; exit 0 ;; esac
+    ${realDirs ? r'exec "$REAL_STAT" "$@"' : r'list=$S/stat-dirs'} ;;
+  "-c %f +%u:+%g -- "*) list=\$S/stat-files ;;
+  *) exec "\$REAL_STAT" "\$@" ;;
+esac
+while IFS='|' read -r path answer; do
+  [ "\$R\$path" = "\$last" ] && { echo "\$answer"; exit 0; }
+done < "\$list"
+[ "\$list" = "\$S/stat-dirs" ] && { echo "41ed 0"; exit 0; }
+exec "\$REAL_STAT" "\$@"''');
+    }
+
+    /// The directories of the "Pi" the script asked `stat` about, in order
+    /// (`/` is the sandbox itself).
+    List<String> dirsAsked() {
+      const question = 'stat -L -c %f %u -- ';
+      return [
+        for (final c in pi.calls)
+          if (c.startsWith('$question${pi.root}'))
+            c.substring(question.length + pi.root.length).isEmpty
+                ? '/'
+                : c.substring(question.length + pi.root.length)
+      ];
+    }
+
+    /// The chown and chmod calls so far (where a test logs them).
+    List<String> ownerAndModeCalls() => pi.calls
+        .where((c) => c.startsWith('chown ') || c.startsWith('chmod '))
+        .toList();
+
+    /// Puts the symlink [link] → [target] on the "Pi" and says whether this
+    /// host can; a [target] without a leading slash stays relative. MSYS=…:
+    /// Git Bash copies instead of linking unless it is told to write a link
+    /// of its own kind — one its readlink, mv and test treat like the real
+    /// thing. Anywhere else the variable means nothing.
+    Future<bool> symlink(String target, String link) async {
+      // /dev/null stays the real one.
+      final onPi = target.startsWith('/') && !target.startsWith('/dev/');
+      final to = onPi ? '${pi.root}$target' : target;
+      final r = await pi.run(
+          "mkdir -p \"\$(dirname '${pi.root}$link')\" && "
+          "MSYS=winsymlinks:sysfile ln -s '$to' "
+          "'${pi.root}$link' && [ -L '${pi.root}$link' ]",
+          rebase: false);
+      return r.code == 0;
+    }
+
+    Future<bool> isLink(String abs) async =>
+        (await pi.run("[ -L '${pi.root}$abs' ]", rebase: false)).code == 0;
+
+    /// The script refused: its one line says why ([because]), and nothing was
+    /// written — no backup, no temp file in [dirs].
+    void expectRefused(SandboxRun r, String because, List<String> dirs) {
+      expect(r.code, 3, reason: '${r.out}${r.err}');
+      expect(r.lines, hasLength(1), reason: r.out);
+      expect(r.lines.single, startsWith('CONFIG_REFUSED: '));
+      expect(r.lines.single, contains(because));
+      expect(pi.exists('/var/backups/pi-tool'), isFalse);
+      for (final d in dirs) {
+        expect(leftovers(d), isEmpty, reason: d);
+      }
+    }
 
     test('a plain file is replaced, backed up, and nothing lies next to it',
         () async {
@@ -1601,58 +1722,333 @@ esac'''
       expect(leftovers('/etc'), isEmpty);
     });
 
-    test('a symlink stays a link, its target gets the content', () async {
+    test('a file of a service account is replaced in place; owner and mode '
+        'reach the new file through the descriptor', () async {
+      // /home/svc is nobody's the script would trust (no $SUDO_UID, not
+      // root's) — a regular file is saved there all the same.
+      pi.put('/home/svc/app.conf', 'old');
+      fakeStat(files: {'/home/svc/app.conf': '81a0 +112:+120'});
+      pi.stub('chown', 'exit 0');
+      pi.stub('chmod', 'exit 0');
+      final r = await write('/home/svc/app.conf', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.read('/home/svc/app.conf'), 'new');
+      expect(leftovers('/home/svc'), isEmpty);
+      // Owner first: chown may clear mode bits that chmod then sets again.
+      expect(ownerAndModeCalls(), [
+        'chown +112:+120 /proc/self/fd/3',
+        'chmod 640 /proc/self/fd/3',
+      ]);
+      expect(dirsAsked(), isEmpty);
+    });
+
+    test('setuid and setgid bits of the old file are not taken over',
+        () async {
+      pi.put('/home/svc/tool', 'old');
+      fakeStat(files: {'/home/svc/tool': '8de8 +0:+0'}); // 6750
+      pi.stub('chown', 'exit 0');
+      pi.stub('chmod', 'exit 0');
+      final r = await write('/home/svc/tool', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(ownerAndModeCalls(),
+          ['chown +0:+0 /proc/self/fd/3', 'chmod 750 /proc/self/fd/3']);
+    });
+
+    test('neither a link nor a missing file hands on owner or mode', () async {
+      pi.stub('chown', 'exit 0');
+      pi.stub('chmod', 'exit 0');
+      // A link that took the place of the file after the script looked: the
+      // entry itself is asked, and a link has nothing to hand on.
+      pi.put('/home/svc/app.conf', 'old');
+      fakeStat(files: {'/home/svc/app.conf': 'a1ff +0:+0'});
+      var r = await write('/home/svc/app.conf', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      // A new file stays root's alone.
+      r = await write('/home/svc/new.conf', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(pi.read('/home/svc/new.conf'), 'new');
+      expect(ownerAndModeCalls(), isEmpty);
+    });
+
+    test('a link in /etc to a file in the home of the invoking user: the '
+        'file gets the content, the link stays', () async {
       pi.put('/home/pi/evcc.yaml', 'old');
-      // MSYS=…: Git Bash copies instead of linking unless it is told to write
-      // a link of its own kind — one its readlink, mv and test treat like the
-      // real thing. Anywhere else the variable means nothing.
-      final link = await pi.run(
-          "MSYS=winsymlinks:sysfile ln -s '${pi.root}/home/pi/evcc.yaml' "
-          "'${pi.root}/etc/evcc.yaml' && [ -L '${pi.root}/etc/evcc.yaml' ]",
-          rebase: false);
-      if (link.code != 0) {
-        // A Git Bash too old for that. The next test covers the same step
-        // with a stubbed readlink.
+      if (!await symlink('/home/pi/evcc.yaml', '/etc/evcc.yaml')) {
         markTestSkipped('this host creates no symlinks');
         return;
       }
-      final r = await write('/etc/evcc.yaml', 'new');
+      fakeStat(dirs: {'/etc': '41ed 0', '/home/pi': '41c0 1000'});
+      final r = await write('/etc/evcc.yaml', 'new', sudoUid: 1000);
       expect(r.code, 0, reason: '${r.out}${r.err}');
       expect(r.lines.last, 'CONFIG_SAVED');
       expect(pi.read('/home/pi/evcc.yaml'), 'new');
-      final still = await pi.run(
-          "[ -L '${pi.root}/etc/evcc.yaml' ] && echo LINK",
-          rebase: false);
-      expect(still.lines, ['LINK']);
+      expect(await isLink('/etc/evcc.yaml'), isTrue);
+      // Every directory a name was looked up in: down to the link, then from
+      // the root again down to the file.
+      expect(dirsAsked(), ['/', '/etc', '/', '/home', '/home/pi']);
       expect(leftovers('/etc'), isEmpty);
       expect(leftovers('/home/pi'), isEmpty);
+      // The backup holds what the file behind the link held.
+      final backups = pi.ls('/var/backups/pi-tool');
+      expect(backups, hasLength(1));
+      expect(backups.single, startsWith('config-evcc.yaml-'));
+      expect(pi.read('/var/backups/pi-tool/${backups.single}'), 'old');
     });
 
-    test('the content goes where readlink -f says the path leads', () async {
-      // /etc/evcc.yaml stands in for a link to /home/pi/evcc.yaml: a rename
-      // onto the path itself would replace the link and leave the file that
-      // the service reads untouched.
-      pi.put('/etc/evcc.yaml', 'the link');
+    test('the same link without an invoking user: only root owns a '
+        'directory, refused', () async {
       pi.put('/home/pi/evcc.yaml', 'old');
-      pi.stub('readlink', 'echo "\$R/home/pi/evcc.yaml"');
+      if (!await symlink('/home/pi/evcc.yaml', '/etc/evcc.yaml')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat(dirs: {'/etc': '41ed 0', '/home/pi': '41c0 1000'});
       final r = await write('/etc/evcc.yaml', 'new');
-      expect(r.code, 0, reason: '${r.out}${r.err}');
-      expect(r.lines.last, 'CONFIG_SAVED');
-      expect(pi.calls.where((c) => c.startsWith('readlink ')),
-          ['readlink -f ${pi.root}/etc/evcc.yaml']);
-      expect(pi.read('/home/pi/evcc.yaml'), 'new');
-      expect(pi.read('/etc/evcc.yaml'), 'the link');
-      expect(leftovers('/etc'), isEmpty);
-      expect(leftovers('/home/pi'), isEmpty);
+      expectRefused(r, 'anderes Konto', ['/etc', '/home/pi']);
+      expect(pi.read('/home/pi/evcc.yaml'), 'old');
     });
 
-    test('without a usable readlink the path itself is written', () async {
-      pi.put('/etc/evcc.yaml', 'old');
-      pi.stub('readlink', 'exit 1');
-      final r = await write('/etc/evcc.yaml', 'new');
+    // The attack of the release review: the account that can write to the
+    // directory shows the editor a regular file and puts a link in its place
+    // while it is open. Root would write the edited text to the file the
+    // link names.
+    for (final (what, dir) in [
+      ('belongs to another account', '41ed 999'),
+      ('is writable for the group', '41fd 0'),
+      ('is writable for everyone', '41ef 1000'),
+      ('is sticky and writable for everyone, like /tmp', '43ff 0'),
+    ]) {
+      test('a link in a directory that $what: refused, nothing written',
+          () async {
+        pi.put('/etc/cron.d/pitool', 'old');
+        if (!await symlink('/etc/cron.d/pitool', '/home/svc/app.conf')) {
+          markTestSkipped('this host creates no symlinks');
+          return;
+        }
+        fakeStat(dirs: {'/home/svc': dir, '/etc/cron.d': '41ed 0'});
+        final r = await write('/home/svc/app.conf', '* * * * * root id',
+            sudoUid: 1000);
+        expectRefused(r, 'anderes Konto', ['/home/svc', '/etc/cron.d']);
+        expect(pi.read('/etc/cron.d/pitool'), 'old');
+        expect(await isLink('/home/svc/app.conf'), isTrue);
+      });
+    }
+
+    test('a link in /etc to a file in a directory of another account: refused',
+        () async {
+      pi.put('/home/svc/evcc.yaml', 'old');
+      if (!await symlink('/home/svc/evcc.yaml', '/etc/evcc.yaml')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat(dirs: {'/etc': '41ed 0', '/home/svc': '41ed 999'});
+      final r = await write('/etc/evcc.yaml', 'new', sudoUid: 1000);
+      expectRefused(r, 'anderes Konto', ['/etc', '/home/svc']);
+      expect(pi.read('/home/svc/evcc.yaml'), 'old');
+      expect(await isLink('/etc/evcc.yaml'), isTrue);
+    });
+
+    test('a link of root that leads on through a link of another account: '
+        'refused', () async {
+      // Root put /etc/evcc.yaml there, but it points into the directory of a
+      // service account — which has since put a link of its own at that
+      // name. Both the first link and the file lie in directories of root.
+      pi.put('/etc/cron.d/pitool', 'old');
+      if (!await symlink('/etc/cron.d/pitool', '/home/svc/evcc.yaml') ||
+          !await symlink('/home/svc/evcc.yaml', '/etc/evcc.yaml')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat(dirs: {'/home/svc': '41ed 999'});
+      final r =
+          await write('/etc/evcc.yaml', '* * * * * root id', sudoUid: 1000);
+      expectRefused(r, 'anderes Konto', ['/etc', '/home/svc', '/etc/cron.d']);
+      expect(pi.read('/etc/cron.d/pitool'), 'old');
+    });
+
+    test('a link of root that leads through a directory link of another '
+        'account: refused', () async {
+      // The same with a directory: /home/svc/conf is a link to /etc/cron.d.
+      pi.put('/etc/cron.d/evcc.yaml', 'old');
+      if (!await symlink('/etc/cron.d', '/home/svc/conf') ||
+          !await symlink('/home/svc/conf/evcc.yaml', '/etc/evcc.yaml')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat(dirs: {'/home/svc': '41ed 999'});
+      final r =
+          await write('/etc/evcc.yaml', '* * * * * root id', sudoUid: 1000);
+      expectRefused(r, 'anderes Konto', ['/etc', '/home/svc', '/etc/cron.d']);
+      expect(pi.read('/etc/cron.d/evcc.yaml'), 'old');
+    });
+
+    test('a link below a directory of another account: refused, whoever '
+        'owns its own directory', () async {
+      // /home/svc/sub is root's — and can be exchanged as a whole by the
+      // account that owns /home/svc.
+      pi.put('/etc/cron.d/pitool', 'old');
+      if (!await symlink('/etc/cron.d/pitool', '/home/svc/sub/app.conf')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat(dirs: {'/home/svc': '41ed 999'});
+      final r = await write('/home/svc/sub/app.conf', '* * * * * root id',
+          sudoUid: 1000);
+      expectRefused(r, 'anderes Konto', ['/home/svc/sub', '/etc/cron.d']);
+      expect(pi.read('/etc/cron.d/pitool'), 'old');
+    });
+
+    test('links of root on the way are followed: a directory link, a '
+        'relative target, ".."', () async {
+      // As on a Pi with a merged /usr: /lib -> usr/lib.
+      pi.put('/usr/lib/app/app.conf', 'old');
+      if (!await symlink('usr/lib', '/lib') ||
+          !await symlink('../lib/app/app.conf', '/etc/app.conf')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat();
+      final r = await write('/etc/app.conf', 'new', sudoUid: 1000);
       expect(r.code, 0, reason: '${r.out}${r.err}');
       expect(r.lines.last, 'CONFIG_SAVED');
-      expect(pi.read('/etc/evcc.yaml'), 'new');
+      expect(pi.read('/usr/lib/app/app.conf'), 'new');
+      expect(await isLink('/etc/app.conf'), isTrue);
+      expect(await isLink('/lib'), isTrue);
+      expect(dirsAsked(),
+          ['/', '/etc', '/', '/', '/usr', '/usr/lib', '/usr/lib/app']);
+      expect(leftovers('/usr/lib/app'), isEmpty);
+    });
+
+    test('a link that leads to no file: refused, nothing created', () async {
+      pi.put('/home/pi/dir/keep');
+      pi.put('/home/pi/evcc.yaml', 'old');
+      if (!await symlink('/home/pi/gone.yaml', '/etc/dangling.conf') ||
+          !await symlink('/home/pi/dir', '/etc/dir.conf') ||
+          !await symlink('/home/pi/evcc.yaml', '/etc/evcc.yaml')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat(dirs: {'/etc': '41ed 0', '/home/pi': '41ed 0'});
+      var r = await write('/etc/dangling.conf', 'new');
+      expectRefused(r, 'keiner Datei', ['/etc', '/home/pi']);
+      expect(pi.exists('/home/pi/gone.yaml'), isFalse);
+      r = await write('/etc/dir.conf', 'new');
+      expectRefused(r, 'keiner Datei', ['/etc', '/home/pi']);
+      expect(pi.ls('/home/pi/dir'), ['keep']);
+      // Where the link leads cannot be told: it is not followed on a guess.
+      pi.stub('readlink', 'exit 1');
+      r = await write('/etc/evcc.yaml', 'new');
+      expectRefused(r, 'keiner Datei', ['/etc', '/home/pi']);
+      expect(pi.read('/home/pi/evcc.yaml'), 'old');
+    });
+
+    test('two links that point at each other: refused, no endless loop',
+        () async {
+      if (!await symlink('/etc/b.conf', '/etc/a.conf') ||
+          !await symlink('/etc/a.conf', '/etc/b.conf')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat();
+      final r = await write('/etc/a.conf', 'new');
+      expectRefused(r, 'keiner Datei', ['/etc']);
+    });
+
+    test('a link with spaces in its name and in its target is followed to '
+        'the letter', () async {
+      pi.put('/home/pi/my configs/evcc main.yaml', 'old');
+      pi.put('/home/pi/my', 'not this one');
+      if (!await symlink(
+          '/home/pi/my configs/evcc main.yaml', '/etc/evcc main.yaml')) {
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      fakeStat();
+      final r = await write('/etc/evcc main.yaml', 'new', sudoUid: 1000);
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.read('/home/pi/my configs/evcc main.yaml'), 'new');
+      expect(pi.read('/home/pi/my'), 'not this one');
+      expect(await isLink('/etc/evcc main.yaml'), isTrue);
+    });
+
+    // The name of the temp file is fresh and random, and it is opened
+    // exclusively: an account that owns the directory and has a link (or a
+    // file) waiting under that name gets nothing written through it.
+    for (final (what, place) in <(String, Future<bool> Function(String))>[
+      ('a link to a file', (name) => symlink('/etc/shadow', name)),
+      ('a link to nowhere', (name) => symlink('/etc/nowhere', name)),
+      // No regular file: bash's noclobber opens such a name, the script
+      // looks at what it got.
+      ('a link to a device', (name) => symlink('/dev/null', name)),
+      (
+        'a file',
+        (name) async {
+          pi.put(name, 'theirs');
+          return true;
+        }
+      ),
+    ]) {
+      test('the temp name is taken by $what: refused, nothing goes through it',
+          () async {
+        pi.put('/etc/shadow', 'secret');
+        pi.put('/home/svc/app.conf', 'old');
+        pi.stub('mktemp', r'''
+last=
+for a in "$@"; do last=$a; done
+echo "${last%XXXXXX}taken1"''', log: false);
+        const name = '/home/svc/.pitool-cfg.taken1';
+        if (!await place(name)) {
+          markTestSkipped('this host creates no symlinks');
+          return;
+        }
+        final r = await write('/home/svc/app.conf', 'new');
+        expect(r.code, isNot(0));
+        expect(r.out, isNot(contains('CONFIG_SAVED')));
+        expect(pi.read('/home/svc/app.conf'), 'old');
+        expect(pi.read('/etc/shadow'), 'secret');
+        expect(pi.exists('/etc/nowhere'), isFalse);
+        // Not the script's file, so not the script's to remove either.
+        expect(pi.exists(name), isTrue);
+        if (what == 'a file') expect(pi.read(name), 'theirs');
+      });
+    }
+
+    test('the temp name swapped for a link once the file exists: owner and '
+        'mode go to the script\'s own file, not through the link', () async {
+      pi.put('/etc/shadow', 'secret');
+      pi.put('/home/svc/app.conf', 'old');
+      final modes = await pi.run(
+          "chmod 600 '${pi.root}/etc/shadow' && "
+          "chmod 644 '${pi.root}/home/svc/app.conf'",
+          rebase: false);
+      expect(modes.code, 0, reason: modes.err);
+      // base64 is the first command after the temp file was created: it
+      // decodes as always, then does what the owner of the directory would.
+      pi.stub('base64', '''
+"${real['base64']}" "\$@" || exit 1
+for f in "\$R"/home/svc/.pitool-cfg.*; do
+  "\$REAL_RM" -f "\$f"
+  MSYS=winsymlinks:sysfile "${real['ln']}" -s "\$R/etc/shadow" "\$f"
+done''', log: false);
+      // After the swap Git Bash no longer finds the file behind the
+      // descriptor; there the calls are what counts.
+      pi.stub('chown',
+          Platform.isWindows ? 'exit 0' : 'exec "${real['chown']}" "\$@"');
+      pi.stub('chmod', Platform.isWindows ? 'exit 0' : r'exec "$REAL_CHMOD" "$@"');
+      await write('/home/svc/app.conf', 'new');
+      expect(pi.read('/etc/shadow'), 'secret');
+      final calls = ownerAndModeCalls();
+      expect(calls, hasLength(2));
+      expect(calls[0], matches(r'^chown \+\d+:\+\d+ /proc/self/fd/3$'));
+      expect(calls[1], matches(r'^chmod \d+ /proc/self/fd/3$'));
+      // Git Bash only emulates modes; where they are real, the mode is that
+      // of the config and the file behind the link keeps its own.
+      if (!Platform.isWindows) {
+        expect(calls[1], 'chmod 644 /proc/self/fd/3');
+        expect(await pi.mode('/etc/shadow'), '600');
+      }
     });
 
     test('a directory at the target: nothing is moved into it, no marker',
@@ -1675,6 +2071,85 @@ esac'''
       expect(pi.read('/etc/evcc.yaml'), 'old');
       expect(leftovers('/etc'), isEmpty);
     });
+
+    // Where owners and modes are real (Linux, CI): the same decisions with the
+    // real stat for everything in the sandbox. It belongs to the account
+    // that runs the tests — as $SUDO_UID that is the invoking user, without
+    // it a stranger.
+    group('with real owners and modes', () {
+      late int me;
+
+      setUp(() async {
+        me = int.parse(
+            (await pi.run("stat -c %u '${pi.root}'", rebase: false)).out.trim());
+        fakeStat(realDirs: true);
+      });
+
+      Future<void> chmod(String mode, String abs) async {
+        final r = await pi.run("chmod $mode '${pi.root}$abs'", rebase: false);
+        expect(r.code, 0, reason: r.err);
+      }
+
+      /// /etc/evcc.yaml → /home/pi/evcc.yaml (0640); every directory on the
+      /// way is the test account's and closed to everyone else.
+      Future<void> linkedConfig() async {
+        pi.put('/home/pi/evcc.yaml', 'old');
+        expect(await symlink('/home/pi/evcc.yaml', '/etc/evcc.yaml'), isTrue);
+        await chmod('755', '/etc');
+        await chmod('755', '/home');
+        await chmod('700', '/home/pi');
+        await chmod('640', '/home/pi/evcc.yaml');
+      }
+
+      test('a link between directories of the invoking user is written '
+          'through, the file keeps its mode', () async {
+        await linkedConfig();
+        final r = await write('/etc/evcc.yaml', 'new', sudoUid: me);
+        expect(r.code, 0, reason: '${r.out}${r.err}');
+        expect(r.lines.last, 'CONFIG_SAVED');
+        expect(pi.read('/home/pi/evcc.yaml'), 'new');
+        expect(await isLink('/etc/evcc.yaml'), isTrue);
+        expect(await pi.mode('/home/pi/evcc.yaml'), '640');
+      });
+
+      test('the same link once the group may write to its directory: refused',
+          () async {
+        await linkedConfig();
+        await chmod('775', '/etc');
+        final r = await write('/etc/evcc.yaml', 'new', sudoUid: me);
+        expectRefused(r, 'anderes Konto', ['/etc', '/home/pi']);
+        expect(pi.read('/home/pi/evcc.yaml'), 'old');
+      });
+
+      test('the same link without an invoking user: the directories are a '
+          'stranger\'s, refused', () async {
+        if (me == 0) {
+          markTestSkipped('runs as root: every directory here is root\'s');
+          return;
+        }
+        await linkedConfig();
+        final r = await write('/etc/evcc.yaml', 'new');
+        expectRefused(r, 'anderes Konto', ['/etc', '/home/pi']);
+        expect(pi.read('/home/pi/evcc.yaml'), 'old');
+      });
+
+      test('a regular file keeps its permission bits, the setuid bit goes',
+          () async {
+        pi.put('/home/svc/tool', 'old');
+        await chmod('4750', '/home/svc/tool');
+        final r = await write('/home/svc/tool', 'new');
+        expect(r.code, 0, reason: '${r.out}${r.err}');
+        expect(pi.read('/home/svc/tool'), 'new');
+        expect(await pi.mode('/home/svc/tool'), '750');
+      });
+
+      test('a new file is for its owner alone', () async {
+        pi.put('/etc/other.conf');
+        final r = await write('/etc/new.conf', 'new');
+        expect(r.code, 0, reason: '${r.out}${r.err}');
+        expect(await pi.mode('/etc/new.conf'), '600');
+      });
+    }, skip: Platform.isWindows ? 'needs real owners and modes' : false);
   }, skip: needsBash);
 }
 

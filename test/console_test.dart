@@ -153,15 +153,34 @@ void main() {
     test('write backs up, decodes to a temp file, then atomically renames', () {
       final s = buildConfigWriteScript(
           path: '/etc/evcc.yaml', base64Content: 'aGkK');
-      expect(s, contains('/var/backups/pi-tool')); // backup first
-      expect(s, contains("cp '/etc/evcc.yaml'"));
-      expect(s, contains('mktemp')); // atomic: temp then rename
-      expect(s, contains("printf '%s' 'aGkK' | base64 -d > \"\$tmp\""));
-      expect(s, contains("chmod --reference='/etc/evcc.yaml'")); // preserve mode
+      final lines = s.split('\n');
+      int at(String line) {
+        final i = lines.indexOf(line);
+        expect(i, isNot(-1), reason: 'missing line: $line');
+        return i;
+      }
+
+      expect(lines, contains("p='/etc/evcc.yaml'"));
+      // Backup first, then the temp file: created under a fresh name by an
+      // exclusive open and written, owned and moded through that descriptor.
+      final backup = at('mkdir -p /var/backups/pi-tool');
+      final create = at(r'exec 3> "$tmp"');
+      expect(create, greaterThan(backup));
+      expect(lines[create - 2], r'tmp=$(mktemp -u "$dir/.pitool-cfg.XXXXXX")');
+      expect(lines[create - 1], 'set -C');
+      final write = at("printf '%s' 'aGkK' | base64 -d >&3");
+      final owner = at(r'    chown "${st#* }" "$fd" 2>/dev/null || true');
+      final mode = at(r'    chmod "$mode" "$fd" 2>/dev/null || true');
+      final close = at('exec 3>&-');
       // The rename goes onto what the path leads to (a symlink stays a link).
-      expect(s, contains("t=\$(readlink -f '/etc/evcc.yaml' 2>/dev/null)"));
-      expect(s, contains('mv -fT "\$tmp" "\$t"'));
-      expect(s, contains('CONFIG_SAVED'));
+      final rename = at(r'mv -fT "$tmp" "$dest"');
+      final steps = [create, write, owner, mode, close, rename];
+      expect(steps, [...steps]..sort(), reason: 'out of order');
+      expect(s.trimRight(), endsWith('\necho CONFIG_SAVED'));
+      // Nothing reaches the temp file by its name but the rename and the
+      // clean-up: no --reference, no redirect into "$tmp" after the open.
+      expect(s, isNot(contains('--reference')));
+      expect(RegExp(r'> "\$tmp"').allMatches(s), hasLength(1));
     });
 
     test('a hostile path cannot break out of the write script', () {

@@ -1422,45 +1422,171 @@ String buildConfigReadCommand(String path) =>
 const String _configBackupTsGlob = '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-'
     '[0-9][0-9][0-9][0-9][0-9][0-9]';
 
+/// Prefix of the one line [buildConfigWriteScript] prints when it refuses
+/// before writing anything (exit 3), followed by the German reason.
+const String configWriteRefusedPrefix = 'CONFIG_REFUSED: ';
+
+/// The reason from a config write script's refusal line, or null.
+String? parseConfigWriteRefusal(String out) =>
+    _refusalReason(out, configWriteRefusedPrefix);
+
+/// The bash lines with which a root script puts [base64Content] in place of
+/// the file named in its variable `dest` (the directory of that file in
+/// `dir`): into a temp file next to it, then renamed over it, so a write that
+/// fails half-way (full disk, killed) never leaves a truncated file. Base64
+/// sidesteps ALL shell-quoting / injection issues with arbitrary content (b64
+/// is only `A-Za-z0-9+/=`). The script runs under `set -e`.
+///
+/// The directory may belong to another account — a service's data directory —
+/// and that account can exchange any name in it at any moment. So nothing here
+/// follows a name it did not just create:
+///
+///  * The temp file gets a fresh random name and is created by an exclusive
+///    open (`set -C`): a name that exists is refused, a symlink included.
+///    From then on it is reached through that one descriptor only — content,
+///    owner and mode. By name it is just renamed or removed, and neither
+///    follows a link.
+///  * Owner and mode come from the file being replaced, asked once and of the
+///    entry itself: only a regular file hands them on (a link does not, nor
+///    what it points to), and of the mode only the permission bits — setuid,
+///    setgid and sticky stay behind.
+///
+/// The temp file is 0600 until it has that owner and mode, so the content of
+/// a 0600 file is never readable for everyone on the way. Where there is no
+/// file to take them from it gets [newFileMode], or stays root's 0600 without
+/// one. With [strict] a chown or chmod that fails ends the script; without,
+/// the file is written all the same.
+String rootReplaceFileLines({
+  required String tmpPrefix,
+  required String base64Content,
+  required bool strict,
+  String? newFileMode,
+}) {
+  final soft = strict ? '' : ' 2>/dev/null || true';
+  final newFile =
+      newFileMode == null ? '' : '  *) chmod $newFileMode "\$fd" ;;\n';
+  return '''
+umask 077
+tmp=\$(mktemp -u "\$dir/${tmpPrefix}XXXXXX")
+set -C
+exec 3> "\$tmp"
+set +C
+fd=/proc/self/fd/3
+# set -C lets a name through that exists but is no regular file (a FIFO, a
+# device): only a file this script created itself is written.
+[ -f "\$fd" ] || { echo "Pi-Tool: Die temporäre Datei ließ sich nicht sicher anlegen – nichts geändert."; exit 1; }
+# Whatever fails from here on: no temp file is left lying next to the target.
+trap 'rm -f "\$tmp"' EXIT
+printf '%s' ${shSingleQuote(base64Content)} | base64 -d >&3
+# Owner first: chown may clear mode bits that chmod then sets again.
+st=\$(stat -c '%f +%u:+%g' -- "\$dest" 2>/dev/null) || st=
+case \$st in
+  8[0-9a-f][0-9a-f][0-9a-f]' '+[0-9]*:+[0-9]*)
+    printf -v mode %o "\$((16#\${st%% *} & 0777))"
+    chown "\${st#* }" "\$fd"$soft
+    chmod "\$mode" "\$fd"$soft
+    ;;
+${newFile}esac
+exec 3>&-
+# -T: a directory at the target is an error, not a place to move the file into.
+mv -fT "\$tmp" "\$dest"
+# The name is no longer this script's.
+trap - EXIT
+''';
+}
+
 /// Root script that backs the current [path] up (under /var/backups/pi-tool,
-/// the 5 newest per file are kept), then overwrites it with [base64Content].
+/// the 5 newest per file are kept), then overwrites it with [base64Content]
+/// (see [rootReplaceFileLines]). Prints `CONFIG_SAVED` on success.
+///
 /// A symlink at [path] stays a link — the file it leads to is written, as an
-/// editor on the Pi would. Base64 sidesteps ALL shell-quoting / injection
-/// issues with arbitrary file content (b64 is only `A-Za-z0-9+/=`). Prints
-/// `CONFIG_SAVED` on success.
+/// editor on the Pi would. But only a link nobody else could have put there:
+/// in a directory another account can change, that account would choose the
+/// file root writes the edited text to. So the link is followed by hand, and
+/// every directory on the way — down to the link, and on along each link to
+/// the file — has to belong to root or to the account that called sudo, with
+/// no write permission for group or others. Otherwise the script refuses with
+/// one `CONFIG_REFUSED: <Grund>` line and exit 3, before anything is written
+/// (see [parseConfigWriteRefusal]). A regular file is replaced in place, in
+/// any directory.
 String buildConfigWriteScript({
   required String path,
   required String base64Content,
 }) {
-  final p = shSingleQuote(path);
   return '''
 set -e
+p=${shSingleQuote(path)}
+# 0 when only root and the account that called sudo can put a name into
+# directory \$1 or exchange one there: it belongs to one of the two, and
+# neither group nor others may write.
+own_dir() {
+  local s
+  s=\$(stat -L -c '%f %u' -- "\$1" 2>/dev/null) || return 1
+  case \$s in
+    4[0-9a-f][0-9a-f][0-9a-f]' 0' | 4[0-9a-f][0-9a-f][0-9a-f]" \${SUDO_UID:-0}") ;;
+    *) return 1 ;;
+  esac
+  [ \$((16#\${s%% *} & 022)) -eq 0 ]
+}
+# Follows the path \$1 by hand, one name at a time, and leaves where it leads
+# in \$followed (empty: it leads nowhere). Every directory a name is looked up
+# in has to pass own_dir — a name in any other directory can be exchanged for
+# a link at any moment, by the account that may write there. 1 = one does not.
+follow() {
+  local rest=\$1 cur= c t n=0
+  followed=
+  while [ -n "\$rest" ]; do
+    rest=\${rest#/}
+    c=\${rest%%/*}
+    case \$rest in */*) rest=\${rest#*/} ;; *) rest= ;; esac
+    case \$c in
+      '' | .) continue ;;
+      ..) cur=\${cur%/*}; continue ;;
+    esac
+    own_dir "\${cur:-/}" || return 1
+    if [ -L "\$cur/\$c" ]; then
+      n=\$((n + 1))
+      [ "\$n" -le 40 ] || return 0
+      # The x keeps a line break at the end of the target from being dropped.
+      t=\$(readlink -- "\$cur/\$c" && echo x) || return 0
+      t=\${t%??}
+      case \$t in /*) cur= ;; esac
+      rest=\$t/\$rest
+    else
+      cur=\$cur/\$c
+    fi
+  done
+  followed=\${cur:-/}
+}
+# A symlink is written THROUGH: renamed onto the link itself, the new file
+# would replace the link and the file it points to stay as it was. This script
+# is root, though, and whoever can put a link at a name on the way chooses the
+# file it writes — hence follow, and the kernel has to agree on where the path
+# leads (-ef).
+dest=\$p
+if [ -L "\$p" ]; then
+  if ! follow "\$p"; then
+    echo 'CONFIG_REFUSED: Der Pfad ist eine Verknüpfung (Symlink), und der Weg zu ihr oder zu der Datei, auf die sie zeigt, führt durch einen Ordner, den auch ein anderes Konto ändern kann – nichts gespeichert. Bitte die Zieldatei direkt öffnen und dort bearbeiten (wohin die Verknüpfung zeigt, sagt „readlink -f“ im Terminal).'
+    exit 3
+  fi
+  dest=\$followed
+  if [ ! -f "\$dest" ] || [ -L "\$dest" ] || [ ! "\$dest" -ef "\$p" ]; then
+    echo 'CONFIG_REFUSED: Der Pfad ist eine Verknüpfung (Symlink), die zu keiner Datei führt – nichts gespeichert.'
+    exit 3
+  fi
+fi
 mkdir -p /var/backups/pi-tool
-if [ -f $p ]; then
-  cp $p "/var/backups/pi-tool/config-\$(basename $p)-\$(date +%Y%m%d-%H%M%S).bak"
+if [ -f "\$dest" ] && [ ! -L "\$dest" ]; then
+  # -P: should a link take the place of the file right now, the link is
+  # copied, not what it points to.
+  cp -P "\$dest" "/var/backups/pi-tool/config-\$(basename "\$p")-\$(date +%Y%m%d-%H%M%S).bak"
   # Keep the 5 newest of THIS file: the glob is the timestamp above, so
   # evcc.yaml does not count (or delete) the backups of evcc.yaml-old. Line by
   # line — xargs would split a name at a space and stop at an apostrophe.
-  ls -1t "/var/backups/pi-tool/config-\$(basename $p)-"$_configBackupTsGlob.bak 2>/dev/null | tail -n +6 | while IFS= read -r old; do rm -f -- "\$old"; done || true
+  ls -1t "/var/backups/pi-tool/config-\$(basename "\$p")-"$_configBackupTsGlob.bak 2>/dev/null | tail -n +6 | while IFS= read -r old; do rm -f -- "\$old"; done || true
 fi
-# Write to a temp file, then atomically rename over the target so a mid-write
-# failure (full disk, killed) never leaves a truncated live config. Preserve
-# the original's owner/mode first (a fresh inode would reset them to root+umask).
-# A symlink is written THROUGH (readlink -f): renamed onto the link itself, the
-# new file would replace the link and the file it points to stay as it was.
-t=\$(readlink -f $p 2>/dev/null) && [ -n "\$t" ] || t=$p
-d=\$(dirname "\$t")
-tmp=\$(mktemp "\$d/.pitool-cfg.XXXXXX")
-# Whatever fails from here on: no temp file is left lying next to the config.
-trap 'rm -f "\$tmp"' EXIT
-printf '%s' ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"
-if [ -f $p ]; then
-  chmod --reference=$p "\$tmp" 2>/dev/null || true
-  chown --reference=$p "\$tmp" 2>/dev/null || true
-fi
-# -T: a directory at the target is an error, not a place to move the file into.
-mv -fT "\$tmp" "\$t"
-echo CONFIG_SAVED
+dir=\$(dirname "\$dest")
+${rootReplaceFileLines(tmpPrefix: '.pitool-cfg.', base64Content: base64Content, strict: false)}echo CONFIG_SAVED
 ''';
 }
 

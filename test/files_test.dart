@@ -19,8 +19,8 @@ final Object _needsBash =
 /// The plain tools the commands under test use; each gets a pass-through
 /// wrapper in the sandbox.
 const _realTools = [
-  'base64', 'bash', 'chmod', 'chown', 'dirname', 'find', 'head', 'mkdir',
-  'mktemp', 'mv', 'rm',
+  'base64', 'bash', 'chmod', 'chown', 'dirname', 'find', 'head', 'ln', 'mkdir',
+  'mktemp', 'mv', 'rm', 'stat',
 ];
 
 class _Run {
@@ -54,11 +54,12 @@ class _Box {
     Directory(host('home/pi')).createSync(recursive: true);
     for (var i = 0; i < _realTools.length; i++) {
       final name = _realTools[i];
+      real[name] = facts[i + 1].trim();
       final log = name == 'chmod' || name == 'chown'
           ? "echo \"$name \$*\" >> '$root/calls'\n"
           : '';
       File(host('bin/$name')).writeAsStringSync(
-          '#!/bin/sh\n${log}exec "${facts[i + 1].trim()}" "\$@"\n');
+          '#!/bin/sh\n${log}exec "${real[name]}" "\$@"\n');
     }
     // Like `sudo -S [-p prompt]`: the password is the first line on stdin.
     File(host('bin/sudo')).writeAsStringSync(r'''#!/bin/sh
@@ -85,8 +86,20 @@ exec "$@"
   /// The sandbox as bash names it (`/tmp/…` in Git Bash).
   late final String root;
 
+  /// Where the real tool behind each pass-through wrapper lives.
+  final Map<String, String> real = {};
+
   /// [rel] below the sandbox as dart:io reaches it.
   String host(String rel) => '${_dir.path}/$rel';
+
+  /// Replaces the wrapper of [name] by a stub with [body] (sh); with [log]
+  /// its calls are recorded like those of chmod and chown.
+  void stub(String name, String body, {bool log = false}) {
+    File(host('bin/$name')).writeAsStringSync('#!/bin/sh\n'
+        '${log ? "echo \"$name \$*\" >> '$root/calls'\n" : ''}'
+        '$body\n');
+    Process.runSync(_bash!, ['-c', r'chmod +x "$0"', host('bin/$name')]);
+  }
 
   /// Prepares fixtures with the host's own tools; [script] runs with the
   /// sandbox as its working directory and touches nothing outside it. Returns
@@ -191,6 +204,34 @@ void main() {
       expect(s, contains("'/etc/evcc.yaml'"));
       expect(s, contains('aGk=')); // the payload
       expect(s, contains('UPLOAD_OK')); // success marker the caller verifies
+    });
+
+    test('upload: the temp file is created exclusively and reached through '
+        'its descriptor only', () {
+      // Without a bash at hand the group further down is skipped; the steps
+      // it proves are pinned here.
+      final s = buildUploadScript(path: '/etc/evcc.yaml', base64Content: 'aGk=');
+      expect(
+          s.split('\n'),
+          containsAllInOrder([
+            r'tmp=$(mktemp -u "$dir/.pitool-up.XXXXXX")',
+            'set -C',
+            r'exec 3> "$tmp"',
+            'set +C',
+            'fd=/proc/self/fd/3',
+            "printf '%s' 'aGk=' | base64 -d >&3",
+            r'''st=$(stat -c '%f +%u:+%g' -- "$dest" 2>/dev/null) || st=''',
+            r'    printf -v mode %o "$((16#${st%% *} & 0777))"',
+            r'    chown "${st#* }" "$fd"',
+            r'    chmod "$mode" "$fd"',
+            r'  *) chmod 644 "$fd" ;;',
+            'exec 3>&-',
+            r'mv -fT "$tmp" "$dest"',
+            'echo UPLOAD_OK',
+          ]));
+      // By its name the temp file is only created, renamed and removed.
+      expect(s, isNot(contains('--reference')));
+      expect(RegExp(r'> "\$tmp"').allMatches(s), hasLength(1));
     });
 
     test('upload: creates the target dir before mktemp (migration to a new Pi)',
@@ -501,7 +542,9 @@ void main() {
 
     String text(String rel) => File(box.host(rel)).readAsStringSync();
 
-    final tmpName = RegExp(r'/\.pitool-up\.[A-Za-z0-9]{6}$');
+    /// The script's temp file, reached through its one descriptor: owner and
+    /// mode are never set by name.
+    const fd = '/proc/self/fd/3';
 
     test('a new file: written, 0644, marker, nothing left behind', () async {
       final r = await upload('home/pi/notes.txt', 'neu\n');
@@ -510,9 +553,12 @@ void main() {
       expect(text('home/pi/notes.txt'), 'neu\n');
       expect(box.ls('home/pi'), ['notes.txt']);
       // Nothing to take over: only the default mode is set.
-      expect(box.calls, hasLength(1));
-      expect(box.calls.single, startsWith('chmod 644 ${box.root}/home/pi/'));
-      expect(tmpName.hasMatch(box.calls.single), isTrue);
+      expect(box.calls, ['chmod 644 $fd']);
+      // Git Bash only emulates modes; where they are real, it is 0644.
+      if (!Platform.isWindows) {
+        expect(
+            File(box.host('home/pi/notes.txt')).statSync().mode & 0xfff, 0x1a4);
+      }
     });
 
     test('an existing file keeps its owner and its mode', () async {
@@ -523,24 +569,41 @@ void main() {
       expect(r.out.trim(), 'UPLOAD_OK');
       expect(text('home/pi/.env'), 'NEU=2\n');
       expect(box.ls('home/pi'), ['.env']);
-      final dest = '${box.root}/home/pi/.env';
       final calls = box.calls;
-      // No `chmod 644` in between: the temp file stays 0600 (mktemp) until it
-      // has the owner and mode of the file it replaces — the new content of a
-      // 0600 file is never readable for everyone.
+      // No `chmod 644` in between: the temp file is created 0600 and stays so
+      // until it has the owner and mode of the file it replaces — the new
+      // content of a 0600 file is never readable for everyone.
       expect(calls, hasLength(2));
-      final tmp = calls[0].substring('chown --reference=$dest '.length);
-      expect(tmpName.hasMatch(tmp), isTrue);
       // Owner first: chown may clear mode bits that chmod then sets again.
-      expect(calls, [
-        'chown --reference=$dest $tmp',
-        'chmod --reference=$dest $tmp',
-      ]);
+      expect(calls[0], matches(RegExp('^chown \\+\\d+:\\+\\d+ $fd\$')));
+      expect(calls[1], 'chmod 600 $fd');
       // Git Bash only emulates modes; where they are real, 0600 must survive.
       if (!Platform.isWindows) {
-        expect(File(box.host('home/pi/.env')).statSync().mode & 0x1ff, 0x180);
+        expect(File(box.host('home/pi/.env')).statSync().mode & 0xfff, 0x180);
       }
     });
+
+    test('owner and mode are the old file\'s own; setuid and setgid bits '
+        'stay behind', () async {
+      File(box.host('home/pi/tool')).writeAsStringSync('alt');
+      // Git Bash knows neither owners nor these bits: stat answers for it.
+      box.stub('stat', 'echo "8de8 +112:+120"'); // 6750
+      box.stub('chown', 'exit 0', log: true);
+      final r = await upload('home/pi/tool', 'neu');
+      expect(r.code, 0, reason: r.err);
+      expect(r.out.trim(), 'UPLOAD_OK');
+      expect(text('home/pi/tool'), 'neu');
+      expect(box.calls, ['chown +112:+120 $fd', 'chmod 750 $fd']);
+    });
+
+    test('a setuid file: the upload keeps its permission bits only', () async {
+      File(box.host('home/pi/tool')).writeAsStringSync('alt');
+      expect(box.setup('chmod 4750 home/pi/tool'), isTrue);
+      final r = await upload('home/pi/tool', 'neu');
+      expect(r.code, 0, reason: r.err);
+      expect(text('home/pi/tool'), 'neu');
+      expect(File(box.host('home/pi/tool')).statSync().mode & 0xfff, 0x1e8);
+    }, skip: Platform.isWindows ? 'Git Bash knows no setuid bit' : false);
 
     test('a directory of that name: refused, nothing moved into it', () async {
       expect(box.setup('mkdir home/pi/backup\n: > home/pi/backup/keep.txt'),
@@ -579,6 +642,9 @@ void main() {
       final r = await upload('home/pi/link.txt', 'neu');
       expect(r.code, 0, reason: r.err);
       expect(r.out.trim(), 'UPLOAD_OK');
+      // A link hands on neither owner nor mode — not its own, not those of
+      // the file it points to: the upload is a new file.
+      expect(box.calls, ['chmod 644 $fd']);
       // What the app's question says before it: the link is gone, and the
       // file it pointed to is as it was.
       expect(
@@ -605,6 +671,19 @@ void main() {
       expect(box.ls('home/pi'), ['notes.txt']);
     });
 
+    test('an owner that cannot be set: the old file stays, no temp file does',
+        () async {
+      File(box.host('home/pi/.env')).writeAsStringSync('ALT=1\n');
+      box.stub('chown', 'exit 1', log: true);
+      final r = await upload('home/pi/.env', 'NEU=2\n');
+      expect(r.code, isNot(0));
+      expect(r.out, isNot(contains('UPLOAD_OK')));
+      expect(text('home/pi/.env'), 'ALT=1\n');
+      expect(box.ls('home/pi'), ['.env']);
+      // It ended there: no mode was set on a file of the wrong owner.
+      expect(box.calls, hasLength(1));
+    });
+
     test('a target directory that does not exist yet is created', () async {
       final r = await upload('var/backups/evcc/evcc-backup-1.tar.gz', 'tgz');
       expect(r.code, 0, reason: r.err);
@@ -616,6 +695,100 @@ void main() {
       expect(r.code, 0, reason: r.err);
       expect(box.ls('home/pi'), ["a'; mkdir pwned; '.txt"]);
       expect(Directory(box.host('pwned')).existsSync(), isFalse);
+    });
+
+    // The target directory may belong to another account (a service's data
+    // directory), which can exchange any name in it at any moment. home/svc
+    // is that directory here, etc/shadow the file it must not get at.
+    bool victim() =>
+        box.setup('mkdir -p etc home/svc && printf secret > etc/shadow && '
+            'chmod 600 etc/shadow');
+
+    // The name of the temp file is fresh and random, and it is opened
+    // exclusively: with a link (or a file) waiting under that name the upload
+    // ends, and nothing is written through it.
+    for (final (what, place) in [
+      (
+        'a link to a file',
+        'ln -s "\$PWD/etc/shadow" home/svc/.pitool-up.taken1 && '
+            '[ -L home/svc/.pitool-up.taken1 ]'
+      ),
+      (
+        'a link to nowhere',
+        'ln -s "\$PWD/etc/nowhere" home/svc/.pitool-up.taken1 && '
+            '[ -L home/svc/.pitool-up.taken1 ]'
+      ),
+      // No regular file: bash's noclobber opens such a name, the script looks
+      // at what it got.
+      (
+        'a link to a device',
+        'ln -s /dev/null home/svc/.pitool-up.taken1 && '
+            '[ -L home/svc/.pitool-up.taken1 ]'
+      ),
+      ('a file', 'printf theirs > home/svc/.pitool-up.taken1'),
+    ]) {
+      test('the temp name is taken by $what: refused, nothing goes through it',
+          () async {
+        expect(victim(), isTrue);
+        box.stub('mktemp', r'''
+last=
+for a in "$@"; do last=$a; done
+echo "${last%XXXXXX}taken1"''');
+        if (!box.setup(place)) {
+          markTestSkipped('no symlinks on this platform');
+          return;
+        }
+        final r = await upload('home/svc/notes.txt', 'neu');
+        expect(r.code, isNot(0));
+        expect(r.out, isNot(contains('UPLOAD_OK')));
+        expect(text('etc/shadow'), 'secret');
+        expect(File(box.host('etc/nowhere')).existsSync(), isFalse);
+        expect(File(box.host('home/svc/notes.txt')).existsSync(), isFalse);
+        expect(box.calls, isEmpty);
+        // Not the script's file, so not the script's to remove either.
+        expect(
+            box.setup(what == 'a file'
+                ? '[ "\$(cat home/svc/.pitool-up.taken1)" = theirs ]'
+                : '[ -L home/svc/.pitool-up.taken1 ]'),
+            isTrue);
+      });
+    }
+
+    test('the temp name swapped for a link once the file exists: owner and '
+        'mode go to the script\'s own file, not through the link', () async {
+      // The finding of the release review: with chown and chmod by name, the
+      // owner of the directory had root hand a file of its choosing its own
+      // owner and mode.
+      expect(victim(), isTrue);
+      File(box.host('home/svc/app.env')).writeAsStringSync('ALT=1\n');
+      expect(box.setup('chmod 644 home/svc/app.env'), isTrue);
+      // base64 is the first command after the temp file was created: it
+      // decodes as always, then does what the owner of the directory would.
+      box.stub('base64', '''
+"${box.real['base64']}" "\$@" || exit 1
+for f in '${box.root}'/home/svc/.pitool-up.*; do
+  "${box.real['rm']}" -f "\$f"
+  MSYS=winsymlinks:lnk "${box.real['ln']}" -s '${box.root}/etc/shadow' "\$f"
+done''');
+      // After the swap Git Bash no longer finds the file behind the
+      // descriptor; there the calls are what counts.
+      for (final tool in ['chown', 'chmod']) {
+        box.stub(tool,
+            Platform.isWindows ? 'exit 0' : 'exec "${box.real[tool]}" "\$@"',
+            log: true);
+      }
+      await upload('home/svc/app.env', 'NEU=2\n');
+      expect(text('etc/shadow'), 'secret');
+      final calls = box.calls;
+      expect(calls, hasLength(2));
+      expect(calls[0], matches(RegExp('^chown \\+\\d+:\\+\\d+ $fd\$')));
+      expect(calls[1], matches(RegExp('^chmod \\d+ $fd\$')));
+      // Git Bash only emulates modes; where they are real, the mode is that
+      // of the replaced file and the file behind the link keeps its own.
+      if (!Platform.isWindows) {
+        expect(calls[1], 'chmod 644 $fd');
+        expect(File(box.host('etc/shadow')).statSync().mode & 0xfff, 0x180);
+      }
     });
   }, skip: _needsBash);
 

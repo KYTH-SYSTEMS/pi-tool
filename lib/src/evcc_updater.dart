@@ -1974,6 +1974,10 @@ class EvccUpdater {
 
   /// Saves [content] to a config file (root), backing up the old one first.
   /// Content is transferred base64-encoded, so any bytes are safe.
+  ///
+  /// A symlink that another account on the Pi could have placed is not
+  /// written through: the script refuses before it changes anything, and its
+  /// reason is the error message.
   Future<void> saveConfigFile({
     required SshConfig config,
     required String path,
@@ -1986,10 +1990,23 @@ class EvccUpdater {
       onLog: onLog,
       body: (runner, log) async {
         log('Speichere $path …');
-        await _runRootScriptExpectMarker(runner, log, config,
-            script: buildConfigWriteScript(path: path, base64Content: b64),
-            successMarker: 'CONFIG_SAVED',
-            failMsg: 'Speichern fehlgeschlagen');
+        // What the script printed, for the reason of a refusal.
+        final printed = StringBuffer();
+        try {
+          await _runRootScriptExpectMarker(runner, (line) {
+            printed.writeln(line);
+            log(line);
+          }, config,
+              script: buildConfigWriteScript(path: path, base64Content: b64),
+              successMarker: 'CONFIG_SAVED',
+              failMsg: 'Speichern fehlgeschlagen');
+        } on EvccUpdateException catch (e) {
+          final refusal = parseConfigWriteRefusal(printed.toString());
+          if (e.kind != UpdateErrorKind.unknown || refusal == null) rethrow;
+          // Redact: remote output, and this becomes the status banner.
+          throw EvccUpdateException(UpdateErrorKind.unknown,
+              redactPassword(refusal, config.password));
+        }
       },
     );
   }

@@ -1159,12 +1159,26 @@ exit 0''');
     late _Pi pi;
     const dir = '/var/backups/pi-tool';
 
-    setUp(() => pi = _Pi());
+    setUp(() {
+      pi = _Pi();
+      // The script asks stat for owner and mode of the file it replaces.
+      final stat =
+          (Process.runSync(_bash!, ['-c', 'command -v stat']).stdout as String)
+              .trim();
+      pi.stub('stat', 'exec "$stat" "\$@"', log: false);
+    });
     tearDown(() => pi.dispose());
 
     Future<void> write(String path, String content) async {
-      final r = await pi.run(buildConfigWriteScript(
-          path: path, base64Content: base64Encode(utf8.encode(content))));
+      // The script's own descriptor (/proc/self/fd/3) is no Pi path: it stays
+      // what it is.
+      final r = await pi.run(
+          pi
+              .rebase(buildConfigWriteScript(
+                  path: path,
+                  base64Content: base64Encode(utf8.encode(content))))
+              .replaceAll('${pi.root}/proc/self/fd/', '/proc/self/fd/'),
+          rebase: false);
       expect(r.code, 0, reason: '${r.out}${r.err}');
       expect(r.lines.last, 'CONFIG_SAVED');
       expect(pi.read(path), content);
