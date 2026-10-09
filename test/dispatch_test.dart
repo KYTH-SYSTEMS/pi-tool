@@ -1684,13 +1684,13 @@ void main() {
     await tester.tap(find.byIcon(Icons.upload_file));
     await tester.pumpAndSettle();
 
-    expect(find.text('„.env" überschreiben?'), findsOneWidget);
+    expect(find.text('„.env“ überschreiben?'), findsOneWidget);
     expect(u.uploadedTo, isEmpty, reason: 'vor der Bestätigung geht nichts raus');
 
     await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
     await tester.pumpAndSettle();
     expect(u.uploadedTo, isEmpty);
-    expect(find.text('„.env" überschreiben?'), findsNothing);
+    expect(find.text('„.env“ überschreiben?'), findsNothing);
 
     // Confirmed, it uploads.
     await tester.tap(find.byIcon(Icons.upload_file));
@@ -1737,7 +1737,7 @@ void main() {
     expect(u.uploadedTo, isEmpty);
     expect(find.textContaining('überschreiben?'), findsNothing);
     expect(
-        find.text('Hier gibt es bereits einen Ordner „backup" — eine Datei '
+        find.text('Hier gibt es bereits einen Ordner „backup“ — eine Datei '
             'kann ihn nicht ersetzen.'),
         findsOneWidget);
   });
@@ -7543,7 +7543,7 @@ void main() {
     // interface now — shown once, and it says which Pi it belongs to.
     expect(find.text('Pi-hole-Passwort'), findsOneWidget);
     expect(find.text('Abc234xyzKLMN567'), findsOneWidget);
-    expect(find.textContaining('„Zweiter"'), findsOneWidget);
+    expect(find.textContaining('„Zweiter“'), findsOneWidget);
     await tester.tap(find.text('Fertig'));
     await tester.pumpAndSettle();
     // The failure itself stays on screen underneath.

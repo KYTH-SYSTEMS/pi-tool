@@ -6,7 +6,7 @@
   "wAlertsActiveSince": "Aktuell aktiv · letzte Prüfung: {check}",
   "wAlertsExplain": "Der Pi meldet sich per Push (via ntfy), wenn die Platte vollläuft, ein Dienst ausfällt, es zu heiß wird oder Updates anstehen — geprüft alle 30 Min. Kostenlos & ohne Konto.",
   "wAlertsNtfyLink": "So funktioniert ntfy (App installieren, Thema abonnieren) →",
-  "wAlertsTopicUnknown": "Das ntfy-Thema dieses Pi ist in der App nicht gespeichert — etwa weil die Alerts von einem anderen Gerät oder vor einer Neuinstallation eingerichtet wurden. Trag das bestehende Thema ein oder würfle ein neues; „{action}\" schreibt es auf den Pi.",
+  "wAlertsTopicUnknown": "Das ntfy-Thema dieses Pi ist in der App nicht gespeichert — etwa weil die Alerts von einem anderen Gerät oder vor einer Neuinstallation eingerichtet wurden. Trag das bestehende Thema ein oder würfle ein neues; „{action}“ schreibt es auf den Pi.",
   "wAllPis": "Alle Pis",
   "wAutoConnect": "Beim Start automatisch verbinden",
   "wCachedState": "Stand von vorhin — verbinde, um ihn zu aktualisieren.",
