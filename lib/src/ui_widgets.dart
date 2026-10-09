@@ -628,10 +628,12 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
       if (!mounted) return;
       // [_path] and [_entries] stay: at "/" there is no way up, so a list
       // replaced by the error would leave nothing to tap.
+      // What the updater could not classify reads "Details im Terminal-Log",
+      // and the drill-down writes none: that one stays generic, too.
       setState(() {
         _loading = false;
         _failedPath = path;
-        _error = e is EvccUpdateException
+        _error = e is EvccUpdateException && e.kind != UpdateErrorKind.unknown
             ? e.message
             : context.l10n.wLoadFailedPerms;
       });
@@ -667,16 +669,26 @@ class _StorageExplorerSheetState extends State<_StorageExplorerSheet> {
           const Divider(height: 1),
           if (_error != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 8, 0),
-              child: Row(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              // The retry below the reason, not next to it: in one row a
+              // large font left the reason no width and pushed the row past
+              // its edge.
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Icon(Icons.error_outline,
-                      size: 18, color: Theme.of(context).colorScheme.error),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text('$_failedPath: $_error',
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.error_outline,
+                          size: 18,
+                          color: Theme.of(context).colorScheme.error),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('$_failedPath: $_error',
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error)),
+                      ),
+                    ],
                   ),
                   TextButton(
                     onPressed: () => _load(_failedPath!),
@@ -904,6 +916,12 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
     });
   }
 
+  /// Whether the view stands at the newest entry — false once someone
+  /// scrolled up to read.
+  bool get _atEnd =>
+      !_scroll.hasClients ||
+      _scroll.position.pixels >= _scroll.position.maxScrollExtent - 24;
+
   void _toggleLive(bool on) {
     setState(() => _live = on);
     _timer?.cancel();
@@ -925,8 +943,7 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
       final l = await widget.fetch();
       if (!mounted) return;
       // Stay at the newest entry — unless someone scrolled up to read.
-      final atEnd = !_scroll.hasClients ||
-          _scroll.position.pixels >= _scroll.position.maxScrollExtent - 24;
+      final atEnd = _atEnd;
       setState(() {
         _logs = l;
         _loading = false;
@@ -936,10 +953,15 @@ class _LiveLogSheetState extends State<_LiveLogSheet> {
     } catch (_) {
       if (!mounted) return;
       // The log on screen stays; say that it is no longer the current one.
+      // The line takes its room from the log: without following it here, the
+      // newest entry slid out of view and the next fetch took that for
+      // "scrolled up" — one failed poll ended the following.
+      final atEnd = _atEnd;
       setState(() {
         _loading = false;
         _failed = true;
       });
+      if (atEnd) _scrollToEnd();
     }
   }
 

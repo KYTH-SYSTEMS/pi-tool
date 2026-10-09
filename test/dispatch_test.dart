@@ -4631,6 +4631,57 @@ void main() {
     expect(find.textContaining('charging stopped'), findsOneWidget);
   });
 
+  // The hint takes its room from the log. That must not read as "scrolled up
+  // to read": one poll that fails would end the following for good.
+  testWidgets(
+      'Service-Logs: nach einem fehlgeschlagenen Abruf bleibt die Ansicht im '
+      'Live-Modus beim neuesten Eintrag', (tester) async {
+    useTallScreen(tester);
+    String lines(int n) => [for (var i = 0; i < n; i++) 'zeile $i'].join('\n');
+    final u = FakeEvccUpdater()..serviceLogs = lines(400);
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Logs anzeigen'));
+    await tester.pumpAndSettle();
+    ScrollPosition pos() => tester
+        .state<ScrollableState>(find
+            .descendant(
+                of: find.descendant(
+                    of: find.byType(BottomSheet),
+                    matching: find.byType(SingleChildScrollView)),
+                matching: find.byType(Scrollable))
+            .first)
+        .position;
+    expect(pos().pixels, pos().maxScrollExtent);
+
+    // Following starts with a poll that fails: the newest entry stays in view
+    // below the hint.
+    u.logError =
+        const EvccUpdateException(UpdateErrorKind.connection, 'Pi weg');
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(
+        find.text('Abruf fehlgeschlagen – angezeigt wird der letzte Stand.'),
+        findsOneWidget);
+    expect(pos().pixels, pos().maxScrollExtent);
+
+    // The next poll works and brings a longer tail: still at its end.
+    final before = pos().maxScrollExtent;
+    u
+      ..logError = null
+      ..serviceLogs = lines(450);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(pos().maxScrollExtent, greaterThan(before));
+    expect(pos().pixels, pos().maxScrollExtent);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('Automatik → Geplante Backups: Einschalten installiert den Timer',
       (tester) async {
     useTallScreen(tester);
@@ -5363,6 +5414,63 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('huge.img'), findsOneWidget);
     expect(find.textContaining('Konnte nicht geladen werden'), findsNothing);
+
+    // What the updater could not classify points at the terminal log – and
+    // the drill-down writes none. That one stays generic as well.
+    u.diskErrors['/var'] = const EvccUpdateException(UpdateErrorKind.unknown,
+        'Unerwarteter Fehler – Details im Terminal-Log.');
+    await tester.tap(find.text('var'));
+    await tester.pumpAndSettle();
+    expect(find.text('/var: Konnte nicht geladen werden (Rechte?).'),
+        findsOneWidget);
+    expect(find.textContaining('Terminal-Log'), findsNothing);
+  });
+
+  // The error line is laid out like the rest of this step's fixes: on a small
+  // phone with a large font the reason keeps its width and the retry stays on
+  // screen, instead of both sharing one row.
+  testWidgets(
+      'Speicherplatz analysieren: die Fehlerzeile läuft auf kleinem Display '
+      'mit großer Schrift nicht über', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ]
+      ..disk = const [
+        (name: 'var', bytes: 2 * 1024 * 1024 * 1024, isDir: true, path: '/var'),
+      ]
+      ..diskErrors['/var'] = const EvccUpdateException(
+          UpdateErrorKind.connection,
+          'Verbindung fehlgeschlagen – IP/Port korrekt, Pi online im Netz?');
+    await tester.pumpWidget(page(u, config: _readyNoOffer));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-system')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Speicherplatz analysieren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('var'));
+    await tester.pumpAndSettle();
+
+    shrinkWithLargeFont(tester);
+    await tester.pumpAndSettle();
+
+    // A RenderFlex overflow in the sheet would be reported here.
+    expect(tester.takeException(), isNull);
+    final retry =
+        tester.getRect(find.widgetWithText(TextButton, 'Erneut versuchen'));
+    expect(retry.left, greaterThanOrEqualTo(0));
+    expect(retry.right, lessThanOrEqualTo(360));
+    expect(retry.bottom, lessThanOrEqualTo(640));
+    expect(
+        tester
+            .getSize(find.textContaining('Verbindung fehlgeschlagen'))
+            .width,
+        greaterThan(200));
+    // The list below it is still there to tap.
+    expect(find.text('var').hitTestable(), findsOneWidget);
   });
 
   testWidgets('Pi Connect: anstehendes Update übernimmt den Primär-Knopf',
