@@ -725,6 +725,39 @@ void main() {
     expect(ok(), isNotNull);
   });
 
+  testWidgets(
+      'profile export: with the keyboard up on a small phone the dialog '
+      'scrolls instead of overflowing', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(_page());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile exportieren'));
+    await tester.tap(find.text('Profile exportieren'));
+    await tester.pumpAndSettle();
+
+    // A 360×800 phone with the keyboard open: less room than the text and the
+    // two fields take.
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // The second field can be brought above the buttons, not under them.
+    final repeat = find.widgetWithText(TextField, 'Passphrase wiederholen');
+    await tester.ensureVisible(repeat);
+    await tester.pumpAndSettle();
+    expect(
+        tester.getRect(repeat).bottom,
+        lessThanOrEqualTo(
+            tester.getRect(find.widgetWithText(FilledButton, 'OK')).top));
+  });
+
   testWidgets('the ⋮ menu opens the Pi setup guide', (tester) async {
     useTallScreen(tester);
     await tester.pumpWidget(_page());

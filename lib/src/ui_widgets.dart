@@ -2311,7 +2311,8 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.title),
-      // With the keyboard up, both fields do not fit a small phone.
+      // With the keyboard up a small phone has less room than the text and the
+      // two fields take: they scroll then, instead of sliding under the buttons.
       scrollable: true,
       content: Column(
         mainAxisSize: MainAxisSize.min,

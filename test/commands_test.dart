@@ -1603,13 +1603,16 @@ esac'''
 
     test('a symlink stays a link, its target gets the content', () async {
       pi.put('/home/pi/evcc.yaml', 'old');
+      // MSYS=…: Git Bash copies instead of linking unless it is told to write
+      // a link of its own kind — one its readlink, mv and test treat like the
+      // real thing. Anywhere else the variable means nothing.
       final link = await pi.run(
-          "ln -s '${pi.root}/home/pi/evcc.yaml' '${pi.root}/etc/evcc.yaml' && "
-          "[ -L '${pi.root}/etc/evcc.yaml' ]",
+          "MSYS=winsymlinks:sysfile ln -s '${pi.root}/home/pi/evcc.yaml' "
+          "'${pi.root}/etc/evcc.yaml' && [ -L '${pi.root}/etc/evcc.yaml' ]",
           rebase: false);
       if (link.code != 0) {
-        // Git Bash copies instead of linking. The next test covers the same
-        // step there with a stubbed readlink.
+        // A Git Bash too old for that. The next test covers the same step
+        // with a stubbed readlink.
         markTestSkipped('this host creates no symlinks');
         return;
       }
