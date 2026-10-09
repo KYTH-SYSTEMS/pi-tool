@@ -447,8 +447,6 @@
       }
     }
   },
-  "actionRestoreBackup": "Restore backup",
-  "newestFirst": "Newest first",
   "snackNoServiceBackups": "No {service} backups found on the Pi.",
   "@snackNoServiceBackups": {
     "placeholders": {
@@ -547,6 +545,8 @@
     }
   },
   "serviceBackupsSubtitle": "Tap = restore · Newest first",
+  "backupOriginScheduled": "Scheduled backup",
+  "backupOriginAutoUpdate": "Before automatic update",
   "tooltipDownloadToPhone": "Save to phone",
   "tooltipDeleteBackup": "Delete backup",
   "dialogCleanupTitle": "Free up storage?",

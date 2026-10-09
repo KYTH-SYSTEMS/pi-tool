@@ -2780,9 +2780,10 @@ class _UpdaterPageState extends State<UpdaterPage>
     });
   }
 
-  /// Lists the evcc backups on the Pi, lets the user pick one, confirms, then
-  /// restores it (stops evcc → extract → restart). Backups are made before apt
-  /// updates (see the backup-before-update setting).
+  /// Lists the evcc backups on the Pi and lets the user pick one: restore it
+  /// after a confirm (stops evcc → extract → restart), download it or delete
+  /// it. Backups are made before apt updates (see the backup-before-update
+  /// setting) and by the on-Pi timers.
   Future<void> _restoreBackup() async {
     if (_busy) return;
     final l10n = context.l10n;
@@ -2798,8 +2799,11 @@ class _UpdaterPageState extends State<UpdaterPage>
       _snack(context.l10n.snackNoEvccBackups);
       return;
     }
-    final chosen = await _pickBackup(backups!);
-    if (chosen == null || !mounted) return;
+    final choice = await _pickServiceBackup('evcc', backups!);
+    if (choice == null || !mounted) return;
+    final (action, chosen) = choice;
+    if (action == 'download') return _downloadBackup(config, 'evcc', chosen);
+    if (action == 'delete') return _deleteBackup(config, 'evcc', chosen);
     if (!await _confirm(
       context.l10n.dialogRestoreBackupTitle,
       context.l10n.dialogRestoreBackupBody(_backupLabel(chosen)),
@@ -2831,37 +2835,63 @@ class _UpdaterPageState extends State<UpdaterPage>
         .backupTimestamp('${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}');
   }
 
-  Future<String?> _pickBackup(List<String> backups) {
-    return showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            ListTile(
-              title: Text(ctx.l10n.actionRestoreBackup,
-                  style: Theme.of(ctx).textTheme.titleMedium),
-              subtitle: Text(ctx.l10n.newestFirst),
-            ),
-            for (final b in backups)
-              ListTile(
-                leading: const Icon(Icons.restore),
-                title: Text(_backupLabel(b)),
-                subtitle: Text(b,
-                    style: const TextStyle(
-                        fontFamily: 'monospace', fontSize: 11)),
-                onTap: () => Navigator.pop(ctx, b),
-              ),
-          ],
-        ),
-      ),
-    );
+  /// For an archive one of the on-Pi timers wrote: which one. Null for the
+  /// app's own backups.
+  String? _backupOriginLabel(BuildContext ctx, String path) =>
+      switch (backupOrigin(path)) {
+        BackupOrigin.app => null,
+        BackupOrigin.scheduled => ctx.l10n.backupOriginScheduled,
+        BackupOrigin.autoUpdate => ctx.l10n.backupOriginAutoUpdate,
+      };
+
+  /// Fetches the backup [path] to the phone and hands it to the share sheet.
+  /// Runs after the listing's guard, so it enters the busy state again itself
+  /// (like [_deleteBackup]).
+  Future<void> _downloadBackup(
+      SshConfig config, String serviceName, String path) async {
+    _beginBusy();
+    await _guard(() async {
+      final bytes = await _updater.downloadFile(
+          config: config, path: path, onLog: _appendLog);
+      if (!mounted) return;
+      final name = path.split('/').last;
+      await _fileSaver(name, bytes);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = context.l10n.statusBackupDownloaded(name);
+        _statusOk = true;
+      });
+      _addHistory(context.l10n.historyBackupDownloaded(serviceName, name));
+    }, backgroundMessage: context.l10n.busyDownloadingBackup);
+  }
+
+  /// Deletes the backup [path] from the Pi after a confirm.
+  Future<void> _deleteBackup(
+      SshConfig config, String serviceName, String path) async {
+    final l10n = context.l10n;
+    if (!await _confirm(l10n.dialogDeleteBackupTitle,
+        l10n.dialogDeleteBackupBody(serviceName, _backupLabel(path)),
+        destructive: true)) {
+      return;
+    }
+    _beginBusy();
+    await _guard(() async {
+      await _updater.deleteServiceBackup(
+          config: config, path: path, onLog: _appendLog);
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = context.l10n.statusBackupDeleted(_backupLabel(path));
+        _statusOk = true;
+      });
+      _addHistory(
+          context.l10n.historyBackupDeleted(serviceName, _backupLabel(path)));
+    }, backgroundMessage: l10n.busyDeletingBackup);
   }
 
   // ---- service backup management (Pi-hole + Home Assistant) ----
 
-  /// Lists a service's backups and lets the user restore or delete one.
+  /// Lists a service's backups and lets the user restore, download or delete
+  /// one.
   Future<void> _manageServiceBackups({
     required String servicePrefix,
     required String serviceName,
@@ -2893,43 +2923,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     final choice = await _pickServiceBackup(serviceName, backups!);
     if (choice == null || !mounted) return;
     final (action, path) = choice;
-    if (action == 'download') {
-      _beginBusy();
-      await _guard(() async {
-        final bytes = await _updater.downloadFile(
-            config: config, path: path, onLog: _appendLog);
-        if (!mounted) return;
-        final name = path.split('/').last;
-        await _fileSaver(name, bytes);
-        if (!mounted) return;
-        setState(() {
-          _statusMessage = context.l10n.statusBackupDownloaded(name);
-          _statusOk = true;
-        });
-        _addHistory(context.l10n.historyBackupDownloaded(serviceName, name));
-      }, backgroundMessage: context.l10n.busyDownloadingBackup);
-      return;
-    }
-    if (action == 'delete') {
-      if (!await _confirm(context.l10n.dialogDeleteBackupTitle,
-          context.l10n.dialogDeleteBackupBody(serviceName, _backupLabel(path)),
-          destructive: true)) {
-        return;
-      }
-      _beginBusy();
-      await _guard(() async {
-        await _updater.deleteServiceBackup(
-            config: config, path: path, onLog: _appendLog);
-        if (!mounted) return;
-        setState(() {
-          _statusMessage = context.l10n.statusBackupDeleted(_backupLabel(path));
-          _statusOk = true;
-        });
-        _addHistory(
-            context.l10n.historyBackupDeleted(serviceName, _backupLabel(path)));
-      }, backgroundMessage: l10n.busyDeletingBackup);
-      return;
-    }
+    if (action == 'download') return _downloadBackup(config, serviceName, path);
+    if (action == 'delete') return _deleteBackup(config, serviceName, path);
     if (!await _confirm(context.l10n.dialogRestoreBackupTitle, restoreWarning)) {
       return;
     }
@@ -2962,7 +2957,9 @@ class _UpdaterPageState extends State<UpdaterPage>
             config: config, path: path, onLog: _appendLog),
       );
 
-  /// Sheet of one service's backups: tap = restore, trash icon = delete.
+  /// Sheet of one service's backups (evcc, Pi-hole, Home Assistant): tap =
+  /// restore, the icons = download / delete. The archives of the on-Pi timers
+  /// say which timer wrote them.
   Future<(String action, String path)?> _pickServiceBackup(
       String serviceName, List<String> backups) {
     return showModalBottomSheet<(String, String)>(
@@ -2981,9 +2978,17 @@ class _UpdaterPageState extends State<UpdaterPage>
               ListTile(
                 leading: const Icon(Icons.restore),
                 title: Text(_backupLabel(b)),
-                subtitle: Text(b,
-                    style: const TextStyle(
-                        fontFamily: 'monospace', fontSize: 11)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_backupOriginLabel(ctx, b) case final origin?)
+                      Text(origin),
+                    Text(b,
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 11)),
+                  ],
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -5481,7 +5486,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                           () => _proGate(
                               () => _editConfig('/etc/evcc.yaml', 'evcc.yaml')),
                           pro: true),
-                      _CardAction(context.l10n.actionRestoreBackup,
+                      _CardAction(context.l10n.actionManageBackups,
                           () => _proGate(_restoreBackup), pro: true),
                     ],
                     ..._projectLinkActions('evcc'),

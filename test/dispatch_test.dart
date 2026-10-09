@@ -2329,7 +2329,7 @@ void main() {
     expect(u.runCalls, 1); // forced update still works
   });
 
-  testWidgets('evcc ⋮ → Backup wiederherstellen lists, picks and restores',
+  testWidgets('evcc ⋮ → Backups verwalten lists, picks and restores',
       (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
@@ -2342,10 +2342,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('menu-evcc'))); // evcc card ⋮
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Backup wiederherstellen'));
+    await tester.tap(find.text('Backups verwalten'));
     await tester.pumpAndSettle();
 
     // The picker shows the formatted timestamp; choose it.
+    expect(find.text('evcc-Backups'), findsOneWidget);
     expect(find.text('30.06.2026 12:00 Uhr'), findsOneWidget);
     await tester.tap(find.text('30.06.2026 12:00 Uhr'));
     await tester.pumpAndSettle();
@@ -2357,6 +2358,150 @@ void main() {
     expect(u.restoreCalls, 1);
     expect(u.restoredPath,
         '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz');
+    expect(u.downloadedPaths, isEmpty);
+    expect(u.deletedBackups, isEmpty);
+  });
+
+  testWidgets('evcc backups: the download icon fetches the archive and hands '
+      'it to the saver, nothing is restored', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..backups = const [
+        '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz'
+      ]
+      ..downloadBytes = Uint8List.fromList([7, 7, 7, 7]);
+    final saved = <(String, int)>[];
+    await tester.pumpWidget(page(u,
+        fileSaver: (name, bytes) async => saved.add((name, bytes.length))));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.download_outlined));
+    await tester.pumpAndSettle();
+
+    expect(u.downloadedPaths,
+        ['/var/backups/evcc/evcc-backup-20260630-120000.tar.gz']);
+    expect(saved, [('evcc-backup-20260630-120000.tar.gz', 4)]);
+    expect(
+        find.textContaining(
+            'Backup heruntergeladen: evcc-backup-20260630-120000.tar.gz'),
+        findsWidgets);
+    expect(u.restoreCalls, 0);
+  });
+
+  testWidgets('evcc backups: the trash icon deletes only after the confirm',
+      (tester) async {
+    useTallScreen(tester);
+    const path = '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz';
+    final u = FakeEvccUpdater()..backups = const [path];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    Future<void> openAndTapTrash() async {
+      await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Backups verwalten'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+    }
+
+    // Declined: nothing is deleted.
+    await openAndTapTrash();
+    expect(
+        find.text('Löscht das evcc-Backup (30.06.2026 12:00 Uhr) endgültig '
+            'vom Pi.'),
+        findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.deletedBackups, isEmpty);
+
+    await openAndTapTrash();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.deletedBackups, [path]);
+    expect(u.restoreCalls, 0);
+  });
+
+  testWidgets('evcc backups: the archives of the on-Pi timers are listed, '
+      'marked, and restore like the others', (tester) async {
+    useTallScreen(tester);
+    const sched = '/var/backups/pi-tool/sched-evcc-20260701-030000.tar.gz';
+    final u = FakeEvccUpdater()
+      ..backups = const [
+        sched,
+        '/var/backups/pi-tool/autoupdate-evcc-20260630-040000.tar.gz',
+        '/var/backups/evcc/evcc-backup-20260629-120000.tar.gz',
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+
+    // One mark per timer archive, under its date; the app's own has none.
+    Finder inTile(String date, String text) => find.descendant(
+        of: find.widgetWithText(ListTile, date), matching: find.text(text));
+    expect(inTile('01.07.2026 03:00 Uhr', 'Geplantes Backup'), findsOneWidget);
+    expect(inTile('30.06.2026 04:00 Uhr', 'Vor automatischem Update'),
+        findsOneWidget);
+    expect(find.text('Geplantes Backup'), findsOneWidget);
+    expect(find.text('Vor automatischem Update'), findsOneWidget);
+    expect(find.byIcon(Icons.download_outlined), findsNWidgets(3));
+    expect(find.byIcon(Icons.delete_outline), findsNWidgets(3));
+
+    await tester.tap(find.text('01.07.2026 03:00 Uhr'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.restoredPath, sched);
+  });
+
+  testWidgets('evcc backups on 360 dp with a large font: mark, path and both '
+      'icons of a timer archive fit', (tester) async {
+    tester.view.physicalSize = const Size(360, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    const auto = '/var/backups/pi-tool/autoupdate-evcc-20260630-040000.tar.gz';
+    final u = FakeEvccUpdater()..backups = const [auto];
+    await tester.pumpWidget(page(u, config: _readyNoOffer));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('menu-evcc')));
+    await tester.tap(find.byKey(const ValueKey('menu-evcc')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+
+    // A RenderFlex overflow in the sheet would be reported here.
+    expect(tester.takeException(), isNull);
+    final tile =
+        tester.getRect(find.widgetWithText(ListTile, '30.06.2026 04:00 Uhr'));
+    for (final f in [
+      find.text('Vor automatischem Update'),
+      find.text(auto),
+      find.byIcon(Icons.download_outlined),
+      find.byIcon(Icons.delete_outline),
+    ]) {
+      final r = tester.getRect(f);
+      expect(r.left, greaterThanOrEqualTo(tile.left));
+      expect(r.right, lessThanOrEqualTo(tile.right));
+      expect(r.top, greaterThanOrEqualTo(tile.top));
+      expect(r.bottom, lessThanOrEqualTo(tile.bottom));
+    }
   });
 
   testWidgets('keep-alive is released (end) even when the action fails',
@@ -3690,6 +3835,47 @@ void main() {
         ['/var/backups/pi-tool/pihole-backup-20260706-090000.zip']);
     expect(saved, [('pihole-backup-20260706-090000.zip', 3)]);
     expect(u.restoredPihole, isEmpty); // tap on the icon must not restore
+  });
+
+  testWidgets('backup manager: an archive of the backup timer is marked and '
+      'restores like an on-demand one', (tester) async {
+    useTallScreen(tester);
+    const sched = '/var/backups/pi-tool/sched-pihole-20260707-030000.zip';
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            version: 'v6.0.4',
+            active: true),
+      ]
+      ..serviceBackups = const [
+        sched,
+        '/var/backups/pi-tool/pihole-backup-20260706-090000.zip',
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+
+    expect(
+        find.descendant(
+            of: find.widgetWithText(ListTile, '07.07.2026 03:00 Uhr'),
+            matching: find.text('Geplantes Backup')),
+        findsOneWidget);
+    expect(find.text('Geplantes Backup'), findsOneWidget);
+
+    await tester.tap(find.text('07.07.2026 03:00 Uhr'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.restoredPihole, [sched]);
   });
 
   testWidgets(
