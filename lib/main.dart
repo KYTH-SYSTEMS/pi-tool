@@ -3740,6 +3740,26 @@ class _UpdaterPageState extends State<UpdaterPage>
             : context.l10n.busyDisablingAutoUpdates);
   }
 
+  /// The pickers of a schedule sheet in one row, the first at the left edge
+  /// and the last at the right — or one below the other where a large font
+  /// on a narrow phone leaves no room for that.
+  Widget _pickerRow(List<Widget> pickers) => SizedBox(
+        width: double.infinity,
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 16,
+          children: pickers,
+        ),
+      );
+
+  /// One picker of [_pickerRow] behind its label; it goes below the label
+  /// where the two do not fit side by side.
+  Widget _labelledPicker(String label, Widget picker) => Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [Text(label), picker],
+      );
+
   Future<({bool enable, bool weekly, int hour, int weekday})?>
       _showAutoUpdateSheet(AutoUpdateStatus status) {
     // What is installed on the Pi, where the probe could read it: "Zeitplan
@@ -3765,7 +3785,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
-          child: Padding(
+          // Scrollable, like the alerts sheet: with the hint about an older
+          // script and a large font the sheet is taller than a small phone,
+          // and the buttons are its last row.
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -3816,9 +3839,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                   onSelectionChanged: (s) => setSheet(() => weekly = s.first),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Text(ctx.l10n.labelTime),
+                _pickerRow([
+                  _labelledPicker(
+                    ctx.l10n.labelTime,
                     DropdownButton<int>(
                       value: hour,
                       items: [
@@ -3830,9 +3853,10 @@ class _UpdaterPageState extends State<UpdaterPage>
                       ],
                       onChanged: (v) => setSheet(() => hour = v ?? 4),
                     ),
-                    if (weekly) ...[
-                      const Spacer(),
-                      Text(ctx.l10n.labelDay),
+                  ),
+                  if (weekly)
+                    _labelledPicker(
+                      ctx.l10n.labelDay,
                       DropdownButton<int>(
                         value: weekday,
                         items: [
@@ -3842,9 +3866,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                         ],
                         onChanged: (v) => setSheet(() => weekday = v ?? 7),
                       ),
-                    ],
-                  ],
-                ),
+                    ),
+                ]),
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -3940,7 +3963,8 @@ class _UpdaterPageState extends State<UpdaterPage>
       isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
-          child: Padding(
+          // Scrollable, as the auto-update sheet.
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -3981,9 +4005,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                     ),
                   ),
                 const Divider(height: 24),
-                Row(
-                  children: [
-                    Text(ctx.l10n.labelTime),
+                _pickerRow([
+                  _labelledPicker(
+                    ctx.l10n.labelTime,
                     DropdownButton<int>(
                       value: hour,
                       items: [
@@ -3995,8 +4019,9 @@ class _UpdaterPageState extends State<UpdaterPage>
                       ],
                       onChanged: (v) => setSheet(() => hour = v ?? 3),
                     ),
-                    const Spacer(),
-                    Text(ctx.l10n.labelKeep),
+                  ),
+                  _labelledPicker(
+                    ctx.l10n.labelKeep,
                     DropdownButton<int>(
                       value: keep,
                       items: [
@@ -4005,8 +4030,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                       ],
                       onChanged: (v) => setSheet(() => keep = v ?? 7),
                     ),
-                  ],
-                ),
+                  ),
+                ]),
                 const SizedBox(height: 16),
                 Row(
                   children: [

@@ -6398,6 +6398,175 @@ void main() {
         tester.getRect(pw).bottom, lessThanOrEqualTo(tester.getRect(done).top));
   });
 
+  // ---- the two schedule sheets on a small display with a large font ----
+  //
+  // The hint that an older script runs on the Pi names "Zeitplan ändern" —
+  // and with it showing, that button and "Ausschalten" lay below the screen
+  // edge of a sheet that did not scroll.
+
+  /// Scrolls [button] into the sheet's visible part and checks that it lies
+  /// on the 360x640 screen and takes a tap there.
+  Future<void> expectReachable(WidgetTester tester, Finder button) async {
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(button);
+    expect(rect.top, greaterThanOrEqualTo(0));
+    expect(rect.bottom, lessThanOrEqualTo(640));
+    expect(rect.left, greaterThanOrEqualTo(0));
+    expect(rect.right, lessThanOrEqualTo(360));
+    expect(button.hitTestable(), findsOneWidget);
+  }
+
+  /// Every picker of the sheet lies within the width of the screen.
+  void expectPickersOnScreen(WidgetTester tester) {
+    final pickers = inSheet(find.byType(DropdownButton<int>));
+    for (var i = 0; i < tester.widgetList(pickers).length; i++) {
+      final rect = tester.getRect(pickers.at(i));
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(360));
+    }
+  }
+
+  // Where there is room, the row is what it was: one line, the first picker
+  // at the left edge of the sheet's content and the last at the right.
+  testWidgets('Zeitplan-Sheets mit Platz: die Auswahlfelder stehen in einer '
+      'Zeile, links und rechts außen', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..autoStatus = (
+        enabled: true,
+        nextRun: 'Wed 2026-10-14 22:00:00',
+        lastResult: null,
+        wrapperOutdated: false,
+        schedule: (weekly: true, hour: 22, weekday: 3)
+      )
+      ..scheduledBackupStatus = (
+        enabled: true,
+        nextRun: 'Sat 2026-10-10 01:00:00',
+        lastResult: null,
+        wrapperOutdated: false,
+        hour: 1,
+        keep: 30
+      );
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+
+    for (final (tile, firstLabel) in [
+      ('Automatische Updates', 'Uhrzeit:  '),
+      ('Geplante Backups', 'Uhrzeit:  '),
+    ]) {
+      await tester.tap(find.text(tile));
+      await tester.pumpAndSettle();
+      // The sheet's content, 20 dp of padding on either side.
+      final sheet =
+          tester.getRect(inSheet(find.byType(SingleChildScrollView)));
+      final pickers = inSheet(find.byType(DropdownButton<int>));
+      expect(pickers, findsNWidgets(2), reason: tile);
+      final first = tester.getRect(pickers.at(0));
+      final last = tester.getRect(pickers.at(1));
+      expect(first.center.dy, last.center.dy, reason: tile);
+      expect(tester.getRect(inSheet(find.text(firstLabel))).left,
+          sheet.left + 20,
+          reason: tile);
+      expect(last.right, sheet.right - 20, reason: tile);
+      Navigator.of(tester.element(pickers.first)).pop();
+      await tester.pumpAndSettle();
+    }
+  });
+
+  for (final button in ['Zeitplan ändern', 'Ausschalten']) {
+    testWidgets(
+        'Automatische Updates auf kleinem Display mit großer Schrift: das '
+        'Sheet läuft nicht über, „$button“ ist erreichbar', (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..autoStatus = (
+          enabled: true,
+          nextRun: 'Wed 2026-10-14 22:00:00',
+          lastResult: '2026-10-08 22:00:12 ok; evcc-neustart',
+          wrapperOutdated: true,
+          schedule: (weekly: true, hour: 22, weekday: 3)
+        );
+      await tester.pumpWidget(page(u, config: _readyNoOffer));
+      await tester.pumpAndSettle();
+      await goAutomatik(tester);
+      await tester.tap(find.text('Automatische Updates'));
+      await tester.pumpAndSettle();
+
+      shrinkWithLargeFont(tester);
+      await tester.pumpAndSettle();
+
+      // A RenderFlex overflow in the sheet would be reported here.
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('wrapperOutdatedHint')), findsOneWidget);
+      expect(pickerValues(tester), [22, 3]);
+      expectPickersOnScreen(tester);
+      // The premise: the sheet is taller than this screen.
+      final scroller = tester
+          .state<ScrollableState>(find
+              .descendant(
+                  of: inSheet(find.byType(SingleChildScrollView)),
+                  matching: find.byType(Scrollable))
+              .first)
+          .position;
+      expect(scroller.maxScrollExtent, greaterThan(0));
+
+      final target = button == 'Ausschalten'
+          ? find.widgetWithText(TextButton, button)
+          : find.widgetWithText(FilledButton, button);
+      await expectReachable(tester, target);
+      await tester.tap(target);
+      await tester.pump();
+      if (button == 'Ausschalten') {
+        expect(u.autoUpdateDisabled, isTrue);
+      } else {
+        expect(u.enabledOnCalendar, 'Wed *-*-* 22:00:00');
+      }
+    });
+
+    testWidgets(
+        'Geplante Backups auf kleinem Display mit großer Schrift: das Sheet '
+        'läuft nicht über, „$button“ ist erreichbar', (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()
+        ..scheduledBackupStatus = (
+          enabled: true,
+          nextRun: 'Sat 2026-10-10 01:00:00',
+          lastResult: '2026-10-09 01:00:01 fehler: evcc(tar-rc=2); ok: pihole',
+          wrapperOutdated: true,
+          hour: 1,
+          keep: 30
+        );
+      await tester.pumpWidget(page(u, config: _readyNoOffer));
+      await tester.pumpAndSettle();
+      await goAutomatik(tester);
+      await tester.tap(find.text('Geplante Backups'));
+      await tester.pumpAndSettle();
+
+      shrinkWithLargeFont(tester);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('wrapperOutdatedHint')), findsOneWidget);
+      expect(pickerValues(tester), [1, 30]);
+      expectPickersOnScreen(tester);
+
+      final target = button == 'Ausschalten'
+          ? find.widgetWithText(TextButton, button)
+          : find.widgetWithText(FilledButton, button);
+      await expectReachable(tester, target);
+      await tester.tap(target);
+      await tester.pump();
+      if (button == 'Ausschalten') {
+        expect(u.scheduledBackupDisabled, isTrue);
+      } else {
+        expect(u.scheduledBackupOnCal, '*-*-* 01:00:00');
+        expect(u.scheduledBackupKeep, 30);
+      }
+    });
+  }
+
   testWidgets('Automatik: aktuelles Skript oder ausgeschalteter Timer – kein '
       'Hinweis', (tester) async {
     useTallScreen(tester);
