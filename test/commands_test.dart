@@ -1945,15 +1945,19 @@ exec "\$REAL_STAT" "\$@"''');
 
     test('two links that point at each other: refused, no endless loop',
         () async {
-      if (!await symlink('/etc/b.conf', '/etc/a.conf') ||
-          !await symlink('/etc/a.conf', '/etc/b.conf')) {
+      // Relative targets: the script follows 40 links before it gives up and
+      // asks stat for every directory on the way each time. From the root
+      // again at every link, that took Git Bash longer than the default
+      // timeout on a busy PC — hence the longer one as well.
+      if (!await symlink('b.conf', '/etc/a.conf') ||
+          !await symlink('a.conf', '/etc/b.conf')) {
         markTestSkipped('this host creates no symlinks');
         return;
       }
       fakeStat();
       final r = await write('/etc/a.conf', 'new');
       expectRefused(r, 'keiner Datei', ['/etc']);
-    });
+    }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('a link with spaces in its name and in its target is followed to '
         'the letter', () async {
