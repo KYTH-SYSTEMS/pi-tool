@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:evcc_updater/src/profile_transfer.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,15 +38,16 @@ void main() {
         () async {
       final envelope =
           await encryptProfileExport('data', 'pw', iterations: fastIters);
-      // Flip a character inside the base64 data field.
-      final tampered = envelope.replaceFirst('"data":"A', '"data":"B');
+      // Flip one bit of the ciphertext itself: unlike swapping base64
+      // characters this changes the data whatever the random bytes are.
+      final j = jsonDecode(envelope) as Map<String, dynamic>;
+      final data = base64.decode(j['data'] as String);
+      data[0] ^= 0x01;
+      j['data'] = base64.encode(data);
       await expectLater(
-        decryptProfileExport(
-            tampered == envelope
-                ? envelope.replaceFirst(RegExp(r'"data":"..'), '"data":"zz')
-                : tampered,
-            'pw'),
-        throwsA(isA<ProfileTransferException>()),
+        decryptProfileExport(jsonEncode(j), 'pw'),
+        throwsA(isA<ProfileTransferException>()
+            .having((e) => e.message, 'message', contains('verändert'))),
       );
     });
 
@@ -107,5 +110,45 @@ void main() {
       // No destination of its own: what the exporting app showed for it.
       expect(imported[1].alertsNtfyTopic, 'app-weit-9999999999');
     });
+  });
+
+  // The real parameters, slow on purpose — these derive the key in the
+  // background isolate, which the fast tests above never reach.
+  group('profile export with the real parameters', () {
+    // Seconds per derivation on a desktop; a loaded CI runner gets more room
+    // than the default 30 s.
+    const slow = Timeout(Duration(minutes: 3));
+
+    test('the export asks for 600000 rounds and at least 10 characters', () {
+      expect(kExportKdfIterations, 600000);
+      expect(kExportMinPassphraseLength, 10);
+    });
+
+    test('an export written with the defaults records its rounds and reads back',
+        () async {
+      const secret = '{"profiles":[{"name":"S","password":"geheim"}]}';
+      final envelope = await encryptProfileExport(secret, 'korrekt batterie');
+      final j = jsonDecode(envelope) as Map<String, dynamic>;
+      expect(j['iterations'], 600000);
+      expect(await decryptProfileExport(envelope, 'korrekt batterie'), secret);
+    }, timeout: slow);
+
+    test('a file written by v0.71.0 (200000 rounds) still imports', () async {
+      // Produced by the v0.71.0 code. The round count is read from the file.
+      const v071 = '{"format":"pitool-profiles-v1","kdf":"pbkdf2-hmac-sha256",'
+          '"iterations":200000,"salt":"li7EmcXs4D4C3NF1RaqwsQ==",'
+          '"nonce":"M9zyBvqQ+gH+/OZk","cipher":"aes-256-gcm",'
+          '"data":"tJ3kF5H7rl4/amWj15DvdNBNIwcMZ7lhb6HeDumcqZrFzBINXbDBH4cV9Hcp'
+          'UBAibo6yrN4+eIScz2HkltKqFA2R0rSs","mac":"Nl7xkFRVEepmPq2sgO+U1g=="}';
+      expect(
+        await decryptProfileExport(v071, 'altes passwort'),
+        '{"profiles":[{"name":"Zuhause","host":"192.0.2.10"}],"activeIndex":0}',
+      );
+      await expectLater(
+        decryptProfileExport(v071, 'falsches passwort'),
+        throwsA(isA<ProfileTransferException>()
+            .having((e) => e.message, 'message', contains('Passphrase'))),
+      );
+    }, timeout: slow);
   });
 }

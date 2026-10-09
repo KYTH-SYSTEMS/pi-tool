@@ -986,7 +986,7 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _exportProfiles() async {
     final pass = await _promptPassphrase(
       context.l10n.exportProfilesTitle,
-      context.l10n.exportProfilesBody,
+      context.l10n.exportProfilesBody(kExportMinPassphraseLength),
       confirm: true,
     );
     if (pass == null || !mounted) return;

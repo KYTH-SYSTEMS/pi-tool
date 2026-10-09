@@ -684,6 +684,47 @@ void main() {
     expect(store.saved.lockEnabled, isFalse);
   });
 
+  testWidgets(
+      'profile export: the passphrase needs 10 characters, and the dialog '
+      'says so', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(_page());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Profile exportieren'));
+    await tester.tap(find.text('Profile exportieren'));
+    await tester.pumpAndSettle();
+
+    Future<void> enter(String passphrase) async {
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Passphrase'), passphrase);
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Passphrase wiederholen'), passphrase);
+      await tester.pump();
+    }
+
+    VoidCallback? ok() => tester
+        .widget<FilledButton>(find.widgetWithText(FilledButton, 'OK'))
+        .onPressed;
+
+    // The body names the minimum before anything is typed.
+    expect(find.textContaining('mindestens 10 Zeichen'), findsOneWidget);
+
+    // 9 characters, repeated correctly: too short for a file with root
+    // credentials in it.
+    await enter('123456789');
+    expect(find.text('Mindestens 10 Zeichen.'), findsOneWidget);
+    expect(ok(), isNull);
+
+    await enter('1234567890');
+    expect(find.text('Mindestens 10 Zeichen.'), findsNothing);
+    expect(ok(), isNotNull);
+  });
+
   testWidgets('the ⋮ menu opens the Pi setup guide', (tester) async {
     useTallScreen(tester);
     await tester.pumpWidget(_page());

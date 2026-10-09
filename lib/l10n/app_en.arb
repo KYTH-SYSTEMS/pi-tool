@@ -202,12 +202,19 @@
   "loadFailedResetConfirm": "Reset",
   "loadFailedResetFailed": "Reset failed. As a last resort, the app data can be cleared in the Android settings.",
   "exportProfilesTitle": "Export profiles",
-  "exportProfilesBody": "The file contains your Pi credentials (passwords/SSH keys) — encrypted. Choose a passphrase; without it the file is worthless.",
+  "exportProfilesBody": "The file contains your Pi credentials (passwords/SSH keys) — encrypted. Choose a passphrase of at least {n} characters; without it the file is worthless. Encrypting takes a few seconds.",
+  "@exportProfilesBody": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "snackExportCreated": "Export created — keep it safe.",
   "snackExportFailed": "Export failed.",
   "snackFilePickFailed": "File selection failed.",
   "importProfilesTitle": "Import profiles",
-  "importProfilesBody": "Enter the export file's passphrase.",
+  "importProfilesBody": "Enter the export file's passphrase. Decrypting can take a few seconds.",
   "snackFileNoProfiles": "File contains no profiles.",
   "dialogImportTitle": "Import?",
   "dialogImportBody": "{count} profile(s) will be added to your existing ones.",

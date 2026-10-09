@@ -2283,7 +2283,7 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
   final _ctrl = TextEditingController();
   final _ctrl2 = TextEditingController();
   bool _obscure = true;
-  static const _minLen = 6;
+  static const _minLen = kExportMinPassphraseLength;
 
   @override
   void dispose() {
