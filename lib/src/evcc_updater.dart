@@ -1160,12 +1160,9 @@ class EvccUpdater {
     required String path,
     required void Function(String line) onLog,
   }) async {
-    if (!path.endsWith('.zip')) {
-      throw const EvccUpdateException(
-        UpdateErrorKind.unknown,
-        'Dieses Backup stammt von Pi-hole v5 (.tar.gz) und kann nur über die '
-        'Web-Oberfläche importiert werden (Einstellungen → Teleporter).',
-      );
+    final refusal = piholeRestoreRefusal(path);
+    if (refusal != null) {
+      throw EvccUpdateException(UpdateErrorKind.unknown, refusal);
     }
     await _withConnection<void>(
       config: config,
@@ -1581,11 +1578,10 @@ class EvccUpdater {
     final what = logout ? 'Abmelden' : 'Trennen';
     // Checked before connecting: the address alone says so, and the app
     // answers the tap with this refusal instead of a question.
-    if (isTailnetHost(config.host)) {
-      return Future.error(EvccUpdateException(
-          UpdateErrorKind.unknown,
-          'Die Verbindung läuft über Tailscale und würde beim $what '
-          'abreißen – bitte über die Heimnetz-Adresse verbinden.'));
+    final refusal = tailscaleSetRefusal(config.host, logout: logout);
+    if (refusal != null) {
+      return Future.error(
+          EvccUpdateException(UpdateErrorKind.unknown, refusal));
     }
     return _withConnection<void>(
       config: config,

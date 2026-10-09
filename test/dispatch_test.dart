@@ -447,6 +447,7 @@ class FakeEvccUpdater extends EvccUpdater {
       deletedBackups.add(path);
 
   Object? piholeRestoreError; // thrown by restorePiholeBackup
+  int restorePiholeCalls = 0;
 
   @override
   Future<void> restorePiholeBackup({
@@ -454,6 +455,7 @@ class FakeEvccUpdater extends EvccUpdater {
     required String path,
     required void Function(String line) onLog,
   }) async {
+    restorePiholeCalls++;
     if (piholeRestoreError != null) throw piholeRestoreError!;
     // Like the real one: only a v6 .zip can be imported.
     if (!path.endsWith('.zip')) {
@@ -4076,6 +4078,9 @@ void main() {
               'Teleporter).'),
           findsOneWidget);
       expect(u.restoredPihole, isEmpty);
+      // Turned down by the page itself: a restore nobody confirmed must not
+      // reach the updater at all, whatever the updater would do with it.
+      expect(u.restorePiholeCalls, 0);
       expect(find.textContaining('wiederhergestellt'), findsNothing);
       // Nothing ran: no foreground service for it, and the app is free again.
       expect(ka.beginCount, began);
@@ -8759,8 +8764,9 @@ void main() {
           find.text('Die Verbindung läuft über Tailscale und würde beim '
               'Abmelden abreißen – bitte über die Heimnetz-Adresse verbinden.'),
           findsOneWidget);
-      // The refusal is the updater's own; nothing was signed out.
-      expect(u.tailscaleSetCalls, 1);
+      // Turned down by the page itself: a sign-out nobody confirmed must not
+      // reach the updater at all, whatever the updater would do with it.
+      expect(u.tailscaleSetCalls, 0);
       expect(u.tailscaleLoggedOut, isNull);
       expect(find.text('Tailscale abgemeldet.'), findsNothing);
       // Nothing ran: no foreground service announcing a sign-out nobody was
@@ -8793,7 +8799,7 @@ void main() {
         find.text('Die Verbindung läuft über Tailscale und würde beim '
             'Trennen abreißen – bitte über die Heimnetz-Adresse verbinden.'),
         findsOneWidget);
-    expect(u.tailscaleSetCalls, 1);
+    expect(u.tailscaleSetCalls, 0);
     expect(u.tailscaleLoggedOut, isNull);
     expect(find.text('Tailscale getrennt.'), findsNothing);
     expect(ka.beginCount, began);

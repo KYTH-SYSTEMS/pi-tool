@@ -100,6 +100,21 @@ bool isTailnetHost(String host) {
   return h.startsWith('100.') || h.endsWith('.ts.net');
 }
 
+/// Why "Trennen" (`tailscale down`) or "Abmelden" (`tailscale logout`) is
+/// turned down for a Pi reached under [host], or null when the address is no
+/// reason: under a tailnet address the session would cut itself off.
+///
+/// One source for both sides. The updater refuses with it before it connects,
+/// and the UI answers the tap with it instead of asking first — and then never
+/// calls the updater: an action nobody confirmed must not depend on the other
+/// side turning it down.
+String? tailscaleSetRefusal(String host, {required bool logout}) =>
+    isTailnetHost(host)
+        ? 'Die Verbindung läuft über Tailscale und würde beim '
+            '${logout ? 'Abmelden' : 'Trennen'} abreißen – bitte über die '
+            'Heimnetz-Adresse verbinden.'
+        : null;
+
 /// Ordered connect candidates for a Pi that has both a home address and a
 /// tailnet IP. Home first — it is the fast path and needs no VPN on the phone —
 /// unless the tailnet is what worked last time. A [lastGood] matching neither

@@ -52,6 +52,7 @@ import 'src/profiles.dart';
 import 'src/secure_screen.dart';
 import 'src/services/apt_services.dart';
 import 'src/services/pi_service.dart';
+import 'src/services/pihole_service.dart' show piholeRestoreRefusal;
 import 'src/services/service_links.dart';
 import 'src/services/stack_wiring.dart';
 import 'src/services/tailscale.dart';
@@ -2916,15 +2917,15 @@ class _UpdaterPageState extends State<UpdaterPage>
   // ---- service backup management (Pi-hole + Home Assistant) ----
 
   /// Lists a service's backups and lets the user restore, download or delete
-  /// one. [restoreRefused] names the archives [restore] turns down before it
-  /// connects: for those the tap is answered with that refusal right away,
-  /// without the question that would otherwise come first.
+  /// one. [restoreRefusal] gives, for an archive the app cannot restore, the
+  /// reason: the tap is then answered with it right away, without the question
+  /// that would otherwise come first — and [restore] is not called.
   Future<void> _manageServiceBackups({
     required String servicePrefix,
     required String serviceName,
     required Future<void> Function(SshConfig config, String path) restore,
     required String restoreWarning,
-    bool Function(String path)? restoreRefused,
+    String? Function(String path)? restoreRefusal,
   }) async {
     if (_busy) return;
     final l10n = context.l10n;
@@ -2937,7 +2938,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           serviceName: serviceName,
           restore: restore,
           restoreWarning: restoreWarning,
-          restoreRefused: restoreRefused,
+          restoreRefusal: restoreRefusal,
         );
     List<String>? backups;
     await _guard(() async {
@@ -2954,16 +2955,22 @@ class _UpdaterPageState extends State<UpdaterPage>
     final (action, path) = choice;
     if (action == 'download') return _downloadBackup(config, serviceName, path);
     if (action == 'delete') return _deleteBackup(config, serviceName, path);
-    final refused = restoreRefused?.call(path) ?? false;
-    if (!refused &&
+    final refusal = restoreRefusal?.call(path);
+    if (refusal == null &&
         !await _confirm(context.l10n.dialogRestoreBackupTitle, restoreWarning)) {
       return;
     }
     _beginBusy();
     // A refusal comes at once, before anything connects: no foreground
     // service for it.
-    final busyMessage = refused ? null : l10n.busyRestoringService(serviceName);
+    final busyMessage =
+        refusal != null ? null : l10n.busyRestoringService(serviceName);
     await _guard(() async {
+      // Said here, without the updater: what nobody confirmed must not reach
+      // it, whatever it would do with the call.
+      if (refusal != null) {
+        throw EvccUpdateException(UpdateErrorKind.unknown, refusal);
+      }
       await restore(config, path);
       if (!mounted) return;
       setState(() {
@@ -2981,9 +2988,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         restoreWarning: context.l10n.restoreWarningPihole,
         restore: (config, path) => _updater.restorePiholeBackup(
             config: config, path: path, onLog: _appendLog),
-        // A Pi-hole v5 archive (.tar.gz): restorePiholeBackup refuses whatever
-        // is not a v6 .zip, with the reason and where it can be imported.
-        restoreRefused: (path) => !path.endsWith('.zip'),
+        // A Pi-hole v5 archive (.tar.gz) cannot be imported from here; the
+        // reason says where it can.
+        restoreRefusal: piholeRestoreRefusal,
       );
 
   Future<void> _manageHomeAssistantBackups() => _manageServiceBackups(
@@ -6268,14 +6275,15 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _tailscaleSet({required bool logout}) async {
     if (_busy) return;
     final l10n = context.l10n;
-    // Under a tailnet address the updater turns both down before it runs
-    // anything — the session would cut itself off. The address already says
-    // so, and then there is nothing to ask first: the answer to the tap is
-    // that refusal, in the updater's words. Not in the demo, whose actions
-    // never use the address in the field.
-    final refused = !_demoMode && isTailnetHost(_host.text.trim());
+    // Under a tailnet address both are turned down — the session would cut
+    // itself off. The address already says so, and then there is nothing to
+    // ask first: the answer to the tap is that refusal. Not in the demo,
+    // whose actions never use the address in the field.
+    final refusal = _demoMode
+        ? null
+        : tailscaleSetRefusal(_host.text.trim(), logout: logout);
     if (logout &&
-        !refused &&
+        refusal == null &&
         !await _confirm(context.l10n.dialogSignOutTitle,
             context.l10n.dialogSignOutTailscaleBody)) {
       return;
@@ -6284,6 +6292,11 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = () => _tailscaleSet(logout: logout);
     await _guard(() async {
+      // Said here, without the updater: what nobody confirmed must not reach
+      // it, whatever it would do with the call.
+      if (refusal != null) {
+        throw EvccUpdateException(UpdateErrorKind.unknown, refusal);
+      }
       await _updater.tailscaleSet(
           config: config, logout: logout, onLog: _appendLog);
       if (!mounted) return;
@@ -6297,7 +6310,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     },
         // A refusal comes at once: no foreground service, and no bar that
         // says a sign-out is running.
-        backgroundMessage: refused
+        backgroundMessage: refusal != null
             ? null
             : logout
                 ? l10n.busyTailscaleSigningOut

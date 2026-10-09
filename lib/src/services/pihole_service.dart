@@ -123,6 +123,18 @@ echo "BACKUP_OK $out"
 ''';
 }
 
+/// Why the app cannot restore the Pi-hole backup at [archivePath], or null
+/// when it can: only a v6 Teleporter export (`.zip`) is imported.
+///
+/// One source for both sides. The updater refuses with it before it connects,
+/// and the UI answers the tap with it instead of asking first — and then never
+/// calls the updater: a restore nobody confirmed must not depend on the other
+/// side turning it down.
+String? piholeRestoreRefusal(String archivePath) => archivePath.endsWith('.zip')
+    ? null
+    : 'Dieses Backup stammt von Pi-hole v5 (.tar.gz) und kann nur über die '
+        'Web-Oberfläche importiert werden (Einstellungen → Teleporter).';
+
 /// Root script that restores a Pi-hole Teleporter backup. Only the v6 CLI can
 /// import (`pihole-FTL --teleporter <zip>`, since Pi-hole v6); a v5 `.tar.gz`
 /// archive can only be imported via the web UI, so it's refused with a clear
