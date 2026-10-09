@@ -19,9 +19,12 @@ String _real(String tool) =>
 
 /// The influx CLI as the wiring asks it: one org, the bucket `evcc`, and
 /// `auth create` hands out `tok-<n>-secret` (nothing while `$S/auth-fails`
-/// exists).
+/// exists). `setup` leaves the root CLI config behind, as the real one does.
 const String _influx = r'''
 case "$1 $2" in
+  "setup -f")
+    mkdir -p "$R/root/.influxdbv2"
+    echo "[pitool]" > "$R/root/.influxdbv2/configs" ;;
   "org list") echo "0a1b2c3d pi-tool" ;;
   "bucket list") echo "b1d0b1d0 evcc infinite 168h0m0s 0a1b2c3d implicit" ;;
   "auth create")
@@ -207,8 +210,8 @@ void main() {
   });
 
   // The whole wiring script on a sandboxed Pi: InfluxDB is already set up
-  // (root CLI config present), influx and systemctl are stubs, /etc, /var and
-  // /root live in the sandbox.
+  // (root CLI config present, unless a test takes it away), influx and
+  // systemctl are stubs, /etc, /var and /root live in the sandbox.
   group('stack wiring in bash', () {
     late PiSandbox pi;
     const yaml = '/etc/evcc.yaml';
@@ -236,7 +239,7 @@ void main() {
       pi.stub('influx', _influx);
       pi.stub('systemctl', _systemctl);
       pi.stub('chown', 'exit 0', log: false);
-      for (final tool in ['cp', 'od']) {
+      for (final tool in ['base64', 'cp', 'od']) {
         pi.stub(tool, 'exec ${_real(tool)} "\$@"', log: false);
       }
       pi.put('/root/.influxdbv2/configs', '[pitool]\n  token = "op"\n');
@@ -300,6 +303,85 @@ void main() {
       expect(pi.read(yaml), '$head${block(1)}');
       expect(yamlBackups(), hasLength(1));
       expect(pi.calls, isNot(contains('systemctl restart evcc')));
+    });
+
+    /// A Pi whose InfluxDB Pi-Tool has not set up (yet): no root CLI config.
+    void noInfluxSetup() => pi.remove('/root/.influxdbv2/configs');
+
+    test('first wiring ever: InfluxDB is set up first, then WIRE_OK', () async {
+      noInfluxSetup();
+      aptEvcc();
+      grafana();
+      pi.put(yaml, head);
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.first, 'InfluxDB eingerichtet (Org pi-tool, Bucket evcc).');
+      expect(r.lines.last, 'WIRE_OK');
+      final setup = RegExp(r'^influx setup -f -u pitool -p ([A-Za-z0-9]{24}) '
+              r'-o pi-tool -b evcc -n pitool$')
+          .firstMatch(pi.calls.firstWhere((c) => c.startsWith('influx ')));
+      expect(setup, isNotNull, reason: pi.calls.join('\n'));
+      // The generated admin password stays on the Pi.
+      expect(r.lines.join('\n'), isNot(contains(setup!.group(1)!)));
+      expect(pi.read(yaml), '$head${block(1)}');
+    });
+
+    // An evcc.yaml that came with a backup (restore after a re-flash, the
+    // migration to another Pi) carries the block of the InfluxDB it was written
+    // for. Counted as wired, the app would report success over an evcc that
+    // writes nowhere. After `influx setup` the case could no longer be told
+    // from a real second run, so the script stops before it — on every run.
+    test('own block, but Pi-Tool never set up the InfluxDB of this Pi: '
+        'refused before anything is set up', () async {
+      noInfluxSetup();
+      aptEvcc();
+      grafana();
+      pi.put(yaml, '$head${block(7)}');
+      for (var run = 1; run <= 2; run++) {
+        final r = await wire();
+        expect(r.code, 1, reason: 'run $run\n${r.lines.join('\n')}');
+        expect(r.lines, [
+          'evcc.yaml hat einen influx-Block von Pi-Tool, die InfluxDB auf '
+              'diesem Pi hat Pi-Tool aber nicht eingerichtet '
+              '(/root/.influxdbv2/configs fehlt) - nichts geaendert.',
+          'Der Block stammt dann aus einer frueheren Installation oder dem '
+              'Backup eines anderen Pi, und sein Token gilt hier nicht. Bitte '
+              "den Block in der evcc.yaml loeschen (von der Zeile '"
+              "$evccInfluxBlockMarker' bis zur Zeile mit 'token:') und erneut "
+              'verdrahten.',
+          'WIRE_FAIL',
+        ]);
+        expect(pi.calls.where((c) => c.startsWith('influx ')), isEmpty);
+        expect(pi.exists('/root/.influxdbv2/configs'), isFalse);
+        expect(pi.read(yaml), '$head${block(7)}');
+        expect(yamlBackups(), isEmpty);
+        expect(pi.exists(datasource), isFalse);
+        expect(
+            pi.calls.where((c) => c.startsWith('systemctl restart')), isEmpty);
+      }
+
+      // The block removed as the message says: the next run wires everything.
+      pi.put(yaml, head);
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.last, 'WIRE_OK');
+      expect(pi.read(yaml), '$head${block(1)}');
+    });
+
+    test('the same file under an evcc without a systemd unit is not refused: '
+        'set up, hint, partial as before', () async {
+      noInfluxSetup();
+      pi.put(yaml, '$head${block(7)}');
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.first, 'InfluxDB eingerichtet (Org pi-tool, Bucket evcc).');
+      expect(
+          r.lines,
+          contains('evcc.yaml gefunden, aber kein systemd-Dienst evcc '
+              '(Docker-evcc?) - bitte influx dort selbst eintragen (Org '
+              'pi-tool, Bucket evcc).'));
+      expect(r.lines.last, 'WIRE_PARTIAL');
+      expect(pi.read(yaml), '$head${block(7)}');
     });
 
     test('evcc wired and no Grafana: nothing would use a token, none is made',

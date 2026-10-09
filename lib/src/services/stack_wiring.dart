@@ -21,6 +21,10 @@
 /// - A second run is a no-op for evcc: the block the first run wrote (see
 ///   [evccInfluxBlockMarker]) counts as wired. The token is only created when
 ///   one of the two places is about to be written.
+/// - That block without the root CLI config of `influx setup` means the
+///   evcc.yaml came with a backup (re-flashed or other Pi) and its token
+///   belongs to another database: refused before the setup, nothing changed —
+///   afterwards the case would look like a second run.
 /// - A hand-set-up InfluxDB without root CLI config is reported honestly
 ///   instead of guessed at.
 library;
@@ -148,6 +152,13 @@ String buildStackWiringScript() {
 export LC_ALL=C
 export HOME=/root
 
+# Der eigene influx-Block in /etc/evcc.yaml: die Markerzeile direkt ueber
+# "influx:" - so erkennt ihn auch die Ruecknahme.
+wire_marker=${shSingleQuote(evccInfluxBlockMarker)}
+own_block() {
+  awk -v m="\$wire_marker" 'p == m && \$0 == "influx:" { f = 1 } { p = \$0 } END { exit !f }' /etc/evcc.yaml
+}
+
 # --- InfluxDB: Setup, Bucket, Token -----------------------------------------
 if ! command -v influx >/dev/null 2>&1; then
   echo "influx-CLI fehlt (kommt mit dem Paket influxdb2)."
@@ -158,6 +169,17 @@ if ! systemctl is-active influxdb >/dev/null 2>&1; then
   echo WIRE_FAIL; exit 1
 fi
 if [ ! -f /root/.influxdbv2/configs ]; then
+  # Pi-Tool hat die InfluxDB dieses Pi nie eingerichtet, die evcc.yaml traegt
+  # aber schon seinen Block: sie kam mit einem Backup (neu aufgesetzter oder
+  # anderer Pi), und das Token darin gehoert zu einer anderen Datenbank. Als
+  # "bereits verdrahtet" gezaehlt staende WIRE_OK ueber einem evcc, das nichts
+  # schreibt. Abgelehnt wird VOR dem Setup: danach ist der Fall von einem
+  # echten zweiten Lauf nicht mehr zu unterscheiden.
+  if [ -f /etc/evcc.yaml ] && systemctl cat evcc >/dev/null 2>&1 && own_block; then
+    echo "evcc.yaml hat einen influx-Block von Pi-Tool, die InfluxDB auf diesem Pi hat Pi-Tool aber nicht eingerichtet (/root/.influxdbv2/configs fehlt) - nichts geaendert."
+    echo "Der Block stammt dann aus einer frueheren Installation oder dem Backup eines anderen Pi, und sein Token gilt hier nicht. Bitte den Block in der evcc.yaml loeschen (von der Zeile '\$wire_marker' bis zur Zeile mit 'token:') und erneut verdrahten."
+    echo WIRE_FAIL; exit 1
+  fi
   pw=\$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
   if influx setup -f -u pitool -p "\$pw" -o pi-tool -b evcc -n $stackCliProfile >/dev/null 2>&1; then
     echo "InfluxDB eingerichtet (Org pi-tool, Bucket evcc)."
@@ -211,10 +233,9 @@ if [ -f /etc/evcc.yaml ]; then
     # Restart-Fehler und log "evcc akzeptiert die Aenderung nicht" - falsch.
     echo "evcc.yaml gefunden, aber kein systemd-Dienst evcc (Docker-evcc?) - bitte influx dort selbst eintragen (Org \$org, Bucket evcc)."
     token_hint
-  elif awk -v m="$evccInfluxBlockMarker" 'p == m && \$0 == "influx:" { f = 1 } { p = \$0 } END { exit !f }' /etc/evcc.yaml; then
-    # Der eigene Block aus einem frueheren Lauf (Markerzeile direkt ueber
-    # "influx:", wie ihn auch die Ruecknahme erkennt): evcc IST verdrahtet.
-    # Sonst endete jeder weitere Lauf in WIRE_PARTIAL.
+  elif own_block; then
+    # Der eigene Block aus einem frueheren Lauf: evcc IST verdrahtet. Sonst
+    # endete jeder weitere Lauf in WIRE_PARTIAL.
     echo "evcc.yaml ist bereits verdrahtet (influx-Block von Pi-Tool) - bleibt unveraendert."
     evcc_wired=1
   elif grep -q '^influx:' /etc/evcc.yaml; then
@@ -345,8 +366,9 @@ fi
 // datasource anyway, and the user may have built on the dashboard.
 
 /// Takes back the `influx:` block the wiring appended to /etc/evcc.yaml. Left
-/// in place, evcc keeps writing with a dead token, and a later re-wiring takes
-/// the marked block for a working one ("ist bereits verdrahtet") and leaves it.
+/// in place, evcc keeps writing with a dead token, and a later re-wiring does
+/// not replace the marked block: it refuses, or — where the root CLI config
+/// survived — takes it for a working one ("ist bereits verdrahtet").
 ///
 /// - Removes only the [evccInfluxBlockMarker] line, the `influx:` key right
 ///   below it and that key's indented body (blank/comment lines inside it
