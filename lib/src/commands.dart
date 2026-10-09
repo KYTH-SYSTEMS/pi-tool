@@ -1406,8 +1406,10 @@ const String _configBackupTsGlob = '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-'
 
 /// Root script that backs the current [path] up (under /var/backups/pi-tool,
 /// the 5 newest per file are kept), then overwrites it with [base64Content].
-/// Base64 sidesteps ALL shell-quoting / injection issues with arbitrary file
-/// content (b64 is only `A-Za-z0-9+/=`). Prints `CONFIG_SAVED` on success.
+/// A symlink at [path] stays a link — the file it leads to is written, as an
+/// editor on the Pi would. Base64 sidesteps ALL shell-quoting / injection
+/// issues with arbitrary file content (b64 is only `A-Za-z0-9+/=`). Prints
+/// `CONFIG_SAVED` on success.
 String buildConfigWriteScript({
   required String path,
   required String base64Content,
@@ -1426,14 +1428,20 @@ fi
 # Write to a temp file, then atomically rename over the target so a mid-write
 # failure (full disk, killed) never leaves a truncated live config. Preserve
 # the original's owner/mode first (a fresh inode would reset them to root+umask).
-d=\$(dirname $p)
+# A symlink is written THROUGH (readlink -f): renamed onto the link itself, the
+# new file would replace the link and the file it points to stay as it was.
+t=\$(readlink -f $p 2>/dev/null) && [ -n "\$t" ] || t=$p
+d=\$(dirname "\$t")
 tmp=\$(mktemp "\$d/.pitool-cfg.XXXXXX")
+# Whatever fails from here on: no temp file is left lying next to the config.
+trap 'rm -f "\$tmp"' EXIT
 printf '%s' ${shSingleQuote(base64Content)} | base64 -d > "\$tmp"
 if [ -f $p ]; then
   chmod --reference=$p "\$tmp" 2>/dev/null || true
   chown --reference=$p "\$tmp" 2>/dev/null || true
 fi
-mv -f "\$tmp" $p
+# -T: a directory at the target is an error, not a place to move the file into.
+mv -fT "\$tmp" "\$t"
 echo CONFIG_SAVED
 ''';
 }

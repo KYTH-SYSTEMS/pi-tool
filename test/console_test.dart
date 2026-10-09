@@ -124,7 +124,9 @@ void main() {
       expect(s, contains('mktemp')); // atomic: temp then rename
       expect(s, contains("printf '%s' 'aGkK' | base64 -d > \"\$tmp\""));
       expect(s, contains("chmod --reference='/etc/evcc.yaml'")); // preserve mode
-      expect(s, contains("mv -f \"\$tmp\" '/etc/evcc.yaml'"));
+      // The rename goes onto what the path leads to (a symlink stays a link).
+      expect(s, contains("t=\$(readlink -f '/etc/evcc.yaml' 2>/dev/null)"));
+      expect(s, contains('mv -fT "\$tmp" "\$t"'));
       expect(s, contains('CONFIG_SAVED'));
     });
 

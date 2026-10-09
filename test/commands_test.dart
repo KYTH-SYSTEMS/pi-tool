@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:evcc_updater/src/commands.dart';
 
+import 'on_pi_sandbox.dart';
+
 void main() {
   group('buildUpdateSteps', () {
     test('evcc-only real run produces the validated SSH sequence in order', () {
@@ -1537,6 +1539,140 @@ esac'''
       ]);
     });
   }, skip: _needsBash);
+
+  // The config editor's write script in a REAL bash on a sandboxed "Pi": where
+  // the content lands, what happens to a link or a directory at the target and
+  // what a failure leaves behind is checked. (The backup rotation of the same
+  // script is covered in backup_scripts_test.)
+  group('buildConfigWriteScript in bash', () {
+    late PiSandbox pi;
+
+    setUp(() {
+      pi = PiSandbox();
+      // The plain tools this script needs beyond the sandbox's own.
+      for (final tool in ['base64', 'cp', 'chown', 'readlink', 'ln']) {
+        final real =
+            (Process.runSync(sandboxBash!, ['-c', 'command -v $tool']).stdout
+                    as String)
+                .trim();
+        pi.stub(tool, 'exec "$real" "\$@"', log: false);
+      }
+    });
+    tearDown(() => pi.dispose());
+
+    Future<SandboxRun> write(String path, String content) =>
+        pi.run(buildConfigWriteScript(
+            path: path, base64Content: base64Encode(utf8.encode(content))));
+
+    /// Temp files of the script still lying in [absDir].
+    List<String> leftovers(String absDir) =>
+        pi.ls(absDir).where((n) => n.startsWith('.pitool-cfg.')).toList();
+
+    test('a plain file is replaced, backed up, and nothing lies next to it',
+        () async {
+      pi.put('/etc/evcc.yaml', 'old');
+      final r = await write('/etc/evcc.yaml', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.read('/etc/evcc.yaml'), 'new');
+      expect(leftovers('/etc'), isEmpty);
+      final backups = pi.ls('/var/backups/pi-tool');
+      expect(backups, hasLength(1));
+      expect(pi.read('/var/backups/pi-tool/${backups.single}'), 'old');
+    });
+
+    test('a file that does not exist yet is created', () async {
+      pi.put('/etc/other.conf');
+      final r = await write('/etc/new.conf', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.read('/etc/new.conf'), 'new');
+      expect(leftovers('/etc'), isEmpty);
+    });
+
+    test('a name with a space and an apostrophe is written as it is',
+        () async {
+      const path = "/etc/my pi's notes.conf";
+      pi.put(path, 'old');
+      final r = await write(path, 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.read(path), 'new');
+      expect(leftovers('/etc'), isEmpty);
+    });
+
+    test('a symlink stays a link, its target gets the content', () async {
+      pi.put('/home/pi/evcc.yaml', 'old');
+      final link = await pi.run(
+          "ln -s '${pi.root}/home/pi/evcc.yaml' '${pi.root}/etc/evcc.yaml' && "
+          "[ -L '${pi.root}/etc/evcc.yaml' ]",
+          rebase: false);
+      if (link.code != 0) {
+        // Git Bash copies instead of linking. The next test covers the same
+        // step there with a stubbed readlink.
+        markTestSkipped('this host creates no symlinks');
+        return;
+      }
+      final r = await write('/etc/evcc.yaml', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.read('/home/pi/evcc.yaml'), 'new');
+      final still = await pi.run(
+          "[ -L '${pi.root}/etc/evcc.yaml' ] && echo LINK",
+          rebase: false);
+      expect(still.lines, ['LINK']);
+      expect(leftovers('/etc'), isEmpty);
+      expect(leftovers('/home/pi'), isEmpty);
+    });
+
+    test('the content goes where readlink -f says the path leads', () async {
+      // /etc/evcc.yaml stands in for a link to /home/pi/evcc.yaml: a rename
+      // onto the path itself would replace the link and leave the file that
+      // the service reads untouched.
+      pi.put('/etc/evcc.yaml', 'the link');
+      pi.put('/home/pi/evcc.yaml', 'old');
+      pi.stub('readlink', 'echo "\$R/home/pi/evcc.yaml"');
+      final r = await write('/etc/evcc.yaml', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.calls.where((c) => c.startsWith('readlink ')),
+          ['readlink -f ${pi.root}/etc/evcc.yaml']);
+      expect(pi.read('/home/pi/evcc.yaml'), 'new');
+      expect(pi.read('/etc/evcc.yaml'), 'the link');
+      expect(leftovers('/etc'), isEmpty);
+      expect(leftovers('/home/pi'), isEmpty);
+    });
+
+    test('without a usable readlink the path itself is written', () async {
+      pi.put('/etc/evcc.yaml', 'old');
+      pi.stub('readlink', 'exit 1');
+      final r = await write('/etc/evcc.yaml', 'new');
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines.last, 'CONFIG_SAVED');
+      expect(pi.read('/etc/evcc.yaml'), 'new');
+    });
+
+    test('a directory at the target: nothing is moved into it, no marker',
+        () async {
+      pi.put('/etc/evcc.yaml/keep');
+      final r = await write('/etc/evcc.yaml', 'new');
+      expect(r.code, isNot(0));
+      expect(r.out, isNot(contains('CONFIG_SAVED')));
+      expect(pi.ls('/etc/evcc.yaml'), ['keep']);
+      expect(leftovers('/etc'), isEmpty);
+    });
+
+    test('a failure after the temp file was created leaves none behind',
+        () async {
+      pi.put('/etc/evcc.yaml', 'old');
+      pi.stub('base64', 'exit 1');
+      final r = await write('/etc/evcc.yaml', 'new');
+      expect(r.code, isNot(0));
+      expect(r.out, isNot(contains('CONFIG_SAVED')));
+      expect(pi.read('/etc/evcc.yaml'), 'old');
+      expect(leftovers('/etc'), isEmpty);
+    });
+  }, skip: needsBash);
 }
 
 /// Result of one sandboxed script run.
