@@ -775,6 +775,26 @@ void main() {
           '${heredocBody(script, 'WRAP', 2)}\n');
     });
 
+    // The rule of [_check] has to be able to fail, and the file list must not
+    // pass over a heredoc it does not understand.
+    test('a heredoc with an unquoted delimiter is found', () {
+      for (final open in [
+        'cat > /etc/x <<EOF',
+        'cat > /etc/x << EOF',
+        'cat > /etc/x <<-EOF',
+        'cat <<_END > /etc/x',
+      ]) {
+        expect(_unquotedHeredoc.hasMatch(open), isTrue, reason: open);
+        expect(() => _heredocFiles('$open\nx\nEOF\n'), throwsFormatException,
+            reason: open);
+      }
+      for (final open in ["cat > /etc/x <<'EOF'", "cat >> /etc/x <<'EOF'"]) {
+        expect(_unquotedHeredoc.hasMatch(open), isFalse, reason: open);
+        expect(_heredocFiles('$open\nx\nEOF\n'), {'/etc/x': 'x\n'},
+            reason: open);
+      }
+    });
+
     test('the commands of the traps are found', () {
       expect(_traps(buildRestoreScript('/var/backups/evcc/a.tar.gz')),
           ['systemctl start evcc >/dev/null 2>&1 || true']);

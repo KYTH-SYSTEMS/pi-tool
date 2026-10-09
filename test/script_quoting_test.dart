@@ -402,9 +402,37 @@ void main() {
         'echo x >/pitool-none',
         'echo x >> "/pitool-none/x"',
         'echo x >| /pitool-none',
+        // With these the stubs would no longer be the only ones to answer.
+        'PATH="\$PATH:/usr/sbin"',
+        "export PATH='${pi.root}/bin:/pitool-none'",
       ]) {
         expect(() => pi.runGuarded(script), throwsStateError, reason: script);
       }
+      // Run as it is, a path that a rebase would have moved is the host's.
+      for (final script in ['cat /etc/hostname', "ls '/var/lib/pi-tool/x'"]) {
+        expect(() => pi.runGuarded(script, rebase: false), throwsStateError,
+            reason: script);
+      }
+    });
+
+    test('a script that stays inside the sandbox is run', () async {
+      final r = await pi.runGuarded('#!/bin/sh\n'
+          "PATH='${pi.root}/bin'\n"
+          'echo drin > /etc/pitool-probe 2>/dev/null\n'
+          'cat /etc/pitool-probe');
+      expect(r.code, 0, reason: r.err);
+      expect(r.lines, ['drin']);
+      expect(pi.read('/etc/pitool-probe'), 'drin\n');
+    });
+
+    // Also for a test that expects its script to fail: exit 113 is not the
+    // failure it means.
+    test('a run that ends on a leak is an error, not a result', () async {
+      await expectLater(
+          pi.runGuarded('set -e\ntouch /pitool-none/x\necho weiter',
+              rebase: false),
+          throwsStateError);
+      expect(pi.leaks, ['touch /pitool-none/x']);
     });
 
     test('rm, mv, cp, mkdir and touch refuse what lies outside the sandbox',
@@ -984,9 +1012,13 @@ if [ -e "$S/docker-needs-sudo" ] && [ -z "${PITOOL_SUDO:-}" ]; then exit 1; fi''
       // A sudo that asks for nothing: the line reaches the bootstrap.
       pi.stub('sudo', _sudo, log: false);
       pi.allow(['bash']);
+      // The follower with all of its paths in the sandbox, /run included.
+      final options = JobScriptOptions(root: pi.root);
       for (final (tag, v) in [_hostile[5], _allInOne]) {
-        final r = await pi.runGuarded('${jobFollowCommand(_id)}\n'
-            '${buildJobFollowStdin(password: v, id: _id)}');
+        final r = await pi.runGuarded(
+            '${jobFollowCommand(_id)}\n'
+            '${buildJobFollowStdin(password: v, id: _id, options: options)}',
+            rebase: false);
         expect(r.code, 0, reason: '$tag\n${r.err}');
         expect(r.lines, ['PITOOL_JOB_UNKNOWN $_id'], reason: tag);
         _expectDataOnly(pi, tag);

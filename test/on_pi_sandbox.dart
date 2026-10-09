@@ -186,8 +186,8 @@ class PiSandbox {
 
   // ---- for running a builder on values it must not trust -------------------
 
-  /// Exit status of [runGuarded] when the sandbox does not hold, and of a
-  /// [confine]d tool asked to touch something outside of it.
+  /// Exit status of the shell when [guard] finds that the sandbox does not
+  /// hold, and of a [confine]d tool asked to touch something outside of it.
   static const int leakExit = 113;
 
   /// The commands [runGuarded] looks up before the script starts: the ones
@@ -197,20 +197,37 @@ class PiSandbox {
     'sh', 'bash',
   ];
 
-  /// Absolute directories [rebase] leaves alone. A script that names one of
-  /// them is not run by [runGuarded] (`#!/bin/sh` is no such name).
-  static final RegExp _notRebased = RegExp(
-      r'''(?<![\w.$!-])/(?:tmp|opt|run|boot|srv|mnt|media|snap|bin|sbin|lib)/[^\s"']*''');
+  /// A path of the host: below a directory [rebase] leaves alone, or below
+  /// one it moves — after a rebase none of those is left, in a script run
+  /// with `rebase: false` all of them are. A script that names such a path is
+  /// not run by [runGuarded] (`#!/bin/sh` is no such name).
+  static final RegExp _hostPath = RegExp(
+      r'''(?<![\w.$!-])/(?:tmp|opt|run|boot|srv|mnt|media|snap|bin|sbin|lib|'''
+      r'''etc|var|usr|root|home|sys|proc)/[^\s"']*''');
 
   /// A redirection into an absolute path.
   static final RegExp _redirect = RegExp(r'''>[|&]?\s*["']?(/[^\s"';|&)]*)''');
 
+  /// An assignment to PATH and what it is set to.
+  static final RegExp _pathSet =
+      RegExp(r'''(?<![\w$])PATH=["']?([^\s"';|&)]*)''');
+
   /// Like [run], with the sandbox checked first:
   /// - the shell looks up every command of [guarded] before the first line of
   ///   [script]; one that resolves outside `bin/` ends it with [leakExit];
-  /// - a script that names a directory [rebase] does not move, or redirects
-  ///   into an absolute path outside the sandbox (other than /dev/null), is
-  ///   not started at all ([StateError]).
+  /// - a script that names a path below a directory of the host ([_hostPath]),
+  ///   redirects into an absolute path outside the sandbox (other than
+  ///   /dev/null) or sets a PATH that reaches beyond the sandbox — the lookup
+  ///   above would be worth nothing after that — is not started at all
+  ///   ([StateError]).
+  ///
+  /// A run that ends with [leakExit] — the lookup, or a [confine]d tool under
+  /// `set -e` — completes with a [StateError] as well: no test goes on with
+  /// such a result, also not one that expects its script to fail.
+  ///
+  /// What the check of the text does not see: a directory named without
+  /// anything below it (`cd /opt`, `tar -C /`) and a path the script computes.
+  /// Against those the commands have to be stubs or [confine]d.
   ///
   /// [script] may name the sandbox itself ([root]): such a path is not
   /// rebased a second time. The working directory is the sandbox, so a
@@ -220,14 +237,23 @@ class PiSandbox {
     final masked = script.replaceAll(root, mark);
     final text = rebase ? this.rebase(masked).replaceAll(root, mark) : masked;
     final outside = [
-      for (final m in _notRebased.allMatches(text)) m[0]!,
+      for (final m in _hostPath.allMatches(text)) m[0]!,
       for (final m in _redirect.allMatches(text))
         if (m[1] != '/dev/null') '> ${m[1]}',
+      for (final m in _pathSet.allMatches(text))
+        if (m[1]!.split(':').any((dir) => !dir.startsWith('$mark/')))
+          'PATH=${m[1]}',
     ];
     if (outside.isNotEmpty) {
       throw StateError('the script leaves the sandbox: ${outside.join(', ')}');
     }
-    return run('$guard${text.replaceAll(mark, root)}', rebase: false);
+    final started = run('$guard${text.replaceAll(mark, root)}', rebase: false);
+    return started.then((r) {
+      if (r.code == leakExit) {
+        throw StateError('the sandbox did not hold: ${r.err.trim()}');
+      }
+      return r;
+    });
   }
 
   /// The lines [runGuarded] puts in front of a script: into the sandbox, then
