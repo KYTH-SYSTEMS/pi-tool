@@ -184,6 +184,164 @@ class PiSandbox {
     return SandboxRun(await p.exitCode, await out, await err);
   }
 
+  // ---- for running a builder on values it must not trust -------------------
+
+  /// Exit status of [runGuarded] when the sandbox does not hold, and of a
+  /// [confine]d tool asked to touch something outside of it.
+  static const int leakExit = 113;
+
+  /// The commands [runGuarded] looks up before the script starts: the ones
+  /// that download, install or run something when they are the host's own.
+  static const List<String> guarded = [
+    'curl', 'wget', 'apt-get', 'apt', 'dpkg', 'docker', 'sudo', 'systemctl',
+    'sh', 'bash',
+  ];
+
+  /// Absolute directories [rebase] leaves alone. A script that names one of
+  /// them is not run by [runGuarded] (`#!/bin/sh` is no such name).
+  static final RegExp _notRebased = RegExp(
+      r'''(?<![\w.$!-])/(?:tmp|opt|run|boot|srv|mnt|media|snap|bin|sbin|lib)/[^\s"']*''');
+
+  /// A redirection into an absolute path.
+  static final RegExp _redirect = RegExp(r'''>[|&]?\s*["']?(/[^\s"';|&)]*)''');
+
+  /// Like [run], with the sandbox checked first:
+  /// - the shell looks up every command of [guarded] before the first line of
+  ///   [script]; one that resolves outside `bin/` ends it with [leakExit];
+  /// - a script that names a directory [rebase] does not move, or redirects
+  ///   into an absolute path outside the sandbox (other than /dev/null), is
+  ///   not started at all ([StateError]).
+  ///
+  /// [script] may name the sandbox itself ([root]): such a path is not
+  /// rebased a second time. The working directory is the sandbox, so a
+  /// relative path lands there too.
+  Future<SandboxRun> runGuarded(String script, {bool rebase = true}) {
+    const mark = '__PITOOL_SANDBOX__';
+    final masked = script.replaceAll(root, mark);
+    final text = rebase ? this.rebase(masked).replaceAll(root, mark) : masked;
+    final outside = [
+      for (final m in _notRebased.allMatches(text)) m[0]!,
+      for (final m in _redirect.allMatches(text))
+        if (m[1] != '/dev/null') '> ${m[1]}',
+    ];
+    if (outside.isNotEmpty) {
+      throw StateError('the script leaves the sandbox: ${outside.join(', ')}');
+    }
+    return run('$guard${text.replaceAll(mark, root)}', rebase: false);
+  }
+
+  /// The lines [runGuarded] puts in front of a script: into the sandbox, then
+  /// every command of [guarded] looked up with the PATH the script will run
+  /// with — [leakExit] at the first one that is the host's own.
+  String get guard => "cd '$root' || exit $leakExit\n"
+      'for pitool_t in ${guarded.join(' ')}; do\n'
+      '  pitool_p=\$(command -v "\$pitool_t") || continue\n'
+      '  case "\$pitool_p" in\n'
+      "    '$root/bin/'*) ;;\n"
+      '    *) echo "sandbox leak: \$pitool_t is \$pitool_p" >&2; '
+      'exit $leakExit ;;\n'
+      '  esac\n'
+      'done\n'
+      'unset pitool_t pitool_p\n';
+
+  static final Map<String, String> _resolved = {};
+
+  /// The host's own [tool] as an absolute path in bash's spelling.
+  String real(String tool) =>
+      _Host.instance.tools[tool] ??
+      _resolved.putIfAbsent(tool, () {
+        final r =
+            Process.runSync(sandboxBash!, ['-c', r'command -v "$0"', tool]);
+        final path = (r.stdout as String).trim();
+        if (r.exitCode != 0 || !path.startsWith('/')) {
+          throw StateError('missing tool: $tool');
+        }
+        return path;
+      });
+
+  /// Pass-through wrappers for further plain tools of the host (base64, cp,
+  /// readlink, …), next to the standard set.
+  void allow(Iterable<String> tools) {
+    for (final t in tools) {
+      File(_host('/bin/$t'))
+          .writeAsStringSync('#!/bin/sh\nexec "${real(t)}" "\$@"\n');
+    }
+  }
+
+  /// Replaces the wrappers of [tools] by ones that refuse an operand outside
+  /// the sandbox: exit [leakExit] and a line in [leaks]. For tools whose
+  /// operands are all paths (rm, mv, cp, mkdir, touch) — against a path a
+  /// script computes while it runs, which [rebase] cannot reach.
+  void confine(Iterable<String> tools) {
+    for (final t in tools) {
+      File(_host('/bin/$t')).writeAsStringSync('#!/bin/sh\n'
+          "R='$root'\n"
+          'paths_only=0\n'
+          'for a in "\$@"; do\n'
+          '  if [ "\$paths_only" = 0 ]; then\n'
+          '    case "\$a" in --) paths_only=1; continue ;; -*) continue ;; esac\n'
+          '  fi\n'
+          '  case "\$a" in /*) p=\$a ;; *) p=\$PWD/\$a ;; esac\n'
+          '  case "\$p/" in\n'
+          '    */../*) ;;\n'
+          '    "\$R"/*) continue ;;\n'
+          '  esac\n'
+          '  echo "sandbox leak: $t \$a" >&2\n'
+          '  echo "$t \$a" >> "\$R/state/leak"\n'
+          '  exit $leakExit\n'
+          'done\n'
+          'exec "${real(t)}" "\$@"\n');
+    }
+  }
+
+  /// What the [confine]d tools refused so far, one `tool operand` line each.
+  List<String> get leaks {
+    final f = File(_host('/state/leak'));
+    return f.existsSync() ? f.readAsLinesSync() : const [];
+  }
+
+  /// A stub that notes each call for [recorded] — its arguments byte for
+  /// byte, a line break or an empty one included — and then runs [then]
+  /// (exit 0 without).
+  void record(String name, [String then = '']) => stub(
+      name,
+      // The next free number is claimed by creating its file: with noclobber
+      // that fails for a file another call already has. `$n` is the call's
+      // number, for [then].
+      'n=0\n'
+          'set -C\n'
+          'until { true > "\$S/call.\$n"; } 2>/dev/null; do\n'
+          '  n=\$((n + 1))\n'
+          '  [ "\$n" -lt 10000 ] || exit $leakExit\n'
+          'done\n'
+          'set +C\n'
+          '{\n'
+          "  printf '%s\\000' '$name'\n"
+          '  for a in "\$@"; do printf \'%s\\000\' "\$a"; done\n'
+          '} >> "\$S/call.\$n"\n'
+          '$then',
+      log: false);
+
+  /// Every call of a [record]ed stub so far, oldest first: the stub's name,
+  /// then its arguments.
+  List<List<String>> get recorded {
+    final calls = <List<String>>[];
+    for (var n = 0;; n++) {
+      final f = File(_host('/state/call.$n'));
+      if (!f.existsSync()) return calls;
+      calls.add(utf8.decode(f.readAsBytesSync()).split('\x00')..removeLast());
+    }
+  }
+
+  /// The names of all entries anywhere in the sandbox that start with
+  /// [prefix] — what a canary command left behind, wherever it ran.
+  List<String> named(String prefix) => _dir
+      .listSync(recursive: true, followLinks: false)
+      .map((e) => e.path.replaceAll(r'\', '/').split('/').last)
+      .where((n) => n.startsWith(prefix))
+      .toList()
+    ..sort();
+
   /// Sets the mtime of [abs] to [when] in `date -d` wording ("2 days ago").
   Future<void> setAge(String abs, String when) async {
     final r = await run("touch -d '$when' '$root$abs'", rebase: false);
