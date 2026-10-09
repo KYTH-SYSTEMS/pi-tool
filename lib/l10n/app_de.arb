@@ -106,6 +106,7 @@
   "wStatusWarning": "Warnung",
   "wSudoPassword": "sudo-Passwort",
   "wSudoPasswordHelper": "für sudo auf dem Pi (leer lassen bei NOPASSWD-sudo)",
+  "wSymlink": "Verknüpfung (Symlink)",
   "wTest": "Test",
   "wUnlock": "Entsperren",
   "wUpToDate": "Aktuell",

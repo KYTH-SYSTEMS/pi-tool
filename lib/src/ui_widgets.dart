@@ -226,6 +226,11 @@ class _FilesViewState extends State<_FilesView> {
                               : Icons.insert_drive_file_outlined,
                         ),
                         title: Text(e.name),
+                        // Listed as what it points to; opening, uploading
+                        // over and deleting it differ for a link.
+                        subtitle: e.isLink
+                            ? Text(context.l10n.wSymlink)
+                            : null,
                         onTap: busy
                             ? null
                             : e.isDir

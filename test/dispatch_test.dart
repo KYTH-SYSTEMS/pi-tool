@@ -1902,6 +1902,17 @@ void main() {
             of: find.widgetWithText(ListTile, 'bin'),
             matching: find.byIcon(Icons.folder)),
         findsOneWidget);
+    // … and marked as the link it is; the real folder next to it is not.
+    expect(
+        find.descendant(
+            of: find.widgetWithText(ListTile, 'bin'),
+            matching: find.text('Verknüpfung (Symlink)')),
+        findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.widgetWithText(ListTile, 'usr'),
+            matching: find.text('Verknüpfung (Symlink)')),
+        findsNothing);
     await tester.tap(find.text('bin'));
     await tester.pumpAndSettle();
     expect(find.text('/home/bin'), findsOneWidget);
