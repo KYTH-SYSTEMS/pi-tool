@@ -3,6 +3,41 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'history.dart';
 import 'host_key.dart';
 
+/// Android options of the secure storage behind every store of this app.
+///
+/// `resetOnError: false`: with the plugin's default (true) a value that cannot
+/// be decrypted is deleted and read as "not stored", and a Keystore key that
+/// no longer fits takes all data with it. The app would see a first start and
+/// save an empty configuration over profiles, passwords and SSH keys. With the
+/// flag off the failure reaches Dart as an exception and what is stored stays
+/// as it is; the start page then offers a retry and [resetSecureStorage].
+/// The plugin reads the flag in its failure paths only — storage file, key
+/// and cipher are those of the default options.
+///
+/// One constant for every store: the plugin keeps the options of the call that
+/// opened the storage for as long as the process lives.
+const kSecureStorageOptions = AndroidOptions(resetOnError: false);
+
+/// The secure storage every store uses, unless a test hands it another one.
+const kSecureStorage = FlutterSecureStorage(aOptions: kSecureStorageOptions);
+
+/// Deletes everything in [storage] — profiles, history and trusted host keys
+/// alike. The way out when what is stored can no longer be read.
+///
+/// If the delete throws as well, the storage did not even open (its key no
+/// longer fits what is stored). One call with the plugin's own
+/// `resetOnError: true` then makes the plugin drop data and key and start
+/// over, as it did by default — and keep that setting until the app restarts.
+/// A failure of that call is the caller's.
+Future<void> resetSecureStorage(FlutterSecureStorage storage) async {
+  try {
+    await storage.deleteAll();
+  } catch (_) {
+    await storage.deleteAll(
+        aOptions: const AndroidOptions(resetOnError: true));
+  }
+}
+
 /// How to authenticate the SSH connection.
 enum AuthMode { password, key }
 
@@ -87,7 +122,7 @@ class SettingsStore {
   final FlutterSecureStorage _storage;
 
   SettingsStore([FlutterSecureStorage? storage])
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = storage ?? kSecureStorage;
 
   Future<Settings> load() async {
     final all = await _storage.readAll();
@@ -146,17 +181,32 @@ class HistoryStore {
   final FlutterSecureStorage _storage;
 
   HistoryStore([FlutterSecureStorage? storage])
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = storage ?? kSecureStorage;
+
+  // [add] reads the list, appends and writes it back. The writes run one
+  // after the other through this chain: a second one would otherwise read the
+  // list before the first has written it, and then write over its entry.
+  Future<void> _lastWrite = Future<void>.value();
 
   Future<List<HistoryEntry>> load() async =>
       parseHistory(await _storage.read(key: _key) ?? '');
 
-  Future<void> add(HistoryEntry entry) async {
-    final list = capHistory([...await load(), entry]);
-    await _storage.write(key: _key, value: encodeHistory(list));
-  }
+  /// Appends [entry]. Fails when the stored list cannot be read, and writes
+  /// nothing then — an unreadable history is not an empty one.
+  Future<void> add(HistoryEntry entry) => _queued(() async {
+        final list = capHistory([...await load(), entry]);
+        await _storage.write(key: _key, value: encodeHistory(list));
+      });
 
-  Future<void> clear() => _storage.delete(key: _key);
+  Future<void> clear() => _queued(() => _storage.delete(key: _key));
+
+  Future<void> _queued(Future<void> Function() write) {
+    final done = _lastWrite.then((_) => write());
+    // The chain itself never fails: a write that threw must not take the ones
+    // behind it with it. Its caller still gets the error, through [done].
+    _lastWrite = done.then((_) {}, onError: (_) {});
+    return done;
+  }
 }
 
 /// [HostKeyStore] backed by the platform secure storage.
@@ -164,7 +214,7 @@ class SecureHostKeyStore implements HostKeyStore {
   final FlutterSecureStorage _storage;
 
   SecureHostKeyStore([FlutterSecureStorage? storage])
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = storage ?? kSecureStorage;
 
   @override
   Future<String?> get(String id) => _storage.read(key: id);

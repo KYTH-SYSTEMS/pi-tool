@@ -70,7 +70,20 @@ class Dartssh2Runner implements SshRunner {
   Future<bool> checkAndRecordHostKey(Uint8List fingerprint) async {
     final presented = utf8.decode(fingerprint);
     final id = hostKeyId(config.host, config.port);
-    final stored = await _hostKeyStore.get(id);
+    final String? stored;
+    try {
+      stored = await _hostKeyStore.get(id);
+    } catch (_) {
+      // What is trusted for this host cannot be read (secure storage throws
+      // for a value it cannot decrypt, instead of answering "nothing
+      // stored"). Not a first use: that would trust whoever answers and write
+      // over the pin. Rejected like a changed key, with no stored value to go
+      // with it — no password is sent, and "trust new key" (forget, then
+      // confirm as on first use) is the way on.
+      _changedFingerprint = presented;
+      _storedAtCheck = null;
+      return false;
+    }
     switch (verifyHostKey(stored: stored, presented: presented)) {
       case HostKeyVerdict.firstUse:
         if (confirmFirstUse != null) {

@@ -1,14 +1,20 @@
 import 'dart:async';
-import 'dart:io' show HttpException;
+import 'dart:io' show Directory, File, FileSystemException, HttpException;
+import 'dart:typed_data';
 
 import 'package:evcc_updater/main.dart';
 import 'package:evcc_updater/src/l10n.dart';
 import 'package:evcc_updater/src/authenticator.dart';
 import 'package:evcc_updater/src/early_adopter.dart';
 import 'package:evcc_updater/src/evcc_api.dart';
+import 'package:evcc_updater/src/evcc_updater.dart';
+import 'package:evcc_updater/src/history.dart';
 import 'package:evcc_updater/src/kyth_wordmark.dart';
 import 'package:evcc_updater/src/profiles.dart';
 import 'package:evcc_updater/src/secure_screen.dart';
+import 'package:evcc_updater/src/services/pi_service.dart';
+import 'package:evcc_updater/src/settings_store.dart';
+import 'package:evcc_updater/src/ssh_runner.dart';
 import 'package:evcc_updater/src/update_check.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
@@ -44,10 +50,11 @@ class _StartupStore extends AppConfigStore {
     if (!held) gate.complete();
   }
 
-  final AppConfig _config;
+  AppConfig _config;
   final gate = Completer<void>();
   int failures;
-  int loadCalls = 0, saveCalls = 0;
+  int loadCalls = 0, saveCalls = 0, resetCalls = 0;
+  bool resetFails = false; // the storage does not even let itself be deleted
   AppConfig? saved;
 
   @override
@@ -67,6 +74,75 @@ class _StartupStore extends AppConfigStore {
     saveCalls++;
     saved = c;
   }
+
+  @override
+  Future<void> reset() async {
+    resetCalls++;
+    if (resetFails) {
+      throw PlatformException(
+          code: 'Exception encountered', message: 'KeyStoreException');
+    }
+    // What was stored is gone: reading works again and finds a first start.
+    failures = 0;
+    _config = AppConfig.initial;
+  }
+}
+
+/// History kept in memory. [unreadable] makes it throw the way secure storage
+/// does for a value it cannot decrypt — until it is cleared.
+class _MemoryHistory extends HistoryStore {
+  _MemoryHistory([List<HistoryEntry>? initial]) : entries = [...?initial];
+
+  final List<HistoryEntry> entries;
+  bool unreadable = false;
+
+  PlatformException get _error => PlatformException(
+      code: 'Exception encountered', message: 'AEADBadTagException');
+
+  @override
+  Future<List<HistoryEntry>> load() async {
+    if (unreadable) throw _error;
+    return List.of(entries);
+  }
+
+  @override
+  Future<void> add(HistoryEntry entry) async {
+    if (unreadable) throw _error; // reads first, as the real store does
+    entries.add(entry);
+  }
+
+  @override
+  Future<void> clear() async {
+    unreadable = false;
+    entries.clear();
+  }
+}
+
+/// Just enough updater to connect and restart the Pi — the shortest action
+/// that writes a history entry.
+class _RebootUpdater extends EvccUpdater {
+  _RebootUpdater() : super(runnerFactory: _noRunner);
+  static SshRunner _noRunner(SshConfig c) => throw UnimplementedError();
+
+  int reboots = 0;
+
+  @override
+  Future<List<ServiceStatus>> detectServices({
+    required SshConfig config,
+    required void Function(String line) onLog,
+    bool allowSudoForDocker = true,
+    void Function()? onConnected,
+  }) async {
+    onConnected?.call();
+    return const [];
+  }
+
+  @override
+  Future<void> reboot({
+    required SshConfig config,
+    required void Function(String line) onLog,
+  }) async =>
+      reboots++;
 }
 
 /// Authenticator that is available but always denies — keeps the app locked.
@@ -958,6 +1034,276 @@ void main() {
         findsNothing);
     expect(find.text('Verbindung herstellen'), findsOneWidget);
     expect(find.text('Zuhause'), findsOneWidget); // the loaded profile's name
+  });
+
+  // Secure storage no longer deletes what it cannot decrypt (resetOnError is
+  // off), so a storage that stays unreadable needs a way out the user takes
+  // knowingly.
+  const resetButton = 'Gespeicherte Daten zurücksetzen';
+  const loadFailedTitle = 'Einstellungen konnten nicht geladen werden';
+
+  testWidgets(
+      'the error state offers a reset behind a confirmation that says what is '
+      'lost; confirmed, it deletes the stored data and starts like a first run',
+      (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final store = _StartupStore(stored, failures: 99);
+    await tester.pumpWidget(startupPage(store));
+    await tester.pumpAndSettle();
+    expect(find.text(loadFailedTitle), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, resetButton));
+    await tester.pumpAndSettle();
+
+    // The confirmation names the consequence and the way back.
+    expect(find.text('Gespeicherte Daten zurücksetzen?'), findsOneWidget);
+    final body = find.textContaining('Profile samt Passwörtern und SSH-Keys');
+    expect(body, findsOneWidget);
+    final bodyText = tester.widget<Text>(body).data!;
+    expect(bodyText, contains('Das kann nicht rückgängig gemacht werden.'));
+    expect(bodyText, contains('Einstellungen → „Profile importieren“'));
+    // … and that a retry after a device restart comes first.
+    expect(bodyText, contains('vor dem Zurücksetzen das Gerät neu starten'));
+
+    // Cancelled: nothing is deleted, nothing is read or written.
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(store.resetCalls, 0);
+    expect(store.loadCalls, 1);
+    expect(find.text(loadFailedTitle), findsOneWidget);
+
+    // Confirmed: the stored data is deleted, then read again.
+    await tester.tap(find.widgetWithText(TextButton, resetButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Zurücksetzen'));
+    await tester.pumpAndSettle();
+    expect(store.resetCalls, 1);
+    expect(store.loadCalls, 2);
+    expect(find.text(loadFailedTitle), findsNothing);
+    expect(find.text('Willkommen bei Pi-Tool'), findsOneWidget); // first run
+  });
+
+  testWidgets(
+      'a reset that fails as well stays on the error state, says so and '
+      'writes nothing', (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final store = _StartupStore(stored, failures: 99)..resetFails = true;
+    await tester.pumpWidget(startupPage(store));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, resetButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Zurücksetzen'));
+    await tester.pumpAndSettle();
+
+    expect(store.resetCalls, 1);
+    expect(store.loadCalls, 1); // nothing to read again
+    expect(store.saveCalls, 0);
+    expect(find.text(loadFailedTitle), findsOneWidget);
+    expect(find.textContaining('Zurücksetzen fehlgeschlagen.'), findsOneWidget);
+    // Both ways on are still there.
+    expect(find.widgetWithText(FilledButton, 'Erneut versuchen'),
+        findsOneWidget);
+    expect(find.widgetWithText(TextButton, resetButton), findsOneWidget);
+  });
+
+  // ---- Verlauf ----
+
+  const twoPis = AppConfig(
+    profiles: [
+      Profile(name: 'Keller', host: '192.0.2.10', password: 'pw'),
+      Profile(name: 'Garage', host: '192.0.2.11', password: 'pw'),
+    ],
+    activeIndex: 0,
+    disclaimerAccepted: true,
+  );
+  const onePi = AppConfig(
+    profiles: [Profile(name: 'Keller', host: '192.0.2.10', password: 'pw')],
+    activeIndex: 0,
+    disclaimerAccepted: true,
+  );
+  const tagged = HistoryEntry(
+      when: '2026-10-09 08:15',
+      text: 'Pi-hole aktualisiert.',
+      profile: 'Garage');
+  const untagged =
+      HistoryEntry(when: '2026-06-29 14:00', text: 'evcc 0.1 → 0.2');
+
+  // The addresses are from the documentation range; the fake updater never
+  // opens a connection.
+  Widget historyPage(AppConfig config, HistoryStore history,
+          {EvccUpdater? updater}) =>
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('de'),
+        home: UpdaterPage(
+          store: _FakeStore(config),
+          updater: updater ?? _RebootUpdater(),
+          updateChecker: _noUpdateChecker,
+          historyStore: history,
+          apiClient: EvccApiClient(
+              getJson: (_) async =>
+                  throw const EvccApiException('kein Netz im Test')),
+          evccReleaseFetcher: () async => null,
+          haVersionFetcher: () async => null,
+        ),
+      );
+
+  Future<void> openMenuItem(WidgetTester tester, String item) async {
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, item));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('with several profiles the history names the Pi of an entry',
+      (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    await tester.pumpWidget(
+        historyPage(twoPis, _MemoryHistory([untagged, tagged])));
+    await tester.pumpAndSettle();
+
+    await openMenuItem(tester, 'Verlauf');
+
+    expect(find.text('2026-10-09 08:15 · Garage'), findsOneWidget);
+    // An entry from before the profile was recorded shows its time alone.
+    expect(find.text('2026-06-29 14:00'), findsOneWidget);
+  });
+
+  testWidgets('with a single profile the history shows the time alone',
+      (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    await tester
+        .pumpWidget(historyPage(onePi, _MemoryHistory([untagged, tagged])));
+    await tester.pumpAndSettle();
+
+    await openMenuItem(tester, 'Verlauf');
+
+    expect(find.text('2026-10-09 08:15'), findsOneWidget);
+    expect(find.textContaining('Garage'), findsNothing);
+  });
+
+  testWidgets('an action is recorded with the Pi it ran on', (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final history = _MemoryHistory();
+    final updater = _RebootUpdater();
+    await tester.pumpWidget(historyPage(twoPis, history, updater: updater));
+    await tester.pumpAndSettle();
+
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pumpAndSettle();
+    await openMenuItem(tester, 'Pi neu starten');
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(updater.reboots, 1);
+    expect(history.entries.single.text, 'Pi-Neustart ausgelöst.');
+    expect(history.entries.single.profile, 'Keller'); // the active profile
+  });
+
+  testWidgets(
+      'a history that cannot be read does not turn an action that worked '
+      'into an error', (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final history = _MemoryHistory([untagged])..unreadable = true;
+    final updater = _RebootUpdater();
+    await tester.pumpWidget(historyPage(onePi, history, updater: updater));
+    await tester.pumpAndSettle();
+
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Verbindung herstellen'));
+    await tester.pumpAndSettle();
+    await openMenuItem(tester, 'Pi neu starten');
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    // The failed add is nobody's unhandled error (the test would fail on it),
+    // the action's own result stands, and the stored list is as it was.
+    expect(updater.reboots, 1);
+    expect(find.textContaining('Neustart ausgelöst'), findsWidgets);
+    expect(history.entries, [untagged]);
+  });
+
+  testWidgets(
+      'a history that cannot be read says so instead of "no history yet", and '
+      'clearing it is the way back', (tester) async {
+    _mockPackageInfo();
+    useTallScreen(tester);
+    final history = _MemoryHistory([untagged])..unreadable = true;
+    await tester.pumpWidget(historyPage(onePi, history));
+    await tester.pumpAndSettle();
+
+    await openMenuItem(tester, 'Verlauf');
+
+    expect(find.text('Der Verlauf ließ sich nicht lesen.'), findsOneWidget);
+    expect(find.text('Noch kein Verlauf.'), findsNothing);
+    expect(history.entries, [untagged]); // nothing written over it
+
+    await tester.tap(find.widgetWithText(SnackBarAction, 'Leeren'));
+    await tester.pumpAndSettle();
+    expect(history.unreadable, isFalse);
+
+    await openMenuItem(tester, 'Verlauf');
+    expect(find.text('Noch kein Verlauf.'), findsOneWidget);
+  });
+
+  // ---- Teilen: die Temp-Datei bleibt nicht im App-Cache liegen ----
+
+  group('shareTemporaryFile', () {
+    late Directory dir;
+    setUp(() => dir = Directory.systemTemp.createTempSync('pitool_share_'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    final bytes = Uint8List.fromList([1, 2, 3, 4]);
+
+    test('the file is there while it is shared and gone once that returns',
+        () async {
+      String? shared;
+      List<int>? seen;
+
+      await shareTemporaryFile('pihole-backup.zip', bytes, dir: dir,
+          share: (path) async {
+        shared = path;
+        seen = File(path).readAsBytesSync();
+      });
+
+      expect(shared, '${dir.path}/pihole-backup.zip');
+      expect(seen, [1, 2, 3, 4]);
+      expect(dir.listSync(), isEmpty);
+    });
+
+    test('a share that fails leaves no file behind either, and still fails',
+        () async {
+      await expectLater(
+          shareTemporaryFile('pihole-backup.zip', bytes,
+              dir: dir,
+              share: (_) async =>
+                  throw PlatformException(code: 'Share failed')),
+          throwsA(isA<PlatformException>()));
+
+      expect(dir.listSync(), isEmpty);
+    });
+
+    test('a file that could not even be written is reported as that',
+        () async {
+      var shared = false;
+      final missing = Directory('${dir.path}/gone');
+
+      await expectLater(
+          shareTemporaryFile('pihole-backup.zip', bytes,
+              dir: missing, share: (_) async => shared = true),
+          throwsA(isA<FileSystemException>()));
+
+      expect(shared, isFalse);
+    });
   });
 
   // ---- App lock without the lock layer ----

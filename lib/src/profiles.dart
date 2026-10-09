@@ -418,7 +418,7 @@ class AppConfigStore {
   final SettingsStore _legacy;
 
   AppConfigStore([FlutterSecureStorage? storage])
-      : _storage = storage ?? const FlutterSecureStorage(),
+      : _storage = storage ?? kSecureStorage,
         _legacy = SettingsStore(storage);
 
   Future<AppConfig> load() async {
@@ -434,4 +434,8 @@ class AppConfigStore {
 
   Future<void> save(AppConfig config) =>
       _storage.write(key: _key, value: encodeAppConfig(config));
+
+  /// Deletes everything the app has stored (see [resetSecureStorage]) — for
+  /// the start page, when [load] keeps failing.
+  Future<void> reset() => resetSecureStorage(_storage);
 }

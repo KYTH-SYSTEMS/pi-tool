@@ -139,6 +139,30 @@ ThemeData buildAppTheme(Brightness brightness, {String? fontFamily}) {
   );
 }
 
+/// Writes [bytes] as [name] into [dir], hands the file to [share] and deletes
+/// it once [share] has returned — also when it threw. The share sheet works
+/// on a copy of its own by then (share_plus copies into its cache folder
+/// before it opens); ours would otherwise stay behind in the app cache, and a
+/// downloaded backup lies there unencrypted.
+Future<void> shareTemporaryFile(
+  String name,
+  Uint8List bytes, {
+  required Directory dir,
+  required Future<void> Function(String path) share,
+}) async {
+  final f = File('${dir.path}/$name');
+  try {
+    await f.writeAsBytes(bytes, flush: true);
+    await share(f.path);
+  } finally {
+    try {
+      await f.delete();
+    } catch (_) {
+      // Never written, or already gone: nothing left to remove.
+    }
+  }
+}
+
 class EvccPiToolApp extends StatelessWidget {
   const EvccPiToolApp({super.key, this.home, this.splash = true});
 
@@ -680,6 +704,35 @@ class _UpdaterPageState extends State<UpdaterPage>
       _booting = true;
     });
     _loadSettings();
+  }
+
+  /// "Gespeicherte Daten zurücksetzen" on the load-error state — the way out
+  /// when what is stored stays unreadable: after a confirmation that says
+  /// what is lost, everything the app has stored is deleted and the settings
+  /// are read again (a first start from there).
+  Future<void> _resetStoredData() async {
+    final l10n = context.l10n;
+    if (!await _confirm(l10n.loadFailedResetTitle, l10n.loadFailedResetBody,
+        confirmLabel: l10n.loadFailedResetConfirm, destructive: true)) {
+      return;
+    }
+    // The boot mark while it runs: nothing to tap a second time.
+    setState(() {
+      _loadFailed = false;
+      _booting = true;
+    });
+    try {
+      await _store.reset();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _booting = false;
+        _loadFailed = true;
+      });
+      _snack(l10n.loadFailedResetFailed);
+      return;
+    }
+    if (mounted) _loadSettings();
   }
 
   /// Records `firstSeenVersionCode` once (if not yet set) for future Pro
@@ -4177,12 +4230,13 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   /// Default [UpdaterPage.fileSaver]: writes [bytes] into the app's temp dir
   /// (dart:io — on Android that's the app cache, no plugin needed) and opens
-  /// the share sheet, so the user can save to Dateien/Drive/etc.
-  Future<void> _saveAndShareBytes(String name, Uint8List bytes) async {
-    final f = File('${Directory.systemTemp.path}/$name');
-    await f.writeAsBytes(bytes, flush: true);
-    await SharePlus.instance.share(ShareParams(files: [XFile(f.path)]));
-  }
+  /// the share sheet, so the user can save to Dateien/Drive/etc. The temp file
+  /// is gone again once the sheet has closed ([shareTemporaryFile]).
+  Future<void> _saveAndShareBytes(String name, Uint8List bytes) =>
+      shareTemporaryFile(name, bytes,
+          dir: Directory.systemTemp,
+          share: (path) =>
+              SharePlus.instance.share(ShareParams(files: [XFile(path)])));
 
   /// Default [UpdaterPage.textSharer]: the system share sheet.
   Future<void> _shareText(String text) async {
@@ -4536,10 +4590,17 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   void _addHistory(String text) {
     if (_demoMode) return; // a demo action is not part of this Pi's history
-    _historyStore.add(HistoryEntry(
-      when: formatTimestamp(DateTime.now()),
-      text: text,
-    ));
+    _historyStore
+        .add(HistoryEntry(
+          when: formatTimestamp(DateTime.now()),
+          text: text,
+          // Every action runs on the active Pi; switching is off meanwhile.
+          profile: _activeProfileName,
+        ))
+        // The history is a convenience. An entry that cannot be stored (a
+        // history that cannot be read is left as it is, see HistoryStore.add)
+        // must not turn an action that worked into an error.
+        .catchError((Object _) {});
     // A history entry is an action that actually did something — the unit the
     // review ask counts in (review_prompt.dart).
     _reviewPrompt = _reviewPrompt.recordSuccess(_now());
@@ -4577,8 +4638,21 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   Future<void> _showHistory() async {
-    final entries = await _historyStore.load();
+    final List<HistoryEntry> entries;
+    try {
+      entries = await _historyStore.load();
+    } catch (_) {
+      // Unreadable is not empty: no "no history yet", and nothing is written
+      // over it. Clearing it is the way back to a history that works.
+      if (!mounted) return;
+      _snack(context.l10n.snackHistoryUnreadable,
+          actionLabel: context.l10n.actionClear,
+          onAction: () => _historyStore.clear().catchError((Object _) {}));
+      return;
+    }
     if (!mounted) return;
+    // Several Pis share the one history: say which one a row is about.
+    final showProfile = _profiles.length > 1;
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -4607,7 +4681,8 @@ class _UpdaterPageState extends State<UpdaterPage>
                       dense: true,
                       leading: const Icon(Icons.history, size: 18),
                       title: Text(e.text),
-                      subtitle: Text(e.when),
+                      subtitle: Text(
+                          historySubtitle(e, showProfile: showProfile)),
                     ),
                 ],
               ),
@@ -6594,8 +6669,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       );
     }
     // The stored settings could not be read. Nothing was written (see
-    // _persistSettings); offer a retry. Pinned dark like the lock screen — it
-    // follows the dark splash, and the theme setting is not known here.
+    // _persistSettings); offer a retry — and, for a storage that stays
+    // unreadable, the reset. Pinned dark like the lock screen — it follows
+    // the dark splash, and the theme setting is not known here.
     if (_loadFailed) {
       return Theme(
         data: buildAppTheme(Brightness.dark),
@@ -6609,6 +6685,13 @@ class _UpdaterPageState extends State<UpdaterPage>
               body: context.l10n.loadFailedBody,
               actionLabel: context.l10n.loadFailedRetry,
               onAction: _retryLoadSettings,
+              // Destructive, so it looks the part and asks first.
+              below: TextButton(
+                onPressed: _resetStoredData,
+                style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.error),
+                child: Text(context.l10n.loadFailedReset),
+              ),
             ),
           ),
         ),
@@ -7275,6 +7358,7 @@ class _UpdaterPageState extends State<UpdaterPage>
     required String body,
     String? actionLabel,
     VoidCallback? onAction,
+    Widget? below,
   }) =>
       Center(
         child: Padding(
@@ -7294,6 +7378,7 @@ class _UpdaterPageState extends State<UpdaterPage>
                 const SizedBox(height: 16),
                 FilledButton(onPressed: onAction, child: Text(actionLabel)),
               ],
+              if (below != null) ...[const SizedBox(height: 8), below],
             ],
           ),
         ),

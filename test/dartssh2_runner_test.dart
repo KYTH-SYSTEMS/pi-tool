@@ -22,6 +22,15 @@ class FakeHostKeyStore implements HostKeyStore {
   Future<void> remove(String id) async => data.remove(id);
 }
 
+/// A store whose reads throw, as secure storage does for a value it cannot
+/// decrypt.
+class _UnreadableHostKeyStore extends FakeHostKeyStore {
+  _UnreadableHostKeyStore(super.initial);
+  @override
+  Future<String?> get(String id) async =>
+      throw Exception('AEADBadTagException');
+}
+
 const _config =
     SshConfig(host: '192.168.178.64', port: 22, username: 'pi', password: 'pw');
 
@@ -99,6 +108,28 @@ void main() {
       expect(accepted, isFalse); // aborts the handshake → no password sent
       expect(store.data[id], 'SHA256:old'); // NOT overwritten
       expect(runner.changedFingerprint, 'SHA256:new');
+    });
+
+    // Secure storage throws for a value it cannot decrypt: the pin is there,
+    // it just cannot be read. That is neither a match nor a first use.
+    test('unreadable pin: rejects like a changed key, asks nobody, writes '
+        'nothing', () async {
+      final store = _UnreadableHostKeyStore({id: 'SHA256:old'});
+      var asked = false;
+      final runner = Dartssh2Runner(_config,
+          hostKeyStore: store,
+          confirmFirstUse: (_, _) async {
+            asked = true;
+            return true;
+          });
+
+      final accepted = await runner.checkAndRecordHostKey(_fp('SHA256:new'));
+
+      expect(accepted, isFalse); // aborts the handshake → no password sent
+      expect(asked, isFalse); // the first-use dialog would trust over the pin
+      expect(store.data[id], 'SHA256:old'); // NOT overwritten
+      expect(runner.changedFingerprint, 'SHA256:new');
+      expect(runner.firstUseDeclined, isFalse);
     });
   });
 

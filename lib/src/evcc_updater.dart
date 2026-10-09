@@ -3747,6 +3747,17 @@ class EvccUpdater {
         );
       }
       if (e is HostKeyChangedException) {
+        // Without a stored value the runner had nothing to compare with: the
+        // trusted fingerprint could not be read. Not a change anyone saw.
+        if (e.stored == null) {
+          throw EvccUpdateException(
+            UpdateErrorKind.hostKeyChanged,
+            'Der gespeicherte SSH-Host-Key von ${e.host} ließ sich nicht '
+            'lesen – ob der Pi derselbe ist, lässt sich so nicht prüfen. Aus '
+            'Sicherheit wurde KEIN Passwort gesendet.\n'
+            'Fingerprint des Pi: ${e.presented}',
+          );
+        }
         throw EvccUpdateException(
           UpdateErrorKind.hostKeyChanged,
           'Der SSH-Host-Key von ${e.host} hat sich geändert! Entweder wurde der '

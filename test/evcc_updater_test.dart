@@ -1072,6 +1072,37 @@ void main() {
             .having((e) => e.kind, 'kind', UpdateErrorKind.hostKeyChanged)),
       );
     });
+
+    // The runner rejects the key when the trusted fingerprint is stored but
+    // cannot be read (stored: null). Same way on — "trust new key" — but the
+    // message must not claim a change nobody has seen.
+    test('an unreadable trusted host key is reported as such, not as changed',
+        () async {
+      final runner = FakeSshRunner({},
+          connectError: const HostKeyChangedException(
+            host: '192.168.178.64',
+            port: 22,
+            presented: 'SHA256:new',
+            stored: null,
+          ));
+
+      await expectLater(
+        _updaterWith(runner).run(
+            config: _config, fullUpgrade: false, dryRun: false, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.hostKeyChanged)
+            .having(
+                (e) => e.message,
+                'message',
+                allOf(
+                  contains('192.168.178.64'),
+                  contains('ließ sich nicht lesen'),
+                  contains('KEIN Passwort gesendet'),
+                  contains('SHA256:new'),
+                  isNot(contains('hat sich geändert')),
+                ))),
+      );
+    });
   });
 
   group('EvccUpdater admin actions', () {

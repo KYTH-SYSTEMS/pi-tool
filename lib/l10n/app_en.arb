@@ -189,6 +189,14 @@
   },
   "loadFailedBody": "The device's secure storage could not be read. Pi-Tool has not overwritten anything.",
   "loadFailedRetry": "Try again",
+  "loadFailedReset": "Reset stored data",
+  "@loadFailedReset": {
+    "description": "Destructive second action of the load error state: deletes everything the app has stored, after a confirmation"
+  },
+  "loadFailedResetTitle": "Reset stored data?",
+  "loadFailedResetBody": "Deletes everything Pi-Tool has stored on this device: profiles including passwords and SSH keys, settings, history and the remembered host keys of your Pis. This cannot be undone. Nothing changes on the Pis themselves.\n\nWith an export file you get the profiles back afterwards via Settings → \"Import profiles\". Without one you enter the credentials again.\n\nIf the storage is only temporarily unreadable, the data is still there — so restart the device and try again before you reset.",
+  "loadFailedResetConfirm": "Reset",
+  "loadFailedResetFailed": "Reset failed. As a last resort, the app data can be cleared in the Android settings.",
   "exportProfilesTitle": "Export profiles",
   "exportProfilesBody": "The file contains your Pi credentials (passwords/SSH keys) — encrypted. Choose a passphrase; without it the file is worthless.",
   "snackExportCreated": "Export created — keep it safe.",
@@ -894,6 +902,7 @@
   "historyTitle": "History",
   "evccNewVersionAvailable": "New evcc version available.",
   "noHistoryYet": "No history yet.",
+  "snackHistoryUnreadable": "The history could not be read.",
   "actionClear": "Clear",
   "snackCouldNotOpenLink": "Couldn't open the link.",
   "actionContinue": "Continue",
