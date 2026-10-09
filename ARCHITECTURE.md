@@ -923,7 +923,9 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   `isTailnetHost(host)`, dann `tailscaleSessionProbe`/`isTailnetClient` auf
   dem nicht-sudo gelesenen `$SSH_CONNECTION` (greift auch unter der
   Heimnetz-Adresse, wenn der Pi das Heimnetz freigibt) — mit einer Meldung,
-  die die Aktion nennt; ausgeführt wird nichts. Ein Logout kappte genau diese
+  die die Aktion nennt; ausgeführt wird nichts. (Beide Prüfungen laufen hier
+  nach der Anmeldung; das Deinstallieren prüft die Adresse schon vor dem
+  Verbinden.) Ein Logout kappte genau diese
   Sitzung und nähme den Pi aus dem Tailnet; `tailscale down` lehnt das CLI in
   dem Fall selbst ab („aborted, no changes made"), was vorher als „Exit 1"
   ankam.
@@ -1292,7 +1294,11 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   - **Regel: nichts Geheimes in einen Wrapper.** Weil die Status-Proben die
     Stempelzeile ohne sudo lesen, bleiben die Wrapper für alle lesbar. Was nur
     root sehen darf, bekommt eine eigene Datei — heute das ntfy-Ziel der
-    Alerts (`pi-tool-alerts.conf`, 0600).
+    Alerts (`pi-tool-alerts.conf`, 0600). **Bestands-Pis:** Ein älterer
+    Alerts-Wrapper (Generation 2 und alle davor) trägt Server und Topic noch
+    selbst (`URL=…`/`TOPIC=…` in der für alle lesbaren Datei) — so lange, bis
+    die Health-Alerts neu eingerichtet werden; das Install-Skript schreibt
+    den Wrapper neu, das Remove-Skript löscht ihn.
   - **`checkOnCalendar`** lässt nur die Zeitpläne durch, die die App baut
     (`[Ddd ]*-*-* HH:MM:SS`), sonst `ArgumentError`. Der Wert landet ungequotet
     in einer Timer-Unit innerhalb eines Heredocs eines Root-Skripts — ein
@@ -1497,7 +1503,10 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `${distro_codename}` muss wörtlich in der Datei ankommen) mit nur
   `"origin=Raspbian,codename=${distro_codename},label=Raspbian"`; listet
   `apt-config` den Eintrag danach nicht, wird die Datei wieder entfernt, und
-  es gibt keinen Marker. Das Archiv der Raspberry Pi Foundation bleibt bewusst
+  es gibt keinen Marker. Das Pattern trifft alle Pakete dieser Origin für die
+  Release, nicht nur Sicherheitsupdates: Auf 32 Bit installiert
+  `unattended-upgrades` danach alle Raspbian-Updates von selbst. Das Archiv
+  der Raspberry Pi Foundation bleibt bewusst
   draußen: Kernel-, Firmware- und Bootloader-Pakete bleiben ein manuelles
   Update, auf 32- und 64-Bit. Nicht an einem 32-Bit-Pi gemessen.
   **fail2ban muss oben bleiben:** `enable --now` kehrt zurück, sobald der
@@ -1888,9 +1897,11 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
     `AppLockLayer.maybeOf(context)` (nur unter einer Schicht, die wirklich im
     Baum ist) und meldet über den Setter von `_locked`: **zuerst**
     `_appLock.locked`, dann die Screenshot-Policy — die Schicht folgt
-    `_locked`, was immer der Plattform-Seam tut. `_engageLock()` ist die eine
-    Stelle, die sperrt. **Regel für neuen Code:** `_locked` und `_lockEnabled`
-    nur über ihre Setter schreiben.
+    `_locked`, was immer der Plattform-Seam tut. Im Betrieb sperrt allein
+    `_engageLock()`; der gesperrte Kaltstart setzt `_locked` in
+    `_loadSettings`, bevor das Profil angewendet wird (s. u.
+    `secure_screen.dart`). **Regel für neuen Code:** `_locked` und
+    `_lockEnabled` nur über ihre Setter schreiben.
   - **Fokus und Tastatur:** `_AppLockScopeState._onLockChanged` schaltet die
     beiden Bereiche **in dem Aufruf, der sperrt oder entsperrt** — nicht mit
     dem nächsten Build: Die App sperrt im Hintergrund, wo kein Frame gezeichnet
@@ -2274,6 +2285,17 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   herunterfahren" der System-Karte setzen ihn, solange `_connected` falsch
   ist — wie die gleichen Einträge im App-Menü; eine gemerkte Karte ist keine
   Sitzung.
+- **Backup-Sheet:** „Backups verwalten" auf der evcc-Karte (nur apt-evcc), der
+  Pi-hole- und der Home-Assistant-Karte öffnet dasselbe Sheet
+  (`_pickServiceBackup`): Antippen = Wiederherstellen (nach Bestätigung), die
+  Symbole = Herunterladen (`_downloadBackup`, über `downloadFile` und den
+  `fileSaver`-Seam) und Löschen (`_deleteBackup`, nach destruktiver
+  Bestätigung). Archive der On-Pi-Timer tragen ihre Herkunft (`backupOrigin`,
+  §3 „Backup-Listen"). Einstiege: `_restoreBackup` für evcc (der Name ist
+  geblieben; der Handler lädt auch herunter und löscht) und
+  `_manageServiceBackups` für Pi-hole und Home Assistant. Jede Fortsetzung
+  nach der Auswahl ruft erneut `_beginBusy()` und läuft in `_guard`
+  (mehrphasiger Flow, s. o.).
 - **Onboarding:** `_SetupGuidePage` (in `ui_widgets.dart`) erklärt Einsteigern die
   Pi-Einrichtung per Raspberry Pi Imager (SSH/Benutzer/WLAN). Erreichbar via
   `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen
@@ -2598,9 +2620,10 @@ Hilfe 17492799). Stand der Prüfung an v0.67.0 (2026-08-27):
   Gerät-zu-Gerät-Transfer aus — die Domains einzeln, weil ein Ausschluss von
   `root` die anderen nicht abdeckt. Grund: Bei targetSdk ≥ 31 schaltet
   `allowBackup=false` laut Android-Dokumentation den Gerät-zu-Gerät-Transfer
-  nicht auf den Geräten jedes Herstellers ab; übertragen würde Chiffrat ohne den Keystore-Schlüssel,
-  das sich auf dem neuen Handy nicht lesen lässt (der Fehlerzustand beim
-  Laden, §7). Die vier `device_*`-Domains fehlen bewusst: Weder die App noch
+  nicht auf den Geräten jedes Herstellers ab; übertragen würde Chiffrat ohne
+  den Keystore-Schlüssel, das sich auf dem neuen Handy nicht lesen lässt (der
+  Fehlerzustand beim Laden, §7). Die vier `device_*`-Domains fehlen bewusst:
+  Weder die App noch
   ihre Plugins legen etwas im device-protected Storage ab — ein Plugin, das
   damit anfängt, braucht vier weitere Ausschlüsse. Die Datei ist aus dem
   Manifest referenziert, das Ressourcen-Shrinking behält sie also ohne

@@ -54,10 +54,12 @@ Stelle wird erst sichtbar, wenn `isPro()` zum ersten Mal `false` liefert. Alle
 drei müssen entschieden und umgesetzt sein, bevor das Billing-Release gebaut
 wird.
 
-- **„Fernzugriff einrichten" / „Fernzugriff prüfen": frei lassen oder sauber
-  als Pro führen.** Beide laufen heute durch `_proGate` — an drei Stellen in
-  `lib/main.dart`: die Angebotszeile und die Karte in `_remoteAccessCard()`
-  sowie „Fernzugriff einrichten" im ⋮ der Tailscale-Karte. Sie tragen aber
+- **„Fernzugriff einrichten" / Fernzugriff prüfen (Knopf „Jetzt prüfen"):
+  frei lassen oder sauber als Pro führen.** Beide laufen heute durch
+  `_proGate` — an drei Stellen in `lib/main.dart`: die Angebotszeile und die
+  Karte in `_remoteAccessCard()` (je nach Stand `_setupRemoteAccess` oder
+  `_checkRemoteAccess`) sowie „Fernzugriff einrichten" im ⋮ der
+  Tailscale-Karte. Sie tragen aber
   **keinen Schloss-Hinweis** (die Knöpfe der Karte haben keinen, der
   ⋮-Eintrag ist ein `_CardAction` ohne `pro: true`), es gibt **keinen
   `ProFeature`-Eintrag** (`backups, console, cleanup, multiPi, automation,

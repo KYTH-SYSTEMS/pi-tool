@@ -66,8 +66,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Home Assistant** — als **Docker-Container** installieren (installiert bei
   Bedarf zuerst Docker, experimentell) und aktualisieren (Image-Pull + Neuanlage,
   Daten im `/config`-Volume bleiben erhalten; Details und Grenzen unter
-  [Docker-Installation](#was-die-app-macht)), Web-UI auf Port 8123 öffnen. Ein
-  neu angelegter Container übernimmt die Zeitzone des Pi.
+  [Docker-Installation](#was-die-app-macht)), Web-UI auf Port 8123 öffnen. Bei
+  der Installation bekommt der Container die Zeitzone des Pi; ein Update
+  behält die Umgebung, die der Container hat.
 - **AdGuard Home, Node-RED & Zigbee2MQTT** — werden erkannt, wenn sie als
   systemd-Dienst laufen: eigene Karte mit Weboberfläche öffnen, Logs und
   Neustart. (Installation überlässt die App bewusst dir.)
@@ -169,7 +170,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
     oder Herunterfahren während eines Laufs wartet auf dessen Ende, höchstens
     30 Minuten — so lange ist der Pi nicht erreichbar; aus der App heraus
     werden beide in dieser Zeit abgelehnt. Das Einrichten oder Ändern des
-    Zeitplans startet kein Update.
+    Zeitplans startet kein Update; ein Lauf, der in die fünf Minuten danach
+    fällt, entfällt.
   - *Health-Alerts:* Das ntfy-Thema ist faktisch das Passwort (ntfy kennt
     kein Konto), deshalb schlägt die App ein langes Zufallsthema vor und warnt
     vor leicht erratbaren Namen. Das Thema wird **je Pi** gespeichert und
@@ -333,8 +335,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   unbekannt" statt „Aktuell" — lieber keine Auskunft als eine falsche. Die
   System-Karte bietet dann im ⋮-Menü **„Paketlisten aktualisieren"**; läuft
   auf dem Pi gerade eine andere Paketinstallation oder reißt die Verbindung
-  dabei ab, meldet die App das als Fehler. Ein Update per Pi-Job setzt den
-  Stand der Paketlisten ebenfalls zurück. Schlägt die Update-Prüfung selbst
+  dabei ab, meldet die App das als Fehler. Auch ein System-, evcc- oder
+  Paket-Update lädt die Paketlisten neu; gelingt das, gilt ihr Stand danach
+  wieder als frisch. Schlägt die Update-Prüfung selbst
   fehl, steht auf der System-Karte „Update-Prüfung fehlgeschlagen — Stand
   unbekannt". Eine evcc-Installation aus dem nightly-Kanal gilt nicht schon
   deshalb als „Aktuell", weil sie neuer ist als das Stable-Release.
@@ -559,8 +562,9 @@ neues Handy ist der Profil-Export.
   gesperrt, wo Zugangsdaten zu sehen sein können (`FLAG_SECURE`): auf dem
   Sperrbildschirm und bei aufgeklappter Zugangsdaten-Karte. Dienst-Karten,
   Logs, Terminal, Datei-Vorschau und Config-Editor sind seit v0.65.0 **nicht**
-  mehr geschützt — was dort steht, kann in einem Screenshot und, ohne
-  eingeschaltete App-Sperre, in der Recents-Vorschau erscheinen.
+  mehr geschützt — was dort steht, kann in einem Screenshot erscheinen und in
+  der Recents-Vorschau (dort nicht, wenn die App-Sperre eingeschaltet ist und
+  Android 13 oder neuer läuft).
 - **Host-Key-Verifizierung (TOFU):** Beim ersten Connect zeigt die App den
   SSH-Fingerprint zur **Bestätigung** an und merkt ihn erst nach Zustimmung;
   danach wird er geprüft. Ändert er sich (möglicher MITM oder neu aufgesetzter
