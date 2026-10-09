@@ -174,6 +174,8 @@ List<_Script> _scripts() {
     const _Script(
         'dockerListStateSudoCommand', login, dockerListStateSudoCommand,
         inner: 1),
+    const _Script('dockerListStateSudoProbe', login, dockerListStateSudoProbe,
+        inner: 1),
     ..._each('dockerInspectJsonCommand', login, dockerInspectJsonCommand),
     ..._each(
         'dockerInspectJsonSudoCommand', login, dockerInspectJsonSudoCommand),
@@ -240,6 +242,18 @@ List<_Script> _scripts() {
         bash,
         (v) => buildConfigWriteScript(
             path: '/etc/$v.yaml', base64Content: 'aGFsbG8K')),
+    // The lines the config editor and the upload share, in every combination
+    // of their options — two of them no caller uses so far.
+    for (final strict in [false, true])
+      for (final mode in [null, '644'])
+        _Script(
+            'rootReplaceFileLines (strict: $strict, new file: $mode)',
+            bash,
+            rootReplaceFileLines(
+                tmpPrefix: '.pitool-x.',
+                base64Content: 'aGFsbG8K',
+                strict: strict,
+                newFileMode: mode)),
     ..._each(
         'buildServiceLogsCommand (container)',
         login,
@@ -274,7 +288,8 @@ List<_Script> _scripts() {
         'buildTestAlertCommand',
         login,
         (v) => buildTestAlertCommand(
-            ntfyServer: 'https://ntfy.example/$v', ntfyTopic: v)),
+            ntfyServer: 'https://ntfy.example/$v', ntfyTopic: v),
+        inner: 1),
     const _Script('alertsStatusCommand', login, alertsStatusCommand),
     for (final weekly in [false, true])
       _Script(
@@ -744,22 +759,33 @@ void main() {
           'set -o pipefail; head -c $kFilePreviewLimit -- "\$1" | base64');
       final probe = _inner(buildStorageProbe("/home/it's")).single.text;
       expect(probe, startsWith("echo __DU__; du -x -b -d1 '/home/it'\\''s' "));
+      // The test push is one sh script: the title from the host name, then
+      // curl with the URL, quoted inside it once more.
+      final push = _inner(buildTestAlertCommand(
+              ntfyServer: 'https://ntfy.sh', ntfyTopic: "it's"))
+          .single;
+      expect(push.bash, isFalse);
+      expect(push.literal, isTrue);
+      expect(push.text, startsWith(r'host=$(hostname 2>/dev/null); case '));
+      expect(push.text, endsWith(" -- 'https://ntfy.sh/it'\\''s'"));
     });
 
     test('the wrappers the install scripts write are found, by their shebang',
         () {
+      // A timer's wrapper is written next to its place (`.new`) and moved
+      // there: the heredoc names the file it is written to.
       expect(
           _shebangs(buildAlertsInstallScript(
               ntfyServer: 'https://ntfy.sh', ntfyTopic: 'pi')),
-          {'/usr/local/lib/$alertsUnit.sh': '#!/bin/sh'});
+          {'/usr/local/lib/$alertsUnit.sh.new': '#!/bin/sh'});
       expect(
           _shebangs(buildAutoUpdateInstallScript(
               onCalendar: autoUpdateOnCalendar(weekly: false, hour: 4))),
-          {'/usr/local/lib/$autoUpdateUnit.sh': '#!/bin/bash'});
+          {'/usr/local/lib/$autoUpdateUnit.sh.new': '#!/bin/bash'});
       expect(
           _shebangs(buildScheduledBackupInstallScript(
               onCalendar: scheduledBackupOnCalendar(hour: 3), keep: 7)),
-          {'/usr/local/lib/$scheduledBackupUnit.sh': '#!/bin/sh'});
+          {'/usr/local/lib/$scheduledBackupUnit.sh.new': '#!/bin/sh'});
       expect(
           _shebangs(buildJobLauncherScript(
               id: _id, kind: jobKindPiholeUpdate, payload: 'true')),
@@ -770,7 +796,7 @@ void main() {
       final script = buildAlertsInstallScript(
           ntfyServer: 'https://ntfy.sh', ntfyTopic: 'pi');
       expect(
-          _heredocFiles(script)['/usr/local/lib/$alertsUnit.sh'],
+          _heredocFiles(script)['/usr/local/lib/$alertsUnit.sh.new'],
           '${heredocBody(script, 'WRAP')}\n'
           '${heredocBody(script, 'WRAP', 2)}\n');
     });
@@ -894,7 +920,7 @@ void main() {
         r'(\w+)(?: =|\()',
         multiLine: true);
     final shellName = RegExp(r'(Command|Script|ScriptPart|Probe|Payload|Query|'
-        r'Batch|Exec|Stdin|Steps|Guard|Bootstrap|Blocks)$');
+        r'Batch|Exec|Stdin|Steps|Guard|Bootstrap|Blocks|Lines)$');
     for (final file in Directory('lib/src')
         .listSync(recursive: true)
         .whereType<File>()
@@ -917,6 +943,7 @@ void main() {
           'buildConsoleExec',
           'buildUpdateSteps',
           'buildRestoreScript',
+          'rootReplaceFileLines',
           'piConnectInstallScript',
           'tailscaleUpScript',
         ]));
