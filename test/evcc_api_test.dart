@@ -523,7 +523,8 @@ void main() {
         lp(title: 'A', connected: true),
         lp(title: 'B', charging: true, connected: true, power: 5000),
       ]));
-      expect(lines[1], 'B: 5,0 kW');
+      // The whole card: no line for A before or after it.
+      expect(lines, ['PV 1 W', 'B: 5,0 kW']);
     });
 
     test('several loadpoints, none charging: the first connected one', () {
@@ -532,7 +533,7 @@ void main() {
         lp(title: 'B', connected: true),
         lp(title: 'C', connected: true),
       ]));
-      expect(lines[1], 'B: verbunden');
+      expect(lines, ['PV 1 W', 'B: verbunden']);
     });
   });
 }

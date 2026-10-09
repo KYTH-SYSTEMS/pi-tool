@@ -114,7 +114,9 @@ void main() {
         ('STDIN', 'probe-in'),
         ('LAST', 'probe-a'),
       ]);
-      final r = await pi.run(script, rebase: false);
+      // LC_ALL=C as in detectShellCommand: bash's own "command not found"
+      // below is worded by the locale.
+      final r = await pi.run('export LC_ALL=C\n$script', rebase: false);
       expect(r.code, 0, reason: r.err);
       expect(r.err, isEmpty); // every probe's stderr is in its section
 

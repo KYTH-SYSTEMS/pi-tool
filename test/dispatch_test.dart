@@ -4611,6 +4611,7 @@ void main() {
 
     // Declined: nothing reaches the Pi.
     await openInstall();
+    expect(find.text('evcc installieren?'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
     await tester.pumpAndSettle();
     expect(u.installHosts, isEmpty);
