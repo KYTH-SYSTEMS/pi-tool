@@ -141,5 +141,18 @@ void main() {
       await install(key);
       expect(pi.read(file), '$other\n$key');
     });
+
+    // The line runs in the user's login shell, not in a bash of ours.
+    test('the same under dash, a plain POSIX sh', () async {
+      pi.put(file, other);
+      pi.put('/tmp/install.sh', buildInstallAuthorizedKeyScript(key));
+      final r = await pi.run(
+          "export HOME='${pi.root}/home/pi'\n"
+          "'$sandboxDash' '${pi.root}/tmp/install.sh'",
+          rebase: false);
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines, ['KEY_INSTALLED']);
+      expect(pi.read(file), '$other\n$key\n');
+    }, skip: needsDash);
   }, skip: needsBash);
 }
