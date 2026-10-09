@@ -2606,8 +2606,9 @@ class EvccUpdater {
       void Function(String) log, String out, String? image) {
     if (image == null || !isDockerImageUnchanged(out)) return null;
     final pinned = isVersionPinnedImage(image);
-    log('Kein neueres Image für „$image“ – der Container läuft bereits '
-        'damit, nichts geändert.');
+    // "nutzt", not "läuft": the Docker overview also updates stopped ones.
+    log('Kein neueres Image für „$image“ – der Container nutzt bereits das '
+        'aktuelle, nichts geändert.');
     if (pinned) {
       log('Das Tag ist versionsfest: Eine neuere Version gibt es erst mit '
           'einem anderen Tag.');

@@ -1373,6 +1373,15 @@ esac'''
           runCommand: "docker run -d --name 'evcc' 'evcc/evcc:latest'",
         ));
 
+    test('the sandbox runs its stubs, not a host command of the same name',
+        () async {
+      // `sleep` exists on every host: the settle must not really wait, and a
+      // host with Docker must never have its daemon asked.
+      final r = await sb.run('command -v sleep docker\n');
+      final bin = '${_posix(sb.root)}/bin';
+      expect(r.lines, ['$bin/sleep', '$bin/docker'], reason: r.err);
+    });
+
     // The two questions the script asks after the pull, as the stub logs them.
     const askContainer = 'docker container inspect -f {{.Image}} evcc';
     const askTag = 'docker image inspect -f {{.Id}} evcc/evcc:latest';
@@ -1558,6 +1567,13 @@ final String? _bash = Platform.isWindows
 final Object _needsBash =
     _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false;
 
+/// A path usable inside PATH (Git Bash wants /c/... there, not C:/...).
+String _posix(String p) {
+  final s = p.replaceAll(r'\', '/');
+  final m = RegExp(r'^([A-Za-z]):/').firstMatch(s);
+  return m == null ? s : '/${m.group(1)!.toLowerCase()}/${s.substring(3)}';
+}
+
 /// A throwaway "Pi" for running a real root script in a real bash. Every
 /// command the script may call is a logging stub in `bin/`, and PATH holds
 /// ONLY that directory, so nothing on the host (docker, apt, systemctl) can
@@ -1630,8 +1646,10 @@ class _Sandbox {
     final err = p.stderr.transform(utf8.decoder).join();
     // Stubs first, set INSIDE the shell: Git Bash's launcher puts its own
     // directories in front of an inherited PATH, so on Windows the environment
-    // alone would let a real binary of the same name win over its stub.
-    p.stdin.add(utf8.encode("export PATH='$root/bin':\"\$PATH\"\n"));
+    // alone would let a real binary of the same name win over its stub. As
+    // /c/…, not C:/…: bash splits PATH at every colon, drive letter included.
+    p.stdin.add(
+        utf8.encode("export PATH='${_posix('$root/bin')}':\"\$PATH\"\n"));
     p.stdin.add(utf8.encode(rebased));
     await p.stdin.close();
     return _Run(await p.exitCode, await out, await err);

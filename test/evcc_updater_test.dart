@@ -6096,7 +6096,9 @@ void main() {
             reason: image);
         expect(runner.commandsRun,
             isNot(contains(buildDockerRunningProbe('web'))));
-        expect(log, isNot(contains('aktualisiert und läuft')));
+        // The overview also updates stopped containers, and nobody asked
+        // whether this one runs: the report must not claim it.
+        expect(log, isNot(contains('läuft')));
       }
     });
 

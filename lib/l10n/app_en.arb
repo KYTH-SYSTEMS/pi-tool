@@ -994,7 +994,7 @@
   },
   "dialogUpdateContainerBody": "Pulls the new image and recreates the container; compose-managed containers are updated via docker compose. The old container is kept as a rollback. Experimental — data in volumes stays untouched.",
   "statusContainerUpdated": "Container updated and running.",
-  "statusImageTagCurrent": "No newer image for this tag – the container already runs the current one. Nothing changed.",
+  "statusImageTagCurrent": "No newer image for this tag – the container already uses the current one. Nothing changed.",
   "statusImageTagPinnedCurrent": "No newer image for this tag – nothing changed. The tag names a fixed version: a newer version only comes with a different tag.",
   "busyUpdatingContainer": "Updating container \"{name}\" …",
   "@busyUpdatingContainer": {

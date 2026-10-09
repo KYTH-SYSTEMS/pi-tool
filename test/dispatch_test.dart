@@ -2111,8 +2111,7 @@ void main() {
     u.dockerOutcome = DockerUpdateOutcome.tagCurrent;
     await tester.tap(find.widgetWithText(OutlinedButton, 'Aktualisieren'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('läuft bereits mit dem aktuellen'),
-        findsOneWidget);
+    expect(find.textContaining('nutzt bereits das aktuelle'), findsOneWidget);
     expect(find.textContaining('versionsfest'), findsNothing);
     expect(history.added, isEmpty);
 
