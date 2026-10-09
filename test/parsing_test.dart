@@ -178,6 +178,65 @@ void main() {
       // Full password absent; the only present token "ab" is <3 → left alone.
       expect(redactPassword('ab only here', 'ab cd'), 'ab only here');
     });
+
+    test('a password inside a longer word masks the whole word', () {
+      // "********pi" would show where the password ends — and with that, for
+      // the old default password, the password itself.
+      expect(
+        redactPassword(
+            'Hit:1 http://archive.raspberrypi.com/debian bookworm InRelease',
+            'raspberry'),
+        'Hit:1 http://archive.$passwordMask.com/debian bookworm InRelease',
+      );
+      expect(redactPassword('raspberrypi-kernel is held', 'raspberry'),
+          '$passwordMask-kernel is held');
+      // Letters or digits before it, after it, or on both sides.
+      expect(redactPassword('host myraspberry up', 'raspberry'),
+          'host $passwordMask up');
+      expect(redactPassword('v0.31234.5', '1234'), 'v0.$passwordMask.5');
+      expect(redactPassword('größegeheimnis!', 'geheim'), '$passwordMask!');
+    });
+
+    test('the mask is the same wherever the password sits in the word', () {
+      for (final word in ['raspberry', 'raspberrypi', 'myraspberry', 'xraspberryx']) {
+        expect(redactPassword('<$word>', 'raspberry'), '<$passwordMask>',
+            reason: word);
+      }
+    });
+
+    test('the leak it is there for stays masked', () {
+      expect(
+        redactPassword(
+            'bash: line 1: raspberry: command not found', 'raspberry'),
+        'bash: line 1: $passwordMask: command not found',
+      );
+      // A fragment of a password with spaces, inside a longer word.
+      expect(
+        redactPassword('bash: line 1: hunter2x: command not found',
+            'hunter2 pass'),
+        'bash: line 1: $passwordMask: command not found',
+      );
+    });
+
+    test('occurrences that touch or overlap give ONE mask', () {
+      // Two masks in a row would tell how often the password fits in.
+      expect(redactPassword('raspberryraspberry', 'raspberry'), passwordMask);
+      expect(redactPassword('<!!!!>', '!!'), '<$passwordMask>');
+      expect(redactPassword('<!!!>', '!!'), '<$passwordMask>');
+      expect(redactPassword('<a.a.a>', 'a.a'), '<$passwordMask>');
+    });
+
+    test('a password with punctuation still takes its neighbours along', () {
+      // The match is "a.b"; "x" before and "yz" after belong to the same word.
+      expect(redactPassword('xa.byz next', 'a.b'), '$passwordMask next');
+      // Punctuation around the match ends the mask.
+      expect(redactPassword('pw=a.b; done', 'a.b'), 'pw=$passwordMask; done');
+    });
+
+    test('text without the password is returned as it is', () {
+      const line = 'Unpacking raspberrypi-kernel (1:1.20230405-1) ...';
+      expect(redactPassword(line, 'geheim'), line);
+    });
   });
 
   group('summarize (evcc-only)', () {

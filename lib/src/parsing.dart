@@ -123,21 +123,63 @@ String stripProgressNoise(String text) {
       .join('\n');
 }
 
-/// Replaces every literal occurrence of [password] in [text] with
-/// [passwordMask]. An empty [password] leaves [text] untouched.
+/// A run of letters (with their combining marks) and digits: the word a
+/// password can sit inside.
+final _wordRun = RegExp(r'[\p{L}\p{M}\p{N}]+', unicode: true);
+
+/// Masks every literal occurrence of [password] in [text] with [passwordMask].
+/// An empty [password] leaves [text] untouched.
+///
+/// A match is never cut out of the word around it: where the password sits
+/// inside a longer run of letters and digits, the whole run becomes ONE mask.
+/// "********pi" for `raspberrypi` shows where the password ends — and with the
+/// old default password, the password itself. Matches that touch or overlap
+/// share one mask too, so neither position nor length nor count can be read
+/// off a shared log.
 String redactPassword(String text, String password) {
   if (password.isEmpty) return text;
-  var out = text.replaceAll(password, passwordMask);
   // Defense in depth: on a NOPASSWD-sudo Pi the password line isn't consumed by
   // `sudo -S`, so `bash -s` may echo it word-split ("bash: line 1: <word>: not
   // found"). A literal full-string match would miss those fragments, so also
   // mask each whitespace-separated part (length ≥ 3 to avoid over-redacting).
-  for (final part in password.split(RegExp(r'\s+'))) {
-    if (part.length >= 3 && part != password) {
-      out = out.replaceAll(part, passwordMask);
+  final needles = <String>{
+    password,
+    for (final part in password.split(RegExp(r'\s+')))
+      if (part.length >= 3) part,
+  };
+  // Per code unit: masked or not. Only allocated once something matches.
+  List<bool>? masked;
+  for (final needle in needles) {
+    // Next search from i + 1, not from behind the match: an occurrence that
+    // overlaps the previous one counts as well.
+    for (var i = text.indexOf(needle);
+        i >= 0;
+        i = text.indexOf(needle, i + 1)) {
+      (masked ??= List<bool>.filled(text.length, false))
+          .fillRange(i, i + needle.length, true);
     }
   }
-  return out;
+  if (masked == null) return text;
+  // Widen each match to its word: a run that holds a masked unit or borders
+  // on one goes under the mask as a whole.
+  for (final run in _wordRun.allMatches(text)) {
+    final from = run.start > 0 ? run.start - 1 : 0;
+    final to = run.end < text.length ? run.end + 1 : text.length;
+    if (masked.sublist(from, to).contains(true)) {
+      masked.fillRange(run.start, run.end, true);
+    }
+  }
+  final out = StringBuffer();
+  var i = 0;
+  while (i < text.length) {
+    final start = i;
+    final mask = masked[i];
+    while (i < text.length && masked[i] == mask) {
+      i++;
+    }
+    out.write(mask ? passwordMask : text.substring(start, i));
+  }
+  return out.toString();
 }
 
 /// Outcome category of a completed update run.
