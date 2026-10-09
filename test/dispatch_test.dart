@@ -6513,6 +6513,70 @@ void main() {
     expect(find.byType(AlertDialog), findsOneWidget);
   });
 
+  // The export exists so that the profiles survive a lost phone. A share sheet
+  // closed without a choice put the file nowhere — "created, keep it safe"
+  // would say the opposite.
+  testWidgets(
+      'Profil-Export: ein ohne Auswahl geschlossener Teilen-Dialog ist kein '
+      '„Export erstellt“', (tester) async {
+    useTallScreen(tester);
+    var answer = ShareResultStatus.dismissed;
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('de'),
+      home: UpdaterPage(
+        store: _FakeStore(_ready),
+        updater: FakeEvccUpdater(),
+        updateChecker: _noUpdateChecker,
+        apiClient: EvccApiClient(
+            getJson: (_) async =>
+                throw const EvccApiException('kein Netz im Test')),
+        evccReleaseFetcher: () async => null,
+        haVersionFetcher: () async => null,
+        fileSaver: (name, bytes) async => answer,
+        exportEncryptor: (json, passphrase) async => '{"v":1}',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    Future<void> export() async {
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Einstellungen'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Profile exportieren'));
+      await tester.tap(find.text('Profile exportieren'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Passphrase'), '1234567890');
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Passphrase wiederholen'),
+          '1234567890');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'OK'));
+      await tester.pumpAndSettle();
+    }
+
+    await export();
+    expect(find.text('Export erstellt — sicher aufbewahren.'), findsNothing);
+    expect(
+        find.text('Export nicht gespeichert: Der Teilen-Dialog wurde ohne '
+            'Auswahl geschlossen.'),
+        findsOneWidget);
+
+    // A target was chosen, or the sheet cannot tell: as before.
+    for (final said in [
+      ShareResultStatus.success,
+      ShareResultStatus.unavailable,
+    ]) {
+      answer = said;
+      await export();
+      expect(find.text('Export erstellt — sicher aufbewahren.'), findsOneWidget,
+          reason: '$said');
+    }
+  });
+
   testWidgets('Passphrase-Dialog: der Sichtbarkeits-Schalter sagt, was er tut',
       (tester) async {
     await openExportPassphrase(tester);

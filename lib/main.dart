@@ -1085,9 +1085,17 @@ class _UpdaterPageState extends State<UpdaterPage>
       final envelope =
           await _exportEncryptor(encodeAppConfig(_currentConfig()), pass);
       if (!mounted) return;
-      await _fileSaver('pi-tool-profile.pitool',
-          Uint8List.fromList(utf8.encode(envelope)));
-      if (mounted) _snack(context.l10n.snackExportCreated);
+      // Typed void for the savers that have nothing to report; the default
+      // one completes with what the share sheet said (see the seam).
+      final Future<Object?> saving = _fileSaver(
+          'pi-tool-profile.pitool', Uint8List.fromList(utf8.encode(envelope)));
+      final dismissed = await saving == ShareResultStatus.dismissed;
+      if (!mounted) return;
+      // A sheet closed without a choice put the file nowhere: no "created,
+      // keep it safe" for an export that does not exist.
+      _snack(dismissed
+          ? context.l10n.snackExportNotSaved
+          : context.l10n.snackExportCreated);
     } catch (_) {
       if (mounted) _snack(context.l10n.snackExportFailed);
     } finally {

@@ -214,6 +214,7 @@
   },
   "snackExportEncrypting": "Encrypting the export …",
   "snackExportCreated": "Export created — keep it safe.",
+  "snackExportNotSaved": "Export not saved: the share sheet was closed without a choice.",
   "snackExportFailed": "Export failed.",
   "snackFilePickFailed": "File selection failed.",
   "importProfilesTitle": "Import profiles",
