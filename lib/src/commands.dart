@@ -86,6 +86,19 @@ const String dockerListStateCommand =
 const String dockerListStateSudoCommand =
     'LC_ALL=C sudo -S sh -c "$dockerListStateCommand"';
 
+/// [dockerListStateSudoCommand] as detection runs it, after a batch whose
+/// DOCKER probe the socket refused: closed the way the batch is. The listing
+/// (sudo's stdout) is the section `DOCKER`, and the last thing printed is the
+/// marker of [detectEndKey] — by the shell, once sudo has returned, whatever
+/// became of it: a refused password or a missing docker leaves an empty
+/// section between the two markers. Without the end marker the channel closed
+/// while the listing ran. Read it with [splitDetectSections]; the messages of
+/// sudo and docker stay on stderr.
+const String dockerListStateSudoProbe =
+    'echo ${_detectMarker}DOCKER$_detectMarker; '
+    '$dockerListStateSudoCommand; '
+    'echo; echo $_detectMarker$detectEndKey$_detectMarker';
+
 /// The state of container [name] in a [dockerListStateCommand] listing
 /// (`running`, `restarting`, `paused`). Null when its line carries none — the
 /// plain listing of an older Docker — or the container is not listed.

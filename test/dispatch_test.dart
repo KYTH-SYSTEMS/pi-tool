@@ -455,6 +455,13 @@ class FakeEvccUpdater extends EvccUpdater {
     required void Function(String line) onLog,
   }) async {
     if (piholeRestoreError != null) throw piholeRestoreError!;
+    // Like the real one: only a v6 .zip can be imported.
+    if (!path.endsWith('.zip')) {
+      throw const EvccUpdateException(
+          UpdateErrorKind.unknown,
+          'Dieses Backup stammt von Pi-hole v5 (.tar.gz) und kann nur über die '
+          'Web-Oberfläche importiert werden (Einstellungen → Teleporter).');
+    }
     restoredPihole.add(path);
   }
 
@@ -570,13 +577,25 @@ class FakeEvccUpdater extends EvccUpdater {
     return tailscaleUpUrl;
   }
 
+  int tailscaleSetCalls = 0;
+
   @override
   Future<void> tailscaleSet({
     required SshConfig config,
     required bool logout,
     required void Function(String line) onLog,
-  }) async =>
-      tailscaleLoggedOut = logout;
+  }) async {
+    tailscaleSetCalls++;
+    // Like the real one: under a tailnet address nothing runs.
+    if (isTailnetHost(config.host)) {
+      throw EvccUpdateException(
+          UpdateErrorKind.unknown,
+          'Die Verbindung läuft über Tailscale und würde beim '
+          '${logout ? 'Abmelden' : 'Trennen'} abreißen – bitte über die '
+          'Heimnetz-Adresse verbinden.');
+    }
+    tailscaleLoggedOut = logout;
+  }
 
   final uninstalled = <(String, bool)>[];
   Object? uninstallError;
@@ -615,10 +634,14 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async =>
       unshareLanCalls++;
 
-  List<DirEntry> dirEntries = const [];
+  /// What the Dateien tab lists; [dirLinks] names the entries among them that
+  /// are symlinks.
+  List<({String name, bool isDir})> dirEntries = const [];
+  Set<String> dirLinks = const {};
   Uint8List fileBytes = Uint8List(0);
   final uploadedTo = <String>[];
   final deletedPaths = <String>[];
+  final deletedAsDir = <bool>[]; // `isDir` of each delete: true = rm -rf
   int listDirCalls = 0; // every listing is an SSH login with the sudo password
   // Thrown by the file operations of the Dateien tab.
   Object? listDirError, deleteError, readFileError;
@@ -631,7 +654,10 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async {
     listDirCalls++;
     if (listDirError != null) throw listDirError!;
-    return dirEntries;
+    return [
+      for (final e in dirEntries)
+        (name: e.name, isDir: e.isDir, isLink: dirLinks.contains(e.name))
+    ];
   }
 
   bool uploadThrows = false;
@@ -663,6 +689,7 @@ class FakeEvccUpdater extends EvccUpdater {
   }) async {
     if (deleteError != null) throw deleteError!;
     deletedPaths.add(path);
+    deletedAsDir.add(isDir);
   }
 
   final downloadedPaths = <String>[];
@@ -1030,8 +1057,8 @@ const _ready = AppConfig(
 );
 
 /// [_ready] with the remote-access offer dismissed. For layout tests that
-/// connect on a narrow surface: in the test font the offer's own row does not
-/// fit there, and it is not what those tests are about.
+/// connect on a narrow surface and are not about the offer's own row — that
+/// one has its own test ("Fernzugriff-Einstieg auf kleinem Display …").
 const _readyNoOffer = AppConfig(
   profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
   activeIndex: 0,
@@ -1733,6 +1760,170 @@ void main() {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
       ..dirEntries = const [(name: 'backup', isDir: true)];
+    final picker =
+        _FakeFilePicker((name: 'backup', bytes: Uint8List.fromList([1])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(u.uploadedTo, isEmpty);
+    expect(find.textContaining('überschreiben?'), findsNothing);
+    expect(
+        find.text('Hier gibt es bereits einen Ordner „backup“ — eine Datei '
+            'kann ihn nicht ersetzen.'),
+        findsOneWidget);
+  });
+
+  // ---- Dateien: a symlink is listed as what it points to ----
+
+  /// Opens the delete question of [name] in the Dateien tab.
+  Future<void> askDelete(WidgetTester tester, String name) async {
+    await tester.tap(find.descendant(
+        of: find.widgetWithText(ListTile, name),
+        matching: find.byIcon(Icons.more_vert)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Löschen'));
+    await tester.pumpAndSettle();
+  }
+
+  const deleteFolder =
+      'Löscht den Ordner samt Inhalt. Das kann nicht rückgängig gemacht werden.';
+  const deleteLink = 'Das ist eine Verknüpfung (Symlink). Gelöscht wird nur die '
+      'Verknüpfung; das, worauf sie zeigt, bleibt erhalten. Das kann nicht '
+      'rückgängig gemacht werden.';
+
+  testWidgets(
+      'Dateien: eine Verknüpfung auf einen Ordner lässt sich betreten, und '
+      'Löschen sagt, dass nur die Verknüpfung geht — ohne -r', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [
+        (name: 'bin', isDir: true), // /bin -> usr/bin
+        (name: 'usr', isDir: true),
+      ]
+      ..dirLinks = const {'bin'};
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    // Listed as the folder it leads to, and entered like one.
+    expect(
+        find.descendant(
+            of: find.widgetWithText(ListTile, 'bin'),
+            matching: find.byIcon(Icons.folder)),
+        findsOneWidget);
+    await tester.tap(find.text('bin'));
+    await tester.pumpAndSettle();
+    expect(find.text('/home/bin'), findsOneWidget);
+    await tester.tap(find.text('..'));
+    await tester.pumpAndSettle();
+    expect(find.text('/home'), findsOneWidget);
+
+    await askDelete(tester, 'bin');
+    expect(find.text('„bin“ löschen?'), findsOneWidget);
+    expect(find.text(deleteLink), findsOneWidget);
+    expect(find.text(deleteFolder), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.deletedPaths, ['/home/bin']);
+    expect(u.deletedAsDir, [false],
+        reason: 'eine Verknüpfung wird nie rekursiv gelöscht');
+  });
+
+  testWidgets(
+      'Dateien: ein echter Ordner wird weiter samt Inhalt gelöscht, mit '
+      'diesem Hinweis', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [
+        (name: 'bin', isDir: true),
+        (name: 'usr', isDir: true),
+      ]
+      ..dirLinks = const {'bin'};
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await askDelete(tester, 'usr');
+    expect(find.text(deleteFolder), findsOneWidget);
+    expect(find.text(deleteLink), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+
+    expect(u.deletedPaths, ['/home/usr']);
+    expect(u.deletedAsDir, [true]);
+  });
+
+  testWidgets(
+      'Dateien: auch bei einer Verknüpfung auf eine Datei sagt Löschen, was '
+      'geht', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [
+        (name: 'resolv.conf', isDir: false),
+        (name: 'hosts', isDir: false),
+      ]
+      ..dirLinks = const {'resolv.conf'};
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await askDelete(tester, 'resolv.conf');
+    expect(find.text(deleteLink), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+
+    // A plain file keeps the short text.
+    await askDelete(tester, 'hosts');
+    expect(find.text(deleteLink), findsNothing);
+    expect(find.text('Das kann nicht rückgängig gemacht werden.'),
+        findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.deletedPaths, ['/home/hosts']);
+    expect(u.deletedAsDir, [false]);
+  });
+
+  testWidgets(
+      'Dateien: heißt eine Verknüpfung wie die gewählte Datei, sagt die '
+      'Rückfrage, dass der Upload die Verknüpfung ersetzt', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'evcc.yaml', isDir: false)]
+      ..dirLinks = const {'evcc.yaml'};
+    final picker =
+        _FakeFilePicker((name: 'evcc.yaml', bytes: Uint8List.fromList([1])));
+    await tester.pumpWidget(page(u, filePicker: picker));
+    await tester.pumpAndSettle();
+    await goDateien(tester);
+
+    await tester.tap(find.byIcon(Icons.upload_file));
+    await tester.pumpAndSettle();
+
+    expect(find.text('„evcc.yaml“ überschreiben?'), findsOneWidget);
+    expect(
+        find.text('In diesem Ordner liegt unter diesem Namen eine Verknüpfung '
+            '(Symlink). Der Upload ersetzt die Verknüpfung durch die Datei; '
+            'das, worauf sie zeigt, bleibt unverändert. Das kann nicht '
+            'rückgängig gemacht werden.'),
+        findsOneWidget);
+    expect(u.uploadedTo, isEmpty);
+    await tester.tap(find.widgetWithText(FilledButton, 'Überschreiben'));
+    await tester.pumpAndSettle();
+    expect(u.uploadedTo, ['/home/evcc.yaml']);
+  });
+
+  testWidgets(
+      'Dateien: eine Verknüpfung auf einen Ordner gleichen Namens wird beim '
+      'Upload wie ein Ordner abgelehnt', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..dirEntries = const [(name: 'backup', isDir: true)]
+      ..dirLinks = const {'backup'};
     final picker =
         _FakeFilePicker((name: 'backup', bytes: Uint8List.fromList([1])));
     await tester.pumpWidget(page(u, filePicker: picker));
@@ -3836,6 +4027,112 @@ void main() {
     expect(find.textContaining('wiederhergestellt'), findsWidgets);
   });
 
+  // A Pi-hole v5 archive cannot be imported from the app; the updater says so
+  // before it connects. The tap is answered with that — not with the question
+  // whether to overwrite the configuration first.
+  for (final v5 in [
+    '/var/backups/pi-tool/pihole-backup-20260706-090000.tar.gz',
+    '/var/backups/pi-tool/sched-pihole-20260706-090000.tar.gz',
+  ]) {
+    testWidgets(
+        'Pi-hole-Backups: ein v5-Archiv (${v5.split('/').last}) wird beim '
+        'Antippen abgelehnt, ohne Rückfrage davor — Download und Löschen '
+        'bleiben', (tester) async {
+      useTallScreen(tester);
+      final ka = _FakeKeepAlive();
+      final u = FakeEvccUpdater()
+        ..services = const [
+          ServiceStatus(
+              id: 'pihole',
+              name: 'Pi-hole',
+              installed: true,
+              version: 'v5.18.3',
+              active: true),
+        ]
+        ..serviceBackups = [v5]
+        ..downloadBytes = Uint8List.fromList([9, 9]);
+      final saved = <String>[];
+      await tester.pumpWidget(page(u,
+          keepAlive: ka, fileSaver: (name, bytes) async => saved.add(name)));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      Future<void> openSheet() async {
+        await tester.tap(find.byKey(const ValueKey('menu-pihole')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Backups verwalten'));
+        await tester.pumpAndSettle();
+      }
+
+      await openSheet();
+      final began = ka.beginCount;
+      await tester.tap(find.text('06.07.2026 09:00 Uhr'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Backup wiederherstellen?'), findsNothing);
+      expect(
+          find.text('Dieses Backup stammt von Pi-hole v5 (.tar.gz) und kann '
+              'nur über die Web-Oberfläche importiert werden (Einstellungen → '
+              'Teleporter).'),
+          findsOneWidget);
+      expect(u.restoredPihole, isEmpty);
+      expect(find.textContaining('wiederhergestellt'), findsNothing);
+      // Nothing ran: no foreground service for it, and the app is free again.
+      expect(ka.beginCount, began);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+
+      // The archive itself can still be fetched and removed.
+      await openSheet();
+      await tester.tap(find.byIcon(Icons.download_outlined));
+      await tester.pumpAndSettle();
+      expect(u.downloadedPaths, [v5]);
+      expect(saved, [v5.split('/').last]);
+
+      await openSheet();
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+      await tester.pumpAndSettle();
+      expect(u.deletedBackups, [v5]);
+    });
+  }
+
+  testWidgets(
+      'Home-Assistant-Backups (.tar.gz) fragen weiter vor dem Wiederherstellen',
+      (tester) async {
+    useTallScreen(tester);
+    const archive =
+        '/var/backups/pi-tool/homeassistant-backup-20260706-090000.tar.gz';
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            version: '2026.9.3',
+            active: true,
+            detail: 'Docker · homeassistant'),
+      ]
+      ..serviceBackups = const [archive];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester.tap(find.byKey(const ValueKey('menu-homeassistant')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backups verwalten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('06.07.2026 09:00 Uhr'));
+    await tester.pumpAndSettle();
+
+    // That ending is this service's own format: asked about as before.
+    expect(find.text('Backup wiederherstellen?'), findsOneWidget);
+    expect(u.restoredHa, isEmpty);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.restoredHa, [archive]);
+  });
+
   testWidgets('backup manager: trash icon deletes after a confirm',
       (tester) async {
     useTallScreen(tester);
@@ -4529,6 +4826,62 @@ void main() {
     // Still shown — but as what they are now: not this host's measured state.
     expect(find.byKey(const Key('sessionConnected')), findsNothing);
     expect(find.byKey(const ValueKey('menu-system')), findsOneWidget);
+    expect(find.textContaining('Stand von vorhin'), findsOneWidget);
+  });
+
+  // A text controller notifies its listeners for every change of its value:
+  // the cursor a tap sets, a selection, the keyboard's composing range. None
+  // of them is an edit of the address.
+  testWidgets(
+      'Tippen in ein Zugangsdaten-Feld, Cursor und Auswahl, ohne den Text zu '
+      'ändern: die Sitzung bleibt, die Karten sind kein „Stand von vorhin"',
+      (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(page(FakeEvccUpdater()));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+
+    void expectSession(String after) {
+      expect(find.byKey(const Key('sessionConnected')), findsOneWidget,
+          reason: after);
+      expect(find.textContaining('Stand von vorhin'), findsNothing,
+          reason: after);
+    }
+
+    expectSession('connect');
+    final host = find.widgetWithText(TextField, 'Host / IP');
+    final controller = tester.widget<TextField>(host).controller!;
+    var notified = 0;
+    controller.addListener(() => notified++);
+
+    await tester.tap(host);
+    await tester.pumpAndSettle();
+    // The tap did reach the field and the controller did say so.
+    expect(controller.selection.isValid, isTrue);
+    expect(notified, greaterThan(0));
+    expectSession('a tap into the host field');
+
+    controller.selection = const TextSelection(baseOffset: 0, extentOffset: 7);
+    await tester.pumpAndSettle();
+    expectSession('a selection');
+
+    controller.value =
+        controller.value.copyWith(composing: const TextRange(start: 0, end: 3));
+    await tester.pumpAndSettle();
+    expectSession('a composing range');
+
+    // The same text typed again is no other address either.
+    await tester.enterText(host, '192.168.178.64');
+    await tester.pumpAndSettle();
+    expectSession('the same text again');
+
+    // A changed text still is one.
+    await tester.enterText(host, '192.168.178.6');
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1)); // drain the auto-save debounce
+    expect(find.byKey(const Key('sessionConnected')), findsNothing);
     expect(find.textContaining('Stand von vorhin'), findsOneWidget);
   });
 
@@ -5909,6 +6262,80 @@ void main() {
     expect(find.text('Fernzugriff einrichten'), findsNothing);
   });
 
+  // Every connected user who has not dismissed the offer sees this row.
+  testWidgets(
+      'Fernzugriff-Einstieg auf kleinem Display mit großer Schrift: läuft '
+      'nicht über, Titel, Knopf und ✕ bleiben im Bild und bedienbar',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ]
+      ..tailscaleUpUrl = null;
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    final title = find.text('Fernzugriff');
+    final oneLine = tester.getSize(title).height;
+
+    shrinkWithLargeFont(tester);
+    await tester.pumpAndSettle();
+
+    // A RenderFlex overflow in the row would be reported here.
+    expect(tester.takeException(), isNull);
+    final button = find.widgetWithText(TextButton, 'Fernzugriff einrichten');
+    final dismiss = find.byKey(const ValueKey('remoteAccessDismiss'));
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    for (final f in [title, button, dismiss]) {
+      final r = tester.getRect(f);
+      expect(r.left, greaterThanOrEqualTo(0));
+      expect(r.right, lessThanOrEqualTo(360));
+    }
+    // The title is not squeezed into a column of letters next to the button:
+    // it is still one line (at 1.5 times the font size), and the button has
+    // moved below it.
+    expect(tester.getSize(title).height, closeTo(oneLine * 1.5, 1));
+    expect(tester.getRect(button).top,
+        greaterThanOrEqualTo(tester.getRect(title).bottom));
+    // The ✕ keeps its place and its size, next to both.
+    expect(tester.getSize(dismiss).width, greaterThanOrEqualTo(48));
+    expect(tester.getRect(dismiss).left,
+        greaterThanOrEqualTo(tester.getRect(button).right));
+
+    // Both still do what they did.
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(u.tailscaleInstallCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Fernzugriff-Einstieg mit genug Platz: Titel und Knopf in einer Zeile, '
+      'der Knopf rechts am ✕ wie bisher', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    final title = tester.getRect(find.text('Fernzugriff'));
+    final button = tester
+        .getRect(find.widgetWithText(TextButton, 'Fernzugriff einrichten'));
+    final dismiss =
+        tester.getRect(find.byKey(const ValueKey('remoteAccessDismiss')));
+    expect(title.center.dy, moreOrLessEquals(button.center.dy, epsilon: 1));
+    expect(title.center.dy, moreOrLessEquals(dismiss.center.dy, epsilon: 1));
+    expect(title.right, lessThan(button.left));
+    expect(button.right, dismiss.left);
+  });
+
   testWidgets('Fernzugriff: einmal ausgeblendet bleibt über Neustarts weg',
       (tester) async {
     useTallScreen(tester);
@@ -7097,6 +7524,29 @@ void main() {
     expect(find.textContaining('Verbindung OK'), findsNothing);
   });
 
+  testWidgets(
+      'Demo: ein Tipp in ein Zugangsdaten-Feld ohne Eingabe beendet die Demo '
+      'nicht', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(demoPage(_FakeStore(emptyProfile)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('demoEntry')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('conn-card-header')));
+    await tester.pumpAndSettle();
+    final host = find.widgetWithText(TextField, 'Host / IP');
+    await tester.tap(host);
+    await tester.pumpAndSettle();
+    // The field has the cursor; nothing was typed.
+    expect(tester.widget<TextField>(host).controller!.selection.isValid, isTrue);
+
+    expect(find.text('Demo-Modus – Beispieldaten, kein echter Pi.'),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('menu-evcc')), findsOneWidget);
+    expect(find.byKey(const Key('sessionConnected')), findsOneWidget);
+  });
+
   testWidgets('Demo-Aktionen landen nicht im Verlauf des echten Pi',
       (tester) async {
     useTallScreen(tester);
@@ -7892,6 +8342,60 @@ void main() {
     expect(find.text('Beheben'), findsNothing);
   });
 
+  // 32-bit Raspberry Pi OS: the fix lets unattended-upgrades install every
+  // update of the origin Raspbian (it has no security suite of its own). The
+  // question before it says so; on a Debian-origin Pi it is what it was.
+  testWidgets(
+      'Sicherheits-Check, automatische Updates: die Rückfrage nennt auf '
+      'Raspbian alle Updates der Paketquelle, sonst Sicherheitsupdates',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system', name: 'System (Pi)', installed: true, active: true)
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    const raspbian = 'Installiert unattended-upgrades und schaltet tägliche '
+        'automatische Updates ein. Auf diesem Pi (32-Bit Raspberry Pi OS) '
+        'sind das alle Updates aus der Paketquelle Raspbian, nicht nur '
+        'Sicherheitsupdates – Raspbian führt dafür keine eigene Quelle. Das '
+        'Raspberry-Pi-Archiv (u. a. Kernel und Firmware) wird dabei nicht '
+        'freigegeben.';
+    const debian = 'Installiert unattended-upgrades und schaltet tägliche '
+        'automatische Sicherheitsupdates ein.';
+    const running = 'enabled\nactive\nAPT::Periodic::Unattended-Upgrade "1";\n';
+
+    for (final (unatt, text) in [
+      // Raspberry Pi OS as shipped: no unattended-upgrades at all.
+      ('disabled\ninactive\nraspbian-origin-uncovered\n', raspbian),
+      ('${running}raspbian-origin-uncovered\n', raspbian),
+      ('disabled\ninactive\n', debian),
+    ]) {
+      // The finding as the parser builds it from the probe's lines.
+      u.securityFindings = [
+        parseSecurityReport('__SEC_UNATT__\n$unatt')
+            .firstWhere((f) => f.title == 'Automatische Sicherheitsupdates')
+      ];
+      await tester.tap(find.byKey(const ValueKey('menu-system')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sicherheits-Check'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Beheben'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('„Automatische Sicherheitsupdates“ beheben?'),
+          findsOneWidget, reason: unatt);
+      expect(find.text(text), findsOneWidget, reason: unatt);
+      await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+      await tester.pumpAndSettle();
+      expect(u.securityFixes, isEmpty);
+    }
+  });
+
   testWidgets(
       'Sicherheits-Check: Pi-hole ohne Passwort → „Beheben" setzt eins und '
       'zeigt es einmalig', (tester) async {
@@ -8209,6 +8713,78 @@ void main() {
     await tester.pumpAndSettle();
     expect(u.tailscaleLoggedOut, isFalse); // tailscale down, kein Logout
     expect(find.text('Tailscale getrennt.'), findsOneWidget);
+  });
+
+  // Under a tailnet address the updater refuses a logout before it runs
+  // anything: the session would cut itself off. The address in the host field
+  // already says so — the question "Abmelden?" must not come first.
+  const tailscaleUp = ServiceStatus(
+      id: 'tailscale',
+      name: 'Tailscale',
+      installed: true,
+      active: true,
+      version: '100.64.0.5',
+      updateKnown: true,
+      aptPackage: 'tailscale');
+
+  Future<void> tapSignOut(WidgetTester tester) async {
+    await tester.tap(find.byKey(const ValueKey('menu-tailscale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Von Tailscale abmelden'));
+    await tester.pumpAndSettle();
+  }
+
+  for (final host in ['100.64.0.5', 'evcc-pi.tail1234.ts.net']) {
+    testWidgets(
+        '„Von Tailscale abmelden" unter der Tailnet-Adresse $host: die '
+        'Ablehnung kommt gleich, ohne Rückfrage davor', (tester) async {
+      useTallScreen(tester);
+      final u = FakeEvccUpdater()..services = const [tailscaleUp];
+      await tester.pumpWidget(page(u,
+          config: AppConfig(
+            profiles: [Profile(name: 'S', host: host, password: 'pw')],
+            activeIndex: 0,
+            disclaimerAccepted: true,
+          )));
+      await tester.pumpAndSettle();
+      await detect(tester);
+
+      await tapSignOut(tester);
+
+      expect(find.text('Abmelden?'), findsNothing);
+      expect(
+          find.text('Die Verbindung läuft über Tailscale und würde beim '
+              'Abmelden abreißen – bitte über die Heimnetz-Adresse verbinden.'),
+          findsOneWidget);
+      // The refusal is the updater's own; nothing was signed out.
+      expect(u.tailscaleSetCalls, 1);
+      expect(u.tailscaleLoggedOut, isNull);
+      expect(find.text('Tailscale abgemeldet.'), findsNothing);
+    });
+  }
+
+  testWidgets(
+      '„Von Tailscale abmelden" unter der Heimnetz-Adresse fragt weiter '
+      'vorher nach', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = const [tailscaleUp];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tapSignOut(tester);
+    expect(find.text('Abmelden?'), findsOneWidget);
+    expect(u.tailscaleSetCalls, 0, reason: 'vor der Bestätigung läuft nichts');
+
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.tailscaleSetCalls, 0);
+
+    await tapSignOut(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.tailscaleLoggedOut, isTrue);
+    expect(find.text('Tailscale abgemeldet.'), findsOneWidget);
   });
 
   // ---- Fernzugriff / Tailscale: Erfolg kommt aus dem Ablauf selbst ----

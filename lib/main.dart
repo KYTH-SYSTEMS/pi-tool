@@ -675,9 +675,16 @@ class _UpdaterPageState extends State<UpdaterPage>
       c.addListener(_scheduleSave);
     }
     // Editing a connection field invalidates the last test result (clears the
-    // green/red Test-Button indicator).
+    // green/red Test-Button indicator). Only a changed text is an edit: a
+    // controller also notifies when the cursor or the selection moves — a tap
+    // into the field — and that changes nothing about the connection.
     for (final c in [_host, _port, _user, _password, _privateKey, _keyPassphrase]) {
-      c.addListener(_invalidateConnTest);
+      var text = c.text;
+      c.addListener(() {
+        if (c.text == text) return;
+        text = c.text;
+        _invalidateConnTest();
+      });
     }
     if (_locked) _unlockAfterSplash();
     // Auto-connect: only at app start, only for a Pi that asked for it, and
@@ -2558,7 +2565,11 @@ class _UpdaterPageState extends State<UpdaterPage>
     final (finding, fix) = choice;
     final desc = switch (fix) {
       SecurityFix.fail2ban => context.l10n.fixDescFail2ban,
-      SecurityFix.autoUpdates => context.l10n.fixDescAutoUpdates,
+      // 32-bit Raspberry Pi OS: there the fix covers every update of its
+      // origin, not security updates alone.
+      SecurityFix.autoUpdates => securityFixLetsRaspbianIn(finding)
+          ? context.l10n.fixDescAutoUpdatesRaspbian
+          : context.l10n.fixDescAutoUpdates,
       SecurityFix.rootLogin => context.l10n.fixDescRootLogin,
       SecurityFix.piholePassword => context.l10n.fixDescPiholePassword,
     };
@@ -2905,12 +2916,15 @@ class _UpdaterPageState extends State<UpdaterPage>
   // ---- service backup management (Pi-hole + Home Assistant) ----
 
   /// Lists a service's backups and lets the user restore, download or delete
-  /// one.
+  /// one. [restoreRefused] names the archives [restore] turns down before it
+  /// connects: for those the tap is answered with that refusal right away,
+  /// without the question that would otherwise come first.
   Future<void> _manageServiceBackups({
     required String servicePrefix,
     required String serviceName,
     required Future<void> Function(SshConfig config, String path) restore,
     required String restoreWarning,
+    bool Function(String path)? restoreRefused,
   }) async {
     if (_busy) return;
     final l10n = context.l10n;
@@ -2923,6 +2937,7 @@ class _UpdaterPageState extends State<UpdaterPage>
           serviceName: serviceName,
           restore: restore,
           restoreWarning: restoreWarning,
+          restoreRefused: restoreRefused,
         );
     List<String>? backups;
     await _guard(() async {
@@ -2939,10 +2954,15 @@ class _UpdaterPageState extends State<UpdaterPage>
     final (action, path) = choice;
     if (action == 'download') return _downloadBackup(config, serviceName, path);
     if (action == 'delete') return _deleteBackup(config, serviceName, path);
-    if (!await _confirm(context.l10n.dialogRestoreBackupTitle, restoreWarning)) {
+    final refused = restoreRefused?.call(path) ?? false;
+    if (!refused &&
+        !await _confirm(context.l10n.dialogRestoreBackupTitle, restoreWarning)) {
       return;
     }
     _beginBusy();
+    // A refusal comes at once, before anything connects: no foreground
+    // service for it.
+    final busyMessage = refused ? null : l10n.busyRestoringService(serviceName);
     await _guard(() async {
       await restore(config, path);
       if (!mounted) return;
@@ -2952,7 +2972,7 @@ class _UpdaterPageState extends State<UpdaterPage>
         _statusOk = true;
       });
       _addHistory(context.l10n.historyServiceBackupRestored(serviceName));
-    }, backgroundMessage: l10n.busyRestoringService(serviceName));
+    }, backgroundMessage: busyMessage);
   }
 
   Future<void> _managePiholeBackups() => _manageServiceBackups(
@@ -2961,6 +2981,9 @@ class _UpdaterPageState extends State<UpdaterPage>
         restoreWarning: context.l10n.restoreWarningPihole,
         restore: (config, path) => _updater.restorePiholeBackup(
             config: config, path: path, onLog: _appendLog),
+        // A Pi-hole v5 archive (.tar.gz): restorePiholeBackup refuses whatever
+        // is not a v6 .zip, with the reason and where it can be imported.
+        restoreRefused: (path) => !path.endsWith('.zip'),
       );
 
   Future<void> _manageHomeAssistantBackups() => _manageServiceBackups(
@@ -3319,13 +3342,19 @@ class _UpdaterPageState extends State<UpdaterPage>
     // file at all.
     final existing = entries.where((e) => e.name == safeName).firstOrNull;
     if (existing != null) {
+      // Also a symlink to a folder: the tab lists it as one, and the upload
+      // script refuses it like one.
       if (existing.isDir) {
         _snack(l10n.snackUploadNameIsFolder(safeName));
         return false;
       }
+      // Any other symlink is replaced itself (the script renames over it):
+      // the file it points to stays as it is, and the question says so.
       if (!await _confirm(
         l10n.dialogOverwriteFileTitle(safeName),
-        l10n.dialogOverwriteFileBody,
+        existing.isLink
+            ? l10n.dialogOverwriteLinkBody
+            : l10n.dialogOverwriteFileBody,
         confirmLabel: l10n.actionOverwrite,
         destructive: true,
       )) {
@@ -3354,9 +3383,12 @@ class _UpdaterPageState extends State<UpdaterPage>
     final l10n = context.l10n; // captured: dialog and delete await
     if (!await _confirm(
       context.l10n.dialogDeleteFileTitle(entry.name),
-      entry.isDir
-          ? context.l10n.dialogDeleteFolderBody
-          : context.l10n.dialogDeleteFileBody,
+      // A symlink to a folder is listed as a folder — what goes is the link.
+      entry.isLink
+          ? context.l10n.dialogDeleteLinkBody
+          : entry.isDir
+              ? context.l10n.dialogDeleteFolderBody
+              : context.l10n.dialogDeleteFileBody,
       destructive: true,
     )) {
       return false;
@@ -3365,7 +3397,9 @@ class _UpdaterPageState extends State<UpdaterPage>
       await _updater.deleteRemotePath(
           config: c,
           path: joinRemotePath(dir, entry.name),
-          isDir: entry.isDir,
+          // A link is deleted as a file, without -r: what it points to is
+          // never descended into.
+          isDir: entry.isDir && !entry.isLink,
           onLog: _appendLog);
       if (mounted) _snack(l10n.snackDeleted(entry.name));
       return true;
@@ -5277,21 +5311,31 @@ class _UpdaterPageState extends State<UpdaterPage>
           children: [
             Icon(Icons.travel_explore, size: 18, color: cs.onSurfaceVariant),
             const SizedBox(width: 10),
+            // One line while title and button fit next to each other. On a
+            // narrow display or with a large font the button moves below the
+            // title instead of pushing the row past its edge.
             Expanded(
-              child: Text(context.l10n.remoteAccessTitle,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-            ),
-            // Pi already carries a tailnet IP → the open question is whether
-            // THIS phone reaches it, so offer the check, not the setup.
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () => _proGate(_tailscaleIp.isNotEmpty
-                      ? _checkRemoteAccess
-                      : _setupRemoteAccess),
-              child: Text(_tailscaleIp.isNotEmpty
-                  ? context.l10n.actionCheckRemoteAccess
-                  : context.l10n.actionSetupRemoteAccess),
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(context.l10n.remoteAccessTitle,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  // Pi already carries a tailnet IP → the open question is
+                  // whether THIS phone reaches it, so offer the check, not
+                  // the setup.
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _proGate(_tailscaleIp.isNotEmpty
+                            ? _checkRemoteAccess
+                            : _setupRemoteAccess),
+                    child: Text(_tailscaleIp.isNotEmpty
+                        ? context.l10n.actionCheckRemoteAccess
+                        : context.l10n.actionSetupRemoteAccess),
+                  ),
+                ],
+              ),
             ),
             IconButton(
               key: const ValueKey('remoteAccessDismiss'),
@@ -6224,7 +6268,14 @@ class _UpdaterPageState extends State<UpdaterPage>
   Future<void> _tailscaleSet({required bool logout}) async {
     if (_busy) return;
     final l10n = context.l10n;
+    // Under a tailnet address the updater turns both down before it runs
+    // anything — the session would cut itself off. The address already says
+    // so, and then there is nothing to ask first: the answer to the tap is
+    // that refusal, in the updater's words. Not in the demo, whose actions
+    // never use the address in the field.
+    final refused = !_demoMode && isTailnetHost(_host.text.trim());
     if (logout &&
+        !refused &&
         !await _confirm(context.l10n.dialogSignOutTitle,
             context.l10n.dialogSignOutTailscaleBody)) {
       return;

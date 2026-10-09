@@ -82,6 +82,9 @@ void main() {
     expect(entries.map((e) => e.name), containsAll(<String>['backups', 'evcc.yaml']));
     expect(entries.firstWhere((e) => e.name == 'backups').isDir, isTrue);
     expect(entries.firstWhere((e) => e.name == 'evcc.yaml').isDir, isFalse);
+    // The whole sample directory, none of it a symlink.
+    expect(entries, hasLength(5));
+    expect(entries.any((e) => e.isLink), isFalse);
 
     final b64 = demoResponseFor(buildReadFileCommand('/home/pi/evcc.yaml')).trim();
     expect(utf8.decode(base64.decode(b64)), contains('evcc'));

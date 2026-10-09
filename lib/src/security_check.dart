@@ -82,6 +82,20 @@ SecurityFix? securityFixFor(SecurityFinding f) {
   return null;
 }
 
+/// How the automatic-updates finding names the origin of a 32-bit Raspberry
+/// Pi OS, in each of its warnings there ([securityFixLetsRaspbianIn]).
+const String _raspbianOrigin = 'Paketquelle Raspbian (32-Bit Raspberry Pi OS)';
+
+/// Whether the fix of [f] is the automatic-updates one on a Pi that takes its
+/// packages from the origin Raspbian. There the fix lets unattended-upgrades
+/// install ALL updates of that origin — Raspbian has no separate security
+/// suite — and the confirmation has to say so instead of "security updates".
+/// Never true on a Debian-origin system: the probe prints nothing about
+/// Raspbian there.
+bool securityFixLetsRaspbianIn(SecurityFinding f) =>
+    securityFixFor(f) == SecurityFix.autoUpdates &&
+    f.detail.contains(_raspbianOrigin);
+
 /// Title of the Pi-hole web-login finding (only present when Pi-hole is).
 const String piholeWebFindingTitle = 'Pi-hole-Weboberfläche';
 
@@ -308,6 +322,12 @@ List<SecurityFinding> parseSecurityReport(String output) {
   // about whether unattended-upgrades runs, so the verdicts below stay what
   // they are without it.
   final raspbianLeftOut = unatt.remove('raspbian-origin-uncovered');
+  // The fix behind the two warnings that are not about Raspbian lets that
+  // origin in as well (see [buildSecurityFixScript]) — on such a Pi they name
+  // it too, and [securityFixLetsRaspbianIn] reads it from there.
+  final onRaspbian = raspbianLeftOut
+      ? ' Dieser Pi bezieht seine Pakete aus der $_raspbianOrigin.'
+      : '';
   if (unatt.isEmpty) {
     updates = (
       title: 'Automatische Sicherheitsupdates',
@@ -328,15 +348,15 @@ List<SecurityFinding> parseSecurityReport(String output) {
             level: SecurityLevel.warn,
             detail: 'unattended-upgrades ist installiert, aber abgeschaltet '
                 '(APT::Periodic::Unattended-Upgrade "0") — es wird nichts '
-                'automatisch installiert.'
+                'automatisch installiert.$onRaspbian'
           )
         : raspbianLeftOut
             ? (
                 title: 'Automatische Sicherheitsupdates',
                 level: SecurityLevel.warn,
                 detail: 'unattended-upgrades läuft, installiert aber keine '
-                    'Updates aus der Paketquelle Raspbian (32-Bit Raspberry Pi '
-                    'OS) — sie fehlt in Unattended-Upgrade::Origins-Pattern.'
+                    'Updates aus der $_raspbianOrigin — sie fehlt in '
+                    'Unattended-Upgrade::Origins-Pattern.'
               )
             : (
                 title: 'Automatische Sicherheitsupdates',
@@ -348,7 +368,7 @@ List<SecurityFinding> parseSecurityReport(String output) {
       title: 'Automatische Sicherheitsupdates',
       level: SecurityLevel.warn,
       detail: 'Keine automatischen Sicherheitsupdates — unattended-upgrades '
-          'aktivieren empfohlen.'
+          'aktivieren empfohlen.$onRaspbian'
     );
   }
 

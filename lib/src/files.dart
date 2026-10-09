@@ -26,17 +26,20 @@ bool isProbablyTextFile(Uint8List bytes) {
 }
 
 /// Lists a directory (sudo, so root-only paths work too): one
-/// `<type>\t<name>\0` record per entry, dotfiles included, without `.`/`..`.
+/// `<own type><type>\t<name>\0` record per entry, dotfiles included, without
+/// `.`/`..`.
 ///
 /// `%Y` is the type BEHIND a symlink (`d` for /bin -> usr/bin on a merged-usr
 /// system, `N` for a dangling link) — `ls -p` marked such a link as a file and
-/// it could not be entered. `-H` follows a link only when it is the directory
+/// it could not be entered. `%y` in front of it is the entry itself, `l` for
+/// a symlink: deleting removes the link, not what it points to, and has to
+/// say so. `-H` follows a link only when it is the directory
 /// asked for. NUL-terminated because a name may hold anything else, a line
 /// break included. Messages of sudo and find stay on stderr (LC_ALL=C: sudo's
 /// are matched in English), so none of them can turn up as an entry.
 String buildListDirCommand(String path) =>
     "LC_ALL=C sudo -S -p '' find -H ${shSingleQuote(path)} "
-    r"-mindepth 1 -maxdepth 1 -printf '%Y\t%f\0'";
+    r"-mindepth 1 -maxdepth 1 -printf '%y%Y\t%f\0'";
 
 /// Max bytes fetched for a file preview — caps memory so tapping a multi-GB
 /// log/db/.img can't OOM the app.
@@ -116,27 +119,30 @@ String buildDownloadFileCommand(String path) =>
     'base64 -- ${shSingleQuote(path)}';
 
 /// Deletes a file (`rm -f`) or directory (`rm -rf`) as root. `--` stops option
-/// parsing and the path is single-quoted.
+/// parsing and the path is single-quoted. A symlink is deleted as a file,
+/// whatever it points to: only the link goes.
 String buildDeleteCommand({required String path, required bool isDir}) =>
     // LC_ALL=C so isSudoPasswordFailure can flag a rejected password (localized
     // Pis print a translated sudo error otherwise).
     "LC_ALL=C sudo -S -p '' rm -${isDir ? 'rf' : 'f'} -- ${shSingleQuote(path)}";
 
-/// One directory entry.
-typedef DirEntry = ({String name, bool isDir});
+/// One directory entry. [isDir] is what it is to enter or open — for a
+/// symlink, what it points to; [isLink] says that the entry itself is a
+/// symlink.
+typedef DirEntry = ({String name, bool isDir, bool isLink});
 
 /// Parses [buildListDirCommand] output: dirs first, then files, alphabetical.
-/// A record is `<type>\t<name>` up to its NUL; what follows the last NUL was
-/// cut off and is no entry. The name is taken as it is — trimmed, it would
-/// name another file in the paths of open and delete.
+/// A record is `<own type><type>\t<name>` up to its NUL; what follows the last
+/// NUL was cut off and is no entry. The name is taken as it is — trimmed, it
+/// would name another file in the paths of open and delete.
 List<DirEntry> parseDirListing(String out) {
   final entries = <DirEntry>[];
   final records = out.split('\x00')..removeLast();
   for (final r in records) {
-    if (r.length < 3 || r[1] != '\t') continue;
-    final name = r.substring(2);
+    if (r.length < 4 || r[2] != '\t') continue;
+    final name = r.substring(3);
     if (name == '.' || name == '..') continue;
-    entries.add((name: name, isDir: r[0] == 'd'));
+    entries.add((name: name, isDir: r[1] == 'd', isLink: r[0] == 'l'));
   }
   entries.sort((a, b) {
     if (a.isDir != b.isDir) return a.isDir ? -1 : 1;

@@ -173,7 +173,7 @@ void main() {
       expect(
           buildListDirCommand('/etc'),
           "LC_ALL=C sudo -S -p '' find -H '/etc' -mindepth 1 -maxdepth 1 "
-          r"-printf '%Y\t%f\0'");
+          r"-printf '%y%Y\t%f\0'");
       // Size-capped read (head -c) so a huge file can't OOM the app.
       expect(
           buildReadFileCommand('/etc/evcc.yaml'),
@@ -240,7 +240,8 @@ void main() {
         [for (final e in parseDirListing(out)) (e.name, e.isDir)];
 
     test('dirs first, then files, alphabetical', () {
-      expect(parsed('d\tetc\x00f\tzeta.txt\x00d\tapps\x00f\talpha.conf\x00'), [
+      expect(
+          parsed('dd\tetc\x00ff\tzeta.txt\x00dd\tapps\x00ff\talpha.conf\x00'), [
         ('apps', true),
         ('etc', true),
         ('alpha.conf', false),
@@ -250,7 +251,8 @@ void main() {
 
     test('a symlink counts as what it points to', () {
       // %Y: d for /bin -> usr/bin, N for a dangling link, L for a loop.
-      expect(parsed('d\tbin\x00f\tvmlinuz\x00N\tdangling\x00L\tloop\x00'), [
+      expect(
+          parsed('ld\tbin\x00lf\tvmlinuz\x00lN\tdangling\x00lL\tloop\x00'), [
         ('bin', true),
         ('dangling', false),
         ('loop', false),
@@ -258,12 +260,28 @@ void main() {
       ]);
     });
 
+    test('a symlink is flagged as one, whatever it points to', () {
+      // %y is the entry itself: only then can deleting say what it removes.
+      final byName = {
+        for (final e in parseDirListing('ld\tbin\x00dd\tusr\x00lf\tvmlinuz\x00'
+            'ff\tnotes.txt\x00lN\tdangling\x00'))
+          e.name: e.isLink
+      };
+      expect(byName, {
+        'bin': true,
+        'usr': false,
+        'vmlinuz': true,
+        'notes.txt': false,
+        'dangling': true,
+      });
+    });
+
     test('names stay as they are: spaces, tabs, line breaks', () {
       // They go into the paths of open and delete — a trimmed name is
       // another file.
       expect(
-          parsed('f\ttrailing \x00f\t leading\x00f\ta\tb\x00'
-              'f\tline\nbreak\x00d\tdir \x00'),
+          parsed('ff\ttrailing \x00ff\t leading\x00ff\ta\tb\x00'
+              'ff\tline\nbreak\x00dd\tdir \x00'),
           [
             ('dir ', true),
             (' leading', false),
@@ -278,7 +296,7 @@ void main() {
     });
 
     test('a record cut off before its terminator is not an entry', () {
-      expect(parsed('f\tdone\x00f\thalf'), [('done', false)]);
+      expect(parsed('ff\tdone\x00ff\thalf'), [('done', false)]);
     });
 
     test('text that is not a record is not an entry', () {
@@ -287,7 +305,9 @@ void main() {
       expect(
           parseDirListing("find: '/x': No such file or directory\n\x00"),
           isEmpty);
-      expect(parseDirListing('\x00\x00f\t\x00'), isEmpty);
+      expect(parseDirListing('\x00\x00ff\t\x00'), isEmpty);
+      // One type letter only is not this listing's format.
+      expect(parseDirListing('f\tnotes.txt\x00'), isEmpty);
     });
   });
 
@@ -301,6 +321,16 @@ void main() {
       expect(r.code, 0, reason: r.err);
       expect(r.err, isEmpty);
       return [for (final e in parseDirListing(r.out)) (e.name, e.isDir)];
+    }
+
+    /// The names in [rel] the listing flags as symlinks, sorted.
+    Future<List<String>> linkNames(String rel) async {
+      final r = await box.exec(buildListDirCommand('${box.root}/$rel'));
+      expect(r.code, 0, reason: r.err);
+      return [
+        for (final e in parseDirListing(r.out))
+          if (e.isLink) e.name
+      ]..sort();
     }
 
     test('directories, files, hidden files, names with spaces', () async {
@@ -321,6 +351,7 @@ void main() {
         ('trailing ', false),
         ('two words', false),
       ]);
+      expect(await linkNames('home/pi'), isEmpty);
     });
 
     test('an empty directory lists nothing', () async {
@@ -356,8 +387,11 @@ void main() {
         ('file.txt', false),
         ('to-file', false),
       ]);
+      // Each of them is flagged as the link it is; what they point to is not.
+      expect(await linkNames('home/pi'), ['dangling', 'to-dir', 'to-file']);
       // … and entering one lists what it points to.
       expect(await list('home/pi/to-dir'), [('inside.txt', false)]);
+      expect(await linkNames('home/pi/to-dir'), isEmpty);
     });
 
     test('a missing directory: nothing listed, exit status and message',
@@ -533,6 +567,33 @@ void main() {
       expect(box.ls('home/pi/real'), isEmpty);
     });
 
+    test('a symlink to a file: the upload replaces the link, not its target',
+        () async {
+      final links = box.setup('printf alt > home/pi/real.txt\n'
+          'ln -s real.txt home/pi/link.txt\n'
+          '[ -L home/pi/link.txt ]');
+      if (!links) {
+        markTestSkipped('no symlinks on this platform');
+        return;
+      }
+      final r = await upload('home/pi/link.txt', 'neu');
+      expect(r.code, 0, reason: r.err);
+      expect(r.out.trim(), 'UPLOAD_OK');
+      // What the app's question says before it: the link is gone, and the
+      // file it pointed to is as it was.
+      expect(
+          box.setup('[ ! -L home/pi/link.txt ] && '
+              '[ "\$(cat home/pi/real.txt)" = alt ]'),
+          isTrue);
+      // Git Bash only emulates links, and a rename over one lands under the
+      // emulation's own name; where they are real, the name now holds the
+      // uploaded file itself.
+      if (!Platform.isWindows) {
+        expect(text('home/pi/link.txt'), 'neu');
+        expect(box.ls('home/pi'), ['link.txt', 'real.txt']);
+      }
+    });
+
     test('a failure half-way: no temp file stays, the old file is untouched',
         () async {
       File(box.host('home/pi/notes.txt')).writeAsStringSync('alt\n');
@@ -555,6 +616,73 @@ void main() {
       expect(r.code, 0, reason: r.err);
       expect(box.ls('home/pi'), ["a'; mkdir pwned; '.txt"]);
       expect(Directory(box.host('pwned')).existsSync(), isFalse);
+    });
+  }, skip: _needsBash);
+
+  group('buildDeleteCommand in bash', () {
+    late _Box box;
+    setUp(() => box = _Box());
+    tearDown(() => box.dispose());
+
+    Future<_Run> delete(String rel, {required bool isDir}) =>
+        box.exec(buildDeleteCommand(path: '${box.root}/$rel', isDir: isDir));
+
+    test('a file, and a directory with what is in it', () async {
+      expect(
+          box.setup('mkdir home/pi/dir\n'
+              ': > home/pi/dir/inside.txt\n'
+              ': > home/pi/file.txt\n'
+              ': > home/pi/keep.txt'),
+          isTrue);
+      final file = await delete('home/pi/file.txt', isDir: false);
+      expect(file.code, 0, reason: file.err);
+      final dir = await delete('home/pi/dir', isDir: true);
+      expect(dir.code, 0, reason: dir.err);
+      expect(box.ls('home/pi'), ['keep.txt']);
+    });
+
+    test('a directory deleted as a file stays, with all that is in it',
+        () async {
+      expect(box.setup('mkdir home/pi/dir\n: > home/pi/dir/inside.txt'),
+          isTrue);
+      final r = await delete('home/pi/dir', isDir: false);
+      expect(r.code, isNot(0));
+      expect(box.ls('home/pi/dir'), ['inside.txt']);
+    });
+
+    // The files tab lists a symlink to a directory as a folder. The app
+    // deletes it as the link it is (`rm -f`); with `-r` rm would not follow
+    // it either.
+    for (final isDir in [false, true]) {
+      test(
+          'a symlink to a directory, rm ${isDir ? '-rf' : '-f'}: only the '
+          'link goes', () async {
+        final links = box.setup('mkdir home/pi/target\n'
+            ': > home/pi/target/inside.txt\n'
+            'ln -s target home/pi/to-dir\n'
+            '[ -L home/pi/to-dir ]');
+        if (!links) {
+          markTestSkipped('no symlinks on this platform');
+          return;
+        }
+        final r = await delete('home/pi/to-dir', isDir: isDir);
+        expect(r.code, 0, reason: r.err);
+        expect(box.ls('home/pi'), ['target']);
+        expect(box.ls('home/pi/target'), ['inside.txt']);
+      });
+    }
+
+    test('a dangling symlink is removed like any other link', () async {
+      final links = box.setup('ln -s nowhere home/pi/dangling\n'
+          ': > home/pi/keep.txt\n'
+          '[ -L home/pi/dangling ]');
+      if (!links) {
+        markTestSkipped('no symlinks on this platform');
+        return;
+      }
+      final r = await delete('home/pi/dangling', isDir: false);
+      expect(r.code, 0, reason: r.err);
+      expect(box.ls('home/pi'), ['keep.txt']);
     });
   }, skip: _needsBash);
 

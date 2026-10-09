@@ -216,6 +216,7 @@ __SEC_PORTS__
           'Paketquelle Raspbian (32-Bit Raspberry Pi OS) — sie fehlt in '
           'Unattended-Upgrade::Origins-Pattern.');
       expect(securityFixFor(f), SecurityFix.autoUpdates);
+      expect(securityFixLetsRaspbianIn(f), isTrue);
     });
 
     test('without that line the verdict is the one from before', () {
@@ -223,6 +224,7 @@ __SEC_PORTS__
       expect(f.level, SecurityLevel.ok);
       expect(f.detail, 'unattended-upgrades läuft.');
       expect(securityFixFor(f), isNull);
+      expect(securityFixLetsRaspbianIn(f), isFalse);
     });
 
     test('switched off or not installed: that finding comes first', () {
@@ -240,6 +242,65 @@ __SEC_PORTS__
       expect(securityFixFor(missing), SecurityFix.autoUpdates);
     });
 
+    // The fix then installs ALL updates of Raspbian (it has no security suite
+    // of its own). The finding names the origin, and the confirmation of the
+    // fix is chosen by it — in each of the three warnings, the one of a Pi
+    // without unattended-upgrades (the state Raspberry Pi OS ships in) first.
+    test('each warning on Raspbian names the origin; its fix lets Raspbian in',
+        () {
+      const note = ' Dieser Pi bezieht seine Pakete aus der Paketquelle '
+          'Raspbian (32-Bit Raspberry Pi OS).';
+      final missing = updatesOf(
+          '__SEC_UNATT__\ndisabled\ninactive\nraspbian-origin-uncovered\n');
+      expect(
+          missing.detail,
+          'Keine automatischen Sicherheitsupdates — unattended-upgrades '
+          'aktivieren empfohlen.$note');
+      final off = updatesOf('__SEC_UNATT__\nenabled\nactive\n'
+          'APT::Periodic::Unattended-Upgrade "0";\n'
+          'raspbian-origin-uncovered\n');
+      expect(
+          off.detail,
+          'unattended-upgrades ist installiert, aber abgeschaltet '
+          '(APT::Periodic::Unattended-Upgrade "0") — es wird nichts '
+          'automatisch installiert.$note');
+      final uncovered = updatesOf('${running}raspbian-origin-uncovered\n');
+      for (final f in [missing, off, uncovered]) {
+        expect(securityFixLetsRaspbianIn(f), isTrue, reason: f.detail);
+      }
+    });
+
+    test('Debian origins: the warnings and their fix are what they were', () {
+      final missing = updatesOf('__SEC_UNATT__\ndisabled\ninactive\n');
+      expect(
+          missing.detail,
+          'Keine automatischen Sicherheitsupdates — unattended-upgrades '
+          'aktivieren empfohlen.');
+      final off = updatesOf('__SEC_UNATT__\nenabled\nactive\n'
+          'APT::Periodic::Unattended-Upgrade "0";\n');
+      expect(
+          off.detail,
+          'unattended-upgrades ist installiert, aber abgeschaltet '
+          '(APT::Periodic::Unattended-Upgrade "0") — es wird nichts '
+          'automatisch installiert.');
+      for (final f in [missing, off]) {
+        expect(securityFixFor(f), SecurityFix.autoUpdates);
+        expect(securityFixLetsRaspbianIn(f), isFalse, reason: f.detail);
+      }
+    });
+
+    test('only the automatic-updates fix can let Raspbian in', () {
+      // Another finding that happened to name the origin changes nothing.
+      expect(
+          securityFixLetsRaspbianIn((
+            title: 'fail2ban (Brute-Force-Schutz)',
+            level: SecurityLevel.info,
+            detail: 'fail2ban nicht aktiv — Paketquelle Raspbian (32-Bit '
+                'Raspberry Pi OS).'
+          )),
+          isFalse);
+    });
+
     // systemctl gave no answer at all: the line says which origin is in use,
     // not whether unattended-upgrades runs — unknown stays unknown.
     test('that line alone determines nothing', () {
@@ -247,6 +308,7 @@ __SEC_PORTS__
       expect(f.level, SecurityLevel.info);
       expect(f.detail, 'Konnte nicht ermittelt werden.');
       expect(securityFixFor(f), isNull);
+      expect(securityFixLetsRaspbianIn(f), isFalse);
     });
   });
 
@@ -578,6 +640,8 @@ if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
           'inactive',
           'APT::Periodic::Unattended-Upgrade "1";',
         ]);
+        expect(securityFixLetsRaspbianIn(await finding('Sicherheitsupdates')),
+            isFalse);
         await fix(SecurityFix.autoUpdates);
         expect(await section('__SEC_UNATT__'), [
           'enabled',
@@ -603,6 +667,30 @@ if [ -n "$2" ]; then dump | "$REAL_GREP" -F -- "$2"; else dump; fi''',
         expect(f.level, SecurityLevel.warn);
         expect(f.detail, contains('Raspbian'));
         expect(securityFixFor(f), SecurityFix.autoUpdates);
+        expect(securityFixLetsRaspbianIn(f), isTrue);
+      });
+
+      test('Raspbian without unattended-upgrades, as shipped: the warning '
+          'names the origin, and its fix is the one that lets Raspbian in',
+          () async {
+        pi.put('/state/policy', _policyRaspbian);
+        expect(await section('__SEC_UNATT__'), [
+          'disabled',
+          'inactive',
+          'APT::Periodic::Unattended-Upgrade "1";',
+          'raspbian-origin-uncovered',
+        ]);
+        final f = await finding('Sicherheitsupdates');
+        expect(f.level, SecurityLevel.warn);
+        expect(f.detail, startsWith('Keine automatischen'));
+        expect(securityFixFor(f), SecurityFix.autoUpdates);
+        expect(securityFixLetsRaspbianIn(f), isTrue);
+        // What the confirmation then says is what the fix does here.
+        final r = await fix(SecurityFix.autoUpdates);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines.last, 'SECFIX_OK');
+        expect(pi.read(originsFile), contains('origin=Raspbian,'));
+        expect((await finding('Sicherheitsupdates')).level, SecurityLevel.ok);
       });
 
       test('Raspbian: the fix lets that origin in, and only that one', () async {

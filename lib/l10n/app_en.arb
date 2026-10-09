@@ -617,6 +617,7 @@
     }
   },
   "dialogOverwriteFileBody": "This folder already contains a file with this name. It will be replaced. This cannot be undone.",
+  "dialogOverwriteLinkBody": "This folder already contains a symbolic link with this name. The upload replaces the link with the file; what it points to stays unchanged. This cannot be undone.",
   "actionOverwrite": "Overwrite",
   "snackUploadNameIsFolder": "A folder named \"{name}\" already exists here — a file cannot replace it.",
   "@snackUploadNameIsFolder": {
@@ -635,6 +636,7 @@
     }
   },
   "dialogDeleteFolderBody": "Deletes the folder and its contents. This cannot be undone.",
+  "dialogDeleteLinkBody": "This is a symbolic link. Only the link is deleted; what it points to is kept. This cannot be undone.",
   "dialogDeleteFileBody": "This cannot be undone.",
   "snackDeleted": "Deleted: {name}",
   "@snackDeleted": {
@@ -990,6 +992,7 @@
   "statusSecurityFixApplied": "Security fix applied.",
   "fixDescFail2ban": "Installs fail2ban and enables it — blocks SSH brute-force attempts automatically.",
   "fixDescAutoUpdates": "Installs unattended-upgrades and turns on daily automatic security updates.",
+  "fixDescAutoUpdatesRaspbian": "Installs unattended-upgrades and turns on daily automatic updates. On this Pi (32-bit Raspberry Pi OS) that means all updates from the Raspbian package source, not only security updates – Raspbian has no separate source for those. The Raspberry Pi archive (kernel and firmware among them) is not included.",
   "fixDescRootLogin": "Sets PermitRootLogin no (as a drop-in, validated with sshd -t; the change is rolled back if anything is off). Your current connection stays up.",
   "dialogUpdateContainerTitle": "Update container \"{name}\"?",
   "@dialogUpdateContainerTitle": {

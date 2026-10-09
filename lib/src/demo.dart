@@ -248,13 +248,13 @@ const String _securityReport = '__SEC_SSHD__\n'
     '0.0.0.0:80\n'
     '0.0.0.0:7070\n';
 
-/// Canned listing in the format of `buildListDirCommand` (`<type>\t<name>\0`),
-/// parsed by `parseDirListing`.
-const String _dirListing = 'd\tbackups\x00'
-    'd\tlogs\x00'
-    'f\tevcc.yaml\x00'
-    'f\tevcc.db\x00'
-    'f\tREADME.md\x00';
+/// Canned listing in the format of `buildListDirCommand`
+/// (`<own type><type>\t<name>\0`), parsed by `parseDirListing`.
+const String _dirListing = 'dd\tbackups\x00'
+    'dd\tlogs\x00'
+    'ff\tevcc.yaml\x00'
+    'ff\tevcc.db\x00'
+    'ff\tREADME.md\x00';
 
 /// A small sample file shown when previewing/downloading in the browser.
 const String _sampleFileText = '# evcc – Demo-Konfiguration\n'

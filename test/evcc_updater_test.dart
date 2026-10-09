@@ -1839,11 +1839,21 @@ void main() {
     test('listDir lists a directory as root (password piped)', () async {
       final cmd = buildListDirCommand('/home/pi');
       final runner =
-          FakeSshRunner({cmd: [_r('d\tbackups\x00f\tnotes.txt\x00')]});
+          FakeSshRunner({cmd: [_r('dd\tbackups\x00ff\tnotes.txt\x00')]});
       final e = await _updaterWith(runner)
           .listDir(config: _config, path: '/home/pi', onLog: (_) {});
       expect(e.map((x) => x.name).toList(), ['backups', 'notes.txt']);
       expect(runner.stdinByCommand[cmd], 'sekret\n');
+    });
+
+    test('listDir: a symlink is listed as what it points to, and as a link',
+        () async {
+      final e = await list(_r('ld\tbin\x00dd\tusr\x00lf\tvmlinuz\x00'));
+      expect(e, [
+        (name: 'bin', isDir: true, isLink: true),
+        (name: 'usr', isDir: true, isLink: false),
+        (name: 'vmlinuz', isDir: false, isLink: true),
+      ]);
     });
 
     test('listDir: a rejected sudo password is a sudo error, not a listing',
@@ -1867,7 +1877,7 @@ void main() {
     });
 
     test('listDir without an exit status is not a listing', () async {
-      await expectLater(list(_r('d\tbackups\x00', exitCode: null)),
+      await expectLater(list(_r('dd\tbackups\x00', exitCode: null)),
           _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')));
     });
 
@@ -1877,7 +1887,7 @@ void main() {
       // find lists the others and exits 1.
       final log = <String>[];
       final e = await list(
-          _r('f\tbus\x00d\tsystemd\x00',
+          _r('ff\tbus\x00dd\tsystemd\x00',
               stderr: "find: '/home/pi/gvfs': Permission denied\n",
               exitCode: 1),
           log: log);
@@ -1886,7 +1896,7 @@ void main() {
     });
 
     test('listDir: what sudo says on stderr is not an entry', () async {
-      final e = await list(_r('f\tnotes.txt\x00',
+      final e = await list(_r('ff\tnotes.txt\x00',
           stderr: 'sudo: unable to resolve host pi: Name or service not '
               'known\n'));
       expect(e.map((x) => x.name).toList(), ['notes.txt']);
@@ -1896,7 +1906,7 @@ void main() {
       // The second name ends in a line break: in the listing, sudo's words
       // then end a line, exactly as they would in a message of sudo.
       final e = await list(
-          _r('f\tSorry, try again.\x00f\tSorry, try again.\n\x00'));
+          _r('ff\tSorry, try again.\x00ff\tSorry, try again.\n\x00'));
       expect(e.map((x) => x.name).toList(),
           ['Sorry, try again.', 'Sorry, try again.\n']);
     });
@@ -5310,25 +5320,40 @@ void main() {
       }
     });
 
+    /// What [dockerListStateSudoProbe] prints around [listing], sudo's
+    /// stdout: the section marker in front of it, the end marker behind it.
+    String sudoOut(String listing) =>
+        '@@PT@@DOCKER@@PT@@\n$listing\n@@PT@@$detectEndKey@@PT@@\n';
+
+    test('the sudo probe is the sudo listing between two markers, the end '
+        'marker printed whatever sudo returned', () {
+      expect(
+          dockerListStateSudoProbe,
+          'echo @@PT@@DOCKER@@PT@@; $dockerListStateSudoCommand; '
+          'echo; echo @@PT@@$detectEndKey@@PT@@');
+    });
+
     test('docker needs sudo: the state comes from the sudo listing', () async {
       final runner = FakeSshRunner({
         // Real docker reports this on stderr; the batch merges it (2>&1).
         dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
-        dockerListStateSudoCommand: [
-          _r('evcc|evcc/evcc:latest|restarting\n')
+        dockerListStateSudoProbe: [
+          _r(sudoOut('evcc|evcc/evcc:latest|restarting\n'))
         ],
       });
       final byId = await detect(runner);
       expect(byId['evcc']!.installed, isTrue);
       expect(byId['evcc']!.active, isFalse);
-      expect(runner.stdinByCommand[dockerListStateSudoCommand], 'sekret\n');
-      expect(dockerListStateSudoCommand, isNot(contains('sekret')));
+      expect(runner.stdinByCommand[dockerListStateSudoProbe], 'sekret\n');
+      expect(dockerListStateSudoProbe, isNot(contains('sekret')));
     });
 
     test('allowSudoForDocker:false never sends the password', () async {
       final runner = FakeSshRunner({
         dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
-        dockerListStateSudoCommand: [_r('evcc|evcc/evcc:latest|running\n')],
+        dockerListStateSudoProbe: [
+          _r(sudoOut('evcc|evcc/evcc:latest|running\n'))
+        ],
       });
       final byId = await detect(runner, allowSudoForDocker: false);
       expect(byId['evcc']!.installed, isFalse);
@@ -5338,16 +5363,96 @@ void main() {
     test('a rejected sudo password: logged, no Docker cards', () async {
       final runner = FakeSshRunner({
         dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
-        dockerListStateSudoCommand: [
-          _r('', stderr: 'Sorry, try again.\nsudo: 1 incorrect password attempt',
-              exitCode: 1)
+        // The shell prints the end marker whatever sudo made of it.
+        dockerListStateSudoProbe: [
+          _r(sudoOut(''),
+              stderr: 'Sorry, try again.\nsudo: 1 incorrect password attempt')
         ],
       });
       final log = <String>[];
       final list = await _updaterWith(runner)
           .detectServices(config: _config, onLog: log.add);
       expect(list.firstWhere((s) => s.id == 'evcc').installed, isFalse);
+      expect(list.firstWhere((s) => s.id == 'homeassistant').installed, isFalse);
+      // The rest of the detection is not in doubt.
+      expect(list.firstWhere((s) => s.id == 'system').installed, isTrue);
       expect(log.join('\n'), contains('sudo-Passwort abgelehnt'));
+      expect(log.join('\n'), contains('Erkannt:'));
+    });
+
+    test('no docker for root either: no Docker cards, as before', () async {
+      final runner = FakeSshRunner({
+        dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
+        dockerListStateSudoProbe: [
+          _r(sudoOut(''), stderr: 'sh: 1: docker: not found\n')
+        ],
+      });
+      final log = <String>[];
+      final list = await _updaterWith(runner)
+          .detectServices(config: _config, onLog: log.add);
+      expect(list.firstWhere((s) => s.id == 'evcc').installed, isFalse);
+      expect(list.firstWhere((s) => s.id == 'homeassistant').installed, isFalse);
+      expect(log.join('\n'), contains('Erkannt:'));
+      expect(log.join('\n'), isNot(contains('unvollständig')));
+    });
+
+    // The sudo listing is a second command after the batch. A channel that
+    // ends while it runs delivers part of the listing or none of it — and
+    // "not listed" would read as "evcc and Home Assistant are not installed",
+    // on the cards and in their cache.
+    for (final (name, stdout) in [
+      ('nothing arrived at all', ''),
+      ('only the section marker arrived', '@@PT@@DOCKER@@PT@@\n'),
+      (
+        'the listing stops after its first container',
+        '@@PT@@DOCKER@@PT@@\nevcc|evcc/evcc:latest|running\n'
+      ),
+      (
+        'the output stops in the middle of the end marker',
+        '@@PT@@DOCKER@@PT@@\nevcc|evcc/evcc:latest|running\n\n@@PT@@__END'
+      ),
+    ]) {
+      for (final exitCode in [null, 143]) {
+        test('sudo listing cut off ($name, exit status $exitCode): result '
+            'unknown, no cards', () async {
+          final runner = FakeSshRunner({
+            dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
+            dockerListStateSudoProbe: [_r(stdout, exitCode: exitCode)],
+          });
+          final log = <String>[];
+          await expectLater(
+            _updaterWith(runner)
+                .detectServices(config: _config, onLog: log.add),
+            _err(
+                UpdateErrorKind.unknown,
+                'Verbindung während der Aktion abgerissen – Ergebnis '
+                'unbekannt. Details im Log.'),
+          );
+          expect(log.join('\n'), isNot(contains('Erkannt:')));
+          // The message points to the log, so the log names what was cut off.
+          expect(
+              log.last,
+              'Docker-Abfrage über sudo unvollständig, Exit-Status '
+              '${exitCode ?? 'fehlt'}.');
+        });
+      }
+    }
+
+    test('a sudo listing with its end marker counts, whatever the exit status',
+        () async {
+      for (final exitCode in [0, 1, null]) {
+        final byId = await detect(FakeSshRunner({
+          dockerListStateCommand: [_r('', stderr: denied, exitCode: 1)],
+          dockerListStateSudoProbe: [
+            _r(
+                sudoOut('homeassistant|ghcr.io/home-assistant/'
+                    'home-assistant:stable|running\n'),
+                exitCode: exitCode)
+          ],
+        }));
+        expect(byId['homeassistant']!.installed, isTrue, reason: '$exitCode');
+        expect(byId['homeassistant']!.active, isTrue, reason: '$exitCode');
+      }
     });
 
     test('cards cached by an older version load unchanged', () {
@@ -5630,15 +5735,86 @@ void main() {
       expect(isDockerPermissionError(splitDetectSections(out.stdout)['DOCKER']!),
           isTrue);
 
-      final sudo = await box.exec(dockerListStateSudoCommand,
+      final sudo = await box.exec(dockerListStateSudoProbe,
           stdin: 'sekret\n', env: env);
       expect(sudo.exitCode, 0, reason: sudo.stderr);
-      expect(sudo.stdout, 'evcc|evcc/evcc:latest|restarting\n');
+      // The listing in its section, closed by the end marker.
+      expect(
+          sudo.stdout,
+          '@@PT@@DOCKER@@PT@@\n'
+          'evcc|evcc/evcc:latest|restarting\n'
+          '\n'
+          '@@PT@@$detectEndKey@@PT@@\n');
 
       final evcc =
-          (await cards(out, more: {dockerListStateSudoCommand: [sudo]}))['evcc']!;
+          (await cards(out, more: {dockerListStateSudoProbe: [sudo]}))['evcc']!;
       expect(evcc.installed, isTrue);
       expect(evcc.active, isFalse);
+    });
+
+    test('the sudo probe cut off anywhere before its end marker is rejected',
+        () async {
+      box = _DetectBox(containers: 'evcc|evcc/evcc:latest|running\n');
+      const env = {'EVCC_APT': '', 'DOCKER': 'denied'};
+      final out = await box.run(await batch(), env: env);
+      final sudo = (await box.exec(dockerListStateSudoProbe,
+              stdin: 'sekret\n', env: env))
+          .stdout;
+      final end = sudo.lastIndexOf('@@PT@@$detectEndKey@@PT@@');
+      expect(end, greaterThan(0));
+      for (final cut in [0, sudo.indexOf('evcc|') + 9, end, end + 9]) {
+        await expectLater(
+          cards(out, more: {
+            dockerListStateSudoProbe: [
+              _r(sudo.substring(0, cut), exitCode: null)
+            ]
+          }),
+          _err(UpdateErrorKind.unknown, contains('Ergebnis unbekannt')),
+          reason: 'cut at $cut',
+        );
+      }
+      // Complete, it counts — also without an exit status.
+      final evcc = (await cards(out, more: {
+        dockerListStateSudoProbe: [_r(sudo, exitCode: null)]
+      }))['evcc']!;
+      expect(evcc.installed, isTrue);
+    });
+
+    test('the sudo probe with a wrong password: closed all the same, no '
+        'Docker cards, the rest stands', () async {
+      box = _DetectBox(containers: 'evcc|evcc/evcc:latest|running\n');
+      const env = {'EVCC_APT': '', 'DOCKER': 'denied'};
+      final out = await box.run(await batch(), env: env);
+      final sudo = await box.exec(dockerListStateSudoProbe,
+          stdin: 'falsch\n', env: env);
+      // sudo refused; the shell still printed both markers around nothing.
+      expect(sudo.stdout,
+          '@@PT@@DOCKER@@PT@@\n\n@@PT@@$detectEndKey@@PT@@\n');
+      expect(isSudoPasswordFailure(sudo.stderr), isTrue);
+
+      final log = <String>[];
+      final byId = await cards(out,
+          more: {dockerListStateSudoProbe: [sudo]}, log: log);
+      expect(byId['evcc']!.installed, isFalse);
+      expect(byId['homeassistant']!.installed, isFalse);
+      expect(byId['pihole']!.installed, isTrue);
+      expect(byId['system']!.version, 'Debian GNU/Linux 12 (bookworm)');
+      expect(log.join('\n'), contains('sudo-Passwort abgelehnt'));
+    });
+
+    test('the sudo probe on a Pi without docker: closed, nothing listed',
+        () async {
+      box = _DetectBox();
+      File('${box.root}/bin/docker').deleteSync();
+      final sudo =
+          await box.exec(dockerListStateSudoProbe, stdin: 'sekret\n');
+      expect(sudo.stdout,
+          '@@PT@@DOCKER@@PT@@\n\n@@PT@@$detectEndKey@@PT@@\n');
+      // The message of the second try, on stderr as before.
+      expect(sudo.stderr, contains('docker'));
+      final sec = splitDetectSections(sudo.stdout);
+      expect(sec.keys.toList(), ['DOCKER', detectEndKey]);
+      expect(sec['DOCKER'], isEmpty);
     });
 
     test('sudo listing on a Docker without {{.State}}: one password, the '

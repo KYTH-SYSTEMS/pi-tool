@@ -564,8 +564,9 @@ class EvccUpdater {
   /// Detects ALL known services (evcc, Pi-hole, System) in one SSH session and
   /// returns their status for the service cards. Read-only; never sends the sudo
   /// password unless [allowSudoForDocker] permits the docker-permission retry.
-  /// Throws (result unknown) when the probes did not run to their end marker:
-  /// cards for half a detection would show missing services as not installed.
+  /// Throws (result unknown) when the probes did not run to their end marker —
+  /// the batch, or the sudo Docker listing that may follow it: cards for half
+  /// a detection would show missing services as not installed.
   Future<List<ServiceStatus>> detectServices({
     required SshConfig config,
     required void Function(String line) onLog,
@@ -648,13 +649,28 @@ class EvccUpdater {
         // sudo retry only if the daemon denied access and it's allowed.
         var dockerPs = sec['DOCKER'] ?? '';
         if (allowSudoForDocker && isDockerPermissionError(dockerPs)) {
-          final sd = await runner.run(dockerListStateSudoCommand,
+          final sd = await runner.run(dockerListStateSudoProbe,
               stdin: '${config.password}\n');
           if (isSudoPasswordFailure('${sd.stdout}\n${sd.stderr}')) {
             log('sudo-Passwort abgelehnt – Docker-Dienste konnten nicht '
                 'erkannt werden.');
           }
-          dockerPs = sd.stdout;
+          // A second command, so the batch's end marker says nothing about
+          // it. Closed the same way: without its own end marker the channel
+          // ended while it ran, and a listing that is missing or cut short
+          // would read as "evcc and Home Assistant are not installed". The
+          // shell prints the marker after sudo returned — a refused password
+          // or a Pi without docker still gets here, with an empty listing.
+          final listed = splitDetectSections(sd.stdout);
+          if (!listed.containsKey(detectEndKey)) {
+            if (!_cancelRequested(runner)) {
+              log('Docker-Abfrage über sudo unvollständig, Exit-Status '
+                  '${sd.exitCode ?? 'fehlt'}.');
+            }
+            throw const EvccUpdateException(
+                UpdateErrorKind.unknown, _resultUnknown);
+          }
+          dockerPs = listed['DOCKER'] ?? '';
         }
 
         // ---- pending apt upgrades (shared by evcc-apt + System) ----
