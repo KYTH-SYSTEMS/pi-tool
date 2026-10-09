@@ -14,9 +14,13 @@
 /// - Nothing app-side is interpolated into the script (org/bucket are
 ///   constants), so there is nothing to shell-escape; the dashboard JSON goes
 ///   through a quoted heredoc.
-/// - Fail-soft where a part is missing (no Grafana → skip with a message; a
-///   Docker-evcc has no /etc/evcc.yaml → skip with a hint), fail-HARD with
-///   rollback where a wrong config could break evcc.
+/// - Fail-soft where a part is missing (no Grafana → skip with a message; no
+///   /etc/evcc.yaml — a Docker-evcc, or an apt evcc configured in its web UI —
+///   → skip with a hint, no yaml is created), fail-HARD with rollback where a
+///   wrong config could break evcc.
+/// - A second run is a no-op for evcc: the block the first run wrote (see
+///   [evccInfluxBlockMarker]) counts as wired. The token is only created when
+///   one of the two places is about to be written.
 /// - A hand-set-up InfluxDB without root CLI config is reported honestly
 ///   instead of guessed at.
 library;
@@ -31,7 +35,8 @@ const String stackBucket = 'evcc';
 
 /// First line of the block the wiring appends to /etc/evcc.yaml. It is the
 /// ONLY thing [buildEvccInfluxUnwireScriptPart] removes — a user's own
-/// `influx:` block never carries it. ASCII on purpose (grep -F under LC_ALL=C).
+/// `influx:` block never carries it — and what a later wiring run recognises
+/// its own block by. ASCII on purpose (grep -F under LC_ALL=C).
 const String evccInfluxBlockMarker =
     '# Von Pi-Tool ergaenzt (Monitoring-Stack):';
 
@@ -40,9 +45,10 @@ const String evccInfluxBlockMarker =
 const String stackCliProfile = 'pitool';
 
 /// How much of the stack actually got wired. [partial] exists because the
-/// script legitimately skips halves (Docker-evcc without /etc/evcc.yaml,
-/// Grafana not installed) — reporting that as full success would leave the
-/// user with a green status over a permanently empty dashboard.
+/// script legitimately skips halves (an evcc without /etc/evcc.yaml — Docker,
+/// or configured in its web UI —, a user's own `influx:` block, Grafana not
+/// installed) — reporting that as full success would leave the user with a
+/// green status over a permanently empty dashboard.
 enum StackWiringOutcome { wired, partial }
 
 String _fluxQuery(String measurement) => 'from(bucket: "evcc")\n'
@@ -174,12 +180,24 @@ if ! influx bucket list -o "\$org" --hide-headers 2>/dev/null | awk '{print \$2}
   echo "Bucket evcc angelegt."
 fi
 bid=\$(influx bucket list -o "\$org" -n evcc --hide-headers 2>/dev/null | awk 'NR==1{print \$1}')
-tok=\$(influx auth create -o "\$org" --read-bucket "\$bid" --write-bucket "\$bid" -d "pi-tool evcc wiring" --json 2>/dev/null | grep -o '"token": *"[^"]*"' | head -1 | cut -d '"' -f4)
-if [ -z "\$tok" ]; then
-  echo "Konnte kein Zugriffs-Token erzeugen."
-  echo WIRE_FAIL; exit 1
-fi
-echo "Zugriffs-Token erzeugt (bleibt auf dem Pi)."
+# Das Token entsteht erst, wenn es gleich geschrieben wird (evcc.yaml oder
+# Grafana-Datenquelle) - sonst legt jeder Lauf, der nichts zu schreiben hat,
+# ein unbenutztes in InfluxDB ab. Beide Stellen teilen sich eines.
+tok=""
+make_token() {
+  [ -n "\$tok" ] && return 0
+  tok=\$(influx auth create -o "\$org" --read-bucket "\$bid" --write-bucket "\$bid" -d "pi-tool evcc wiring" --json 2>/dev/null | grep -o '"token": *"[^"]*"' | head -1 | cut -d '"' -f4)
+  if [ -z "\$tok" ]; then
+    echo "Konnte kein Zugriffs-Token erzeugen."
+    echo WIRE_FAIL; exit 1
+  fi
+  echo "Zugriffs-Token erzeugt (bleibt auf dem Pi)."
+}
+# Wer influx selbst in evcc eintragen muss, braucht dafuer ein eigenes Token:
+# das der Verdrahtung wird nie ausgegeben.
+token_hint() {
+  echo "Das Token dafuer in der InfluxDB-Weboberflaeche (Port 8086) unter Load Data > API Tokens anlegen. Hat Pi-Tool die InfluxDB eingerichtet: Benutzer 'pitool', das Passwort vorher auf dem Pi setzen mit: sudo influx user password -n pitool"
+}
 
 # --- evcc.yaml: influx-Block ergaenzen (mit Backup + Selbstheilung) ---------
 # evcc_wired bleibt 0, wenn evcc NICHT verdrahtet wurde - das entscheidet am
@@ -192,9 +210,17 @@ if [ -f /etc/evcc.yaml ]; then
     # /etc/evcc.yaml oder ein "apt remove" ohne purge. Frueher lief das in den
     # Restart-Fehler und log "evcc akzeptiert die Aenderung nicht" - falsch.
     echo "evcc.yaml gefunden, aber kein systemd-Dienst evcc (Docker-evcc?) - bitte influx dort selbst eintragen (Org \$org, Bucket evcc)."
+    token_hint
+  elif awk -v m="$evccInfluxBlockMarker" 'p == m && \$0 == "influx:" { f = 1 } { p = \$0 } END { exit !f }' /etc/evcc.yaml; then
+    # Der eigene Block aus einem frueheren Lauf (Markerzeile direkt ueber
+    # "influx:", wie ihn auch die Ruecknahme erkennt): evcc IST verdrahtet.
+    # Sonst endete jeder weitere Lauf in WIRE_PARTIAL.
+    echo "evcc.yaml ist bereits verdrahtet (influx-Block von Pi-Tool) - bleibt unveraendert."
+    evcc_wired=1
   elif grep -q '^influx:' /etc/evcc.yaml; then
-    echo "evcc.yaml hat schon einen influx-Block - bleibt unveraendert."
+    echo "evcc.yaml hat schon einen eigenen influx-Block - bleibt unveraendert."
   else
+    make_token
     mkdir -p /var/backups/pi-tool
     bak="/var/backups/pi-tool/evcc.yaml.wire-\$(date +%Y%m%d-%H%M%S)"
     # Ohne gelungenes Backup NICHT anfassen - sonst waere die versprochene
@@ -233,13 +259,23 @@ if [ -f /etc/evcc.yaml ]; then
       echo WIRE_FAIL; exit 1
     fi
   fi
+elif systemctl cat evcc >/dev/null 2>&1; then
+  # apt-evcc ohne /etc/evcc.yaml: evcc haelt seine Einstellungen dann in der
+  # eigenen Datenbank (Weboberflaeche). Hier wird bewusst KEINE evcc.yaml
+  # angelegt - wie evcc eine neue Datei neben dieser Konfiguration behandelt,
+  # ist nicht gemessen.
+  echo "evcc hat kein /etc/evcc.yaml (Konfiguration ueber die evcc-Weboberflaeche) - Pi-Tool legt keine an."
+  echo "InfluxDB bitte dort selbst eintragen (Konfiguration > InfluxDB): URL http://localhost:8086, Org \$org, Bucket evcc."
+  token_hint
 else
   echo "Kein /etc/evcc.yaml gefunden (Docker-evcc?) - bitte influx dort selbst eintragen (Org \$org, Bucket evcc)."
+  token_hint
 fi
 
 # --- Grafana: Datenquelle + Dashboard provisionieren ------------------------
 grafana_wired=0
 if [ -d /etc/grafana ]; then
+  make_token
   if ! mkdir -p /etc/grafana/provisioning/datasources /etc/grafana/provisioning/dashboards /var/lib/grafana/dashboards; then
     echo "Konnte die Grafana-Verzeichnisse nicht anlegen - Dashboard uebersprungen."
     echo WIRE_FAIL; exit 1
@@ -309,8 +345,8 @@ fi
 // datasource anyway, and the user may have built on the dashboard.
 
 /// Takes back the `influx:` block the wiring appended to /etc/evcc.yaml. Left
-/// in place, evcc keeps writing with a dead token and a later re-wiring stops
-/// at "hat schon einen influx-Block" (WIRE_PARTIAL forever).
+/// in place, evcc keeps writing with a dead token, and a later re-wiring takes
+/// the marked block for a working one ("ist bereits verdrahtet") and leaves it.
 ///
 /// - Removes only the [evccInfluxBlockMarker] line, the `influx:` key right
 ///   below it and that key's indented body (blank/comment lines inside it

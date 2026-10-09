@@ -5,10 +5,44 @@ import 'package:evcc_updater/src/commands.dart' show shSingleQuote;
 import 'package:evcc_updater/src/services/stack_wiring.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'on_pi_sandbox.dart';
+
 /// `bash` on Linux/macOS (CI); on Windows only an explicit Git Bash
 /// (PITOOL_TEST_BASH), since `bash` there may be the WSL launcher.
 final String? _bash =
     Platform.isWindows ? Platform.environment['PITOOL_TEST_BASH'] : 'bash';
+
+/// Where the host keeps a plain tool the sandbox has no pass-through for.
+String _real(String tool) =>
+    (Process.runSync(sandboxBash!, ['-c', 'command -v $tool']).stdout as String)
+        .trim();
+
+/// The influx CLI as the wiring asks it: one org, the bucket `evcc`, and
+/// `auth create` hands out `tok-<n>-secret` (nothing while `$S/auth-fails`
+/// exists).
+const String _influx = r'''
+case "$1 $2" in
+  "org list") echo "0a1b2c3d pi-tool" ;;
+  "bucket list") echo "b1d0b1d0 evcc infinite 168h0m0s 0a1b2c3d implicit" ;;
+  "auth create")
+    [ -e "$S/auth-fails" ] && exit 1
+    n=$(($(cat "$S/tokens" 2>/dev/null || echo 0) + 1))
+    echo "$n" > "$S/tokens"
+    printf '{\n\t"id": "a%s",\n\t"token": "tok-%s-secret",\n\t"status": "active"\n}\n' "$n" "$n" ;;
+esac
+exit 0''';
+
+/// systemd as the wiring asks it: `cat <unit>` succeeds while `$S/unit-<unit>`
+/// exists, `is-active` prints `$S/active-<unit>` (active without).
+const String _systemctl = r'''
+case "$1" in
+  cat) [ -e "$S/unit-$2" ]; exit $? ;;
+  is-active)
+    st=$(cat "$S/active-$2" 2>/dev/null || echo active)
+    echo "$st"
+    [ "$st" = active ]; exit $? ;;
+esac
+exit 0''';
 
 String _posix(String p) {
   final s = p.replaceAll(r'\', '/');
@@ -171,6 +205,250 @@ void main() {
           contains(shSingleQuote(stackCliProfile)));
     });
   });
+
+  // The whole wiring script on a sandboxed Pi: InfluxDB is already set up
+  // (root CLI config present), influx and systemctl are stubs, /etc, /var and
+  // /root live in the sandbox.
+  group('stack wiring in bash', () {
+    late PiSandbox pi;
+    const yaml = '/etc/evcc.yaml';
+    const datasource =
+        '/etc/grafana/provisioning/datasources/pitool-influxdb.yaml';
+    const backupDir = '/var/backups/pi-tool';
+    const head = 'site:\n  title: Zuhause\n';
+
+    /// What the wiring appends, with the token `auth create` handed out [n]th.
+    String block(int n) => '\n'
+        '$evccInfluxBlockMarker\n'
+        'influx:\n'
+        '  url: http://localhost:8086\n'
+        '  database: evcc\n'
+        '  org: pi-tool\n'
+        '  token: tok-$n-secret\n';
+
+    const tokenHint = 'Das Token dafuer in der InfluxDB-Weboberflaeche '
+        '(Port 8086) unter Load Data > API Tokens anlegen. Hat Pi-Tool die '
+        "InfluxDB eingerichtet: Benutzer 'pitool', das Passwort vorher auf dem "
+        'Pi setzen mit: sudo influx user password -n pitool';
+
+    setUp(() {
+      pi = PiSandbox();
+      pi.stub('influx', _influx);
+      pi.stub('systemctl', _systemctl);
+      pi.stub('chown', 'exit 0', log: false);
+      for (final tool in ['cp', 'od']) {
+        pi.stub(tool, 'exec ${_real(tool)} "\$@"', log: false);
+      }
+      pi.put('/root/.influxdbv2/configs', '[pitool]\n  token = "op"\n');
+    });
+    tearDown(() => pi.dispose());
+
+    /// evcc from the apt package: a systemd unit exists.
+    void aptEvcc() => pi.put('/state/unit-evcc', '');
+    void grafana() => pi.put('/etc/grafana/grafana.ini', '');
+
+    /// One run: the exit code and the log lines, with the Pi's own paths.
+    Future<({int code, List<String> lines})> wire() async {
+      pi.clearCalls();
+      final r = await pi.run(buildStackWiringScript());
+      // The token stays on the Pi, whatever the run did.
+      expect('${r.out}\n${r.err}', isNot(contains('-secret')));
+      // Every tool the script uses is there; nothing complains.
+      expect(r.err, isEmpty);
+      return (
+        code: r.code,
+        lines: [for (final l in r.lines) l.replaceAll(pi.root, '')],
+      );
+    }
+
+    int tokensMade() =>
+        pi.calls.where((c) => c.startsWith('influx auth create ')).length;
+
+    List<String> yamlBackups() =>
+        pi.ls(backupDir).where((n) => n.startsWith('evcc.yaml.wire-')).toList();
+
+    test('first run: block appended, datasource written, one token, WIRE_OK',
+        () async {
+      aptEvcc();
+      grafana();
+      pi.put(yaml, head);
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.last, 'WIRE_OK');
+      expect(pi.read(yaml), '$head${block(1)}');
+      expect(pi.read(datasource), contains('\n    token: tok-1-secret\n'));
+      expect(tokensMade(), 1);
+      expect(yamlBackups(), hasLength(1));
+      expect(pi.read('$backupDir/${yamlBackups().single}'), head);
+      expect(pi.calls, contains('systemctl restart evcc'));
+    });
+
+    test('second run: the block Pi-Tool wrote counts as wired — WIRE_OK, '
+        'evcc.yaml and evcc are left alone', () async {
+      aptEvcc();
+      grafana();
+      pi.put(yaml, head);
+      expect((await wire()).lines.last, 'WIRE_OK');
+
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.last, 'WIRE_OK');
+      expect(
+          r.lines,
+          contains('evcc.yaml ist bereits verdrahtet (influx-Block von '
+              'Pi-Tool) - bleibt unveraendert.'));
+      expect(pi.read(yaml), '$head${block(1)}');
+      expect(yamlBackups(), hasLength(1));
+      expect(pi.calls, isNot(contains('systemctl restart evcc')));
+    });
+
+    test('evcc wired and no Grafana: nothing would use a token, none is made',
+        () async {
+      aptEvcc();
+      pi.put(yaml, '$head${block(1)}');
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.sublist(r.lines.length - 3), [
+        'Grafana nicht installiert - Dashboard uebersprungen.',
+        'Teilweise verdrahtet: evcc=1 grafana=0',
+        'WIRE_PARTIAL',
+      ]);
+      expect(tokensMade(), 0);
+      expect(r.lines.join('\n'), isNot(contains('Zugriffs-Token')));
+      expect(pi.read(yaml), '$head${block(1)}');
+    });
+
+    test('apt evcc configured in its web UI (no /etc/evcc.yaml): no yaml is '
+        'created, the log says what to enter where', () async {
+      aptEvcc();
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines, [
+        'evcc hat kein /etc/evcc.yaml (Konfiguration ueber die '
+            'evcc-Weboberflaeche) - Pi-Tool legt keine an.',
+        'InfluxDB bitte dort selbst eintragen (Konfiguration > InfluxDB): '
+            'URL http://localhost:8086, Org pi-tool, Bucket evcc.',
+        tokenHint,
+        'Grafana nicht installiert - Dashboard uebersprungen.',
+        'Teilweise verdrahtet: evcc=0 grafana=0',
+        'WIRE_PARTIAL',
+      ]);
+      expect(pi.exists(yaml), isFalse);
+      expect(tokensMade(), 0);
+      expect(pi.calls.where((c) => c.startsWith('systemctl restart')), isEmpty);
+    });
+
+    test('the same with Grafana: its half is wired, with the only token',
+        () async {
+      aptEvcc();
+      grafana();
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.sublist(r.lines.length - 2),
+          ['Teilweise verdrahtet: evcc=0 grafana=1', 'WIRE_PARTIAL']);
+      expect(pi.exists(yaml), isFalse);
+      expect(tokensMade(), 1);
+      expect(pi.read(datasource), contains('\n    token: tok-1-secret\n'));
+    });
+
+    test('no evcc service and no evcc.yaml (Docker-evcc): hint with the way '
+        'to a token', () async {
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.sublist(0, 2), [
+        'Kein /etc/evcc.yaml gefunden (Docker-evcc?) - bitte influx dort '
+            'selbst eintragen (Org pi-tool, Bucket evcc).',
+        tokenHint,
+      ]);
+      expect(r.lines.last, 'WIRE_PARTIAL');
+      expect(pi.exists(yaml), isFalse);
+      expect(tokensMade(), 0);
+    });
+
+    test('evcc.yaml without a systemd unit: left alone, same hint', () async {
+      pi.put(yaml, head);
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines.sublist(0, 2), [
+        'evcc.yaml gefunden, aber kein systemd-Dienst evcc (Docker-evcc?) - '
+            'bitte influx dort selbst eintragen (Org pi-tool, Bucket evcc).',
+        tokenHint,
+      ]);
+      expect(r.lines.last, 'WIRE_PARTIAL');
+      expect(pi.read(yaml), head);
+      expect(tokensMade(), 0);
+    });
+
+    test("a user's own influx block is left alone and is not ours",
+        () async {
+      aptEvcc();
+      const own = 'influx:\n  url: http://nas:8086\n  database: evcc\n';
+      pi.put(yaml, '$head$own');
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(
+          r.lines.first,
+          'evcc.yaml hat schon einen eigenen influx-Block - bleibt '
+          'unveraendert.');
+      expect(r.lines.sublist(r.lines.length - 2),
+          ['Teilweise verdrahtet: evcc=0 grafana=0', 'WIRE_PARTIAL']);
+      expect(pi.read(yaml), '$head$own');
+      expect(tokensMade(), 0);
+      expect(yamlBackups(), isEmpty);
+    });
+
+    test('the marker alone (its influx key removed by hand) is no wiring',
+        () async {
+      aptEvcc();
+      pi.put(yaml, '$head$evccInfluxBlockMarker\n');
+      final r = await wire();
+      expect(r.code, 0, reason: r.lines.join('\n'));
+      expect(r.lines, contains('evcc schreibt jetzt nach InfluxDB.'));
+      expect(pi.read(yaml), '$head$evccInfluxBlockMarker\n${block(1)}');
+    });
+
+    test('no token, no change: evcc.yaml is not touched, nothing backed up',
+        () async {
+      aptEvcc();
+      grafana();
+      pi.put(yaml, head);
+      pi.put('/state/auth-fails', '');
+      final r = await wire();
+      expect(r.code, 1, reason: r.lines.join('\n'));
+      expect(r.lines,
+          ['Konnte kein Zugriffs-Token erzeugen.', 'WIRE_FAIL']);
+      expect(pi.read(yaml), head);
+      expect(yamlBackups(), isEmpty);
+      expect(pi.exists(datasource), isFalse);
+      expect(pi.calls.where((c) => c.startsWith('systemctl restart')), isEmpty);
+    });
+
+    test('evcc wired, Grafana present, no token: fails before the datasource '
+        'is written', () async {
+      aptEvcc();
+      grafana();
+      pi.put(yaml, '$head${block(1)}');
+      pi.put('/state/auth-fails', '');
+      final r = await wire();
+      expect(r.code, 1, reason: r.lines.join('\n'));
+      expect(r.lines.last, 'WIRE_FAIL');
+      expect(pi.exists(datasource), isFalse);
+    });
+
+    test('evcc rejecting the block: evcc.yaml is put back, WIRE_FAIL',
+        () async {
+      aptEvcc();
+      pi.put(yaml, head);
+      pi.put('/state/active-evcc', 'failed');
+      final r = await wire();
+      expect(r.code, 1, reason: r.lines.join('\n'));
+      expect(r.lines.sublist(r.lines.length - 2), [
+        'evcc akzeptiert die Aenderung nicht - evcc.yaml wurde zurueckgesetzt.',
+        'WIRE_FAIL',
+      ]);
+      expect(pi.read(yaml), head);
+    });
+  }, skip: needsBash);
 
   group('buildEvccInfluxUnwireScriptPart', () {
     final s = buildEvccInfluxUnwireScriptPart();
