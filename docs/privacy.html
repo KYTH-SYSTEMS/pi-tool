@@ -54,7 +54,7 @@
 
   <p class="eyebrow">Datenschutz</p>
   <h1>Pi-Tool — Datenschutzerklärung</h1>
-  <p class="muted">Stand: 8. Oktober 2026. Diese App ist ein <strong>inoffizielles</strong> Community-Tool und
+  <p class="muted">Stand: 9. Oktober 2026. Diese App ist ein <strong>inoffizielles</strong> Community-Tool und
   steht in keiner Verbindung zum evcc-Projekt. <strong>Nutzung auf eigene Gefahr — keine Haftung
   für Schäden an System, Daten oder Hardware</strong> (MIT-Lizenz, „AS IS").</p>
 
@@ -118,7 +118,8 @@
     <li><strong>Wer sendet:</strong> Die Meldungen gehen von <em>deinem Pi</em> aus, nicht von deinem
       Handy. Die App richtet diese Übermittlung jedoch ein und verschickt auf dein Antippen eine
       Test-Nachricht.</li>
-    <li><strong>Was übertragen wird:</strong> das von dir gewählte Thema (Topic) und der Meldungstext —
+    <li><strong>Was übertragen wird:</strong> das von dir gewählte Thema (Topic), der Gerätename
+      (Hostname) deines Pi im Titel der Meldung und der Meldungstext —
       also Zustandsdaten deines Pi: Speicherbelegung, Temperatur, Hinweise auf ein nur-lesendes
       Dateisystem bzw. SD-Karten-Fehler, die Namen nicht laufender Dienste (z. B. evcc, Pi-hole) und die
       <em>Anzahl</em> verfügbarer Updates. Keine Zugangsdaten, keine Konto- oder Nutzungsdaten. Technisch
@@ -270,7 +271,8 @@
   systemd timer <em>on your Pi</em> that checks the device every 30 minutes and pushes a message to an
   <strong>ntfy server</strong> when something is wrong — by default the public service
   <a href="https://ntfy.sh">ntfy.sh</a> (a third party); you may enter any other, including a self-hosted one.
-  What leaves your Pi (not your phone): the topic you chose and the message text — disk usage, temperature,
+  What leaves your Pi (not your phone): the topic you chose, your Pi's host name in the title of the message
+  and the message text — disk usage, temperature,
   read-only-filesystem/SD-card errors, the names of services that are not running (e.g. evcc, Pi-hole) and the
   <em>number</em> of available updates. No credentials, no account or usage data; the server receives your
   connection's IP address as the sender. ntfy.sh states that published messages are cached temporarily
