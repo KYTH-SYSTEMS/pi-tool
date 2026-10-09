@@ -121,6 +121,10 @@ String buildInstallAuthorizedKeyScript(String publicKeyLine) {
   final q = shSingleQuote(publicKeyLine);
   return 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && '
       'touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && '
-      '{ grep -qxF $q ~/.ssh/authorized_keys || echo $q >> ~/.ssh/authorized_keys; } && '
+      '{ grep -qxF $q ~/.ssh/authorized_keys || { '
+      // A last line without a newline is ended first: appended to it, the key
+      // would become part of that line and never be accepted.
+      '[ -z "\$(tail -c1 ~/.ssh/authorized_keys)" ] || echo >> ~/.ssh/authorized_keys; '
+      'echo $q >> ~/.ssh/authorized_keys; }; } && '
       'echo KEY_INSTALLED';
 }

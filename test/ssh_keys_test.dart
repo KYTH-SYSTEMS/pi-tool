@@ -5,6 +5,8 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:evcc_updater/src/ssh_keys.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'on_pi_sandbox.dart';
+
 void main() {
   group('encodeAuthorizedKey', () {
     test('is a valid ssh-ed25519 line whose blob re-encodes the key type', () {
@@ -85,4 +87,59 @@ void main() {
       expect(s, isNot(contains('>> ~/.ssh/authorized_keys\nrm -rf')));
     });
   });
+
+  // The script in a REAL bash with HOME pointed into a sandbox: what ends up
+  // in authorized_keys is checked, byte for byte.
+  group('buildInstallAuthorizedKeyScript in bash', () {
+    late PiSandbox pi;
+    const file = '/home/pi/.ssh/authorized_keys';
+    const key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPiTool pi-tool@handy';
+    const other = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7 stefan@pc';
+
+    setUp(() => pi = PiSandbox());
+    tearDown(() => pi.dispose());
+
+    Future<void> install(String line) async {
+      final r = await pi.run(
+          "export HOME='${pi.root}/home/pi'\n"
+          '${buildInstallAuthorizedKeyScript(line)}',
+          rebase: false);
+      expect(r.code, 0, reason: '${r.out}${r.err}');
+      expect(r.lines, ['KEY_INSTALLED']);
+    }
+
+    test('a last line without a newline is ended before the key is appended',
+        () async {
+      // Glued to that line the new key would be part of the other key's
+      // comment — and the login with it refused.
+      pi.put(file, other);
+      await install(key);
+      expect(pi.read(file), '$other\n$key\n');
+    });
+
+    test('a file that ends with a newline gets no blank line', () async {
+      pi.put(file, '$other\n');
+      await install(key);
+      expect(pi.read(file), '$other\n$key\n');
+    });
+
+    test('no ~/.ssh yet: the file holds the key and nothing else', () async {
+      await install(key);
+      expect(pi.read(file), '$key\n');
+    });
+
+    test('installing the same key twice keeps one line', () async {
+      pi.put(file, other);
+      await install(key);
+      await install(key);
+      expect(pi.read(file), '$other\n$key\n');
+    });
+
+    test('a key that already is the unterminated last line is left alone',
+        () async {
+      pi.put(file, '$other\n$key');
+      await install(key);
+      expect(pi.read(file), '$other\n$key');
+    });
+  }, skip: needsBash);
 }
