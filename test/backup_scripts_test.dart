@@ -886,6 +886,9 @@ exit 0''');
     Future<String> archiveOf(String install, String unit, String prefix) async {
       final i = await pi.run(install);
       expect(i.code, 0, reason: i.err);
+      // The update wrapper skips a start within minutes of its setup (systemd
+      // catching up, no scheduled run): let the setup lie in the past.
+      if (pi.exists(autoUpdateSetupPath)) pi.put(autoUpdateSetupPath, '0\n');
       final w =
           await pi.run("'${pi.root}/usr/local/lib/$unit.sh'", rebase: false);
       expect(w.code, 0, reason: w.err);
