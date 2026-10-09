@@ -136,6 +136,8 @@ void main() {
         '$dir/../../tmp/sched-evcc-20260630-030000.tar.gz',
         '$dir/sched-evcc-20260630-030000.tar.gz\n',
         '/tmp/sched-evcc-20260630-030000.tar.gz',
+        // The shared directory's path further down another tree.
+        '/tmp$dir/sched-evcc-20260630-030000.tar.gz',
         // Through the evcc directory into the shared one.
         '/var/backups/evcc/../pi-tool/homeassistant-backup-20260630-120000.tar.gz',
         '/var/backups/evcc/evcc-backup-20260630-120000.tar.gz.part',

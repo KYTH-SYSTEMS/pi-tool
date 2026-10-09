@@ -838,14 +838,20 @@ exec "$REAL_TAR" "$@"''');
           ['$dir/homeassistant-backup-20260103-120000.tar.gz']);
     });
 
-    test('a prefix with a quote stays part of one word: nothing else runs',
-        () async {
+    test('a prefix with shell syntax stays part of one word: nothing else '
+        'runs', () async {
       pi.putAged('$dir/pihole-backup-20260103-120000.zip', 3);
-      // TMPDIR is the sandbox's /tmp in every shell of this run.
-      final r = await pi.run(serviceBackupListCommand(
-          "x'; echo yes > \"\$TMPDIR/injected\"; echo '"));
-      expect(pi.exists('/tmp/injected'), isFalse);
-      expect(r.out, isNot(contains('pihole-backup')));
+      // TMPDIR is the sandbox's /tmp in every shell of this run. The first
+      // prefix breaks out of a plain '…' pair; the second carries no quote and
+      // runs wherever the prefix reaches the inner shell unquoted.
+      for (final prefix in [
+        "x'; echo yes > \"\$TMPDIR/injected\"; echo '",
+        'x; echo yes > "\$TMPDIR/injected"; echo ',
+      ]) {
+        final r = await pi.run(serviceBackupListCommand(prefix));
+        expect(pi.exists('/tmp/injected'), isFalse, reason: prefix);
+        expect(r.out, isNot(contains('pihole-backup')), reason: prefix);
+      }
     });
   }, skip: _needsBash);
 
