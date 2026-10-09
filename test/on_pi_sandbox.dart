@@ -205,6 +205,13 @@ class PiSandbox {
       r'''(?<![\w.$!-])/(?:tmp|opt|run|boot|srv|mnt|media|snap|bin|sbin|lib|'''
       r'''etc|var|usr|root|home|sys|proc)/[^\s"']*''');
 
+  /// A descriptor of the shell itself, named on its own (`/proc/self/fd/3`).
+  /// No path of the Pi — the sandbox has no descriptors to offer — and none
+  /// of the host either: it leads to a file the script opened itself, and
+  /// what a script may open is checked where it opens it. Anything else
+  /// below /proc stays a host path.
+  static final RegExp _ownFd = RegExp(r'^/proc/self/fd/[0-9]+$');
+
   /// A redirection into an absolute path.
   static final RegExp _redirect = RegExp(r'''>[|&]?\s*["']?(/[^\s"';|&)]*)''');
 
@@ -231,13 +238,21 @@ class PiSandbox {
   ///
   /// [script] may name the sandbox itself ([root]): such a path is not
   /// rebased a second time. The working directory is the sandbox, so a
-  /// relative path lands there too.
+  /// relative path lands there too. A descriptor of the shell itself
+  /// ([_ownFd]) is neither moved nor refused: a root script reaches the file
+  /// it just created through `/proc/self/fd/3`, on a Pi and here.
   Future<SandboxRun> runGuarded(String script, {bool rebase = true}) {
     const mark = '__PITOOL_SANDBOX__';
     final masked = script.replaceAll(root, mark);
-    final text = rebase ? this.rebase(masked).replaceAll(root, mark) : masked;
+    final text = rebase
+        ? this
+            .rebase(masked)
+            .replaceAll('$root/proc/self/fd/', '/proc/self/fd/')
+            .replaceAll(root, mark)
+        : masked;
     final outside = [
-      for (final m in _hostPath.allMatches(text)) m[0]!,
+      for (final m in _hostPath.allMatches(text))
+        if (!_ownFd.hasMatch(m[0]!)) m[0]!,
       for (final m in _redirect.allMatches(text))
         if (m[1] != '/dev/null') '> ${m[1]}',
       for (final m in _pathSet.allMatches(text))

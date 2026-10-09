@@ -91,6 +91,17 @@ PITOOL_SUDO=1
 export PITOOL_SUDO
 exec "$@"''';
 
+/// What a recording `stat` does once it has noted its arguments. Asked about
+/// a directory on the way to a link (`-L -c '%f %u'`), it answers like a Pi
+/// where each one is root's and closed to others: Git Bash knows no owners,
+/// and the directories above the sandbox are the host's. Any other question
+/// goes to the real stat.
+const _stat = r'''
+case "$*" in
+  "-L -c %f %u -- "*) echo "41ed 0" ;;
+  *) exec "$REAL_STAT" "$@" ;;
+esac''';
+
 /// Nothing of a value ran, and nothing was touched outside the sandbox.
 void _expectDataOnly(PiSandbox pi, String reason) {
   expect(pi.named('pwned-'), isEmpty, reason: reason);
@@ -149,6 +160,21 @@ Future<String?> _read(PiSandbox pi, String path) async {
       'IFS= read -r -d \'\' c < "\$p"\n'
       'printf \'%s\' "\$c"');
   return r.code == 44 ? null : r.out;
+}
+
+/// Makes [link] a symlink to [target], both under exactly these names, and
+/// says whether this host can. MSYS=…: Git Bash copies instead of linking
+/// unless it is told to write a link of its own kind; anywhere else the
+/// variable means nothing.
+Future<bool> _symlink(PiSandbox pi, String target, String link) async {
+  pi.put('/state/target', target);
+  final r = await _withPath(
+      pi,
+      link,
+      'mkdir -p -- "\${p%/*}"\n'
+      "IFS= read -r -d '' t < '${pi.root}/state/target'\n"
+      'MSYS=winsymlinks:sysfile ln -s -- "\$t" "\$p" && [ -L "\$p" ]');
+  return r.code == 0;
 }
 
 /// One command line and the commands that have to get its value.
@@ -405,13 +431,40 @@ void main() {
         // With these the stubs would no longer be the only ones to answer.
         'PATH="\$PATH:/usr/sbin"',
         "export PATH='${pi.root}/bin:/pitool-none'",
+        // A descriptor of the shell is not moved into the sandbox — so what
+        // leads on from one is the host's.
+        '[ -e /proc/self/fd/3/../../environ ]',
       ]) {
         expect(() => pi.runGuarded(script), throwsStateError, reason: script);
       }
       // Run as it is, a path that a rebase would have moved is the host's.
-      for (final script in ['cat /etc/hostname', "ls '/var/lib/pi-tool/x'"]) {
+      for (final script in [
+        'cat /etc/hostname',
+        "ls '/var/lib/pi-tool/x'",
+        // Below /proc only a descriptor of the shell itself is let through.
+        '[ -e /proc/self/environ ]',
+        '[ -d /proc/self/fd/ ]',
+        '[ -e /proc/1/fd/3 ]',
+      ]) {
         expect(() => pi.runGuarded(script, rebase: false), throwsStateError,
             reason: script);
+      }
+    });
+
+    // How a root script reaches the file it just created (fd 3 of
+    // rootReplaceFileLines): moved into the sandbox, the name would lead
+    // nowhere.
+    test('a descriptor of the shell itself stays what it is', () async {
+      for (final rebase in [true, false]) {
+        final r = await pi.runGuarded(
+            "exec 3> '${pi.root}/etc/pitool-fd-$rebase'\n"
+            'fd=/proc/self/fd/3\n'
+            '[ -f "\$fd" ] && echo offen\n'
+            'echo drin >&3',
+            rebase: rebase);
+        expect(r.code, 0, reason: r.err);
+        expect(r.lines, ['offen'], reason: 'rebase: $rebase');
+        expect(pi.read('/etc/pitool-fd-$rebase'), 'drin\n');
       }
     });
 
@@ -667,19 +720,55 @@ if [ -e "$S/docker-needs-sudo" ] && [ -z "${PITOOL_SUDO:-}" ]; then exit 1; fi''
 
     test('buildConfigWriteScript: the file of that name is written', () async {
       pi.allow(['base64', 'readlink', 'chown']);
+      // The new file takes owner and mode from the one it replaces.
+      pi.record('stat', _stat);
       for (final (tag, v) in _heavy) {
         final path = '${pi.root}/home/pi/$v';
         await _write(pi, path, 'alt\n');
+        final before = pi.recorded.length;
         final r = await pi.runGuarded(buildConfigWriteScript(
             path: path, base64Content: base64.encode(utf8.encode('neu $v\n'))));
         expect(r.code, 0, reason: '$tag\n${r.err}');
         expect(r.lines.last, 'CONFIG_SAVED', reason: tag);
         expect(await _read(pi, path), 'neu $v\n', reason: tag);
+        // The file of that name is the one that was asked about.
+        expect(_carrying(pi.recorded.skip(before)), {path}, reason: tag);
         _expectDataOnly(pi, tag);
       }
       // One file and one backup per name, no temp file left.
       expect(pi.ls('/home/pi'), hasLength(_heavy.length));
       expect(pi.ls(serviceBackupDir), hasLength(_heavy.length));
+    });
+
+    // A link at the path is followed by hand, one name at a time — and where
+    // it leads is a value from the Pi like the path itself.
+    test('buildConfigWriteScript: a link of that name is followed to the '
+        'file of that name', () async {
+      pi.allow(['base64', 'readlink', 'chown']);
+      pi.confine(['ln']);
+      pi.record('stat', _stat);
+      for (final (tag, v) in _heavy) {
+        final dir = '${pi.root}/home/pi/$v';
+        final file = '$dir/ziel $v';
+        final link = '${pi.root}/etc/$v';
+        await _write(pi, file, 'alt\n');
+        if (!await _symlink(pi, file, link)) {
+          markTestSkipped('this host creates no symlinks');
+          return;
+        }
+        final before = pi.recorded.length;
+        final r = await pi.runGuarded(buildConfigWriteScript(
+            path: link, base64Content: base64.encode(utf8.encode('neu $v\n'))));
+        expect(r.code, 0, reason: '$tag\n${r.out}${r.err}');
+        expect(r.lines.last, 'CONFIG_SAVED', reason: tag);
+        expect(await _read(pi, file), 'neu $v\n', reason: tag);
+        final still = await _withPath(pi, link, r'[ -L "$p" ]');
+        expect(still.code, 0, reason: '$tag: the link is still one');
+        // Asked about under exactly their names: the directory the last name
+        // was looked up in, and the file for its owner and mode.
+        expect(_carrying(pi.recorded.skip(before)), {dir, file}, reason: tag);
+        _expectDataOnly(pi, tag);
+      }
     });
 
     test('buildConfigWriteScript: content that is no base64 writes nothing',
@@ -699,13 +788,17 @@ if [ -e "$S/docker-needs-sudo" ] && [ -z "${PITOOL_SUDO:-}" ]; then exit 1; fi''
 
     test('buildUploadScript: the file of that name is written', () async {
       pi.allow(['base64', 'chown']);
+      pi.record('stat', _stat);
       for (final (tag, v) in _heavy) {
         final path = '${pi.root}/home/pi/neu/$v';
+        final before = pi.recorded.length;
         final r = await pi.runGuarded(buildUploadScript(
             path: path, base64Content: base64.encode(utf8.encode('neu $v\n'))));
         expect(r.code, 0, reason: '$tag\n${r.err}');
         expect(r.lines.last, 'UPLOAD_OK', reason: tag);
         expect(await _read(pi, path), 'neu $v\n', reason: tag);
+        // Asked whether there is a file of that name to take over from.
+        expect(_carrying(pi.recorded.skip(before)), {path}, reason: tag);
         _expectDataOnly(pi, tag);
       }
       expect(pi.ls('/home/pi/neu'), hasLength(_heavy.length));
@@ -908,15 +1001,29 @@ if [ -e "$S/docker-needs-sudo" ] && [ -z "${PITOOL_SUDO:-}" ]; then exit 1; fi''
       ('heredoc end', 'x\nWRAP\ntouch pwned-wrap\n'),
     ];
 
-    /// What curl got: per call the URL — its last argument — and every
-    /// argument that carries a part of the value.
+    /// What the test push needs on the Pi: the command is one `sh -c` — dash
+    /// where there is one, as on a Pi — that asks for the host name and calls
+    /// curl.
+    void pushTools() {
+      pi.stub('sh', 'exec ${sandboxDash ?? pi.real('sh')} "\$@"', log: false);
+      pi.stub('hostname', 'echo zirkel', log: false);
+      pi.record('curl');
+    }
+
+    /// The title of every push: one argument, blank and brackets included.
+    const title = 'Title: Pi-Tool (zirkel)';
+
+    /// What curl got: per call the header — the argument after `-H` —, the
+    /// URL — its last argument — and every argument that carries a part of
+    /// the value.
     List<List<Object>> pushes() => [
-          for (final call in pi.recorded) [call.last, _carrying([call])],
+          for (final call in pi.recorded)
+            [call[call.indexOf('-H') + 1], call.last, _carrying([call])],
         ];
 
     test('buildTestAlertCommand: the topic is part of one URL argument',
         () async {
-      pi.record('curl');
+      pushTools();
       final statuses = await _exec(pi, [
         for (final (_, v) in values)
           buildTestAlertCommand(ntfyServer: 'https://ntfy.example', ntfyTopic: v),
@@ -925,13 +1032,13 @@ if [ -e "$S/docker-needs-sudo" ] && [ -z "${PITOOL_SUDO:-}" ]; then exit 1; fi''
       final urls = [
         for (final (_, v) in values) 'https://ntfy.example/${stripped(v)}',
       ];
-      expect(pushes(), [for (final url in urls) [url, {url}]]);
+      expect(pushes(), [for (final url in urls) [title, url, {url}]]);
       _expectDataOnly(pi, 'topic');
     });
 
     test('buildTestAlertCommand: the server is part of one URL argument',
         () async {
-      pi.record('curl');
+      pushTools();
       final statuses = await _exec(pi, [
         for (final (_, v) in values)
           buildTestAlertCommand(
@@ -941,7 +1048,7 @@ if [ -e "$S/docker-needs-sudo" ] && [ -z "${PITOOL_SUDO:-}" ]; then exit 1; fi''
       final urls = [
         for (final (_, v) in values) 'https://ntfy.example/${stripped(v)}/pi',
       ];
-      expect(pushes(), [for (final url in urls) [url, {url}]]);
+      expect(pushes(), [for (final url in urls) [title, url, {url}]]);
       _expectDataOnly(pi, 'server');
     });
 
