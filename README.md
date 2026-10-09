@@ -49,6 +49,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Demo-Modus** — „Demo ausprobieren" auf dem Verbindungs-Bildschirm zeigt die
   ganze App mit Beispieldaten (alle Tabs, alle Pro-Features), **ohne** einen echten
   Raspberry Pi — zum Kennenlernen, und damit App-Reviewer die App ohne Gerät prüfen können.
+  Die drei Automatik-Funktionen lassen sich dort ein- und ausschalten. Einige
+  andere Aktionen (etwa ein Pi-hole-Backup, „Aufräumen" oder ein Datei-Upload)
+  enden im Demo mit einer Fehlermeldung — für sie gibt es keine Beispieldaten.
 - **Deutsch & Englisch** — die Oberfläche folgt automatisch der Handy-Sprache;
   in den Einstellungen jederzeit fest umschaltbar (System / Deutsch / English).
 - **Dienste auto-erkennen** — „Verbindung herstellen" findet evcc, Pi-hole,
@@ -56,7 +59,9 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Karte (Status, Version, Aktualisieren/Installieren, „Oberfläche öffnen").
   Reißt die Verbindung mitten in der Erkennung ab, meldet die App das als
   unbekanntes Ergebnis, statt einen halben Stand zu zeigen — fehlende Dienste
-  sähen sonst aus wie „nicht installiert". Ein Docker-Container (evcc, Home
+  sähen sonst aus wie „nicht installiert". Lässt sich die Erkennung auf dem
+  Pi gar nicht erst starten, sagt die App das, statt einen Verbindungsabriss
+  zu melden. Ein Docker-Container (evcc, Home
   Assistant), der in einer Neustart-Schleife hängt oder pausiert ist, steht
   als „inaktiv" mit einem Hinweis auf der Karte.
 - **evcc aktualisieren** — erkennt automatisch, ob evcc als **apt-Paket**
@@ -169,29 +174,63 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
     Backup-Liste der evcc-Karte als „Vor automatischem Update". Ein Neustart
     oder Herunterfahren während eines Laufs wartet auf dessen Ende, höchstens
     30 Minuten — so lange ist der Pi nicht erreichbar; aus der App heraus
-    werden beide in dieser Zeit abgelehnt. Das Einrichten oder Ändern des
-    Zeitplans startet kein Update; ein Lauf, der in die fünf Minuten danach
-    fällt, entfällt.
-  - *Health-Alerts:* Das ntfy-Thema ist faktisch das Passwort (ntfy kennt
+    werden beide in dieser Zeit abgelehnt, ebenso jedes Update per Pi-Job. Die
+    Ablehnung nennt den Ausweg für einen Lauf, der hängt: die automatischen
+    Updates neu einrichten („Zeitplan ändern") oder den Dienst auf dem Pi
+    stoppen (`sudo systemctl stop pi-tool-autoupdate.service`). Ein Zeitplan,
+    der mit einer Version nach v0.71.0 eingerichtet wurde, gibt einem Lauf
+    eine Obergrenze von sechs Stunden mit; ältere Zeitpläne bekommen sie erst
+    mit dem Neueinrichten. Das Einrichten oder Ändern des Zeitplans startet
+    kein Update; ein Lauf, der in die fünf Minuten danach fällt, entfällt.
+  - *Health-Alerts:* Der Titel der Benachrichtigung nennt den Pi — „Pi-Tool
+    (<Hostname>)", auch bei der Test-Benachrichtigung —, damit mehrere Pis an
+    einem Thema unterscheidbar sind. Enthält der Hostname etwas anderes als
+    Buchstaben, Ziffern, Punkt, Unterstrich und Bindestrich, bleibt es bei
+    „Pi-Tool". Das ntfy-Thema ist faktisch das Passwort (ntfy kennt
     kein Konto), deshalb schlägt die App ein langes Zufallsthema vor und warnt
     vor leicht erratbaren Namen. Das Thema wird **je Pi** gespeichert und
     reist im Profil-Export mit; sind auf einem Pi Alerts aktiv, ohne dass die
-    App das Thema kennt, bleibt das Feld leer, und der Dialog sagt das. Ein
+    App das Thema kennt, bleibt das Feld leer, und der Dialog sagt das. Das
+    eine Thema, das Versionen bis v0.71.0 für alle Pis führten, zeigt der
+    Dialog nur noch für einen Pi, dessen Alerts aktiv sind; für einen Pi ohne
+    aktive Alerts und ohne eigenes Thema schlägt er ein neues Zufallsthema
+    vor (das dann auch in der ntfy-App abonniert werden muss). Als Server
+    nimmt der Dialog nur Adressen mit http:// oder https:// (oder ohne Schema)
+    und meldet alles andere am Feld. Ein
     Problem wird einmal gemeldet, bis sich die Menge der Probleme ändert —
     nicht bei jeder Änderung eines Messwerts. Ein Dienst, der gerade startet,
     gilt nicht als ausgefallen. Für die Meldung „Updates verfügbar" lädt der
     Timer die Paketlisten einmal täglich selbst. Das Ergebnis der
     Test-Benachrichtigung erscheint im Dialog.
+  - *Dialoge zeigen, was eingerichtet ist:* Die Dialoge der geplanten Updates
+    und der geplanten Backups öffnen mit dem Zeitplan — und bei den Backups
+    der Aufbewahrung —, die auf dem Pi eingerichtet sind. „Zeitplan ändern"
+    ohne neue Auswahl schreibt also dasselbe zurück. Lässt sich der Stand
+    nicht lesen oder wurde die Timer-Datei von Hand geändert, stehen dort die
+    Vorgaben (Updates täglich 04:00; Backups 03:00, sieben behalten). Der
+    letzte Lauf wird nur für einen eingeschalteten Timer gezeigt; Ausschalten
+    löscht auf dem Pi auch die Statusdateien des Timers (bei den geplanten
+    Updates samt `autoupdate.log`), die Sicherungen bleiben.
   - Die Timer-Skripte liegen auf dem Pi: Änderungen aus einer neueren
     App-Version gelten erst, wenn der jeweilige Timer neu eingerichtet wird —
-    läuft noch ein älteres Skript, weist der Dialog des Timers darauf hin.
+    läuft noch ein älteres Skript, weist der Dialog des Timers darauf hin und
+    nennt den Knopf („Zeitplan ändern", bei den Health-Alerts
+    „Aktualisieren"). Nach dem Update von v0.71.0 betrifft das die geplanten
+    Updates und die Health-Alerts; das Skript der geplanten Backups ist
+    unverändert. Timer, die mit v0.70.0 oder älter eingerichtet wurden,
+    zeigen den Hinweis bei allen dreien. Der Dialog behält dabei den
+    eingerichteten Zeitplan (s. o.).
 - **Dateien** — der Datei-Browser deines Pi im eigenen Tab: Ordner durchsuchen,
   Dateien ansehen (Vorschau), **Textdateien direkt bearbeiten** (atomar mit
   Backup; Binärdateien bleiben schreibgeschützt), **vom Handy hochladen** und
   löschen — alles über die normale SSH-Sitzung, ohne SFTP-Server. Ein Upload
   fragt nach, bevor er eine Datei gleichen Namens ersetzt, und übernimmt dann
   deren Besitzer und Rechte; einen Ordner gleichen Namens ersetzt er nicht.
-  Verlinkte Ordner (etwa `/bin`) lassen sich öffnen. Fehler nennen die Ursache
+  Verlinkte Ordner (etwa `/bin`) lassen sich öffnen. **Verknüpfungen
+  (Symlinks) sind in der Liste gekennzeichnet:** Löschen entfernt nur die
+  Verknüpfung, nicht das, worauf sie zeigt; ein Upload unter dem Namen einer
+  Verknüpfung ersetzt die Verknüpfung durch die Datei und lässt ihr Ziel
+  unverändert — beide Rückfragen sagen das. Fehler nennen die Ursache
   (abgelehntes sudo-Passwort, nicht lesbare Datei, Pi nicht erreichbar) statt
   einer leeren Liste oder „Leere Datei".
 - **Config-Editor** — Konfigdateien (z. B. `evcc.yaml`) direkt in der App
@@ -199,7 +238,13 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   neuesten je Datei bleiben). Bearbeitet werden nur UTF-8-Dateien; wer den
   Editor mit ungespeicherten Änderungen verlässt, wird vorher gefragt. Ist die
   Datei ein Symlink, bleibt der Link erhalten — geschrieben wird die Datei
-  dahinter.
+  dahinter. Das gilt nur für einen Link, den kein anderes Konto auf dem Pi
+  gesetzt haben kann: Jeder Ordner auf dem Weg zum Link und zur Zieldatei
+  muss root oder dem angemeldeten Benutzer gehören und darf für Gruppe und
+  andere nicht beschreibbar sein. Sonst lehnt die App das Speichern ab — ein
+  anderes Konto könnte bestimmen, in welche Datei mit Root-Rechten
+  geschrieben wird — und bittet, die Zieldatei direkt zu öffnen. Die
+  Ablehnung kommt beim Speichern; die Änderung im Editor ist dann verloren.
 - **Terminal** — eigene Befehle direkt per SSH auf dem Pi absetzen (`sudo` wird
   unterstützt; das Pi-Passwort geht nur dann über stdin an sudo, wenn sudo
   danach fragt), Ausgabe live, mit
@@ -223,7 +268,10 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Raspberry Pi OS erkennt die Prüfung, wenn `unattended-upgrades` zwar läuft,
   die Paketquelle „Raspbian" aber nicht einschließt und deshalb nichts
   installiert; „Beheben" ergänzt sie (Kernel-, Firmware- und
-  Bootloader-Pakete bleiben ein manuelles Update). Der fail2ban-Fix meldet
+  Bootloader-Pakete bleiben ein manuelles Update). Auf einem solchen Pi
+  installiert der Fix danach **alle** Updates aus Raspbian automatisch, nicht
+  nur Sicherheitsupdates — Raspbian führt dafür keine eigene Quelle; die
+  Rückfrage vor dem Fix sagt das. Der fail2ban-Fix meldet
   Erfolg erst, wenn fail2ban danach auch weiterläuft, und stellt es auf
   Systemen ohne `/var/log/auth.log` (Bookworm ohne rsyslog) auf das
   systemd-Journal um.
@@ -261,8 +309,13 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   von evcc + Pi-hole, aufs Handy geholt, auf dem Ziel-Profil fehlende Dienste
   installiert und die Backups eingespielt. Der Quell-Pi bleibt unverändert
   (experimentell; apt-evcc und Pi-hole). Pi-hole v5 zieht nicht mit um — sein
-  Backup lässt sich nur über die Pi-hole-Weboberfläche importieren; am Ziel
-  wird dann kein Pi-hole installiert, evcc zieht trotzdem um. Wurde Pi-hole am
+  Backup lässt sich nur über die Pi-hole-Weboberfläche importieren. Das
+  stellt der Helfer fest, bevor er den Ziel-Pi anfasst: Läuft auf der Quelle
+  auch evcc, fragt er, ob nur evcc umziehen soll („Weiter" zieht evcc um und
+  meldet im Ergebnis, dass Pi-hole nicht umgezogen ist; „Abbrechen" beendet
+  den Umzug, am Ziel ist dann nichts geändert). Läuft dort nur Pi-hole v5,
+  endet der Umzug, ohne das Ziel zu berühren. Pi-hole wird in diesen Fällen
+  am Ziel nicht installiert. Wurde Pi-hole am
   Ziel neu installiert, das Backup aber nicht eingespielt, zeigt die App
   einmalig das Web-Passwort des Ziels. Der Monitoring-Stack zieht nicht mit
   um: Bringt die `evcc.yaml` den InfluxDB-Block der alten Verdrahtung mit,
@@ -289,7 +342,8 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   importierbares Format), Home Assistant als Tar des `/config`-Verzeichnisses;
   landet unter `/var/backups/pi-tool/` auf dem Pi. **Wiederherstellen und
   Verwalten direkt in der App** (Pi-hole-Import via `pihole-FTL --teleporter`,
-  nur v6; HA: Container stoppen → entpacken → starten). Automatische Rotation:
+  nur v6 — ein v5-Archiv lehnt die App schon beim Antippen mit Begründung ab;
+  HA: Container stoppen → entpacken → starten). Automatische Rotation:
   die letzten 5 Backups je Dienst bleiben. Das Home-Assistant-Archiv enthält
   `/config` ohne `backups/` und `tmp_backups/` (Home Assistants eigene
   Backups). Der Container läuft während der Sicherung weiter; die
@@ -299,7 +353,11 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Backups aufs Handy** — jedes Backup (evcc, Pi-hole, Home Assistant) lässt
   sich aus der Verwaltung herunterladen und per Teilen-Dialog sichern
   (Dateien, Drive, …) — so überleben Backups auch einen SD-Karten-Ausfall.
-  Grenze: 48 MB je Archiv.
+  Grenze: 48 MB je Archiv. Wird der Teilen-Dialog ohne Auswahl geschlossen,
+  meldet die App „Backup nicht gespeichert" und schreibt keinen
+  Verlaufseintrag — das Archiv liegt weiter auf dem Pi. „Backup
+  heruntergeladen" heißt, dass im Teilen-Dialog ein Ziel gewählt wurde; ob
+  die Ziel-App die Datei abgelegt hat, erfährt die App nicht.
 - **Aufräumen** — die System-Karte gibt Speicher frei (apt autoremove/clean,
   ungenutzte Docker-Images, Journal >7 Tage) und zeigt, wie viel frei wurde.
 - **Updates laufen auf dem Pi weiter** — System-Update, evcc-Update,
@@ -345,9 +403,15 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   SSH-Verbindung). Ein Schritt, der auf dem Pi bereits als root lief, kann
   dort noch zu Ende laufen — die App sagt das dann. Läuft bereits ein Pi-Job,
   heißt der Knopf **„Nicht mehr mitlesen"**: die App hört auf mitzulesen, der
-  Job läuft auf dem Pi weiter. Bleibt eine Aktion zehn Minuten ohne Ausgabe,
-  meldet die App „keine Ausgabe … Ergebnis unbekannt" statt „Pi nicht
-  erreichbar" und behält die Sitzung.
+  Job läuft auf dem Pi weiter. Auch „Pi neu starten" und „Pi herunterfahren"
+  lassen sich nur abbrechen, solange der Pi den Befehl noch nicht angenommen
+  hat: Hat er ihn, zählt das Ergebnis der Aktion — in der Regel der
+  ausgelöste Neustart bzw. das Herunterfahren —, nicht „Abgebrochen". Bleibt
+  eine Aktion zehn Minuten ohne
+  Ausgabe, meldet die App „keine Ausgabe … Ergebnis unbekannt" statt „Pi
+  nicht erreichbar" und behält die Sitzung. Nimmt der Pi die Anmeldung an,
+  startet einen Befehl aber nicht innerhalb von 60 Sekunden, meldet die App,
+  dass der Befehl nicht ausgeführt wurde — auch dann bleibt die Sitzung.
 - **Verbindung herstellen** — Host/Zugang in Sekunden prüfen, ohne etwas zu ändern.
 - **evcc installieren** auf einem frischen Pi (offizielles apt-Repo).
 - **evcc-Status (Live)** — die evcc-Karte zeigt die aktuellen Werte direkt auf
@@ -374,6 +438,13 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Handy importieren. Für den Gerätewechsel. Die Passphrase braucht mindestens
   10 Zeichen; die Schlüsselableitung ist bewusst rechenaufwendig (600 000
   PBKDF2-Runden). Exporte älterer Versionen lassen sich weiter importieren.
+  Solange der Schlüssel abgeleitet wird — einige Sekunden —, zeigt die App
+  das an („Export wird verschlüsselt …", „Import wird entschlüsselt …"); es
+  läuft jeweils nur ein Export bzw. Import. Wird der Teilen-Dialog des Exports
+  ohne Auswahl geschlossen, meldet die App „Export nicht gespeichert" statt
+  „Export erstellt". Läuft beim Bestätigen des Imports gerade eine Aktion,
+  werden die Profile nicht importiert, und die App sagt, dass der Import
+  danach erneut zu starten ist.
 - **SSH-Key mit einem Tap** — im Verbindungsformular auf „SSH-Key" tippen (wenn
   noch keiner hinterlegt ist) und „SSH-Key automatisch einrichten" wählen: erzeugt
   ein Ed25519-Schlüsselpaar **auf dem Handy**, hinterlegt den Public Key (einmalig

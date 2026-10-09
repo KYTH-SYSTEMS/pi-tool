@@ -84,11 +84,11 @@ sind durchgängig **fail-soft** (dürfen die App nie stürzen lassen).
     `stored: null`; daran erkennt `_withConnection` den Fall (§2
     „Fehler-Mapping"). Kein Passwort wird gesendet; „Neuen Key vertrauen"
     (vergessen, dann wie beim First-Use bestätigen) ist der Weg weiter.
-  - `SshConfig.timeout` begrenzt drei Dinge je für sich: TCP-Connect,
-    Auth-Handshake und — pro Befehl — das Warten, bis der Pi Kanal und
-    exec-Anfrage bestätigt hat (s. u. „Start eines Befehls"). Die kurzen
-    Fristen der Proben (4 s, 8 s, 12 s) gelten damit auch für den Start jedes
-    Befehls auf diesen Verbindungen.
+  - `SshConfig.timeout` begrenzt zwei Dinge je für sich: TCP-Connect und
+    Auth-Handshake. Das Warten, bis der Pi Kanal und exec-Anfrage eines
+    Befehls bestätigt hat, begrenzt eine eigene Frist, `SshConfig.startTimeout`
+    (s. u. „Start eines Befehls") — die kurzen Fristen der Proben (4 s, 8 s,
+    12 s) gelten dafür nicht.
     `commandTimeout` ist ein **Inaktivitäts**-Timeout (lange apt/docker-Läufe,
     die weiter streamen, dürfen laufen). `keepAliveInterval: 20s` verhindert,
     dass NAT/Router die Session in ruhigen dpkg-Phasen killen.
@@ -100,17 +100,35 @@ sind durchgängig **fail-soft** (dürfen die App nie stürzen lassen).
   - `run()` drainiert die Streams via `asFuture()` (feuert nach *allen*
     Kanaldaten) — so geht kein letzter Chunk (z.B. eine kurze Versionsausgabe)
     verloren.
-  - **Start eines Befehls ist befristet:** `client.execute()` wartet, bis der
-    Pi Kanal und exec-Anfrage bestätigt hat — vorher hört nichts zu, und das
-    Inaktivitäts-Timeout läuft noch nicht. dartssh2 beendet dieses Warten bei
-    einem Transportfehler und bei `close()`, aber über eine Leitung, die
-    lautlos gestorben ist, kommt keins von beiden, bevor der TCP-Stack aufgibt.
-    `run()` begrenzt es deshalb mit `SshConfig.timeout` (`withinOrDiscard`;
-    eine Sitzung, die danach doch noch aufgeht, wird wieder geschlossen) und
-    wirft **`CommandNotStartedException`** — eine `TimeoutException` eigenen
-    Typs: Soweit diese Seite es weiß, lief der Befehl nie an. Wer einen
-    Verbindungsabriss sonst als Wirkung des Befehls liest (Reboot, Shutdown),
-    darf diesen Fall nicht so lesen (§2 „Null-Exit").
+  - **Start eines Befehls ist befristet — mit einer eigenen Frist:**
+    `client.execute()` wartet, bis der Pi Kanal und exec-Anfrage bestätigt
+    hat — vorher hört nichts zu, und das Inaktivitäts-Timeout läuft noch
+    nicht. dartssh2 beendet dieses Warten bei einem Transportfehler und bei
+    `close()`, aber über eine Leitung, die lautlos gestorben ist, kommt keins
+    von beiden, bevor der TCP-Stack aufgibt. `run()` begrenzt es deshalb mit
+    **`SshConfig.startTimeout`** (Default 60 s; `withinOrDiscard` — eine
+    Sitzung, die danach doch noch aufgeht, wird wieder geschlossen) und wirft
+    **`CommandNotStartedException`** — eine `TimeoutException` eigenen Typs:
+    Soweit diese Seite es weiß, lief der Befehl nie an. **Bewusst nicht die
+    Connect-Frist:** sshd meldet die Anmeldung als gelungen, richtet die
+    Sitzung erst danach ein (PAM — `pam_systemd`, das auf logind wartet, ein
+    langsames motd-Skript, ein Pi Zero unter Last) und bestätigt den Kanal
+    erst dann. Ein solcher Pi ist langsam, nicht unerreichbar; mit der
+    Connect-Frist — bei den Adress-Proben 4 s — gälte er als nicht erreichbar,
+    und die Heim-/Tailnet-Wahl nähme die falsche Adresse. `copyWith` reicht
+    `startTimeout` deshalb unverändert weiter: Die kurze Frist einer Probe
+    gilt dem Erreichen des Pi, ihr `true` wartet danach wie jeder Befehl
+    (`probeConnection`). Die Reihenfolge in sshd stammt aus dem Code-Kommentar
+    bzw. dem OpenSSH-Ablauf; ein Pi mit langsamem Sitzungsaufbau ist **nicht
+    gemessen**, die späte Bestätigung nur gegen den lokalen Test-Server gezeigt
+    (§8). Andere Fehler des Starts (Transportfehler, `close()`) reicht `run()`
+    ohne eigenen Typ durch. Wer einen Verbindungsabriss sonst als Wirkung des
+    Befehls liest (Reboot, Shutdown), darf den Fall „nie gestartet" nicht so
+    lesen (§2 „Null-Exit").
+    Folge der längeren Frist: Über eine Leitung, die direkt nach der Anmeldung
+    lautlos stirbt, endet der erste Befehl erst nach 60 s — auch dort, wo
+    keine Running-Bar mit „Abbrechen" steht (die Liste des Dateien-Tabs) und
+    je Pi im Multi-Pi-Überblick.
   - **stdin läuft unter dem Inaktivitäts-Timeout, nicht unter der
     Connect-Frist:** Die Eingabe wird in 32-KiB-Stücken an den Kanal gegeben
     (`inPieces` über `session.stdin.addStream`) und zusammen mit stdout und
@@ -254,15 +272,21 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   werten `exitCode == null` als „Verbindung während der Aktion abgerissen –
   Ergebnis unbekannt". Dasselbe gilt für `refreshAptIndex` (§4) sowie
   `listDir` und `readFileBytes` (§5 `files.dart`). Ausnahmen: Reboot/Shutdown
-  (Abriss = erwartet — **nicht** aber `CommandNotStartedException`, §1: Hat
+  (Abriss = erwartet) und lesende Probes. Zwei Fälle liest Reboot/Shutdown
+  **nicht** als erwarteten Abriss: **`CommandNotStartedException`** (§1) — hat
   der Pi den Befehl nie angenommen, spricht nichts dafür, dass er
-  herunterfährt; die Aktion meldet dann keinen ausgelösten Neustart) und
-  lesende Probes. Die **Erkennung** zählt nicht zu den ungeprüften Probes:
-  Sie wird am Endmarker ihres Batches gemessen, nicht am Exit-Status (§3
-  „Detection-Batch"). Ohne Exit-Prüfung bleibt die sudo-Docker-Liste
-  **innerhalb** der Erkennung (der Rückfall bei verweigertem Docker-Socket) —
-  ein Abriss genau dort liest sich als „kein Container". Die sudo-Probe wirft
-  bei `null`, statt „Passwort nötig" zu raten.
+  herunterfährt; die Aktion endet als `commandNotStarted` (s. u.
+  „Fehler-Mapping"), nicht als ausgelöster Neustart — und einen Fehler von
+  `run()`, **während ein Abbruch angefordert ist**: Das ist der Abbruch, nicht
+  der Pi, der herunterfährt (s. u. „Cancel"). Unverändert als Abriss zählt
+  jeder andere Fehler des Starts — ein Transportfehler, bevor der Pi den
+  Befehl bestätigt hat, ohne Abbruch —, die Aktion meldet dann den Neustart
+  als ausgelöst; typisiert ist nur die abgelaufene Start-Frist.
+  Die **Erkennung** zählt nicht zu den ungeprüften Probes: Sie wird am
+  Endmarker gemessen, nicht am Exit-Status — der Batch ebenso wie die
+  sudo-Docker-Liste, die ihm bei verweigertem Docker-Socket als zweiter
+  Befehl folgt (§3 „Detection-Batch"). Die sudo-Probe wirft bei `null`, statt
+  „Passwort nötig" zu raten.
 - **Reboot/Shutdown-Sperre** (`jobPowerGuard`, v0.70.0): `rebootCommand`/
   `shutdownCommand` sind `sudo -S sh -c '<guard>; exec reboot|poweroff'`. Der
   Guard lehnt mit Exit 75 und einem Marker ab, in dieser Reihenfolge:
@@ -281,6 +305,22 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   des Auto-Updates erreicht die UI als `JobException(jobBusy)` ohne
   `ref`/`jobKind` (gelbes Banner mit dem Text der Logik-Schicht: „…
   abgelehnt: Auf dem Pi laufen gerade die automatischen Updates – …").
+  **Jede Ablehnung wegen des laufenden Auto-Updates nennt den Ausweg** —
+  Neustart, Herunterfahren und das BUSY des Pi-Job-Launchers enden mit
+  demselben Satz (`autoUpdateBusyWayOut` in `commands.dart`;
+  `statusAutoUpdateBusy` in den `.arb`-Dateien sagt dasselbe): im Tab
+  „Automatik" die automatischen Updates neu einrichten („Zeitplan ändern") —
+  danach beendet der Pi einen Lauf, der länger als sechs Stunden dauert,
+  selbst — oder auf dem Pi `sudo systemctl stop pi-tool-autoupdate.service`
+  ausführen. Grund: Eine Unit aus v0.71.0 oder davor hat keine Laufzeitgrenze
+  (§5 `auto_update.dart`); hängt dort ein Lauf, endet „in ein paar Minuten
+  erneut versuchen" nie. Genannt ist die Grenze, nicht „ein hängender Lauf":
+  systemd zählt sie ab dem Start des laufenden Laufs — ein Lauf, der seit zwei
+  Stunden hängt, endet nicht mit dem Einrichten, sondern vier Stunden später;
+  wer nicht warten kann, nimmt den zweiten Weg. Dass die neue Grenze nach dem
+  `daemon-reload` für den schon laufenden Lauf gilt, ist **nicht an einem
+  Gerät gemessen**. Der Text der Logik-Schicht (Neustart, Herunterfahren) ist
+  in beiden App-Sprachen deutsch (§7 „Sprache", Tier 2).
 - **Abgebrochener dpkg-Lauf** (`isDpkgInterrupted`): danach verweigert apt
   **jede** Installation auf diesem Pi. Der Fehler nennt Ursache und Ausweg statt
   nur „Exit 100"; `repairPackageState` (System-Karte ⋮ → „Paketzustand
@@ -334,13 +374,20 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
     `_runRootScriptExpectMarker` (beide) machen den Grund zur Fehlermeldung
     statt „Details im Log". Erkannt wird nur eine Zeile, die mit dem Präfix
     **beginnt** — das Install-Präfix ist ein Teilstring des Uninstall-Präfixes.
+    Dritte Zeile dieser Art: **`CONFIG_REFUSED: <Grund>`**
+    (`configWriteRefusedPrefix`/`parseConfigWriteRefusal`) — das
+    Config-Schreiben lehnt einen Symlink ab, dem es nicht folgt (§3 „Config
+    schreiben"). Diese wertet `saveConfigFile` selbst aus: Es schneidet mit,
+    was das Skript druckt, und macht den Grund (durch `redactPassword`) zur
+    Fehlermeldung, wenn `_runRootScriptExpectMarker` ohne Marker endet.
 - **Cancel**: `cancel()` markiert **jede** offene Verbindung als abgebrochen
   und schließt sie danach (`_open`, eine Menge statt eines einzelnen Handles:
   die UI serialisiert Aktionen hinter `_busy`, aber der Dateien-Tab listet und
   zeigt daneben — mit einem Handle erreichte „Abbrechen" nur die zuletzt
   geöffnete Verbindung, und die zuerst geschlossene nahm das Handle mit).
   **Der Abbruch-Zustand gilt je Verbindung** (`Expando _cancelled` pro Runner,
-  wie `_jobTouched`; ebenso `_sudoNeedsPw` und `_rootWorkSent`): Mit einem
+  wie `_jobTouched`; ebenso `_sudoNeedsPw`, `_rootWorkSent` und
+  `_powerTaken`): Mit einem
   Flag auf der Instanz löschte eine Verbindung, die direkt hinter „Abbrechen"
   aufging (Dateien-Tab), die Anforderung — die abgebrochene Aktion meldete
   dann, was ihre geschlossene Verbindung hinterließ, und ein Job, bei dem nur
@@ -354,6 +401,28 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   beendet den Stream normal → ein Teil­ergebnis sähe erfolgreich aus).
   **Nach einem Job-Start heißt Cancel nur „nicht mehr mitlesen"**: der Job
   läuft weiter, Ergebnis `jobDetached` (Grund `userStopped`), nie `cancelled`.
+  **Reboot und Shutdown behalten ihr Urteil, sobald der Pi den Befehl hat:**
+  `reboot()`/`shutdown()` setzen `_powerTaken`, sobald `run()` des
+  Power-Befehls mit einem Ergebnis zurückkommt — der Kanal war offen, der Pi
+  hat den Befehl. `_verdictStands(runner)` (= `_jobTouched` oder
+  `_powerTaken`) nimmt die Aktion dann aus der Prüfung nach dem body und aus
+  dem Cancel-Mapping im `catch` heraus: Ein Cancel ersetzt das Urteil des
+  body nicht, weder den Erfolg noch eine `EvccUpdateException` (abgelehntes
+  sudo-Passwort, Ablehnung des Guards).
+  „Abgebrochen." für einen Pi, der gerade herunterfährt, ließe der Seite eine
+  Sitzung zu ihm. Wirft `run()` dagegen, während ein Abbruch angefordert ist
+  — der Pi hatte den Befehl noch nicht bestätigt —, reicht der body den Fehler
+  weiter, und die Aktion endet als „Abgebrochen.". (Die Unterscheidung
+  „`close()` während eines laufenden Befehls liefert ein Ergebnis ohne
+  Exit-Status, `close()` vor der Bestätigung wirft" ist gegen den lokalen
+  SSH-Test-Server geprüft, §8.) **Entwurfsgrenze:** Schließt ein Cancel die
+  Verbindung, nachdem der Pi den Befehl hat, kommt eine Ablehnung, die erst
+  danach einträfe (sudo, der Guard), nicht mehr an — die Aktion meldet
+  Neustart bzw. Herunterfahren als ausgelöst, und nach „Herunterfahren"
+  beendet die Seite die Sitzung eines Pi, der an bleibt. Das ist die harmlose
+  Richtung (neu verbinden). Ob ein Pi, dessen Verbindung direkt nach der
+  Übergabe geschlossen wird, tatsächlich weiter herunterfährt, ist **nicht an
+  einem Gerät gemessen**.
   **Cancel schließt nur die Verbindung — er stoppt nichts auf dem Pi**
   (Entwurfsgrenze): Ein Root-Skript im Vordergrund, das der Pi schon hat,
   läuft weiter, bis eines seiner Kommandos auf die geschlossene Ausgabe
@@ -375,13 +444,27 @@ Führt **jede** Remote-Aktion aus, **eine SSH-Verbindung pro Aktion** über
   Auth/KeyDecode → auth, Socket → connection, sonst unknown.
   **Ein Timeout ist nur vor und während des Verbindens ein
   Verbindungsfehler.** Wirft der body nach gelungenem connect eine
-  `TimeoutException` (10 min ohne Ausgabe, 15 s ohne Start eines Befehls, §1),
-  war der Pi erreichbar und arbeitet möglicherweise noch — etwa ein tar über
-  ein großes Verzeichnis, das lange nichts druckt. Dafür gibt es den eigenen
+  `TimeoutException` (10 min ohne Ausgabe, §1), war der Pi erreichbar und
+  arbeitet möglicherweise noch — etwa ein tar über ein großes Verzeichnis, das
+  lange nichts druckt. Dafür gibt es den eigenen
   `UpdateErrorKind.outputTimeout` („Seit 10 min keine Ausgabe – die Aktion
   läuft möglicherweise auf dem Pi weiter, Ergebnis unbekannt."; die Dauer
   kommt aus der Exception, sonst `commandTimeout`), und `_guard` behält die
-  Sitzung (§7). **`HostKeyChangedException` mit `stored == null`** (der
+  Sitzung (§7). **Ein Befehl, der nie gestartet wurde, hat seine eigene Art:**
+  `CommandNotStartedException` (§1) wird — vor dem allgemeinen
+  `TimeoutException`-Zweig — zu **`UpdateErrorKind.commandNotStarted`** mit
+  „Der Pi hat die Anmeldung angenommen, den Befehl aber nicht innerhalb von
+  1 min gestartet – er wurde nicht ausgeführt." (die Spanne über `_span`:
+  ganze Minuten, sonst Sekunden; aus der Exception, sonst `startTimeout`).
+  Weder „Pi nicht erreichbar" — die Anmeldung ging durch — noch „läuft
+  möglicherweise weiter": Soweit diese Seite es weiß, lief er nie an. Gesagt
+  wird es über den einen Befehl, weil eine Aktion vor ihm andere ausgeführt
+  haben kann. Auch hier behält `_guard` die Sitzung. Zwei Stellen zeigen
+  diese Meldung nicht: Pi-Job-Aktionen (`_driveJob` fängt jede
+  Transportstörung, auch diese, und endet wie bisher als „Start unklar" bzw.
+  `jobDetached`; Start-Frist und Job-Watchdog sind beide 60 s) und der
+  Multi-Pi-Überblick (`_probePi` zeigt jeden Fehler als „nicht erreichbar",
+  §7). **`HostKeyChangedException` mit `stored == null`** (der
   gespeicherte Fingerprint ließ sich nicht lesen, §1) wird ebenfalls zu
   `hostKeyChanged`, aber mit eigenem Text („Der gespeicherte SSH-Host-Key von
   … ließ sich nicht lesen – ob der Pi derselbe ist, lässt sich so nicht
@@ -416,19 +499,88 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
   Shell interpolierte Variable (Container-Namen, Pfade, Compose-Labels, Env,
   Mounts) geht hindurch. Auch von `files.dart`, `alerts.dart`,
   `pihole_service.dart`, `homeassistant_service.dart` importiert.
+  Ausnahme, per Test festgehalten: Unit-Namen gehen ungequotet in die
+  Befehlszeile (`systemdStateCommand`, `systemctl is-active <unit>` der
+  Erkennung). Das sind ausschließlich App-Konstanten (`knownSystemdServices`,
+  `knownAptServices`), und `script_quoting_test.dart` prüft, dass jede ein
+  schlichtes Wort ist (§8).
+- **Welche Shell was liest:** Eine einzelne Befehlszeile auf dem
+  SSH-exec-Kanal liest die Login-Shell des Nutzers — auf Raspberry Pi OS
+  bash. Solche Zeilen bleiben bei dem, was auch ein POSIX-`sh` liest (der
+  Syntax-Test parst sie mit bash, sh und dash, §8). Root-Skripte kommen über
+  `sudo -S bash -s` und dürfen bash-Syntax verwenden; `#!/bin/sh`-Wrapper und
+  `sh -c`-Argumente liest auf einem Pi dash. Eine Login-Shell, die keine
+  Bourne-Shell ist (fish, csh, tcsh), ist damit nicht abgedeckt und an keinem
+  Pi gemessen: Viele Befehlszeilen der App verwenden sh-Syntax (`LC_ALL=C
+  sudo …`, `2>/dev/null ||`, `$(…)`); davon unabhängig gebaut sind nur
+  einzelne — die Erkennung über `env` (s. u. „Detection-Batch"), einige über
+  `sh -c`.
 - **Config schreiben** umgeht Quoting ganz: Inhalt als **base64** transportiert
-  (`buildConfigWriteScript`) → beliebige Bytes, kein Injection-Risiko. Schreibt
-  in `mktemp` + `mv -fT` (atomar; `-T`: ein Verzeichnis am Ziel ist ein Fehler,
-  kein Ort, in den verschoben wird), `chmod/chown --reference` vorher (Rechte
-  erhalten). **Ein Symlink wird durchgeschrieben** (`readlink -f`, die
-  Temp-Datei liegt neben dem echten Ziel): Auf den Link selbst umbenannt,
-  ersetzte die neue Datei den Link, und die Datei dahinter bliebe, wie sie
-  war. Ein `trap … EXIT` räumt die Temp-Datei bei jedem Fehlschlag weg.
-  Rotiert Backups **je Datei** (neueste 5; der Glob ist das
+  (`buildConfigWriteScript`) → beliebige Bytes, kein Injection-Risiko.
+  Vorher sichert das Skript die Datei (`cp -P` — nimmt in diesem Moment ein
+  Link ihren Platz ein, wird der Link kopiert, nicht sein Ziel) und rotiert
+  die Backups **je Datei** (neueste 5; der Glob ist das
   Zeitstempel-Muster `config-<basename>-JJJJMMTT-HHMMSS.bak`, damit `evcc.yaml`
   die Sicherungen von `evcc.yaml-old` weder mitzählt noch löscht; gelöscht wird
-  zeilenweise statt per `xargs`, das Namen an Leerzeichen trennt), Marker
-  `CONFIG_SAVED`.
+  zeilenweise statt per `xargs`, das Namen an Leerzeichen trennt).
+  **Geschrieben wird über `rootReplaceFileLines`** — die Zeilen, mit denen ein
+  Root-Skript die Datei in `$dest` ersetzt, geteilt mit dem Upload (§5
+  `files.dart`): Temp-Datei neben dem Ziel, dann `mv -fT` (atomar; `-T`: ein
+  Verzeichnis am Ziel ist ein Fehler, kein Ort, in den verschoben wird);
+  danach der Marker `CONFIG_SAVED`.
+  **Sicherheits-Invariante: Ein Root-Skript, das in ein Verzeichnis schreibt,
+  das einem anderen Konto gehören kann** (das Datenverzeichnis eines
+  Dienstes), **schreibt, `chown`t und `chmod`et nie über einen Namen** — das
+  Konto kann dort jeden Namen jederzeit austauschen, und ein `chown`/`chmod`
+  auf den Namen der Temp-Datei folgte einem Link, der inzwischen an ihrer
+  Stelle liegt.
+  - Die Temp-Datei bekommt einen frischen Zufallsnamen (`mktemp -u`) und
+    entsteht durch ein **exklusives Öffnen** (`set -C; exec 3> "$tmp"`): Ein
+    Name, den es schon gibt, wird abgelehnt, auch ein Symlink. noclobber lässt
+    einen vorhandenen Namen durch, der keine gewöhnliche Datei ist (FIFO,
+    Gerät) — deshalb zusätzlich `[ -f /proc/self/fd/3 ]`, sonst Abbruch mit
+    Meldung. Inhalt, Besitzer und Modus gehen von da an nur über diesen einen
+    Deskriptor (`>&3`, `chown`/`chmod` auf `/proc/self/fd/3`); über den Namen
+    wird die Datei nur umbenannt oder gelöscht, und beides folgt keinem Link.
+  - Besitzer und Modus kommen aus **einem** `stat` des ersetzten Eintrags
+    selbst (kein Link wird verfolgt) und nur von einer gewöhnlichen Datei; vom
+    Modus nur die Rechte-Bits (`& 0777` — setuid, setgid und sticky bleiben
+    zurück). Erst `chown`, dann `chmod` (chown kann Modus-Bits löschen).
+  - Die Temp-Datei entsteht unter `umask 077` und bleibt 0600, bis sie
+    Besitzer und Modus hat — der Inhalt einer 0600-Datei ist unterwegs nie für
+    alle lesbar (Ausnahme: Default-ACL, s. „Bekannte Grenzen"). Gibt es keine
+    Datei, von der beides käme, bleibt sie root 0600 (Config-Editor) bzw.
+    bekommt `newFileMode` (Upload: 644). `strict` entscheidet, ob ein
+    scheiterndes `chown`/`chmod` das Skript beendet (Upload) oder die Datei
+    trotzdem geschrieben wird (Config-Editor).
+  - Ein `trap … EXIT` räumt die Temp-Datei bei jedem Fehlschlag weg und wird
+    nach dem `mv` gelöst — der Name gehört dem Skript dann nicht mehr.
+  **Ein Symlink am Pfad wird durchgeschrieben — aber nur einer, den kein
+  anderes Konto gesetzt haben kann.** Auf den Link selbst umbenannt, ersetzte
+  die neue Datei den Link, und die Datei dahinter bliebe, wie sie war. Blind
+  verfolgt (`readlink -f`) bestimmte dagegen in einem Verzeichnis, das ein
+  anderes Konto ändern kann, dieses Konto die Datei, in die root den
+  bearbeiteten Text schreibt — über die ganze Zeit, in der der Editor offen
+  ist. Das Skript folgt dem Pfad deshalb von Hand, Name für Name (`follow`,
+  höchstens 40 Links), und **jedes Verzeichnis, in dem dabei ein Name
+  nachgeschlagen wird** — bis zum Link und weiter entlang jedes Links bis zur
+  Datei — muss root oder dem Konto gehören, das sudo aufgerufen hat
+  (`$SUDO_UID`), und darf für Gruppe und andere nicht schreibbar sein
+  (`own_dir`). Ist das nicht so, führt der Link zu keiner gewöhnlichen Datei
+  oder löst der Kernel den Pfad anders auf (`-ef`), druckt das Skript genau
+  eine Zeile `CONFIG_REFUSED: <Grund>` und endet mit Exit 3, **bevor** etwas
+  gesichert oder geschrieben ist (§2 „Ablehnungs-Zeilen"); der Grund nennt den
+  Ausweg, die Zieldatei direkt zu öffnen (`readlink -f` im Terminal zeigt
+  sie). Eine gewöhnliche Datei wird an Ort und Stelle ersetzt, in jedem
+  Verzeichnis. Folgen: Abgelehnt wird auch ein Link, den niemand angreift —
+  jeder, dessen Weg durch das Verzeichnis eines dritten Kontos (etwa das
+  Datenverzeichnis eines Dienstes) oder durch eines mit Schreibrecht für
+  Gruppe oder andere (Modus 775) führt. Und die Ablehnung kommt erst beim
+  Speichern, wenn die Editor-Seite schon geschlossen ist: Die Änderung ist
+  dann verloren, wie bei jedem gescheiterten Speichern (`_editConfig`). Die
+  Speichern-Rückfrage nennt weiter den Pfad des Links, nicht sein Ziel.
+  Nichts davon ist an einem Pi gemessen; die Tests mit echten Besitzern und
+  Modi laufen nur unter Linux (§8).
 - **evcc-Backup** (`buildBackupScript`, läuft über `installShellCommand`):
   Archiv `/var/backups/evcc/evcc-backup-<zeit>.tar.gz` aus `/etc/evcc.yaml`
   (falls vorhanden) und der Datenbank. **Reihenfolge der Datenbank-Kandidaten:**
@@ -490,7 +642,14 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
 - **Detection-Batch**: `buildDetectBatch`/`splitDetectSections` bündeln alle
   Probes der Erkennung (derzeit knapp 30) in **eine** SSH-Runde
   (`@@PT@@key@@PT@@`-Marker, `{ cmd ; } 2>&1 || true` isoliert einzelne
-  Fehlschläge). Ausgeführt via `detectShellCommand` (`LC_ALL=C bash -s`).
+  Fehlschläge). Ausgeführt via `detectShellCommand` (`env LC_ALL=C bash -s`).
+  Über `env`, damit die Zeile mit einem Programm beginnt: sshd übergibt sie
+  der Login-Shell des Nutzers, und eine ohne `NAME=wert befehl` (laut
+  Code-Kommentar fish vor 3.1, csh, tcsh) hält ein führendes `LC_ALL=C` für
+  einen Programmnamen — der Batch lief dort nie, und jedes Verbinden endete
+  an dieser Stelle. Nicht an einem Pi mit einer solchen Login-Shell gemessen
+  (der Test führt die Zeile in einer bash aus, die das erste Wort als
+  Programm nimmt).
   **Der Batch ist eine Gruppe `{ … } </dev/null` und endet mit dem Endmarker
   `@@PT@@__END__@@PT@@`** (`detectEndKey`). Die Gruppe: Das Skript kommt auf
   bashs stdin, und bash liest eine Gruppe bis zur schließenden Klammer, bevor
@@ -510,6 +669,31 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
   Stand auf dem Bildschirm, `_probePi` meldet den Pi als nicht erreichbar, der
   Umzugshelfer endet, bevor er am Ziel etwas installiert. `_readRouteState`
   (§4 Tailscale) nutzt denselben Builder und prüft denselben Endmarker.
+  **Eigener Fall „nie gestartet":** Kam kein einziger Abschnitt an, aber ein
+  Exit-Status oder eine Meldung der Shell (kein bash auf dem Pi, eine
+  Login-Shell, die die Zeile nicht ausführen konnte), wirft `detectServices`
+  stattdessen „Die Erkennung ließ sich auf dem Pi nicht starten (Exit-Status
+  N). Details im Log." (ebenfalls `unknown`): Nichts wurde abgeschnitten, und
+  „Verbindung abgerissen" schickte den Nutzer auf die Suche in seinem Netz.
+  Ein Batch, von dem Abschnitte ankamen, und einer, von dem gar nichts kam,
+  bleiben „Ergebnis unbekannt"; ein Abbruch durch den Nutzer bleibt
+  „Abgebrochen.". Derselbe Text erscheint auch in dem schmalen Fall, dass
+  die Verbindung wirklich vor dem ersten Abschnitt riss und die Login-Shell
+  schon etwas auf stderr geschrieben hatte. Im Log steht dazu nur stderr; was
+  eine Shell ohne Abschnittsmarker auf stdout druckt, wird nicht geloggt.
+  **Die sudo-Docker-Liste hat ihren eigenen Endmarker:** Verweigert der
+  Docker-Socket den Nutzer (und ist `allowSudoForDocker` gesetzt), schickt
+  `detectServices` als zweiten Befehl `dockerListStateSudoProbe` —
+  `dockerListStateSudoCommand` zwischen einem `DOCKER`-Abschnittsmarker und
+  dem Endmarker des Batches (`detectEndKey`), den die Shell druckt, **nachdem**
+  sudo zurückgekehrt ist, was immer daraus wurde: Ein abgelehntes Passwort
+  oder ein Pi ohne docker endet trotzdem mit dem Marker und ergibt keine
+  Docker-Karten. Fehlt der Endmarker, schloss der Kanal während der Abfrage;
+  die ganze Erkennung endet dann als „Ergebnis unbekannt" (Log:
+  „Docker-Abfrage über sudo unvollständig, Exit-Status …") — eine fehlende
+  oder abgeschnittene Liste läse sich sonst als „evcc und Home Assistant sind
+  nicht installiert". Gelesen wird mit `splitDetectSections`; die Meldungen
+  von sudo und docker bleiben auf stderr.
 - **Docker**: `parseEvccDocker` bevorzugt Image-Match, Name-Fallback nur
   *exakt* `evcc` (sonst würde `evcc-db` fälschlich gewählt). `buildDockerRunCommand`
   rekonstruiert `docker run` aus `docker inspect` mit Whitelist bei Restart-Policy
@@ -549,7 +733,9 @@ I/O-freier Kern: `commands.dart` baut **jeden** Shell-Befehl/Skript,
   `dockerListStateCommand` (`name|image|state`; `{{.State}}` kam mit Docker
   20.10 — ein älterer Client scheitert am Template, dann antwortet die
   schlichte Liste ohne Zustand; die sudo-Variante legt **ein** sudo um beide
-  Versuche, `LC_ALL=C sudo -S sh -c "…"`). `dockerContainerState` liest die
+  Versuche, `LC_ALL=C sudo -S sh -c "…"`, und läuft in der Erkennung als
+  `dockerListStateSudoProbe` mit eigenem Endmarker, s. o.).
+  `dockerContainerState` liest die
   dritte Spalte: `restarting` setzt auf der Karte `ServiceStatus.health` =
   „⚠ Container startet neu" (mit `healthWarning`),
   `created`/`paused`/`removing`/`exited`/`dead` ergeben „⚠ Container-Zustand:
@@ -735,11 +921,22 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   `restoreBackup`/`restorePiholeBackup`. Quell-Pi bleibt unangetastet; nur
   apt-evcc zieht um (Docker-evcc hat hier keinen Restore-Pfad). System-Karte ⋮,
   Pro-gated. Braucht ein zweites Profil mit Host.
-  **Pi-hole v5 zieht nicht um:** Ist das Backup der Quelle kein `.zip` (ein
-  v5-`.tar.gz` lässt sich nur über die Pi-hole-Weboberfläche importieren),
-  endet der Lauf mit `errorMigratePiholeV5`, **bevor** am Ziel Pi-hole
-  installiert wird — sonst stünde dort ein frisches Pi-hole ohne die Daten
-  und hinter einem Passwort. evcc ist zu diesem Zeitpunkt schon umgezogen.
+  **Pi-hole v5 zieht nicht um — entschieden, bevor das Ziel angefasst wird:**
+  Ob das Backup der Quelle ein v5-`.tar.gz` ist (es lässt sich nur über die
+  Pi-hole-Weboberfläche importieren), sagt `piholeRestoreRefusal` am Namen der
+  gerade geholten Datei — direkt nach den Quell-Backups, vor dem ersten
+  Kontakt zum Ziel (auch vor dessen `detectServices`). Hat die Quelle dazu
+  apt-evcc, fragt der Helfer **im laufenden Guard**
+  (`dialogMigratePiholeV5Title`/`…Body`: was umzieht, was nicht, und dass am
+  Ziel bis jetzt nichts geändert wurde). „Weiter" zieht nur evcc um und endet
+  **amber** mit `statusMigratedEvccOnly` (das ist auch der Verlaufseintrag;
+  er zählt wie jeder für die Bewertungs-Anfrage, §6), „Abbrechen" endet mit
+  `statusMigrationCancelled` (`UpdateErrorKind.cancelled`). Hat die Quelle
+  nur Pi-hole v5, endet der Lauf mit `errorMigratePiholeV5`, und das Ziel wird
+  nie kontaktiert. Pi-hole wird am Ziel in keinem dieser Fälle installiert —
+  sonst stünde dort ein frisches Pi-hole ohne die Daten und hinter einem
+  Passwort. Solange die Frage offen ist, bleibt die Aktion beschäftigt und
+  der Vordergrunddienst oben (wie beim Host-Key-Dialog des Erstkontakts).
   Wurde Pi-hole am Ziel neu installiert, das Backup aber nicht eingespielt,
   zeigt der Helfer nach dem Guard einmalig das Web-Passwort des Ziels
   (`_showPiholePassword(pw, onPi:)`); nach gelungenem Restore nicht — der
@@ -799,6 +996,11 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
 - **`pihole_service.dart`** — v5+v6-Versionsparser; Backup via Teleporter, Restore
   **verweigert v5 `.tar.gz`** (nur v6-CLI-Import); der DNS-Reload im Restore
   bewusst *nicht* fehlerverschluckt (`set -e` vor `RESTORE_OK`).
+  `piholeRestoreRefusal(path)` (alles außer `.zip` → der Grund, sonst null)
+  ist die **eine Quelle** dieser Ablehnung: `restorePiholeBackup` lehnt damit
+  ab, bevor es verbindet; das Backup-Sheet beantwortet den Tap damit, ohne zu
+  fragen und ohne den Updater aufzurufen (§7 „Ablehnung ohne Frage"); der
+  Umzugshelfer entscheidet damit, was umzieht (s. o.).
   **CLI-Falle (v6):** `pihole` schickt jeden unbekannten Subcommand in `helpFunc`
   — und die endet mit **Exit 0**. Ein Kommando, das es in der laufenden
   Generation nicht gibt, meldet also *Erfolg*. v6 kennt `restartdns` nicht mehr
@@ -919,13 +1121,16 @@ Dienst nur: Befehlsstrings, Root-Skripte, reine Parser. Orchestrierung
   `command -v tailscale`. Tote EOL-Quellen stellt vorher `_fixEolSources` um.
   `up` detached (Login-URL). down/logout via sudo.
   **„Trennen" und „Abmelden" über eine Tailnet-Sitzung werden abgelehnt**
-  (`tailscaleSet`): dieselbe Vorprüfung wie beim Deinstallieren —
-  `isTailnetHost(host)`, dann `tailscaleSessionProbe`/`isTailnetClient` auf
-  dem nicht-sudo gelesenen `$SSH_CONNECTION` (greift auch unter der
-  Heimnetz-Adresse, wenn der Pi das Heimnetz freigibt) — mit einer Meldung,
-  die die Aktion nennt; ausgeführt wird nichts. (Beide Prüfungen laufen hier
-  nach der Anmeldung; das Deinstallieren prüft die Adresse schon vor dem
-  Verbinden.) Ein Logout kappte genau diese
+  (`tailscaleSet`): dieselbe Vorprüfung wie beim Deinstallieren — die Adresse
+  **vor dem Verbinden** (`tailscaleSetRefusal(host, logout:)`, gebaut auf
+  `isTailnetHost`), dann in der Verbindung
+  `tailscaleSessionProbe`/`isTailnetClient` auf dem nicht-sudo gelesenen
+  `$SSH_CONNECTION` (greift auch unter der Heimnetz-Adresse, wenn der Pi das
+  Heimnetz freigibt) — mit einer Meldung, die die Aktion nennt; ausgeführt
+  wird nichts. `tailscaleSetRefusal` ist die **eine Quelle** für Updater und
+  Seite: Unter einer Tailnet-Adresse beantwortet `_tailscaleSet` den Tap
+  selbst damit und ruft den Updater nicht auf (§7 „Ablehnung ohne Frage").
+  Ein Logout kappte genau diese
   Sitzung und nähme den Pi aus dem Tailnet; `tailscale down` lehnt das CLI in
   dem Fall selbst ab („aborted, no changes made"), was vorher als „Exit 1"
   ankam.
@@ -1098,9 +1303,9 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `pitool_wait_apt_locks`, `pitool_repair`): Reparaturkette → `apt-get update`
   mit `APT::Update::Error-Mode=any` → `apt-get full-upgrade`. **Wer diese
   Bausteine in `pi_job.dart` oder `eol_sources.dart` ändert, ändert den
-  Wrapper — `wrapperGeneration` erhöhen.** Danach **self-heal** (startet evcc
-  neu, falls es vorher lief und danach nicht mehr) und die Statuszeile.
-  Marker `AUTOUPDATE_INSTALLED/REMOVED`.
+  Wrapper — `autoUpdateWrapperGeneration` erhöhen.** Danach **self-heal**
+  (startet evcc neu, falls es vorher lief und danach nicht mehr) und die
+  Statuszeile. Marker `AUTOUPDATE_INSTALLED/REMOVED`.
   Die evcc-Sicherung vor dem Upgrade (`autoupdate-evcc-<zeit>.tar.gz` unter
   `/var/backups/pi-tool`, nur wenn das Paket evcc installiert ist) folgt
   denselben Regeln wie der Backup-Wrapper (nur vorhandene Pfade, tar-Exit 1
@@ -1131,6 +1336,23 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   dessen Dokumentation abgeleitet und **nicht an einem Pi gemessen**. Aus der
   App heraus werden Neustart und Herunterfahren währenddessen abgelehnt (§2),
   und der Pi-Job-Launcher meldet BUSY.
+  **Laufzeitgrenze:** `TimeoutStartSec=6h` (=
+  `jobRuntimeLimit(jobKindSystemUpgrade)`, die Grenze eines
+  System-Upgrade-Pi-Jobs). Eine oneshot-Unit hat von sich aus keine
+  Start-Frist und ist für ihren ganzen Lauf „activating": Ein Lauf, der
+  hängt, bliebe es für immer — und solange lehnt die App Neustart,
+  Herunterfahren und jeden Pi-Job ab. (`TimeoutStartSec` und nicht
+  `RuntimeMaxSec`, das laut Code-Kommentar für eine oneshot-Unit nicht
+  greift.) An der Grenze stoppt systemd die Unit wie bei jedem anderen Stopp:
+  SIGTERM nur an den Wrapper (`KillMode=mixed`), der es vermerkt und
+  weiterläuft; endet der Lauf binnen `TimeoutStopSec`, schreibt er seine
+  Statuszeile noch; was danach übrig ist, wird beendet, und die Statusdatei
+  behält die Zeile des Laufs davor (das Sheet kann dann ein älteres „ok"
+  zeigen). In beiden Fällen endet die Unit als failed und ist nicht mehr
+  „activating". Aus systemds Dokumentation abgeleitet, **nicht an einem Gerät
+  gemessen**; der Test hält nur die Zeilen der Unit fest. Eine Unit aus
+  v0.71.0 oder davor bekommt die Grenze erst, wenn die automatischen Updates
+  neu eingerichtet werden — deshalb nennen die Ablehnungen diesen Weg (§2).
   **Einrichten startet nie sofort ein Upgrade:** Ein `Persistent=true`-Timer
   feuert beim Start sofort, wenn seit seinem letzten Lauf einer fällig war —
   nach einer Pause, oder wenn die neue Uhrzeit zwischen letztem Lauf und
@@ -1162,7 +1384,10 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   evcc-Archiv des Timers enthält `/etc/evcc.yaml` und ganz `/var/lib/evcc`;
   eine Datenbank außerhalb davon (eigener `dsn`, altes `/root/.evcc`) ist
   nicht darin. `buildScheduledBackupInstallScript` prüft `onCalendar` mit
-  `checkOnCalendar`.
+  `checkOnCalendar`. Die Status-Probe meldet neben Zustand, nächstem Lauf und
+  letzter Statuszeile auch Zeitplan und Aufbewahrung, wie sie auf dem Pi
+  eingerichtet sind (`ONCALENDAR`, `DROP` → `ScheduledBackupStatus.hour`/
+  `.keep`; s. u. `on_pi_wrapper.dart` „Was eingerichtet ist").
   **Wrapper-Regeln (seit v0.71.0 unverändert, also seit Generation 2):**
   - **tar bekommt nur vorhandene Pfade** (Positionsparameter): Das evcc-Paket
     liefert keine `/etc/evcc.yaml` — ein in der Weboberfläche eingerichtetes
@@ -1197,6 +1422,18 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   oneshot-Unit, die kein eigenes Start-Timeout hat. Das Install-Skript löscht
   `alerts.last` — ein neues Ziel hat von den aktuellen Problemen noch nichts
   gehört.
+  **Der Titel des Push nennt den Pi:** `Title: Pi-Tool (<hostname>)`, gebaut
+  von `_titleSh` — im Wrapper und in der Test-Nachricht. Mehrere Pis können an
+  ein Topic pushen, und „Dienst aus: evcc" allein nennt keinen. Der Hostname
+  ist, was `hostname` auf dem Pi antwortet, und kommt nur in den Titel, wenn
+  er aus Buchstaben, Ziffern, Punkt, Unterstrich und Bindestrich besteht (im
+  `case`-Muster einzeln aufgezählt — was ein Bereich wie `a-z` abdeckt, hängt
+  von der Locale ab); mit irgendetwas anderem darin, oder ohne Antwort, bleibt
+  es bei `Pi-Tool`. Alles ASCII, auch die Klammern: Der Titel reist als
+  HTTP-Header, und was ein Server aus anderen Bytes dort macht, ist nicht
+  gemessen. Der Hostname ist **nicht** Teil des Debounce-Hashs — ein
+  umbenannter Pi hat kein neues Problem. Wie ntfy den Titel anzeigt, ist nicht
+  geprüft: In den Tests ist curl ein Stub, der seine Argumente festhält.
   **Die Paketlisten frischt der Wrapper selbst auf** — „N Updates verfuegbar"
   zählt gegen den lokalen Index, und den erneuert auf einem Standard-Pi
   niemand (§4): als **letzter** Schritt (so kann er einen Push weder verzögern
@@ -1214,9 +1451,22 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `buildTestAlertCommand`, dessen Text den Wert **nicht** enthält (er wird
   geloggt, und das Feld kann Zugangsdaten oder einen `ntfy://`-Link samt Topic
   tragen).
-  Die Test-Nachricht (`buildTestAlertCommand`, `curl -fsS --max-time
-  15`) entfernt Leerraum aus Server und Topic und prüft den Server wie das
-  Install-Skript und wird am Exit-Status gemessen (§2).
+  **Geprüft wird schon im Sheet:** `isNtfyServerUsable` ist das Prädikat, auf
+  dem auch `_ntfyServer` der Builder aufbaut. `_AlertsSheet` ruft es vor
+  „Test" und vor dem Einschalten bzw. Aktualisieren (`_requireServer`),
+  markiert das Feld (`wNtfyServerInvalid`) und schließt nicht — ein
+  abgelehnter Wert wird weder gesendet noch mit dem Profil gespeichert. (Der
+  `ArgumentError` der Builder endete sonst als „Unerwarteter Fehler – Details
+  im Terminal-Log" in dem Sheet, das dieses Log verdeckt, und der Wert stand
+  da schon im Profil.) Ein leer gelassenes Feld bedeutet im Sheet
+  `https://ntfy.sh`. Das Sheet ist die einzige Quelle des Werts für
+  `_configureAlerts`, das weiterhin **vor** der Installation speichert (s. u.).
+  Die Test-Nachricht (`buildTestAlertCommand`) entfernt Leerraum aus Server
+  und Topic, prüft den Server wie das Install-Skript und wird am Exit-Status
+  gemessen (§2). Sie ist `sh -c '<_titleSh>; curl -fsS --max-time 15 -H
+  "Title: $title" -d … -- <url>'`: über `sh -c`, weil der Titel ein `case`
+  braucht und die Login-Shell des SSH-Nutzers keine Bourne-Shell sein muss;
+  curl steht zuletzt, sein Exit-Status ist der des Befehls.
   **Das Ziel steht nicht im Wrapper** (Regel in `on_pi_wrapper.dart` unten):
   ntfy-Server und -Topic liegen in **`/usr/local/lib/pi-tool-alerts.conf`**
   (`alertsDestinationPath`; root, 0600, unter `umask 077` in einem eigenen
@@ -1232,20 +1482,39 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `isWeakNtfyTopic()` (< 16 Zeichen oder
   < 8 verschiedene Zeichen) markiert erratbare Namen im Sheet **und** als
   Warnzeile auf der Automatik-Karte (`_AutomationTile.warning`, beurteilt am
-  Topic des aktiven Pi) — Bestandsnutzer
+  **eigenen** Topic des aktiven Profils, s. u.) — Bestandsnutzer
   öffnen das Sheet sonst nie wieder. Beides rein/testbar; nie durch ein
   Freitext-Feld ohne Vorbelegung ersetzen.
   **Das Topic gehört zum Pi, nicht zur App** (`Profile.alertsNtfyServer`/
-  `alertsNtfyTopic`, §6). Vorbelegung des Sheets: der Wert des Profils, sonst
-  der app-weite Altwert (`effectiveNtfyDestination`), sonst — wenn der Pi
-  Alerts als aktiv meldet, die App aber kein Topic für ihn kennt (von einem
-  anderen Gerät oder vor einer Neuinstallation eingerichtet) — **leer mit
-  Hinweis** (`wAlertsTopicUnknown`; ein erfundenes Topic neben „aktiv" ginge
-  als das des Pi durch), sonst ein generiertes. Gespeichert wird im Profil
+  `alertsNtfyTopic`, §6). Vorbelegung des Sheets
+  (`_alertsDestination(alertsOn: status.enabled)` →
+  `effectiveNtfyDestination`), in dieser Reihenfolge:
+  - das Topic des Profils;
+  - sonst der app-weite Altwert — **aber nur, wenn die Alerts dieses Pi an
+    sind**: Dann ist es das Topic, an das dieser Pi pusht;
+  - sind sie an und die App kennt kein Topic (von einem anderen Gerät oder
+    vor einer Neuinstallation eingerichtet): **leer mit Hinweis**
+    (`wAlertsTopicUnknown`; ein erfundenes Topic neben „aktiv" ginge als das
+    des Pi durch);
+  - sind sie aus: ein generiertes.
+  Für ein Profil ohne eigenes Topic bleibt der app-weite **Server** in jedem
+  dieser Fälle der Vorschlag (wer einen eigenen ntfy-Server betreibt, nutzt
+  ihn auch für den nächsten Pi). Grund
+  der Einschränkung: Für einen Pi ohne aktive Alerts ist das app-weite Topic
+  niemandes — einmal auf dem Pi ersetzt, der es nutzte, bliebe es sonst für
+  jedes andere Profil auf Dauer Vorschlag und Grundlage des „leicht
+  erratbar"-Urteils. Die Warnzeile der Automatik-Karte fragt deshalb mit
+  `alertsOn: false`, beurteilt also nur das eigene Topic des Profils: Ob die
+  Alerts an sind, weiß die Karte nicht (der Zustand wird erst gelesen, wenn
+  das Sheet öffnet). Was diese Entscheidung für Bestandsnutzer bedeutet,
+  steht unter „Bekannte Grenzen".
+  Gespeichert wird im Profil
   **vor** der Installation (das Topic, an das der Pi von da an pusht, darf
   nicht verloren gehen, wenn die App mittendrin verschwindet); im Demo wird
-  nichts ins Profil geschrieben. In den Log-Zeilen von Test-Push und
-  Installation ist das Topic maskiert (`_maskNtfyTopic` in `main.dart`).
+  nichts ins Profil geschrieben — dort merkt sich die Seite das Ziel in
+  `_demoAlerts` (nur im Speicher, §6 `demo.dart`). In den Log-Zeilen von
+  Test-Push und Installation ist das Topic maskiert (`_maskNtfyTopic` in
+  `main.dart`).
 - **Remove-Skripte der drei Timer** (`buildAutoUpdateRemoveScript`,
   `buildScheduledBackupRemoveScript`, `buildAlertsRemoveScript`) laufen unter
   **`set -e`**: ein scheiterndes `rm` (Root nur-lesend) endet ohne Marker, statt
@@ -1257,40 +1526,136 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   angefasst — seine mtime bedeutet „letzter Lauf". Von den
   **Install**-Skripten löscht ihn nur das der automatischen Updates (s. o.);
   die von Alerts und Backup lassen einen laufenden Timer in Ruhe.
+  **Sie löschen auch, was die Läufe in `/var/lib/pi-tool` hinterlassen
+  haben:** `autoupdate.status`, `autoupdate.log`, `autoupdate.log.new`,
+  `autoupdate.setup`; `backup.status`; `alerts.status`, `alerts.last`,
+  `alerts.aptupdate` (und wie bisher `pi-tool-alerts.conf`). Das Sheet eines
+  ausgeschalteten Timers darf keinen letzten Lauf zeigen, und Alerts, die
+  später wieder eingeschaltet werden, beginnen ohne einen Stand von davor.
+  Die Archive in `/var/backups/pi-tool` bleiben. Mit dem Ausschalten der
+  automatischen Updates geht damit auch `autoupdate.log` — die einzige
+  Aufzeichnung, warum ein Lauf scheiterte. Zusätzlich zeigen die Sheets der
+  automatischen Updates und der geplanten Backups den letzten Lauf nur für
+  einen **eingeschalteten** Timer: Eine Statusdatei kann einen Timer
+  überleben, den eine ältere App-Version ausgeschaltet hat (und ein Lauf, der
+  beim Ausschalten noch läuft, schreibt seine am Ende noch einmal). Wird ein
+  solcher Timer wieder eingeschaltet, steht der alte Lauf bis zum nächsten als
+  letzter da.
 - **`on_pi_wrapper.dart`** (v0.71.0) — **Generations-Stempel der
-  On-Pi-Wrapper**. Ein Wrapper (`/usr/local/lib/pi-tool-autoupdate.sh`,
+  On-Pi-Wrapper** und die Proben, mit denen die Sheets lesen, was auf dem Pi
+  eingerichtet ist. Ein Wrapper (`/usr/local/lib/pi-tool-autoupdate.sh`,
   `…/pi-tool-backup.sh`, `…/pi-tool-alerts.sh`) wird beim Einrichten seines
   Timers auf den Pi geschrieben und **bleibt dort**: Eine Korrektur in der App
   erreicht einen Pi erst, wenn dieser Timer neu eingerichtet wird. Deshalb:
-  - Jeder Wrapper trägt als **zweite Zeile** (direkt nach dem Shebang)
-    `wrapperStampLine` = `# pi-tool-wrapper <wrapperGeneration>`. Aktuell
-    Generation **3**. Generation 2 = v0.71.0 (tar nur mit vorhandenen Pfaden,
-    Pi-hole-Export nicht per Exit-Code, Statuszeile nennt Fehler, Alerts erst
-    nach Zustellung gemerkt). Generation 3 = Alerts-Wrapper mit eigenem
-    Paketlisten-Refresh, Debounce nach Problemklasse und Ziel aus der
-    Root-Datei; Auto-Update-Wrapper mit den Pi-Job-Bausteinen,
-    Paketlisten-Meldung, Log, SIGTERM-Handler und der Sperre direkt nach dem
-    Einrichten. Der Backup-Wrapper ist seit 2 unverändert — **die Nummer ist
-    geteilt**, sein Sheet zeigt nach einem App-Update also denselben Hinweis.
-    Wrapper von vor v0.71.0 tragen keinen Stempel.
+  - **Jeder Wrapper hat seine eigene Generation:**
+    `scheduledBackupWrapperGeneration` = **2**, `autoUpdateWrapperGeneration`
+    = **3**, `alertsWrapperGeneration` = **3**. Generation 2 = v0.71.0, alle
+    drei Wrapper (tar nur mit vorhandenen Pfaden, Pi-hole-Export nicht per
+    Exit-Code, Statuszeile nennt Fehler, Alerts erst nach Zustellung gemerkt).
+    Generation 3 des Auto-Update-Wrappers: Pi-Job-Bausteine (Reparatur,
+    Warten auf apt-Sperren), Paketlisten-Meldung, Log, SIGTERM-Handler und
+    die Sperre direkt nach dem Einrichten. Generation 3 des Alerts-Wrappers:
+    eigener Paketlisten-Refresh, Debounce nach Problemklasse, Ziel aus der
+    Root-Datei und der Pi im Titel des Push. Der Backup-Wrapper ist der von
+    v0.71.0. Wrapper von vor v0.71.0 tragen keinen Stempel.
+  - **Stempelzeilen** direkt nach dem Shebang (`scheduledBackupWrapperStamp`,
+    `autoUpdateWrapperStamp`, `alertsWrapperStamp`): die eigene,
+    `# pi-tool-wrapper <n>` — und **jenseits von Generation 2 direkt dahinter
+    die Stempelzeile von v0.71.0**, `# pi-tool-wrapper 2`
+    (`wrapperStampOfV071`). Grund: Die Probe von v0.71.0 ist `grep -qxF
+    '# pi-tool-wrapper 2'` und nennt jeden Wrapper ohne genau diese Zeile
+    veraltet, auch eine spätere Generation. Mehrere Handys je Pi sind üblich.
+    Auf einem, das noch v0.71.0 hat, zeigte ein solcher Wrapper den Hinweis,
+    den Timer neu einzurichten — und wer ihm folgt, schreibt den Wrapper von
+    v0.71.0 zurück: mit dem Zeitplan, mit dem dessen Sheet öffnet (täglich
+    04:00), und dem ntfy-Topic im für alle lesbaren Wrapper; danach fragt das
+    neuere Handy. **Die Zeile muss bleiben, solange v0.71.0 im Feld ist.**
+    Wird der Backup-Wrapper auf 3 gehoben, braucht er sie ebenfalls
+    (`on_pi_wrapper_test.dart` lässt die Probe von v0.71.0 gegen alle drei
+    laufen). Eine spätere Version braucht keine Zeile dieser Art mehr, weil
+    die Proben seither die Zahl melden, die sie finden.
+  - **Die Form der Stempelzeile ist fest — auf Dauer:** das Präfix
+    `# pi-tool-wrapper ` und die Zahl, nichts sonst. Die Probe dieser Version
+    liest die Generation nur aus Zeilen genau dieser Form. Ein später anders
+    gestempelter Wrapper zählte hier über seine v0.71.0-Zeile als Generation
+    2: wieder veraltet, auf jedem Handy, das noch diese Version hat.
   - Jede Status-Probe (`autoUpdateStatusCommand`,
     `scheduledBackupStatusCommand`, `alertsStatusCommand`) hängt
     `wrapperProbeHead` + Unit + `wrapperProbeTail` an und meldet eine Zeile
-    **`WRAPPER current|old|none`** (`grep -qxF` auf die ganze Stempelzeile; ohne
-    sudo, die Wrapper sind für alle lesbar).
-  - `parseWrapperOutdated` → Feld **`wrapperOutdated`** in den drei
-    Status-Records (`AutoUpdateStatus`, `ScheduledBackupStatus`,
-    `AlertsStatus`). Nur `old` zählt: ein fehlender Wrapper oder eine Probe ohne
-    die Zeile (unlesbare Datei, abgeschnittene Antwort) ist nicht „veraltet" —
-    es gibt nichts zu erneuern bzw. nichts Bekanntes.
+    **`WRAPPER <n>`**: die höchste Generation unter den Stempelzeilen des
+    Wrappers (`sed -n … | sort -n | tail -n 1`), `0` für eine Datei ohne
+    Stempel — ein Wrapper von vor den Stempeln, oder einer, den der
+    SSH-Nutzer nicht lesen kann —, `WRAPPER none` ohne Wrapper. **Die Zahl,
+    kein Urteil:** Was als alt gilt, entscheidet der Parser, damit keine App
+    einen Wrapper veraltet nennt, weil er einen Stempel trägt, den sie noch
+    nicht kennt. Ohne sudo, die Wrapper sind für alle lesbar.
+  - `parseWrapperOutdated(out, generation)` → Feld **`wrapperOutdated`** in
+    den drei Status-Records (`AutoUpdateStatus`, `ScheduledBackupStatus`,
+    `AlertsStatus`), jeder mit der Generation seines Wrappers: wahr nur für
+    eine Zahl **unter** der eigenen der App. Ein neuerer Wrapper ist nie
+    veraltet (eine App, die zurückliegt, hat nichts, womit sie ihn erneuern
+    könnte); ein fehlender Wrapper oder eine Probe ohne die Zeile
+    (abgeschnittene Antwort) ebenso wenig — es gibt nichts zu erneuern bzw.
+    nichts Bekanntes.
   - Das Sheet eines **aktiven** Timers mit älterem Wrapper zeigt
     `wrapperOutdatedHint` (Key `wrapperOutdatedHint`) und nennt den Knopf, der
     ihn erneuert („Zeitplan ändern", bei den Health-Alerts „Aktualisieren").
-  - **Regel: `wrapperGeneration` erhöhen, sobald sich das Verhalten eines
-    Wrappers ändert** (und im Kommentar der Konstante festhalten, was die
-    Generation ausmacht) — sonst erfährt kein Bestands-Pi von der Korrektur.
-    Das gilt auch für Änderungen an den apt-Bausteinen in `pi_job.dart` und
-    an `eol_sources.dart`, die der Auto-Update-Wrapper einbettet.
+    Nach dem Update von v0.71.0 betrifft das die automatischen Updates und
+    die Health-Alerts (2 → 3), die geplanten Backups nicht; Timer aus v0.70.0
+    und davor (kein Stempel, also 0) zeigen ihn bei allen dreien.
+  - **Was die Stempel nicht verhindern:** Ein Handy mit v0.71.0 schreibt
+    seinen Wrapper trotzdem zurück, wenn dort jemand Zeitplan oder Topic
+    bewusst ändert — nur der Hinweis ist weg. Ebenso ersetzt ein Handy mit
+    dieser Version einen Wrapper einer späteren Generation ohne Hinweis, wenn
+    „Zeitplan ändern" bzw. „Aktualisieren" getippt wird.
+  - **Regel: die Generation des Wrappers erhöhen, dessen Verhalten sich
+    ändert — und nur die** (im Kommentar der Konstante festhalten, was die
+    Generation ausmacht). Ohne Erhöhung erfährt kein Bestands-Pi von der
+    Korrektur; mit einer Erhöhung an der falschen Stelle erschiene der Hinweis
+    dort, wo das Neueinrichten nichts ändert. Für Änderungen an den
+    apt-Bausteinen in `pi_job.dart` und an `eol_sources.dart`, die der
+    Auto-Update-Wrapper einbettet, ist das `autoUpdateWrapperGeneration`.
+    `on_pi_wrapper_test.dart` hält die drei Zahlen fest (2/3/3) und muss mit.
+  - **Einrichten ersetzt den Wrapper, es schreibt ihn nicht um:** Alle drei
+    Install-Skripte schreiben nach `<pfad>.sh.new` und verschieben die Datei
+    mit `mv -f` an ihren Platz. Ein Lauf, der gerade läuft, liest die Datei
+    weiter, die er geöffnet hat; an Ort und Stelle neu geschrieben, läse
+    seine Shell am alten Offset im neuen Text weiter — beim Auto-Update als
+    root, mitten in einer anderen Zeile. **Modi per Zahl, nicht `+x`:**
+    Wrapper `chmod 755`, Service- und Timer-Unit `chmod 644`. Die Proben
+    lesen Stempel, Zeitplan und Aufbewahrung ohne sudo — das muss gelten,
+    was immer roots umask ist.
+  - **Was eingerichtet ist, lesen die Proben vom Pi:**
+    `onCalendarProbeHead` + Unit + `onCalendarProbeTail` druckt `ONCALENDAR
+    <wert>` — die `OnCalendar=`-Zeile der Timer-Unit, wie die App sie
+    geschrieben hat (jede App-Version schrieb diese Unit an diesen Pfad, mit
+    dieser einen Zeile); ohne Timer leer. `parseInstalledOnCalendar` nimmt
+    nur an, was die App selbst baut (`checkOnCalendar`), sonst null — kein
+    Timer, eine nicht lesbare Unit, eine abgeschnittene Antwort, eine von Hand
+    geänderte Unit. Angehängt an `autoUpdateStatusCommand` und
+    `scheduledBackupStatusCommand` (die Alerts haben einen festen Takt). Die
+    Backup-Probe druckt zusätzlich `DROP <n>`: Die Aufbewahrung steht
+    nirgends als im Wrapper, als das `n` des `tail -n +n`, das die
+    evcc-Archive rotiert; behalten werden n − 1 (angenommen wird 2 bis 1000).
+    Daraus `AutoUpdateStatus.schedule` (`AutoUpdateSchedule?` über
+    `autoUpdateScheduleOf`, die Umkehrung von `autoUpdateOnCalendar` — nur
+    volle Stunden, täglich oder ein Wochentag; nie etwas bloß Ähnliches, das
+    „Zeitplan ändern" dann auf den Pi schriebe), `ScheduledBackupStatus.hour`
+    (`scheduledBackupHourOf`) und `.keep`. **Invariante: Die Rotationszeile
+    der evcc-Archive im Backup-Wrapper (`sched-evcc-… | tail -n +N`) und die
+    eine `OnCalendar=`-Zeile der Timer-Units sind das, was die Proben lesen —
+    ihre Form nicht ändern.**
+  - **Die Sheets öffnen mit dem, was eingerichtet ist**
+    (`_showAutoUpdateSheet`, `_showScheduledBackupSheet`): „Zeitplan ändern"
+    ohne neue Auswahl schreibt denselben Zeitplan zurück, statt ihn auf die
+    Vorgaben zu setzen — und kürzt keine Aufbewahrung von 30 auf 7, nach der
+    der nächste Lauf die älteren Archive löschte. Ohne lesbaren oder
+    darstellbaren Wert gelten die Vorgaben (Updates: täglich 04:00; Backups:
+    03:00, 7 behalten); `scheduledBackupKeepChoices` = [3, 5, 7, 14, 30] ist
+    die Auswahl, eine eingerichtete Aufbewahrung außerhalb davon fällt auf 7.
+    Dass der Stand nicht lesbar oder von Hand geändert war, sagt das Sheet
+    nicht. Gelesen wird auch, was ältere App-Versionen eingerichtet haben
+    (die Tests tragen deren Formen).
   - **Regel: nichts Geheimes in einen Wrapper.** Weil die Status-Proben die
     Stempelzeile ohne sudo lesen, bleiben die Wrapper für alle lesbar. Was nur
     root sehen darf, bekommt eine eigene Datei — heute das ntfy-Ziel der
@@ -1310,13 +1675,19 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
 - **`files.dart`** — Datei-Browser über den normalen Exec-Kanal (kein SFTP → der
   `FakeSshRunner`-Seam deckt ihn ab).
   **Listen** (`buildListDirCommand`): `LC_ALL=C sudo -S -p '' find -H <dir>
-  -mindepth 1 -maxdepth 1 -printf '%Y\t%f\0'` — ein Datensatz `<typ>\t<name>`
-  je Eintrag, NUL-terminiert (ein Name darf alles andere enthalten, auch einen
-  Zeilenumbruch) und ungetrimmt (getrimmt nennte er in den Pfaden von Öffnen
-  und Löschen eine andere Datei). `%Y` ist der Typ **hinter** einem Symlink:
-  Verlinkte Ordner wie `/bin` auf einem merged-usr-System lassen sich öffnen
-  (`ls -p` markierte sie als Datei); `-H` folgt einem Link nur, wenn er das
-  angefragte Verzeichnis ist. Meldungen von sudo und find bleiben auf stderr
+  -mindepth 1 -maxdepth 1 -printf '%y%Y\t%f\0'` — ein Datensatz
+  `<eigener typ><typ>\t<name>` je Eintrag, NUL-terminiert (ein Name darf alles
+  andere enthalten, auch einen Zeilenumbruch) und ungetrimmt (getrimmt nennte
+  er in den Pfaden von Öffnen und Löschen eine andere Datei). `%Y` ist der Typ
+  **hinter** einem Symlink: Verlinkte Ordner wie `/bin` auf einem
+  merged-usr-System lassen sich öffnen (`ls -p` markierte sie als Datei). `%y`
+  davor ist der Eintrag selbst, `l` für einen Symlink. Daraus `DirEntry` =
+  `({name, isDir, isLink})`: `isDir` sagt, was der Eintrag zum Betreten oder
+  Öffnen ist (bei einem Link sein Ziel), `isLink`, dass er selbst ein Link
+  ist. Die Liste kennzeichnet Links (Untertitel `wSymlink`), und Löschen und
+  Upload haben für sie eigene Texte (s. u.). `-H` folgt einem Link nur, wenn
+  er das angefragte Verzeichnis ist. Meldungen von sudo und find bleiben auf
+  stderr
   und können nie als Eintrag erscheinen. Braucht GNU find. `listDir` wirft bei
   abgelehntem sudo-Passwort, fehlendem Exit-Status und nicht lesbarem
   Verzeichnis; ein Exit ≠ 0 **mit** gelisteten Einträgen (find konnte einzelne
@@ -1332,27 +1703,70 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   leeres Ergebnis ist damit wirklich eine leere Datei.
   **Löschen** (`buildDeleteCommand`,
   `rm -f`/`-rf` mit `--` + Quoting) und **Upload** (`buildUploadScript`, base64 →
-  `mktemp` im Zielordner → atomar `mv -fT`, Marker `UPLOAD_OK`, Limit
+  Temp-Datei im Zielordner → atomar `mv -fT`, Marker `UPLOAD_OK`, Limit
   `kFileUploadLimit` 8 MB, via
-  `EvccUpdater.uploadFile`) laufen als Root. Upload-Regeln: Eine **neue** Datei
-  gehört root, 0644. Eine **ersetzte** Datei übernimmt Besitzer und Modus
-  (`chown`, dann `chmod --reference`) direkt von mktemps 0600 aus, nie über
+  `EvccUpdater.uploadFile`) laufen als Root.
+  **Ein Symlink wird als Datei gelöscht, was immer hinter ihm liegt:**
+  `_filesDelete` übergibt `isDir && !isLink`, also `rm -f` und nie `-rf` — in
+  das Ziel wird nie hinabgestiegen —, und die Rückfrage sagt, dass nur die
+  Verknüpfung geht (`dialogDeleteLinkBody`; ein Link auf einen Ordner steht
+  in der Liste als Ordner).
+  Upload-Regeln — geschrieben wird über `rootReplaceFileLines` (§3 „Config
+  schreiben": exklusiv geöffnete Temp-Datei, Inhalt, Besitzer und Modus nur
+  über ihren Deskriptor), hier `strict`: Ein scheiterndes `chown`/`chmod`
+  beendet den Upload, die Temp-Datei wird entfernt. Eine **neue** Datei gehört
+  root, 0644. Eine **ersetzte** gewöhnliche Datei gibt Besitzer und
+  Rechte-Bits weiter (ohne setuid, setgid, sticky), von 0600 aus und nie über
   0644 — der neue Inhalt einer 0600-Datei (eine `.env` eines Dienst-Nutzers)
-  wäre sonst zwischendurch für alle lesbar. Ein **Verzeichnis am Ziel wird
-  abgelehnt** (Meldung, Exit 1, kein `UPLOAD_OK`; `mv -fT` als Rückfallnetz —
-  ohne `-T` verschöbe `mv` die Temp-Datei hinein und meldete Erfolg).
-  `trap 'rm -f "$tmp"' EXIT` räumt die Temp-Datei bei einem Fehlschlag weg.
+  wäre sonst zwischendurch für alle lesbar. **Ein Symlink am Ziel wird selbst
+  ersetzt** (das Umbenennen trifft den Link, nicht sein Ziel): Es entsteht
+  eine neue root-0644-Datei, die Datei dahinter bleibt, wie sie war, und nichts
+  von ihr wird übernommen. Die Überschreiben-Rückfrage der App sagt das
+  (`dialogOverwriteLinkBody`). Ein **Verzeichnis am Ziel wird abgelehnt**
+  (Meldung, Exit 1, kein `UPLOAD_OK`; `mv -fT` als Rückfallnetz — ohne `-T`
+  verschöbe `mv` die Temp-Datei hinein und meldete Erfolg) — auch ein Link
+  auf ein Verzeichnis, im Skript (`[ -d … ]`) wie in der App
+  (`snackUploadNameIsFolder`).
   **Download**
   (`EvccUpdater.downloadFile`, ohne sudo — Backups sind bewusst 0644): erst
   `buildFileSizeCommand` (Abbruch VOR dem Transfer bei > `kBackupDownloadLimit`
   48 MB), dann `buildDownloadFileCommand` (base64) mit Längen-Verifikation
   (Truncation = Fehler). Aufs Handy via `fileSaver`-Seam (Default:
-  `shareTemporaryFile` in `main.dart` — Temp-Datei über dart:io +
-  share_plus-Teilen-Dialog, kein path_provider nötig). Die Temp-Datei wird
-  gelöscht, sobald `share()` zurückkehrt, auch nach einem Fehler; die Kopie,
-  die share_plus selbst in seinem Cache-Ordner anlegt, bleibt bis zum nächsten
-  Teilen (laut dessen Quelltext, nicht gemessen) — ein heruntergeladenes
-  Backup liegt dort unverschlüsselt.
+  `_saveAndShareBytes` → `shareTemporaryFile` in `main.dart` — Temp-Datei über
+  dart:io + share_plus-Teilen-Dialog, kein path_provider nötig). Die
+  Temp-Datei wird gelöscht, sobald `share()` zurückkehrt, auch nach einem
+  Fehler; die Kopie, die share_plus selbst in seinem Cache-Ordner anlegt,
+  bleibt bis zum nächsten Teilen (laut dessen Quelltext, nicht gemessen) — ein
+  heruntergeladenes Backup liegt dort unverschlüsselt.
+  **Was der Teilen-Dialog meldet, zählt:** `shareTemporaryFile<T>` gibt
+  zurück, was `share` lieferte, und der Default-Saver endet mit dem
+  `ShareResultStatus` von share_plus. Der Seam-Typ bleibt `Future<void>
+  Function(String, Uint8List)` (Test-Saver haben nichts zu melden); die zwei
+  Aufrufer lesen den Wert über `Future<Object?>`. `ShareResultStatus.dismissed`
+  — der Dialog wurde ohne Auswahl geschlossen, die Datei ging nirgendwohin —
+  ist **kein Erfolg**: `_downloadBackup` endet amber mit
+  `statusBackupNotSaved` und schreibt **keinen** Verlaufseintrag (beides ließe
+  das Löschen des Archivs auf dem Pi sicher aussehen), `_exportProfiles`
+  meldet `snackExportNotSaved` statt „Export erstellt". Jeder andere Wert, oder
+  keiner, zählt als übergeben. Grenzen: Auf Android heißt `success` laut
+  share_plus-Quelltext nur, dass ein Ziel gewählt wurde — nicht, dass die
+  Ziel-App die Datei gespeichert hat. Und ob der Teilen-Dialog jedes
+  Herstellers das gewählte Ziel meldet, ist **nicht an einem Gerät gemessen**;
+  täte einer es nicht, endete ein echtes Teilen als „nicht gespeichert" (die
+  harmlose Richtung: das Archiv liegt weiter auf dem Pi).
+  **Reste älterer Versionen:** Der Saver bis v0.71.0 schrieb jedes
+  heruntergeladene Backup und jeden Profil-Export für den Teilen-Dialog ins
+  Temp-Verzeichnis der App und löschte nichts. `removeSharedFileLeftovers`
+  (mit `isSharedFileLeftover`: `.tar.gz`, `.zip`, `.pitool`; beide top-level
+  in `main.dart`) entfernt solche Dateien — einmal je App-Start, vor dem
+  ersten Teilen einer Datei durch den Default-Saver (`_shareLeftoversCleared`),
+  also nicht im Startpfad, und nur unter Android (`Platform.isAndroid`:
+  anderswo ist `Directory.systemTemp` der Temp-Ordner aller Programme). Nur
+  gewöhnliche Dateien direkt im Verzeichnis, kein Abstieg in Unterordner, kein
+  Link wird verfolgt, Fehler werden geschluckt. Welches Verzeichnis das auf
+  einem Gerät ist, ist **nicht gemessen**; ist es eines, das Android bei
+  einem App-Update ohnehin leert, findet das Aufräumen nach dem Update nichts.
+  Flag und Android-Schranke sind von keinem Test gedeckt.
   **„Backups sind bewusst 0644" — bekannte, bewusste Grenze beim
   Home-Assistant-Archiv:** Die Backup-Skripte der App legen ihre Archive 0644
   in einem 0755-Verzeichnis ab, damit der Download ohne sudo auskommt
@@ -1368,9 +1782,11 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   **Bearbeiten:** `isProbablyTextFile` (NUL-Byte oder >5 % C0-Control = binär;
   UTF-8-Umlaute zählen nicht) + `kFileEditLimit` (256 KB) entscheiden, ob die
   Vorschau einen „Bearbeiten"-Knopf zeigt; der reicht an den bestehenden
-  Config-Editor weiter (atomarer Write + Backup, sudo-fähig). Der Editor liest
-  über `readConfigFile` (§2: nur mit Exit 0, nur UTF-8). `_ConfigEditorPage`
-  fragt per `PopScope` nach, bevor ungespeicherte Änderungen verloren gehen
+  Config-Editor weiter (atomarer Write + Backup, sudo-fähig; das Speichern
+  über einen Symlink kann abgelehnt werden, §3 „Config schreiben"). Der Editor
+  liest über `readConfigFile` (§2: nur mit Exit 0, nur UTF-8).
+  `_ConfigEditorPage` fragt per `PopScope` nach, bevor ungespeicherte
+  Änderungen verloren gehen
   (Zurück-Geste, Systemtaste, Pfeil der App-Leiste → „Verwerfen" / „Weiter
   bearbeiten"); Speichern poppt direkt mit dem Text. Beim Sperren der App
   bleibt der Editor unter der Sperrschicht offen und behält seinen Text (§6
@@ -1494,10 +1910,24 @@ Android-Hintergrunddienst (v0.20.0-Absturz-Lektion). Reine Builder → POSIX-She
   `raspbian-origin-uncovered`, wenn diese Origin in Gebrauch ist, apt-config
   lesbar war **und** kein Pattern Raspbian einschließt — auf jedem anderen
   System druckt sie nichts. Der Parser nimmt die Zeile vor der Urteilsbildung
-  heraus: Sie kann nur „unattended-upgrades läuft." in den Warn-Befund „…
-  installiert aber keine Updates aus der Paketquelle Raspbian …" verwandeln
-  (fixbar über `SecurityFix.autoUpdates`); ein Abschnitt, der sonst nichts
-  enthält, bleibt „Konnte nicht ermittelt werden." (info, kein Fix). Der Fix
+  heraus: An der Stufe ändert sie nur eines — „unattended-upgrades läuft."
+  wird zum Warn-Befund „… installiert aber keine Updates aus der Paketquelle
+  Raspbian (32-Bit Raspberry Pi OS) …" (fixbar über
+  `SecurityFix.autoUpdates`); ein Abschnitt, der sonst nichts enthält, bleibt
+  „Konnte nicht ermittelt werden." (info, kein Fix). Die beiden anderen
+  Warnungen dieses Befunds („installiert, aber abgeschaltet", „Keine
+  automatischen Sicherheitsupdates") bekommen auf einem solchen Pi einen Satz
+  angehängt, der die Paketquelle nennt — ihr Fix lässt Raspbian ebenfalls
+  ein. **Der Fix hat dort seinen eigenen Bestätigungstext:**
+  `securityFixLetsRaspbianIn(finding)` (der Fix ist `autoUpdates`, und das
+  Detail nennt die Paketquelle, `_raspbianOrigin`) wählt in `main.dart`
+  `fixDescAutoUpdatesRaspbian` statt `fixDescAutoUpdates` — er sagt, dass
+  danach **alle** Updates aus Raspbian installiert werden, nicht nur
+  Sicherheitsupdates, und dass das Raspberry-Pi-Archiv draußen bleibt. Erkannt
+  wird der Fall an einem deutschen Teilstring des Befund-Details: Wer die
+  drei Warnungen umformuliert, muss `_raspbianOrigin` darin behalten. Hat der
+  Nutzer schon ein eigenes Raspbian-Pattern und steht Periodic auf "0", druckt
+  die Probe die Zeile nicht, und der Dialog bleibt beim alten Text. Der Fix
   schreibt bei `o=Raspbian` zusätzlich
   `/etc/apt/apt.conf.d/51pitool-unattended-origins` (0644, quoted Heredoc —
   `${distro_codename}` muss wörtlich in der Datei ankommen) mit nur
@@ -1650,6 +2080,12 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
     — auch ohne Sitzung. Umgekehrt macht das Bearbeiten eines Verbindungsfelds
     die Karten auf dem Bildschirm wieder zum gemerkten Stand
     (`_invalidateConnTest`: sie wurden von der Adresse gelesen, wie sie war).
+    **Bearbeiten heißt: der Text hat sich geändert.** Ein Controller meldet
+    sich auch, wenn Cursor, Auswahl oder Composing-Bereich wandern — ein Tipp
+    ins Feld —, und das ändert nichts an der Verbindung; der Listener der sechs
+    Verbindungsfelder merkt sich deshalb den Text und ruft
+    `_invalidateConnTest` nur bei einem anderen. (Die Meldungen einer echten
+    Android-Tastatur sind nur über den Controller in Widget-Tests nachgestellt.)
     Mit Sitzung oder Testergebnis endet dabei auch die Sitzung; ohne beides
     (Sitzung schon durch Herunterfahren oder Verbindungsverlust beendet) wird
     nur das Flag gesetzt. Auch
@@ -1670,11 +2106,14 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
     `AppConfig.alertsNtfyServer`/`alertsNtfyTopic` bleiben nur als Rückfall
     für Profile ohne eigenes Ziel (geladen und gespeichert, wie sie sind; ein
     neues Ziel geht ins Profil). Zwei reine Helfer: `effectiveNtfyDestination`
-    (Wert des Profils, sonst der app-weite) und `profilesForImport` — ein
-    importiertes Profil ohne eigenes Topic bekommt das app-weite der
+    (Wert des Profils; sonst der app-weite Server und — nur mit `alertsOn`,
+    also für einen Pi, dessen Alerts an sind — das app-weite Topic, sonst ein
+    leeres; Regeln und Grund in §5 `alerts.dart`) und `profilesForImport` —
+    ein importiertes Profil ohne eigenes Topic bekommt das app-weite der
     **exportierenden** App mit, denn der Rückfall der importierenden ist ein
-    anderer. Das Topic wirkt wie ein Passwort und darf nie in eine Log-Zeile
-    (§5 `alerts.dart`).
+    anderer (nach einem Export und Import ist ein app-weites Topic damit
+    wieder das eigene jedes Profils, das keines hatte). Das Topic wirkt wie
+    ein Passwort und darf nie in eine Log-Zeile (§5 `alerts.dart`).
   - **Entfernt:** `AppConfig.autoCheck` und `AppConfig.notifyUpdates` (nie
     gelesen und von der UI nie gesetzt). Gespeichertes JSON mit diesen
     Schlüsseln lädt weiterhin.
@@ -1742,6 +2181,24 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   Endmarker enden** (§3 „Detection-Batch") — ohne ihn gälte es als
   abgeschnitten, und das Demo zeigte keine Karten; die Datei-Liste antwortet
   im Format von `buildListDirCommand` (NUL-Datensätze, §5).
+  **Statisch bis auf die drei On-Pi-Timer:** `DemoPi` (eines je
+  `buildDemoUpdater()`, von allen Runnern dieser Factory geteilt) merkt sich
+  Zeitplan der automatischen Updates, Zeitplan und Aufbewahrung der Backups
+  und ob die Alerts an sind. `demoResponseFor(command, stdin:, pi:, now:)`
+  beantwortet die sechs Install-/Remove-Skripte der Timer mit ihrem Marker
+  (erkannt an der letzten Zeile des Skripts) und die drei Status-Proben mit
+  dem, was eingerichtet wurde — Updates und Backups: nächster Lauf, kein
+  letzter Lauf, `WRAPPER <Generation dieses Wrappers>`, `ONCALENDAR`, bei den
+  Backups `DROP`; Alerts: an oder aus, noch keine Prüfung, `WRAPPER`. Ohne
+  das endete jedes „Einschalten" im Demo als „fehlgeschlagen",
+  und ein Sheet läse einen eben eingeschalteten Timer als aus. **Jedes andere
+  Root-Skript bekommt weiterhin keinen Marker** — eine erfundene
+  Erfolgsmeldung wäre gelogen; die Folge steht unter „Bekannte Grenzen".
+  Das ntfy-Ziel des Demo hält die Seite in `_demoAlerts` (nur im Speicher,
+  nie im Profil), damit das Alerts-Sheet das Topic wieder zeigt wie bei einem
+  echten Pi. `_demoUpdater` wird je Seite einmal gebaut: Timer und Topic des
+  Demo halten für den App-Lauf, auch über Verlassen und erneutes Betreten des
+  Demo hinweg.
   Injiziert über `buildDemoUpdater()` (die einzige
   `runnerFactory`-Stelle) — EINE Klasse füllt alle Tabs mit Beispieldaten, ohne
   echten Pi/Socket. In `main.dart`: `_demoMode` (in-memory wie `_connected`) swappt
@@ -1766,10 +2223,15 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   gehört zu keinem Pi und darf weder ins Profil noch zu anderen Leuten. Gemeinsamer Ausstieg
   ist `_leaveDemo()` (echtes Backend zurück, Beispielkarten vom Bildschirm, der
   zuvor gemerkte Stand des Profils kommt als gemerkter Stand wieder) — über
-  „Beenden", einen Tastendruck in den Zugangsdaten (`_invalidateConnTest`) und
+  „Beenden", einen geänderten Text in den Zugangsdaten (`_invalidateConnTest`;
+  ein bloßer Tipp ins Feld zählt nicht, s. o. `Profile.cachedServices`) und
   jedes echte Verbinden; das Demo endet dabei **beim Start** des Verbindens,
   nicht erst bei dessen Erfolg, damit seine Sitzung die Tabs nicht gegen einen
-  Pi offen hält, der noch nicht geantwortet hat.
+  Pi offen hält, der noch nicht geantwortet hat. Schmale Ausnahme: Nach einem
+  „Pi herunterfahren" **im** Demo gibt es keine Sitzung und kein Testergebnis
+  mehr, und `_invalidateConnTest` setzt dann nur das „Stand von
+  vorhin"-Flag — ein Tastendruck beendet das Demo in diesem Zustand nicht;
+  Demo-Banner mit „Beenden" und echtes Verbinden bleiben.
   **Play-Invariante (nicht verhandelbar):** Ohne eingerichteten Pi muss der
   Einstieg „Demo ausprobieren" **auffällig und ohne Scrollen sichtbar** sein —
   gefüllter Knopf mit Key `demoEntry`, **vor** „Pi im WLAN suchen", plus
@@ -1810,6 +2272,24 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   Export via `fileSaver`-Seam, Import via SAF-Picker; der Passphrase-Dialog
   (`_PassphraseDialog`) ist scrollbar, damit beide Felder bei offener Tastatur
   erreichbar bleiben.
+  **Ablauf in der Seite** (`_exportProfiles`, `_importProfiles` in
+  `main.dart`): Die Ableitung dauert Sekunden und zeigt sonst nichts — deshalb
+  ein Snack, solange sie läuft (`snackExportEncrypting` /
+  `snackImportDecrypting`; der des Imports wird weggenommen, bevor die
+  Import-Rückfrage erscheint), und **je nur ein Lauf**: `_exporting` bzw.
+  `_importing` (`_importProfiles` umschließt `_pickAndImportProfiles`) — ein
+  zweiter Export endete sonst in einem zweiten Teilen-Dialog, ein zweiter
+  Import öffnete einen zweiten Dateiwähler. Ein zweiter Tipp währenddessen
+  wird ohne Zeichen ignoriert; der Snack steht die üblichen vier Sekunden,
+  auch wenn die Ableitung länger braucht. Ein Teilen-Dialog, der ohne Auswahl
+  geschlossen wird, ist kein „Export erstellt" (`snackExportNotSaved`, §5
+  `files.dart` „Was der Teilen-Dialog meldet"). Läuft beim Bestätigen des
+  Imports eine Aktion, heißt es `snackImportBusy` statt „Import
+  fehlgeschlagen" — es ist nichts fehlgeschlagen. Verschlüsseln und
+  Entschlüsseln sind injizierbar (`UpdaterPage.exportEncryptor`, Default
+  `encryptProfileExport`; `UpdaterPage.importDecryptor`, Default
+  `decryptProfileExport`): Die echte Ableitung läuft sekundenlang in einem
+  Hintergrund-Isolate, worauf ein Widget-Test nicht warten kann.
 - **`session.dart`** — reine Sitzungs-/Tab-Gating-Logik (v0.57): `kTab*`-
   Konstanten, `isGatedTab`/`tabAllowed`/`tabAfterDisconnect`. Details im
   UI-Shell-Abschnitt („Verbundene Sitzung").
@@ -1939,13 +2419,26 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
     Rückweg (`inactive` oder `resumed`) sperrt sie, wenn `_kSuppressLockLimit`
     (5 Minuten) vergangen ist oder die Uhr rückwärts lief (injizierbare
     `UpdaterPage.clock`). Das ist der eine Fall, in dem die Sperre außerhalb
-    von `paused`/`hidden` greift. `_filesUpload` verwirft eine Auswahl, die
-    zurückkommt, während gesperrt ist; der Profil-Import braucht das nicht —
+    von `paused`/`hidden` greift.
+    **Die Aussetzung endet mit dem ersten `resumed`, nachdem sie gesetzt
+    wurde, oder mit der Antwort des Pickers — was zuerst kommt** (das
+    `finally` hinter `pick()` bleibt). Nicht erst mit der Antwort: Die
+    schließt das Lesen der Datei auf dem nativen Thread ein (§5
+    `file_pick.dart`), das ein langsamer Provider über Minuten strecken kann
+    — der Picker ist dann längst zu, die App vorn und benutzbar, und wer sie
+    in dieser Zeit verlässt, muss sie sperren wie zu jeder anderen Zeit.
+    `_filesUpload` verwirft eine Auswahl, die
+    zurückkommt, während gesperrt ist — ohne Meldung; nach dem Entsperren
+    wird neu gewählt. Der Profil-Import braucht das nicht —
     sein Passphrase-Dialog wartet unter der Sperre. **Nicht gemessen:** Dass
     die Antwort des Pickers **nach** dem Lifecycle-Wechsel eintrifft, ist aus
     dem Engine-Quelltext abgeleitet. Liefert ein Gerät die Antwort zuerst, ist
     die Aussetzung schon aufgehoben, wenn die Lifecycle-Ereignisse des
     Rückwegs kommen, und die App sperrt bei jeder Rückkehr aus dem Picker.
+    Ebenso abgeleitet: dass kein `resumed` eintrifft, solange der Picker die
+    App verdeckt. Käme auf einem Gerät eines, bevor er sie verdeckt, sperrte
+    die App beim Auswählen, und ein Upload würde verworfen — die sichere
+    Richtung.
   - **Was unter der Sperre passiert:** Ein Snackbar, das während der Sperre
     ausgelöst wird, erscheint darunter und kann beim Entsperren schon
     abgelaufen sein. Eine Netzwerksuche („Pi im WLAN suchen"), die
@@ -2075,8 +2568,18 @@ Profilwechsel (`_resetDetectionForNewPi`), Zugangsdaten-Edit
 `hostKeyChanged` im `_guard`-Catch; ein geänderter Host-Key in einer
 Datei-Operation über `_fileOpFailed`) und **nach „Pi herunterfahren"** — mit
 Snap-Back auf Tab Verwaltung. **Nicht** bei `outputTimeout` (§2: der Pi war
-erreichbar, das Ergebnis ist nur unbekannt). `_beginBusy` fasst `_connected`
-bewusst NICHT an.
+erreichbar, das Ergebnis ist nur unbekannt) und nicht bei `commandNotStarted`
+(§2: die Anmeldung ging durch, nur der Befehl lief nicht an). Ein
+Zugangsdaten-Edit ist ein geänderter Text, nicht ein Tipp ins Feld (§6
+`Profile.cachedServices`). `_beginBusy` fasst `_connected` bewusst NICHT an.
+**Der Verbinden-Knopf behauptet nur, was die Sitzung hergibt:**
+`_connectionOk` (null = ungeprüft, true = „Verbunden", false = gescheitert)
+wird nur zusammen mit einer Sitzung wahr. `_refreshServices` — das Neulesen
+nach einer Aktion — setzt es deshalb nur, wenn `_connected` gilt: Nach einer
+Aktion auf gemerkten Karten oder einem mitgelesenen Pi-Job ohne Sitzung
+bleibt der Knopf neutral („Verbindung herstellen"), während die Karten als
+frisch gelesen gelten (`_servicesFromCache = false`). Sonst stünde
+„Verbunden" neben Einträgen, die „Zuerst mit dem Pi verbinden" sagen.
 In-Memory, nie persistiert: jeder Kaltstart beginnt getrennt, ein Resume löst
 kein SSH aus (`didChangeAppLifecycleState` speichert und sperrt nur).
 **Auto-Verbinden (v0.65.0):** Trägt das aktive Profil `Profile.autoConnect`,
@@ -2146,7 +2649,7 @@ per `Theme(data: buildAppTheme(Brightness.dark))`-Wrapper **fest dunkel** —
 unabhängig vom App-Theme, damit kein heller Blitz erscheint.
 
 **Sprache (v0.58, l10n):** komplette UI-Schicht Deutsch/Englisch via Flutter
-`gen-l10n`: `lib/l10n/app_{de,en}.arb` (~670 Keys; generierte
+`gen-l10n`: `lib/l10n/app_{de,en}.arb` (~690 Keys; generierte
 `app_localizations*.dart` sind **gitignored**, entstehen bei `flutter pub get`),
 Zugriff über die `context.l10n`-Extension (`lib/src/l10n.dart`). Reine
 Auflösungslogik in `lib/src/language.dart`: `localeForLanguageMode`
@@ -2195,6 +2698,24 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   den Release-Abruf vor dem evcc-Update (dort gibt es noch keine Verbindung,
   die sich schließen ließe; nach einem gescheiterten Abruf gibt es auch keinen
   Bestätigen-Dialog, das Update startete sonst ungefragt).
+- **Ablehnung ohne Frage:** Steht schon am Tap fest, dass eine Aktion
+  abgelehnt wird, kommt keine Bestätigungsfrage davor — die Antwort auf den
+  Tap ist die Ablehnung. Zwei Stellen: `_tailscaleSet` unter einer
+  Tailnet-Adresse im Host-Feld (`tailscaleSetRefusal`; nicht im Demo, dessen
+  Aktionen die Adresse im Feld nie benutzen) und `_manageServiceBackups` für
+  ein Archiv, das `restoreRefusal` nennt (Pi-hole: `piholeRestoreRefusal`,
+  alles außer `.zip`). **Die Seite meldet die Ablehnung selbst und ruft den
+  Updater nicht auf:** Der body des Guards wirft die `EvccUpdateException`
+  mit dem Grund — was niemand bestätigt hat, darf den Updater nicht
+  erreichen, was immer der mit dem Aufruf täte (Widget-Tests halten null
+  Aufrufe fest). Das Handler-Muster bleibt (`_prepare()` bzw. `_beginBusy()`,
+  `_lastAction`, `_guard`), nur ohne `backgroundMessage`: kein
+  Vordergrunddienst und kein „Tailscale-Abmeldung läuft …" in der Leiste für
+  etwas, das sofort endet. Die beiden Prädikate sind dieselben Funktionen,
+  mit denen der Updater selbst ablehnt (§4 `tailscale.dart`,
+  `pihole_service.dart`) — eine Quelle, kein Auseinanderlaufen. Die zweite
+  Tailscale-Prüfung (Sitzung über das freigegebene Heimnetz) kann erst in
+  der Verbindung fallen und kommt deshalb weiter nach der Frage.
 - **`_statusOk` ist kein Erfolgssignal einer einzelnen Aktion:** es trägt noch
   das Ergebnis der vorigen. Wer nach dem Guard weitermachen will, führt den
   Erfolg über eine lokale Variable aus dem Guard-Body heraus
@@ -2219,13 +2740,24 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Sheet offen ist, wird **im Sheet** gezeigt — ein Snack läge darunter.
   `_AlertsSheet` bekommt keinen Snack-Callback: `onTest` liefert ein
   Ergebnis-Record, das als Statuszeile erscheint (und in den sichtbaren
-  Bereich gescrollt wird), das fehlende Topic ist `errorText` am Feld; der
+  Bereich gescrollt wird), das fehlende Topic ist `errorText` am Feld, ebenso
+  ein Server, der kein http(s) ist (§5 `alerts.dart`); der
   Sperr-Schalter in `_openSettings` zeigt seinen Fehler als Subtitle. Ist das
   Sheet inzwischen zu, fällt die Meldung auf einen Snack zurück.
   **Konvention für Dialoge:** Ein `AlertDialog` mit einer `Column` als Inhalt
   ist `scrollable: true` (Passphrase, Pi-hole-Passwort, Host-Key-Vertrauen),
   damit auf kleinen Displays und bei großer Schrift nichts abgeschnitten
-  wird. **Tap-Ziele und Semantik:** `_legalLink` und der ntfy-Link haben ein
+  wird. **Die drei Automatik-Sheets scrollen** (`SingleChildScrollView`): Mit
+  dem Hinweis auf ein älteres Skript und großer Schrift sind sie höher als
+  ein kleines Handy, und die Knöpfe sind ihre letzte Zeile. Die Auswahlzeile
+  der beiden Zeitplan-Sheets ist ein `Wrap` (`_pickerRow`/`_labelledPicker`):
+  eine Zeile, der erste Picker am linken und der letzte am rechten Rand,
+  solange Platz ist — sonst untereinander. Dieselbe Regel für die ruhende
+  Fernzugriff-Angebotszeile (`_remoteAccessCard`): Titel und Knopf teilen
+  sich eine Zeile, solange sie passen, sonst rückt der Knopf unter den Titel.
+  Geprüft in Widget-Tests bei 360×640 und Schriftfaktor 1,5 mit der
+  Test-Schrift, die breiter ist als die echte; an keinem Gerät angesehen.
+  **Tap-Ziele und Semantik:** `_legalLink` und der ntfy-Link haben ein
   48-dp-Ziel; der aktive Status der drei Automatik-Sheets nutzt `_themeGreen`
   (lesbar auch im hellen Theme); das Verbunden-Icon und die Multi-Pi-Ampel
   tragen Semantik-Labels.
@@ -2244,8 +2776,10 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   wie Wechseln und Hinzufügen) — das Speichern danach schreibt das verlassene
   Profil so, wie es in der Liste steht — und wird nicht angewendet, wenn
   während Dateiauswahl, Passphrase und Entschlüsselung eine Aktion gestartet
-  wurde (`_busy`). Die importierten Profile gehen durch `profilesForImport`
-  (ntfy-Ziel, §6).
+  wurde (`_busy`; Meldung `snackImportBusy`). Die importierten Profile gehen
+  durch `profilesForImport` (ntfy-Ziel, §6). Rückmeldung während der
+  Schlüsselableitung und der Schutz gegen einen zweiten Export bzw. Import:
+  §6 `profile_transfer.dart`.
 - **Multi-Pi-Überblick:** `_MultiPiDashboardPage` (in `ui_widgets.dart`) zeigt
   eine Ampel-Zeile pro Profil (grün / amber = Updates·Warnung / rot = nicht
   erreichbar). `_showMultiPiDashboard` friert die Profil-Liste ein (aktives
@@ -2295,7 +2829,11 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   geblieben; der Handler lädt auch herunter und löscht) und
   `_manageServiceBackups` für Pi-hole und Home Assistant. Jede Fortsetzung
   nach der Auswahl ruft erneut `_beginBusy()` und läuft in `_guard`
-  (mehrphasiger Flow, s. o.).
+  (mehrphasiger Flow, s. o.). Ein Pi-hole-v5-Archiv wird am Tap abgelehnt,
+  ohne Wiederherstellen-Frage (s. o. „Ablehnung ohne Frage"). Ein Download,
+  dessen Teilen-Dialog ohne Auswahl geschlossen wurde, endet amber als „nicht
+  gespeichert" und ohne Verlaufseintrag (§5 `files.dart` „Was der
+  Teilen-Dialog meldet").
 - **Onboarding:** `_SetupGuidePage` (in `ui_widgets.dart`) erklärt Einsteigern die
   Pi-Einrichtung per Raspberry Pi Imager (SSH/Benutzer/WLAN). Erreichbar via
   `_openSetupGuide()` aus dem ⋮-Menü **und** als Link auf dem Verbindungs-Screen
@@ -2325,7 +2863,13 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   was immer die Operation war). `onUpload` bekommt die geladene Liste mit:
   Eine Datei gleichen Namens verlangt eine destruktive Bestätigung (der Upload
   ersetzt sie als root, ohne Weg zurück), ein Ordner gleichen Namens wird
-  abgelehnt — beides, bevor etwas zum Pi geht.
+  abgelehnt — beides, bevor etwas zum Pi geht. **Symlinks** sind in der Liste
+  gekennzeichnet (Untertitel `wSymlink`; gelistet wird ein Link als das,
+  worauf er zeigt) und haben eigene Texte: Löschen entfernt nur die
+  Verknüpfung (`dialogDeleteLinkBody`), ein Upload über eine Verknüpfung
+  ersetzt sie selbst und lässt ihr Ziel unverändert
+  (`dialogOverwriteLinkBody`), ein Link auf einen Ordner wird wie ein Ordner
+  abgelehnt (§5 `files.dart`).
 - **Terminal/Konsole:** `interactiveCommandHint` (commands.dart) fängt TUI-Befehle
   (htop/vi/less/`-f`) ab und zeigt eine Alternative, statt „Error opening
   terminal" — die Konsole hat kein PTY. `runConsoleCommand` kappt die Ausgabe
@@ -2359,16 +2903,25 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   überlebten die Batch-Umstellung; wie der echte Batch trägt der
   synthetisierte das stderr einer Probe in ihrem Abschnitt und den Endmarker
   am Schluss; `stdinsByCommand` führt **jedes** stdin je Befehl — alle
-  Root-Skripte laufen unter demselben Befehl), `FakeEvccUpdater` (überschreibt
-  jede von der
-  UI genutzte Methode — neue Methode = hier überschreiben, sonst
-  `UnimplementedError`; `diskByPath`/`diskErrors` und `logError` für den
+  Root-Skripte laufen unter demselben Befehl), `FakeEvccUpdater` in
+  `dispatch_test.dart` (überschreibt **jede öffentliche Methode** von
+  `EvccUpdater`. Ein fehlendes Override zeigt sich nicht als
+  `UnimplementedError` — `_guard` macht daraus das Banner „Unerwarteter
+  Fehler", und ein Test, der etwas anderes prüft, bliebe grün. Deshalb landet
+  ein Aufruf, der bis zum echten Updater durchfällt, mit seinem Methodennamen
+  in `FakeEvccUpdater.unexpectedCalls`, und das gemeinsame `tearDown` am
+  Anfang von `main()` lässt den Test scheitern, der ihn gemacht hat. Eine
+  neue Updater-Methode, die die UI aufruft, braucht ein Override mit Zähler.
+  Die Updater-Fakes der übrigen Widget-Tests — `app_lock_test.dart`,
+  `review_ask_test.dart`, `widget_test.dart`, `screenshots.dart` — haben
+  dieses Netz nicht. `diskByPath`/`diskErrors` und `logError` für den
   Speicherplatz-Explorer und das Live-Log), `_FakeStore`, `_FakeEntitlement`,
   `_FakeKeepAlive` (hält die Kanal-Texte fest),
   `FakeSecureStorage`, `FakeHostKeyStore`. `UpdaterPage` nimmt dafür optional
   u. a. `historyStore` (Verlauf beobachten ohne Secure Storage),
-  `reviewRequester`, `installChannel`, `clock`, `urlOpener` und
-  `recentsPreview` entgegen — die Tests der
+  `reviewRequester`, `installChannel`, `clock`, `urlOpener`,
+  `recentsPreview` sowie `exportEncryptor`/`importDecryptor` (§6
+  `profile_transfer.dart`) entgegen — die Tests der
   Bewertungs-Anfrage brauchen so weder einen Plattform-Kanal noch einen
   `PackageInfo`-Mock. `_readyNoOffer` in `dispatch_test.dart` ist die
   eingerichtete Config mit weggeklicktem Fernzugriff-Angebot, für
@@ -2376,17 +2929,76 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
 - **App-Sperre:** `test/app_lock_test.dart` pumpt `EvccPiToolApp(home:
   UpdaterPage(...), splash: false)` — die Sperre, wie die App sie verdrahtet:
   was sie mit offenen Routen macht, was darunter erreichbar ist, was
-  System-Zurück tut, dazu die Recents-Vorschau und die Zeitgrenze für den
-  Dateiwähler. Die übrigen Widget-Tests pumpen `UpdaterPage` direkt und sehen
-  damit das Verhalten **ohne** Sperrschicht (§6 `app_lock.dart`).
+  System-Zurück tut, dazu die Recents-Vorschau, die Zeitgrenze für den
+  Dateiwähler und das Ende der Aussetzung (zurück aus dem Picker, während die
+  Datei noch gelesen wird: Erneutes Verlassen sperrt sofort, der Upload, der
+  dann eintrifft, wird verworfen, der Passphrase-Dialog des Imports wartet
+  unter der Sperre). Die übrigen Widget-Tests pumpen `UpdaterPage` direkt und
+  sehen damit das Verhalten **ohne** Sperrschicht (§6 `app_lock.dart`).
 - **Zwei Netze:** *innen* Command-Contract-Tests (exakte Befehlsstrings +
   Quote-Fuzzing mit `';reboot;'`), *außen* UI-Dispatch (echte `UpdaterPage`,
   Tab→Aktion→Fake asserted; `useTallScreen` weil das ListView off-screen nicht
   baut). Pins u.a.: Passwort nur als erste stdin-Zeile, nie im Befehl; evcc-Update
   sichert erst; Free-Nutzer erreichen den Pi nie.
+- **Jedes Skript, von seiner Shell gelesen — `test/script_syntax_test.dart`:**
+  Eine Tabelle (`_scripts()`) nennt jeden Skript-Builder und jede
+  Befehlskonstante aus `lib/src`, je mit einem schlichten Wert, einem
+  unbequemen (Leerzeichen, beide Anführungszeichen, `$(…)`, Backticks,
+  Backslash, Umlaute) und einem mit Zeilenumbruch, wo der Builder einen Wert
+  nimmt. Jeder Text wird als Datei mit `-n` von der Shell geparst, die ihn
+  auf dem Pi liest — gelesen, nie ausgeführt, also ohne Sandbox: bash für
+  Root-Skripte und den Erkennungs-Batch, `sh` und (wo vorhanden) dash für
+  `#!/bin/sh`-Dateien und `sh -c`-Argumente, alle drei für einzelne
+  Befehlszeilen der Login-Shell (§3 „Welche Shell was liest"). Teile, die
+  eigene Skripte sind, werden herausgelöst und für sich geparst: die
+  Argumente von `sh -c`/`bash -c`, die Dateien, die ein Install-Skript per
+  Heredoc schreibt (nach ihrem Shebang; der Alerts-Wrapper aus seinen beiden
+  Heredocs zusammengesetzt), die Ziel-Datei der Alerts, die Befehle der
+  `trap`s, tars Checkpoint-Befehl. Erkennungs-Batch, Unit-Neustart und der
+  Wrapper um einen Konsolen-Befehl werden aus dem genommen, was der Updater
+  wirklich sendet. Dieselbe Tabelle trägt die Regel **„kein Heredoc mit
+  ungequotetem Delimiter"**. **Vollständigkeitstest** (der letzte der Datei):
+  Er durchsucht `lib/src` nach öffentlichen Deklarationen, deren Name auf
+  eine der Endungen endet, die der Test für Shell-Text führt (`Command`,
+  `Script`, `Probe`, `Payload`, `Query`, `Batch`, `Stdin`, `Guard` … — die
+  Liste steht im Test), und scheitert für jede, die in der Tabelle fehlt —
+  **ein neuer Builder braucht eine Zeile in `_scripts()`**, und einer mit
+  einer neuen Art von Namen auch seine Endung in dieser Liste. Nicht erfasst:
+  die Schnellbefehle der Konsole in `lib/main.dart` (der Scan liest nur
+  `lib/src`), Namen ohne eine der Endungen, awk-/sed-Programme innerhalb der
+  Skripte. Die Tabelle entsteht
+  beim Laden der Datei: Ein Builder, der für einen der unbequemen Werte
+  neuerdings wirft, lässt die ganze Datei scheitern statt eines Tests, und
+  ein Heredoc anderer Form als `> datei <<'TAG'` scheitert als „nicht
+  verstanden".
+- **Was ein Wert mit einem Skript macht — `test/script_quoting_test.dart`:**
+  Jeder Builder, der einen Wert vom Nutzer oder vom Pi trägt (Pfad,
+  Containername, Topic, Präfix, Zeitplan …), läuft in echter bash auf dem
+  Sandbox-Pi mit Werten, die einen Befehl ausführten, wo das Quoting nachgibt
+  (einfaches und doppeltes Anführungszeichen, `$(…)`, Backticks, Semikolon,
+  Zeilenumbruch; dazu Umlaute und Leerzeichen). Geprüft wird zweierlei:
+  **Nichts vom Wert läuft** — jeder feindliche Wert hinterließe seine eigene
+  `pwned-…`-Datei irgendwo in der Sandbox —, und **der Wert kommt an, wie er
+  ist**: als ein Argument des Kommandos, für das er gedacht ist (Stubs halten
+  ihre Argumente Byte für Byte fest), oder als Name bzw. Inhalt der
+  geschriebenen Datei. Builder, die einen solchen Wert stattdessen ablehnen
+  (Zeitplan, Login-Name, Paketname, Job-id und -Art, Web-Passwort, Route,
+  ntfy-Server), werden genau darauf geprüft. Eine eigene Gruppe zeigt, dass
+  die Kanarienwerte auslösen können und die Sandbox hält — eine Prüfung, die
+  nicht scheitern kann, ist der Mangel, den diese Tests ersetzen. Ein neuer
+  Builder, der einen solchen Wert interpoliert, bekommt eine Zeile in
+  `_lines` (einzelne Befehlszeilen) oder einen Test in der Gruppe „root
+  scripts". Nur geparst, nie ausgeführt bleiben Skripte ohne fremden Wert
+  (Install-/Uninstall-Skripte, Stack-Verdrahtung, Sicherheits-Fixes,
+  Aufräumen, EOL-Umstellung, Pi-Job-Launcher) — mehrere laden Installer und
+  starten sie. Der letzte Test hält die Ausnahme zur Quoting-Regel fest:
+  Unit-Namen, die ungequotet in eine Befehlszeile gehen, sind schlichte
+  Wörter (§3). Die Datei trägt `@Timeout(2 minutes)`: Unter Git Bash ist der
+  Prozessstart langsam.
 - **Pi-Jobs:** `pi_job_test.dart` (Builder, `classifyJobRun`-Tabelle inkl.
   „Exit 0 ohne RC", fremde id, kaputte rc, früher Abbruch; `parseJobStatus`;
-  `evaluateJob`),
+  `evaluateJob`; die Job-Status-Probe läuft auf der geteilten Sandbox in
+  bash),
   `pi_job_bash_test.dart` (echtes bash; die Gruppe um Launcher, Wrapper und
   Follower **nur Linux/CI** — Git Bash hat weder
   flock noch setsid): Start→Mitlesen→RC, Launcher getötet → Job läuft zu Ende,
@@ -2414,14 +3026,23 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Server-Kommando, `pitool-test freeze <s>` (antwortet <s> Sekunden lang gar
   nicht — wie eine Leitung, die lautlos gestorben ist), trägt die Fälle „die
   Gegenseite antwortet nicht mehr": eine unbeantwortete exec-Anfrage endet
-  als `CommandNotStartedException`; `close()` beendet ein `run()`, dessen
-  exec-Anfrage noch offen ist oder dessen stdin noch unterwegs ist (der
-  Cancel-Pfad — für dartssh2-Upgrades festgehalten); stdin, das die
-  Gegenseite nicht nimmt, endet unter dem Inaktivitäts-Timeout; ein
-  langsamer Upload, der sich noch bewegt, wird nicht gekappt. **Übersprungen ohne
+  nach `startTimeout` als `CommandNotStartedException`; ein Befehl, den die
+  Gegenseite erst **nach** der Connect-Frist bestätigt, läuft trotzdem (die
+  Connect-Frist begrenzt seinen Start nicht); `close()` beendet ein `run()`,
+  dessen exec-Anfrage noch offen ist oder dessen stdin noch unterwegs ist (der
+  Cancel-Pfad — für dartssh2-Upgrades festgehalten); `close()`, **während**
+  ein Befehl arbeitet, liefert dagegen, was kam, ohne Exit-Status — das
+  Gegenstück dazu und die Unterscheidung, auf die Reboot und Shutdown sich
+  stützen (§2 „Cancel"); stdin, das die Gegenseite nicht nimmt, endet unter dem
+  Inaktivitäts-Timeout; ein langsamer Upload, der sich noch bewegt, wird
+  nicht gekappt. **Übersprungen ohne
   `PITOOL_TEST_SSHD_PYTHON`** (Pfad zu einem Python 3 mit `asyncssh`; unter
   Windows zusätzlich `PITOOL_TEST_BASH`) — die CI führt ihn nicht aus.
-  **Vor jedem dartssh2-Upgrade laufen lassen** (§1). Die reinen Bausteine
+  **Vor jedem dartssh2-Upgrade laufen lassen** (§1) — **und vor dem Taggen,
+  wenn `Dartssh2Runner.run()` angefasst wurde:** Die Start-Frist dort deckt
+  nur dieser Test. Wer sie wieder an `SshConfig.timeout` hängt, besteht die
+  CI; dort laufen nur die `SshConfig`-Tests und die Mapping-Tests des
+  Updaters. Die reinen Bausteine
   (`LineBuffer`, `Utf8ChunkDecoder`, `withinActiveTime`, `withinOrDiscard`,
   `inPieces`, `resolveExitCode`)
   testet `dartssh2_runner_test.dart` ohne Server.
@@ -2434,16 +3055,61 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   in die Sandbox umgebogen), `needsBash`, `needsDash`/`sandboxDash` und
   `heredocBody` (der Rumpf eines Heredocs aus einem Install-Skript, also das,
   was auf dem Pi in der Datei landet). Darauf laufen die drei Timer-Wrapper
-  samt Install- und Remove-Skripten (`alerts_test.dart`,
+  samt Install- und Remove-Skripten und Status-Proben (`alerts_test.dart`,
   `auto_update_test.dart`, `scheduled_backup_test.dart`,
-  `on_pi_wrapper_test.dart`), die Sicherheits-Probe und ihre Fixes
-  (`security_check_test.dart`), Home-Assistant-Install, -Backup und -Restore
+  `on_pi_wrapper_test.dart` — dort auch die wörtliche Probe von v0.71.0 gegen
+  die Wrapper dieser Version und die Probe dieser Version gegen ältere
+  Generationen; `systemctl` ist ein Stub, und ein Test prüft, dass er gefragt
+  wird), die Sicherheits-Probe und ihre Fixes (`security_check_test.dart`:
+  dass die Probe nichts verändert, ist ein bash-Lauf — nur Abfragen, der
+  Dateibaum danach unverändert —; der Root-Login-Fix mit `sshd`- und
+  `systemctl`-Stubs in allen Rollback-Zweigen und im Erfolgsfall),
+  Home-Assistant-Install, -Backup und -Restore
   (`homeassistant_service_test.dart`: echtes tar, docker als Stub, Fälle mit
   geschlossenem Kanal), die Stack-Verdrahtung (`stack_wiring_test.dart`),
   `piConnectSigninCommand` (`pi_connect_test.dart`), die Key-Installation
   (`ssh_keys_test.dart`), das Schreiben von Configs samt echtem Symlink
-  (`commands_test.dart`; unter Git Bash über `MSYS=winsymlinks:…`) und zwei
-  Gruppen von `pi_job_bash_test.dart`. Die `#!/bin/sh`-Wrapper und alles, was
+  (`commands_test.dart`; unter Git Bash über `MSYS=winsymlinks:…`), der
+  Erkennungs-Batch mit Stub-Proben unter `LC_ALL=C` (`console_test.dart`),
+  die Job-Status-Probe (`pi_job_test.dart`), `script_quoting_test.dart`
+  (s. o.) und zwei Gruppen von `pi_job_bash_test.dart`.
+  **Für Läufe mit Werten, denen ein Builder nicht trauen darf, hat
+  `PiSandbox` einen geprüften Einstieg — `runGuarded`** (der Einstieg für
+  neue bash-Tests; die älteren Nutzer rufen weiter `run`): Vor der ersten
+  Zeile des Skripts schlägt die Shell `curl`, `wget`, `apt-get`, `apt`,
+  `dpkg`, `docker`, `sudo`, `systemctl`, `sh` und `bash` nach; löst eines
+  außerhalb von `bin/` auf, endet sie mit Exit 113 (`leakExit`). Gar nicht
+  gestartet (`StateError`) wird ein Skript, das einen Pfad unter einem
+  Verzeichnis des Hosts nennt (`/tmp`, `/opt`, `/run`, `/boot`, `/bin` und
+  weitere; mit `rebase: false` auch `/etc`, `/var`, `/usr`, `/root`, `/home`,
+  `/sys`, `/proc`, die sonst in die Sandbox umgebogen werden), in einen
+  absoluten Pfad außerhalb der Sandbox umleitet (außer `/dev/null`) oder
+  einen `PATH` setzt, der über die Sandbox hinausreicht — das Nachschlagen
+  davor wäre danach nichts wert. Ein Lauf, der mit 113 endet, ist ebenfalls
+  ein `StateError` — kein Test macht mit so einem Ergebnis weiter, auch
+  keiner, der ein Scheitern seines Skripts erwartet. **Was die Textprüfung
+  nicht sieht:** ein Verzeichnis ohne etwas darunter (`cd /opt`, `tar -C /`)
+  und einen Pfad, den das Skript erst berechnet; dagegen müssen die Kommandos
+  Stubs sein oder `confine`d. Die weiteren Helfer: `confine` (ersetzt die
+  Durchreicher von Werkzeugen, deren Operanden alle Pfade sind — `rm`, `mv`,
+  `cp`, `mkdir`, `touch` —, durch solche, die einen Operanden außerhalb der
+  Sandbox mit Exit 113 und einer Zeile in `leaks` ablehnen), `allow`/`real`
+  (Durchreicher für weitere schlichte Werkzeuge des Hosts), `record`/
+  `recorded` (Stubs, die ihre Argumente Byte für Byte festhalten, auch einen
+  Zeilenumbruch oder ein leeres) und `named` (findet Kanarien-Dateien, wo
+  immer sie entstanden sind).
+  **Der Deskriptor ist kein Pi-Pfad:** Sandbox-Läufe der beiden
+  Datei-Schreiber (§3 „Config schreiben", §5 Upload) nehmen `/proc/self/fd/`
+  vom Umbiegen aus (`commands_test.dart`, `files_test.dart`,
+  `backup_scripts_test.dart`). Echte Besitzer und Modi prüfen nur
+  Linux-Läufe (Gruppe „with real owners and modes", der setuid-Test des
+  Uploads): Unter Git Bash sind Modi emuliert, dort beantwortet ein
+  `stat`-Ersatz (`fakeStat`) die Fragen — auch für die Verzeichnisse
+  **oberhalb** der Sandbox, weil `/tmp` für alle schreibbar ist und die
+  Verzeichnisprüfung des Config-Schreibens sonst jeden Link ablehnte. Die
+  Linux-Zweige sind unter Git Bash geschrieben worden; ihr erster Lauf ist
+  die CI.
+  Die `#!/bin/sh`-Wrapper und alles, was
   die App über `sh -c` schickt, laufen zusätzlich unter **dash**, wo eines
   installiert ist: dash ist das `/bin/sh` eines Pi, unter Git Bash ist
   `/bin/sh` eine bash und ließe Bashismen durchgehen.
@@ -2453,8 +3119,11 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   und Remove-Skripte, Config-Sicherungen — `tar`, `pihole`, `pihole-FTL`,
   `curl`, `systemctl`, `docker` als Stubs), `test/install_arch_guard_test.dart`
   (die Installskripte für Home Assistant, InfluxDB und evcc),
-  `test/files_test.dart` (Listen, Lesen, Upload), `test/install_detect_test.dart`
-  (`buildDetectBatch`) und `_DetectBox` in `test/evcc_updater_test.dart` (der
+  `test/files_test.dart` (Listen samt Links, Lesen, Upload, Löschen),
+  `test/install_detect_test.dart` (`buildDetectBatch`; `detectShellCommand`,
+  gespielt von einer bash, die das erste Wort der Zeile als Programm nimmt —
+  wie eine Login-Shell ohne `NAME=wert befehl`) und `_DetectBox` in
+  `test/evcc_updater_test.dart` (der
   Batch, den der Updater wirklich schickt, gegen Stub-Kommandos), dazu
   bash-Gruppen in `commands_test.dart` (`dockerRunRecreateScript`),
   `system_service_test.dart`
@@ -2462,12 +3131,19 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Backend-Zustand) und `evcc_updater_test.dart` (Konsolen-Wrapper). Linux/CI
   nimmt `bash`; unter Windows laufen die Gruppen nur mit `PITOOL_TEST_BASH`
   (Pfad zu Git Bash — ein bloßes `bash` kann dort der WSL-Starter sein).
-  **Regel für jede Sandbox: das Stub-Verzeichnis IM Skript vor den `PATH`
+  **Regel für jede Sandbox: das Stub-Verzeichnis IM Skript in den `PATH`
   setzen** (`export PATH='<sandbox>/bin'…` als erste Zeile dessen, was die bash
-  ausführt — allein oder vor `$PATH`), nicht nur über die Prozess-Umgebung —
-  und in bashs eigener Schreibweise (`/c/…`, nicht `C:/…`): bash trennt
-  `PATH` an jedem Doppelpunkt, auch am Laufwerksbuchstaben, und die Stubs
-  landeten doch hinter den Verzeichnissen des Starters.
+  ausführt), nicht nur über die Prozess-Umgebung — **in bashs eigener
+  Schreibweise** (`/c/…`, nicht `C:/…`): bash trennt `PATH` an jedem
+  Doppelpunkt, auch am Laufwerksbuchstaben, und die Stubs landeten doch
+  hinter den Verzeichnissen des Starters — **und für eine neue Sandbox
+  allein**, wie `PiSandbox` es tut (Durchreicher für die schlichten
+  Werkzeuge, sonst nichts): Steht `$PATH` dahinter, bleibt jedes Kommando des
+  Hosts erreichbar, für das der Test keinen Stub hat. Einige ältere Gruppen
+  hängen `$PATH` noch an (u. a. in `commands_test.dart`,
+  `evcc_updater_test.dart`, `system_service_test.dart`, `tailscale_test.dart`)
+  und verlassen sich darauf, dass ihre Skripte nur Kommandos erreichen, die
+  gestubbt oder harmlos sind.
   Git Bashs Starter stellt eigene Verzeichnisse (mit echtem
   `curl`, `sh`, `gpg`, `uname`) **vor** einen geerbten `PATH`; ein echtes
   Binary gleichen Namens gewinnt dann gegen den Stub. Beim Entwickeln des
@@ -2481,9 +3157,24 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Persistenz), `review_ask_test.dart` (Verdrahtung in der Seite: gefragt wird
   nach der Aktion, die die Schwelle erreicht; Sideload und Demo fragen nie,
   eine gescheiterte Aktion zählt nicht).
+- **Netz nur gegen Loopback:** Die HTTP-Adapter `evccGetJson` und
+  `githubGetJson` sowie `fetchEvccRelease`/`fetchLatestHomeAssistantVersion`
+  über den echten Adapter laufen gegen einen `HttpServer` auf 127.0.0.1
+  (`evcc_api_test.dart`, `update_check_test.dart`), `probeSshPort` gegen einen
+  Loopback-Listener (`network_scan_test.dart`). Kein Test schickt eine Anfrage
+  an `api.github.com` oder einen anderen Host.
+- **Demo:** `demo_test.dart` prüft die kanned Antworten gegen die echten
+  Parser — und die drei Timer: Die Root-Skripte bekommen ihre Marker, die
+  Status-Proben antworten, was eingerichtet wurde, und die Sheets des
+  Automatik-Tabs lassen sich im Demo ein- und ausschalten (Widget-Tests).
 - **l10n:** `l10n_keys_test.dart` erzwingt denselben Schlüsselsatz in
   `app_de.arb` und `app_en.arb` — und für `app_de.arb`, dass jedes öffnende
   `„` von `“` geschlossen wird, nicht von einem ASCII-Anführungszeichen.
+  `l10n_render_test.dart` rendert ausgewählte Texte in beiden Sprachen —
+  u. a., dass der Ausweg-Satz des Auto-Update-BUSY Tab und Knopf so nennt,
+  wie sie in der App heißen, und dass der deutsche dem der Logik-Schicht
+  (`autoUpdateBusyWayOut`) gleicht; `commands_test.dart` bindet dessen „sechs
+  Stunden" an `jobRuntimeLimit`.
 - **CI** (`.github/workflows/build.yml`): ein Job — (auf Tag: Tag-Name gegen
   die pubspec-Version prüfen) → analyze → test → (auf Tag: Store-Texte gegen die
   Play-Limits prüfen) → signieren → **fat APK** (arm64+armeabi-v7a) + AAB →
@@ -2665,21 +3356,113 @@ Jeder Punkt ist eine Entscheidung, kein übersehener Fehler.
   und nicht umgesetzt: ein nicht-prädiktiver `PageTransitionsBuilder` für
   Android in `buildAppTheme`, oder ein an die Sperre gebundener Pop-Eintrag,
   den ein `NavigatorObserver` auf jeder Route registriert.
+- **Root-Dateischreiben: Eine ausgetauschte Verzeichnis-Komponente wird nicht
+  erkannt** (§3 „Config schreiben", §5 Upload). Geschützt sind der Name der
+  Temp-Datei (exklusives Öffnen, Deskriptor) und ein Link **am** Pfad
+  (Verzeichnisprüfung). Der Weg zu einer **gewöhnlichen** Datei wird nicht
+  geprüft: Ein Konto, dem ein Verzeichnis darüber gehört, kann ein
+  Unterverzeichnis gegen einen Link auf ein anderes Verzeichnis tauschen —
+  etwa während der Editor offen ist. Liegt dort eine gewöhnliche Datei
+  gleichen Namens, ersetzt das Skript **sie**, als root, mit dem angezeigten
+  Text samt Änderung; ein Upload verhält sich ebenso. Nötig sind eine Datei
+  mindestens eine Ebene unter einem Verzeichnis des anderen Kontos und ein
+  Name, der im Zielverzeichnis etwas bedeutet. v0.71.0 hat dieselbe Lücke.
+  Offen gelassen, weil eine gewöhnliche Datei in jedem Verzeichnis
+  bearbeitbar bleiben soll: Ein Schließen bräuchte einen Abstieg, der jede
+  Komponente festhält, oder einen Inode-Zeugen aus dem Lesen — beides ohne
+  Gerätetest. Aus dem Skript abgeleitet, nicht gemessen.
+- **Root-Dateischreiben: Unter einer Default-ACL ist die Temp-Datei nicht
+  0600.** Sie entsteht durch eine Umleitung der bash unter `umask 077`; in
+  einem Verzeichnis mit Default-ACL gilt die umask nicht, und die Datei kann
+  von ihrer Entstehung bis zum `chmod` am Ende — also während des Dekodierens
+  von bis zu 8 MB — für andere lesbar sein. (`mktemp`, das die frühere
+  Fassung nutzte, öffnet mit 0600, was eine Default-ACL nicht erweitern
+  kann.) Aus acl(5) abgeleitet, nicht gemessen; ein `chmod 600` direkt nach
+  dem Öffnen verengte das Fenster, schlösse es aber nicht.
+- **Config-Sicherungen erben den Modus der Datei, nicht den Schutz ihres
+  Verzeichnisses:** `cp -P` nach `/var/backups/pi-tool` (0755). Eine
+  0644-Datei, die nur durch ihr 0700-Verzeichnis geschützt war, bekommt dort
+  eine für alle lesbare Kopie.
+- **Der Erfolgsmarker wird als Teilstring gesucht**
+  (`_runRootScriptExpectMarker`: `contains`), nicht als eigene Zeile. Geht
+  der Exit-Status verloren, zählt auch eine Fehlerzeile, die einen Pfad mit
+  dem Markertext zitiert, als Erfolg. Die Ablehnungszeilen des
+  Config-Schreibens drucken deshalb nichts, was vom Pi kommt.
+- **Der fail2ban-Fix beobachtet ein festes Zeitfenster** (§5
+  `security_check.dart`): 10 s, fünf Proben, und als Beleg zählt allein
+  „active" — niemand fragt fail2ban, ob der Server seine Jails geladen hat.
+  Braucht er auf einem langsamen Pi länger als diese 10 s bis zu seinem
+  Abbruch („kein Log für das sshd-Jail"), meldet der Fix `SECFIX_OK` und
+  überspringt das Journal-Drop-in; die nächste Prüfung zeigt fail2ban wieder
+  als nicht aktiv, und ein zweiter Versuch endet gleich. Ein Verdacht, keine
+  Messung — die Startzeit von fail2ban ist an keinem Pi gemessen. Ein Warten
+  auf eine eindeutige Antwort (`fail2ban-client ping`, `systemctl is-failed`)
+  wäre Skript-Code ohne Gerätetest.
+- **Rückfall der SSH-Prüfung im Sicherheits-Check:** Antwortet `sshd -T`
+  nicht, listet `grep` `/etc/ssh/sshd_config` **vor** den Drop-ins, und der
+  Parser nimmt den ersten Wert. sshd selbst nimmt auf einem System, dessen
+  `sshd_config` mit der `Include`-Zeile beginnt, zuerst den Wert des Drop-ins.
+  Bei widersprüchlichen Werten meldete der Rückfall also den der Hauptdatei —
+  etwa „yes", obwohl das Drop-in der App „no" setzt. Nur dieser Rückfallpfad,
+  nicht gemessen, von keinem Test festgehalten.
+- **Mehrere Demo-Aktionen enden mit einer Fehlermeldung** (§6 `demo.dart`):
+  Das Demo-Backend beantwortet von den Root-Skripten nur die sechs der Timer
+  mit ihrem Marker. Jedes andere bekommt eine leere Antwort, und die
+  Marker-Disziplin (§2) macht daraus „fehlgeschlagen" — nachvollzogen am Code
+  für das Backup vor einem evcc-Update, das Pi-hole-Backup, „Aufräumen",
+  einen Sicherheits-Fix, das Speichern im Editor und den Datei-Upload; ein
+  Review-Lauf (Widget-Test gegen `buildDemoUpdater()`, hier nicht
+  wiederholt) nennt außerdem die Installation eines Dienstes, „Fernzugriff
+  einrichten" und das Öffnen einer Datei im Editor.
+  Unverändert gegenüber v0.71.0; eine erfundene Erfolgsmeldung wäre gelogen,
+  und die Einträge im Demo auszublenden (wie „Deinstallieren") ist nicht
+  umgesetzt.
+- **Health-Alerts: Folgen der Topic-Regel für Bestandsnutzer** (§5
+  `alerts.dart`). Bis v0.71.0 gab es nur das app-weite Topic, nach dem Update
+  hat also zunächst kein Profil ein eigenes. (1) Wer die Alerts eines solchen
+  Pi **ausschaltet** und später wieder einschaltet, bekommt im Sheet ein neu
+  generiertes Topic — das alte wird nirgends mehr gezeigt, und der Pi pusht
+  danach an ein Topic, das niemand abonniert hat, bis die ntfy-App folgt.
+  („Aktualisieren", wie der Hinweis auf das ältere Skript es verlangt,
+  speichert das gezeigte Topic dagegen im Profil.) (2) Die Warnzeile „ntfy-Thema
+  leicht erratbar" auf der Automatik-Karte entfällt für ein schwaches
+  app-weites Topic, bis das Sheet einmal gespeichert wurde; das Sheet selbst
+  warnt weiter. Die Karte kennt den Timer-Zustand nicht — den Hinweis zu
+  halten bräuchte ein gespeichertes „Alerts an" je Profil. (3)
+  `profilesForImport` gibt einem importierten Profil ohne Topic weiter das
+  app-weite der exportierenden App mit; danach ist es dessen eigenes.
+- **Zeitplan-Sheets fallen still auf die Vorgaben zurück**, wenn Timer-Unit
+  oder Wrapper für den SSH-Nutzer nicht lesbar sind oder von Hand geändert
+  wurden (§5 `on_pi_wrapper.dart`); eine Hinweiszeile dafür gibt es nicht.
+  Ein Wrapper, den der SSH-Nutzer nicht lesen kann, gilt als Generation 0,
+  also veraltet; neu eingerichtet hat er Modus 755.
 
 Weitere bewusste Grenzen stehen an ihrer Stelle: „Abbrechen" stoppt nichts auf
-dem Pi (§2 „Cancel"); das Home-Assistant-Archiv ist 0644 (§5 `files.dart`);
-die Recents-Vorschau unter Android 12 und älter (§6 `secure_screen.dart`);
-der Backup-Wrapper teilt die Generationsnummer der beiden anderen (§5
-`on_pi_wrapper.dart`).
+dem Pi, und ein Abbruch direkt nach der Übergabe eines Neustarts oder
+Herunterfahrens meldet beides als ausgelöst (§2 „Cancel"); eine Login-Shell,
+die keine Bourne-Shell ist (§3 „Welche Shell was liest"); das
+Home-Assistant-Archiv ist 0644, und „geteilt" heißt auf Android nur „Ziel
+gewählt" (§5 `files.dart`); ein an der Laufzeitgrenze beendeter Auto-Update-Lauf
+lässt die Statuszeile des Laufs davor stehen (§5 `auto_update.dart`); ein
+Handy mit v0.71.0 kann neuere Wrapper weiter überschreiben (§5
+`on_pi_wrapper.dart`); die Recents-Vorschau unter Android 12 und älter (§6
+`secure_screen.dart`); die Start-Frist eines Befehls deckt nur der
+SSH-Integrationstest, den die CI überspringt (§8).
 
 ## Ein neuen Dienst hinzufügen (Kurzrezept)
 
 1. `lib/src/services/<name>.dart`: Befehlsstrings + reine Parser + (falls nötig)
    Root-Skripte mit Markern; jede Interpolation via `shSingleQuote`, Heredocs
-   quoted. **Test zuerst** (`test/<name>_test.dart`).
+   quoted. **Test zuerst** (`test/<name>_test.dart`). Jeder neue Builder und
+   jede neue Befehlskonstante bekommt eine Zeile in `_scripts()` von
+   `test/script_syntax_test.dart` (sonst scheitert dessen
+   Vollständigkeitstest); trägt er einen Wert vom Nutzer oder vom Pi, auch
+   einen Lauf in `test/script_quoting_test.dart` (§8).
 2. Detection-Probe in den Batch in `detectServices` (evcc_updater.dart) + Karte
    bauen; Orchestrierungs-Methoden über `_runRootScriptExpectMarker`.
-3. `FakeEvccUpdater` um die neuen Methoden erweitern; UI-Dispatch-Test.
+3. `FakeEvccUpdater` um die neuen Methoden erweitern (Override mit Zähler —
+   ein fehlendes lässt den Test über `unexpectedCalls` scheitern, §8);
+   UI-Dispatch-Test.
 4. UI: Karte im `_serviceCards`-Switch bzw. `_AddableService`-Picker; Pro-Features
    über `_proGate`. Kann die App ihn installieren, braucht er auch einen
    Deinstallations-Builder nach dem Skript-Vertrag in §4 und
@@ -2688,7 +3471,8 @@ der Backup-Wrapper teilt die Generationsnummer der beiden anderen (§5
    `..._projectLinkActions(<id>)` ans Ende der `actions` — Eintrag und
    Manifest erzwingt der Guard-Test ohnehin.
 5. Ändert der Dienst einen On-Pi-Wrapper (Timer-Backup, Auto-Update, Alerts):
-   `wrapperGeneration` erhöhen (§5), sonst bleibt der alte Wrapper auf
-   Bestands-Pis unbemerkt.
+   die Generation **dieses** Wrappers erhöhen (§5 `on_pi_wrapper.dart`;
+   jenseits von 2 mit der Stempelzeile von v0.71.0), sonst bleibt der alte
+   Wrapper auf Bestands-Pis unbemerkt.
 6. Version bumpen, `whats_new.dart` ergänzen, **diese Doku aktualisieren**,
    analyze+test grün, main-Build, taggen.
