@@ -80,34 +80,59 @@ void main() {
   });
 
   group('effectiveNtfyDestination', () {
-    test('the profile\'s own destination wins over the app-wide one', () {
-      final d = effectiveNtfyDestination(
-          profileServer: 'https://ntfy.example.org',
-          profileTopic: 'eigenes-thema-123456',
-          fallbackServer: 'https://ntfy.sh',
-          fallbackTopic: 'app-weit-9999999999');
-      expect(d.server, 'https://ntfy.example.org');
-      expect(d.topic, 'eigenes-thema-123456');
+    test('the profile\'s own destination wins over the app-wide one, alerts '
+        'on or off', () {
+      for (final alertsOn in [true, false]) {
+        final d = effectiveNtfyDestination(
+            profileServer: 'https://ntfy.example.org',
+            profileTopic: 'eigenes-thema-123456',
+            fallbackServer: 'https://ntfy.sh',
+            fallbackTopic: 'app-weit-9999999999',
+            alertsOn: alertsOn);
+        expect(d.server, 'https://ntfy.example.org');
+        expect(d.topic, 'eigenes-thema-123456');
+      }
     });
 
-    test('a profile without one falls back to the app-wide destination', () {
+    // Set up before the destination was kept per profile: this Pi pushes to
+    // the app-wide topic.
+    test('a profile without one, alerts on: the app-wide destination stands in',
+        () {
       final d = effectiveNtfyDestination(
           profileServer: '',
           profileTopic: '',
           fallbackServer: 'https://ntfy.example.org',
-          fallbackTopic: 'app-weit-9999999999');
+          fallbackTopic: 'app-weit-9999999999',
+          alertsOn: true);
       expect(d.server, 'https://ntfy.example.org');
       expect(d.topic, 'app-weit-9999999999');
     });
 
-    test('neither known: the topic is empty, not made up', () {
+    // Nothing on this Pi pushes to the app-wide topic — and replaced on the
+    // Pi that did, it is no longer anybody's.
+    test('a profile without one, alerts off: no topic, only the server of the '
+        'app-wide destination', () {
       final d = effectiveNtfyDestination(
           profileServer: '',
           profileTopic: ' ',
-          fallbackServer: 'https://ntfy.sh',
-          fallbackTopic: '');
-      expect(d.server, 'https://ntfy.sh');
+          fallbackServer: 'https://ntfy.example.org',
+          fallbackTopic: 'app-weit-9999999999',
+          alertsOn: false);
+      expect(d.server, 'https://ntfy.example.org');
       expect(d.topic, '');
+    });
+
+    test('neither known: the topic is empty, not made up', () {
+      for (final alertsOn in [true, false]) {
+        final d = effectiveNtfyDestination(
+            profileServer: '',
+            profileTopic: ' ',
+            fallbackServer: 'https://ntfy.sh',
+            fallbackTopic: '',
+            alertsOn: alertsOn);
+        expect(d.server, 'https://ntfy.sh');
+        expect(d.topic, '');
+      }
     });
   });
 

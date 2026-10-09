@@ -58,6 +58,7 @@
   "wNoWarnings": "Keine Warnungen — sieht gut aus.",
   "wNotInstalled": "nicht installiert",
   "wNotSetUp": "Noch nicht eingerichtet",
+  "wNtfyServerInvalid": "Bitte eine Adresse mit http:// oder https:// eingeben, z. B. https://ntfy.sh.",
   "wNtfyServerLabel": "ntfy-Server",
   "wNtfyTopicDice": "Neuen Zufallsnamen erzeugen",
   "wNtfyTopicHelper": "Wie ein Passwort behandeln — Zufallsname empfohlen.",

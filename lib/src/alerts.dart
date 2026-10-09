@@ -68,21 +68,29 @@ const String alertsDestinationPath = '/usr/local/lib/$alertsUnit.conf';
 final RegExp _httpRe = RegExp(r'^https?://', caseSensitive: false);
 final RegExp _schemeRe = RegExp(r'^[A-Za-z][A-Za-z0-9+.-]*://');
 
+/// Whether [server] is one the builders below take ([_ntfyServer]): http(s),
+/// or a server typed without a scheme. For the sheet, which marks any other
+/// value at its field before it tests or switches on — so that a refused
+/// server is neither sent nor saved with the profile.
+bool isNtfyServerUsable(String server) {
+  final s = server.replaceAll(RegExp(r'\s'), '');
+  return _httpRe.hasMatch(s) || (s.isNotEmpty && !_schemeRe.hasMatch(s));
+}
+
 /// The ntfy server as curl gets it: without whitespace and with an explicit
 /// http(s) scheme. A server typed without one ("ntfy.sh") gets `http://` —
 /// what curl assumes for such a value, so a destination that works today
 /// keeps working. Any other scheme (and no server at all) is refused: the
 /// field is free text, and curl speaks more protocols than ntfy.
 String _ntfyServer(String server) {
-  final s = server.replaceAll(RegExp(r'\s'), '');
-  if (_httpRe.hasMatch(s)) return s;
-  if (s.isEmpty || _schemeRe.hasMatch(s)) {
+  if (!isNtfyServerUsable(server)) {
     // Without the value: the text of this error is logged, and the field may
     // hold credentials (user:password@…) or a pasted ntfy:// link — which
     // names the topic.
     throw ArgumentError('kein http(s)-Server für ntfy', 'ntfyServer');
   }
-  return 'http://$s';
+  final s = server.replaceAll(RegExp(r'\s'), '');
+  return _httpRe.hasMatch(s) ? s : 'http://$s';
 }
 
 /// Shell that sets `title` to the title of a push: `Pi-Tool (<hostname>)`.

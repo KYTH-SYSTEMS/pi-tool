@@ -96,6 +96,7 @@
   "wNoWarnings": "No warnings — looks good.",
   "wNotInstalled": "not installed",
   "wNotSetUp": "Not set up yet",
+  "wNtfyServerInvalid": "Please enter an address with http:// or https://, e.g. https://ntfy.sh.",
   "wNtfyServerLabel": "ntfy server",
   "wNtfyTopicDice": "Generate a new random name",
   "wNtfyTopicHelper": "Treat it like a password — a random name is safest.",

@@ -920,15 +920,18 @@ class _UpdaterPageState extends State<UpdaterPage>
       );
 
   /// The ntfy destination of the active Pi's Health-Alerts as far as the app
-  /// knows it: its own, else the app-wide one of older releases. In the demo,
-  /// once alerts were set up there, the destination of its sample Pi.
-  ({String server, String topic}) get _alertsDestination =>
+  /// knows it: its own, else — only for a Pi whose alerts are on ([alertsOn])
+  /// — the app-wide one of older releases. In the demo, once alerts were set
+  /// up there, the destination of its sample Pi.
+  ({String server, String topic}) _alertsDestination(
+          {required bool alertsOn}) =>
       (_demoMode ? _demoAlerts : null) ??
       effectiveNtfyDestination(
         profileServer: _piAlertsServer,
         profileTopic: _piAlertsTopic,
         fallbackServer: _alertsServer,
         fallbackTopic: _alertsTopic,
+        alertsOn: alertsOn,
       );
 
   /// The cards the active profile has remembered in [_profiles] — what it had
@@ -3663,7 +3666,9 @@ class _UpdaterPageState extends State<UpdaterPage>
 
   Future<({bool enable, String server, String topic})?> _showAlertsSheet(
       AlertsStatus status, SshConfig config) {
-    final known = _alertsDestination;
+    // Alerts off and no topic of this Pi's own: the sheet then starts with a
+    // generated one, not with the app-wide topic of older releases.
+    final known = _alertsDestination(alertsOn: status.enabled);
     // Whether the sheet is still there to show a test's result itself.
     var sheetOpen = true;
     return showModalBottomSheet<({bool enable, String server, String topic})>(
@@ -7422,8 +7427,10 @@ class _UpdaterPageState extends State<UpdaterPage>
             locked: !_unlocked,
             // The topic is the only protection on ntfy (no account, no auth), so
             // flag a guessable one here too — someone who set alerts up once may
-            // never open the sheet again. Judged by the active Pi's topic.
-            warning: isWeakNtfyTopic(_alertsDestination.topic)
+            // never open the sheet again. Judged by the active Pi's own topic:
+            // whether its alerts are on is not known here, and the app-wide
+            // topic of older releases counts only for a Pi that pushes to it.
+            warning: isWeakNtfyTopic(_alertsDestination(alertsOn: false).topic)
                 ? context.l10n.alertsWeakTopicCardHint
                 : null,
             onTap: () => _proGate(_configureAlerts),

@@ -319,6 +319,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   );
 
   bool _topicMissing = false; // "turn on"/"test" was tapped with an empty topic
+  bool _serverRefused = false; // … or with a server that is not http(s)
   bool _testing = false; // a test push is in flight → its button is off
   ({bool ok, String text})? _testResult; // of the last test, under the buttons
   final _testResultKey = GlobalKey(); // to scroll that line into view
@@ -328,11 +329,18 @@ class _AlertsSheetState extends State<_AlertsSheet> {
     super.initState();
     // Rebuild while typing so the "easy to guess" line tracks the actual field.
     _topicCtrl.addListener(_onTopicChanged);
+    _serverCtrl.addListener(_onServerChanged);
   }
 
   void _onTopicChanged() => setState(() {
     if (_topicCtrl.text.trim().isNotEmpty) _topicMissing = false;
   });
+
+  void _onServerChanged() {
+    if (_serverRefused && isNtfyServerUsable(_server)) {
+      setState(() => _serverRefused = false);
+    }
+  }
 
   /// The trimmed topic — or null, with the field marked, when there is none.
   String? _requireTopic() {
@@ -342,16 +350,27 @@ class _AlertsSheetState extends State<_AlertsSheet> {
     return null;
   }
 
+  /// The server — or null, with the field marked, when it is none the alerts
+  /// can use: the logic layer takes http(s) only (alerts.dart). Said here, at
+  /// the field, before the value is sent to the Pi or saved with the profile.
+  String? _requireServer() {
+    final server = _server;
+    if (isNtfyServerUsable(server)) return server;
+    setState(() => _serverRefused = true);
+    return null;
+  }
+
   Future<void> _runTest() async {
     final topic = _requireTopic();
-    if (topic == null) return;
+    final server = _requireServer();
+    if (topic == null || server == null) return;
     setState(() {
       _testing = true;
       _testResult = null;
     });
     ({bool ok, String text})? result;
     try {
-      result = await widget.onTest(_server, topic);
+      result = await widget.onTest(server, topic);
     } finally {
       if (mounted) {
         setState(() {
@@ -375,6 +394,7 @@ class _AlertsSheetState extends State<_AlertsSheet> {
   @override
   void dispose() {
     _topicCtrl.removeListener(_onTopicChanged);
+    _serverCtrl.removeListener(_onServerChanged);
     _serverCtrl.dispose();
     _topicCtrl.dispose();
     super.dispose();
@@ -519,6 +539,10 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                 enableSuggestions: false,
                 decoration: InputDecoration(
                   labelText: context.l10n.wNtfyServerLabel,
+                  errorText: _serverRefused
+                      ? context.l10n.wNtfyServerInvalid
+                      : null,
+                  errorMaxLines: 3,
                   border: const OutlineInputBorder(),
                 ),
               ),
@@ -529,10 +553,11 @@ class _AlertsSheetState extends State<_AlertsSheet> {
                     child: FilledButton(
                       onPressed: () {
                         final topic = _requireTopic();
-                        if (topic == null) return;
+                        final server = _requireServer();
+                        if (topic == null || server == null) return;
                         Navigator.pop(context, (
                           enable: true,
-                          server: _server,
+                          server: server,
                           topic: topic,
                         ));
                       },

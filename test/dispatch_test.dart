@@ -3673,10 +3673,15 @@ void main() {
       locale: const Locale('de'),
       home: UpdaterPage(
         store: _FakeStore(const AppConfig(
-          profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+          profiles: [
+            Profile(
+                name: 'S',
+                host: '192.168.178.64',
+                password: 'pw',
+                alertsNtfyTopic: 'mein-pi')
+          ],
           activeIndex: 0,
           disclaimerAccepted: true,
-          alertsNtfyTopic: 'mein-pi',
         )),
         updater: FakeEvccUpdater(),
         updateChecker: _noUpdateChecker,
@@ -3913,6 +3918,99 @@ void main() {
     expect(u.testAlertCalls, 0);
   });
 
+  // The logic layer takes http(s) only. A link pasted from the ntfy app used
+  // to end as "Unerwarteter Fehler – Details im Terminal-Log." beneath the
+  // sheet — after "Einschalten" had saved it with the profile.
+  testWidgets(
+      'Health-Alerts: ein Server, der kein http(s) ist, wird am Feld gemeldet '
+      '— nichts wird gesendet, eingerichtet oder gespeichert', (tester) async {
+    useTallScreen(tester);
+    const refused = 'Bitte eine Adresse mit http:// oder https:// eingeben, '
+        'z. B. https://ntfy.sh.';
+    final u = FakeEvccUpdater();
+    final store = _FakeStore(_ready);
+    await tester.pumpWidget(page(u, store: store));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+    final topic = topicField(tester);
+    final serverField = find.byType(TextField).at(1);
+
+    await tester.enterText(serverField, 'ntfy://ntfy.sh/pi-tool-abc');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pumpAndSettle();
+    expect(inSheet(find.text(refused)), findsOneWidget);
+    expect(u.testAlertCalls, 0);
+    expect(find.byKey(const Key('alertsTestResult')), findsNothing);
+
+    // "Einschalten" leaves the sheet open, and nothing reaches Pi or profile.
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+    expect(inSheet(find.text(refused)), findsOneWidget);
+    expect(u.alertsTopic, isNull);
+    expect(u.alertsServer, isNull);
+    await tester.pump(const Duration(seconds: 1)); // past the save debounce
+    expect(store.saved.active.alertsNtfyServer, '');
+    expect(store.saved.active.alertsNtfyTopic, '');
+    expect(find.byType(SnackBar), findsNothing);
+    expect(logText(tester), isNot(contains('FEHLER')));
+
+    // Still refused while it is no http(s) address; gone once it is one.
+    await tester.enterText(serverField, 'ftp://ntfy.example.org');
+    await tester.pumpAndSettle();
+    expect(inSheet(find.text(refused)), findsOneWidget);
+    await tester.enterText(serverField, 'https://ntfy.example.org');
+    await tester.pumpAndSettle(); // the error line fades out
+    expect(find.text(refused), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+    expect(u.alertsServer, 'https://ntfy.example.org');
+    expect(u.alertsTopic, topic);
+    expect(store.saved.active.alertsNtfyServer, 'https://ntfy.example.org');
+  });
+
+  // Both fields at once: each says what is wrong with it.
+  testWidgets(
+      'Health-Alerts: Thema leer und Server kein http(s) — beide Felder '
+      'melden es', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.enterText(find.byType(TextField).first, '');
+    await tester.enterText(find.byType(TextField).at(1), 'file:///etc/shadow');
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+
+    expect(inSheet(find.text('Bitte ein ntfy-Thema eingeben.')), findsOneWidget);
+    expect(inSheet(find.textContaining('http:// oder https://')), findsOneWidget);
+    expect(u.alertsTopic, isNull);
+  });
+
+  // What the builders take, the sheet takes: a server typed without a scheme,
+  // and an empty field (ntfy.sh).
+  testWidgets(
+      'Health-Alerts: ein Server ohne Schema und ein leeres Server-Feld '
+      'gehen weiter durch', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    await tester.enterText(find.byType(TextField).at(1), 'ntfy.lan:8080');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
+    await tester.pumpAndSettle();
+    expect(u.testAlertCalls, 1);
+    expect(find.textContaining('http:// oder https://'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).at(1), '');
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+    expect(u.alertsServer, 'https://ntfy.sh');
+  });
+
   // The topic is the password: whatever the logic layer reports about a test
   // or an install, the topic itself stays out of the log.
   testWidgets('Health-Alerts: das Thema steht in keiner Log-Zeile',
@@ -4037,6 +4135,82 @@ void main() {
     expect(find.textContaining('nicht gespeichert'), findsNothing);
   });
 
+  // The app-wide topic is the one of a Pi that still pushes to it. On a Pi
+  // whose alerts are off it is nobody's.
+  testWidgets(
+      'Health-Alerts: Alerts aus und kein eigenes Thema — das Sheet beginnt '
+      'mit einem Zufallsthema, nicht mit dem app-weiten von früher',
+      (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater();
+    final store = _FakeStore(const AppConfig(
+      profiles: [Profile(name: 'S', host: '192.168.178.64', password: 'pw')],
+      activeIndex: 0,
+      disclaimerAccepted: true,
+      alertsNtfyServer: 'https://ntfy.example.org',
+      alertsNtfyTopic: 'mein-pi',
+    ));
+    await tester.pumpWidget(page(u, store: store));
+    await tester.pumpAndSettle();
+    await openAlertsSheet(tester);
+
+    final suggested = topicField(tester);
+    expect(suggested, startsWith('pi-tool-'));
+    expect(isWeakNtfyTopic(suggested), isFalse);
+    expect(find.textContaining('leicht zu erraten'), findsNothing);
+    expect(find.textContaining('nicht gespeichert'), findsNothing);
+    // The server of back then is still the suggestion: an ntfy server of
+    // one's own serves the next Pi too.
+    expect(find.text('https://ntfy.example.org'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Einschalten'));
+    await tester.pumpAndSettle();
+    expect(u.alertsTopic, suggested);
+    expect(store.saved.active.alertsNtfyTopic, suggested);
+  });
+
+  // Two profiles from before the destination was kept per profile, one weak
+  // topic for both. Replaced on the Pi that pushes to it, it must not stay
+  // the suggestion and the "easy to guess" verdict for the other.
+  testWidgets(
+      'Health-Alerts: das app-weite Thema, auf Pi A ersetzt, bleibt nicht '
+      'Vorschlag und Warnung für Pi B', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..alertsStatus =
+          (enabled: true, lastCheck: '12:00', wrapperOutdated: false);
+    final store = _FakeStore(twoPis(appWide: 'mein-pi'));
+    await tester.pumpWidget(page(u, store: store));
+    await tester.pumpAndSettle();
+
+    // A pushes to the old topic: its sheet shows it, with the warning.
+    await openAlertsSheet(tester);
+    expect(topicField(tester), 'mein-pi');
+    expect(inSheet(find.textContaining('leicht zu erraten')), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.casino_outlined));
+    await tester.pumpAndSettle();
+    final replaced = topicField(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(u.alertsTopic, replaced);
+    expect(store.saved.profiles[0].alertsNtfyTopic, replaced);
+    expect(find.textContaining('leicht erratbar'), findsNothing);
+
+    // B never had alerts.
+    u.alertsStatus = (enabled: false, lastCheck: null, wrapperOutdated: false);
+    await tester.tap(find.byKey(const Key('profileSwitcher')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('B'));
+    await tester.pumpAndSettle();
+    await goAutomatik(tester);
+    expect(find.textContaining('leicht erratbar'), findsNothing);
+    await tester.tap(find.text('Health-Alerts'));
+    await tester.pumpAndSettle();
+    expect(topicField(tester), startsWith('pi-tool-'));
+    expect(topicField(tester), isNot(replaced));
+    expect(inSheet(find.textContaining('leicht zu erraten')), findsNothing);
+  });
+
   testWidgets(
       'Health-Alerts: Einschalten merkt das Thema beim aktiven Profil — das '
       'andere und der app-weite Wert bleiben', (tester) async {
@@ -4120,13 +4294,14 @@ void main() {
     await goAutomatik(tester);
     expect(find.textContaining('leicht erratbar'), findsNothing);
 
-    // B has none of its own: the weak app-wide one stands in.
+    // B has none of its own. Whether B pushes to the weak app-wide one is not
+    // known on the card — its sheet says so when B's alerts are on.
     await tester.tap(find.byKey(const Key('profileSwitcher')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('B'));
     await tester.pumpAndSettle();
     await goAutomatik(tester);
-    expect(find.textContaining('leicht erratbar'), findsOneWidget);
+    expect(find.textContaining('leicht erratbar'), findsNothing);
   });
 
   testWidgets(

@@ -49,9 +49,10 @@ class Profile {
   final bool remoteAccessProven;
 
   /// ntfy destination of this Pi's Health-Alerts, as last set up from this
-  /// app. Empty = none of its own: the app-wide one on [AppConfig] then stands
-  /// in (see [effectiveNtfyDestination]). The topic works like a password
-  /// (alerts.dart) — it must never reach a log line.
+  /// app. Empty = none of its own: while this Pi's alerts are on, the app-wide
+  /// one on [AppConfig] then stands in (see [effectiveNtfyDestination]). The
+  /// topic works like a password (alerts.dart) — it must never reach a log
+  /// line.
   final String alertsNtfyServer;
   final String alertsNtfyTopic;
 
@@ -154,15 +155,24 @@ class Profile {
 /// The ntfy destination the Health-Alerts sheet starts with for a Pi: the
 /// profile's own when it has one, else the app-wide one from before the
 /// destination was kept per profile. A blank topic means neither is known.
+///
+/// The app-wide topic stands in only while the alerts of that Pi are on
+/// ([alertsOn]): then it is the topic this Pi pushes to. For a Pi whose alerts
+/// are off it is nobody's — and once replaced on the Pi that used it, it
+/// would otherwise remain the suggestion (and the "easy to guess" verdict)
+/// for every other profile for good. The app-wide server stays the
+/// suggestion either way: whoever runs an ntfy server of their own uses it
+/// for the next Pi too.
 ({String server, String topic}) effectiveNtfyDestination({
   required String profileServer,
   required String profileTopic,
   required String fallbackServer,
   required String fallbackTopic,
+  required bool alertsOn,
 }) =>
     profileTopic.trim().isNotEmpty
         ? (server: profileServer, topic: profileTopic)
-        : (server: fallbackServer, topic: fallbackTopic);
+        : (server: fallbackServer, topic: alertsOn ? fallbackTopic : '');
 
 /// The profiles of an export file as an import takes them over. One without
 /// an ntfy destination of its own showed the exporting app's app-wide one —
@@ -207,9 +217,9 @@ class AppConfig {
   final List<String> customCommands;
 
   /// Health-Alerts ntfy destination from before it was kept per profile: the
-  /// fallback for a profile that has none of its own ([Profile.alertsNtfyTopic]),
-  /// so a Pi set up back then still shows its topic. Loaded and saved as it
-  /// is — a new destination goes to the profile.
+  /// fallback for a profile that has none of its own ([Profile.alertsNtfyTopic])
+  /// and whose alerts are on, so a Pi set up back then still shows its topic.
+  /// Loaded and saved as it is — a new destination goes to the profile.
   final String alertsNtfyServer;
   final String alertsNtfyTopic;
 

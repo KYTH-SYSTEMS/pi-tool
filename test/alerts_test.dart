@@ -275,6 +275,47 @@ void main() {
         }
       }
     });
+
+    // The sheet asks before it tests or switches on, so that a refused value
+    // is marked at its field — and never saved. It must say exactly what the
+    // builders will do.
+    test('isNtfyServerUsable says what the builders take', () {
+      bool builds(String server) {
+        try {
+          buildAlertsInstallScript(ntfyServer: server, ntfyTopic: 't');
+          buildTestAlertCommand(ntfyServer: server, ntfyTopic: 't');
+          return true;
+        } on ArgumentError {
+          return false;
+        }
+      }
+
+      for (final good in [
+        'https://ntfy.sh',
+        'http://ntfy.lan:8080',
+        'HTTPS://Ntfy.Example',
+        'ntfy.sh',
+        'ntfy.lan:8080',
+        ' https://ntfy.sh ',
+        'https://anna:geheim@ntfy.example',
+      ]) {
+        expect(isNtfyServerUsable(good), isTrue, reason: good);
+        expect(builds(good), isTrue, reason: good);
+      }
+      for (final bad in [
+        // A link pasted from the ntfy app.
+        'ntfy://ntfy.sh/pi-tool-k7m2q9x4vb3dwz',
+        'ftp://ntfy.sh',
+        'file:///etc/shadow',
+        'htps://ntfy.sh',
+        'x://',
+        '',
+        ' \n',
+      ]) {
+        expect(isNtfyServerUsable(bad), isFalse, reason: bad);
+        expect(builds(bad), isFalse, reason: bad);
+      }
+    });
   });
 
   // The real command in a real bash; `curl` is a stub that records its
