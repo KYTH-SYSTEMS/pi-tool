@@ -1503,7 +1503,11 @@ class EvccUpdater {
       );
 
   /// Fresh read right before a route change — never the (possibly cached)
-  /// card state. Unreadable prefs count as "nothing advertised".
+  /// card state. Unreadable prefs count as "nothing advertised" — which is
+  /// why a read that was cut off must not count at all: the root script that
+  /// follows writes the route list anew, and from a partial picture it would
+  /// drop routes and an exit node set by hand. Same end marker as the
+  /// detection.
   Future<
       ({
         List<String> lan,
@@ -1518,6 +1522,9 @@ class EvccUpdater {
               ('TS_FWD', tailscaleForwardingProbe),
             ])}\n');
     final sec = splitDetectSections(r.stdout);
+    if (!sec.containsKey(detectEndKey)) {
+      throw const EvccUpdateException(UpdateErrorKind.unknown, _resultUnknown);
+    }
     final prefs = sec['TS_PREFS'] ?? '';
     return (
       lan: parseLanSubnets(sec['TS_LAN'] ?? ''),

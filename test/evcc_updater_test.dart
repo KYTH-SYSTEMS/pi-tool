@@ -2230,6 +2230,43 @@ void main() {
       expect(script, isNot(contains('192.168.178.0/24')));
     });
 
+    // The read before a route change is the same kind of batch as the
+    // detection. Cut off before the prefs arrived, it would say "nothing is
+    // advertised" — and the root script that follows would then drop the
+    // routes and the exit node somebody set by hand.
+    test('beenden: ein abgeschnittener Stand ändert keine Routen', () async {
+      final runner = _DetectOutputRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [
+          _r('{"AdvertiseRoutes": ["10.8.0.0/24", "192.168.178.0/24"]}')
+        ],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      }, cutAt: '@@PT@@TS_PREFS@@PT@@');
+      await expectLater(
+        _updaterWith(runner)
+            .tailscaleUnshareLan(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)
+            .having((e) => e.message, 'message',
+                contains('Ergebnis unbekannt'))),
+      );
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
+    test('freigeben: ein abgeschnittener Stand ändert keine Routen', () async {
+      final runner = _DetectOutputRunner({
+        lanRoutesCommand: [_r(lanRoutes)],
+        tailscalePrefsCommand: [_r('{"AdvertiseRoutes": ["10.8.0.0/24"]}')],
+        installShellCommand: [_r('TS_ROUTES_SET\n')],
+      }, cutAt: '@@PT@@TS_PREFS@@PT@@');
+      await expectLater(
+        _updaterWith(runner).tailscaleShareLan(config: _config, onLog: (_) {}),
+        throwsA(isA<EvccUpdateException>()
+            .having((e) => e.kind, 'kind', UpdateErrorKind.unknown)),
+      );
+      expect(runner.commandsRun, isNot(contains(installShellCommand)));
+    });
+
     test('beenden: nimmt auch die früher von der App gesetzte Route heraus '
         '(Pi hat inzwischen ein anderes Heimnetz)', () async {
       final runner = FakeSshRunner({
