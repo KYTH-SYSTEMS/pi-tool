@@ -430,7 +430,7 @@ void main() {
 
     test('the installed time and retention are handed on', () {
       const head = 'ENABLED enabled\nNEXT Sat 2026-10-10 05:00:00\nSTATUS \n'
-          'WRAPPER current\n';
+          'WRAPPER 2\n';
       // `tail -n +15` deletes from the 15th newest on: 14 are kept.
       final st = parseScheduledBackupStatus(
           '${head}ONCALENDAR *-*-* 05:00:00\nDROP 15\n');
@@ -441,7 +441,7 @@ void main() {
     });
 
     test('not known, or not something the install script writes: null', () {
-      const head = 'ENABLED enabled\nNEXT \nSTATUS \nWRAPPER current\n';
+      const head = 'ENABLED enabled\nNEXT \nSTATUS \nWRAPPER 2\n';
       expect(parseScheduledBackupStatus(head).hour, isNull);
       expect(parseScheduledBackupStatus(head).keep, isNull);
       for (final drop in ['', 'x', '0', '1', '-3', '8 9', '1001', '8x']) {

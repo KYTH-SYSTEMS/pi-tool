@@ -843,7 +843,7 @@ void main() {
       }
       // The probe exactly as the app sends it — a plain command, no sudo.
       final probe = await pi.run(alertsStatusCommand);
-      expect(probe.lines, contains('WRAPPER current'));
+      expect(probe.lines, contains('WRAPPER 3'));
       expect(parseAlertsStatus(probe.out).wrapperOutdated, isFalse);
       // And the wrapper still finds its destination.
       disk(95);
@@ -853,17 +853,19 @@ void main() {
     });
 
     test('a wrapper of the previous generation, destination inside: the probe '
-        'says old, and setting up again takes the topic out of it', () async {
+        'says so, and setting up again takes the topic out of it', () async {
       pi.put(
           wrapper,
           '#!/bin/sh\n# pi-tool-wrapper 2\n'
           "URL='https://ntfy.example'\nTOPIC='pi-tool-old'\n");
       final probe = await pi.run(alertsStatusCommand);
-      expect(probe.lines, contains('WRAPPER old'));
+      expect(probe.lines, contains('WRAPPER 2'));
+      expect(parseAlertsStatus(probe.out).wrapperOutdated, isTrue);
       await install();
       expect(pi.read(wrapper), isNot(contains('pi-tool-old')));
-      expect((await pi.run(alertsStatusCommand)).lines,
-          contains('WRAPPER current'));
+      final after = await pi.run(alertsStatusCommand);
+      expect(after.lines, contains('WRAPPER 3'));
+      expect(parseAlertsStatus(after.out).wrapperOutdated, isFalse);
     });
 
     test('removing takes the destination file along', () async {

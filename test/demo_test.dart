@@ -8,6 +8,7 @@ import 'package:evcc_updater/src/demo.dart';
 import 'package:evcc_updater/src/files.dart';
 import 'package:evcc_updater/src/keep_alive.dart';
 import 'package:evcc_updater/src/l10n.dart';
+import 'package:evcc_updater/src/on_pi_wrapper.dart';
 import 'package:evcc_updater/src/parsing.dart';
 import 'package:evcc_updater/src/pi_job.dart';
 import 'package:evcc_updater/src/profiles.dart';
@@ -357,6 +358,27 @@ void main() {
         final lines = demoResponseFor(probe).trim().split('\n');
         expect(lines.first, 'ENABLED disabled', reason: probe);
         expect(lines, contains('WRAPPER none'), reason: probe);
+      }
+    });
+
+    // In the words of a real probe: the generation of each wrapper, which
+    // differs between the three.
+    test('with a timer the probes name the wrapper generation of this version',
+        () {
+      final pi = DemoPi()
+        ..autoUpdate = '*-*-* 04:00:00'
+        ..backup = (onCalendar: '*-*-* 03:00:00', drop: '8')
+        ..alerts = true;
+      for (final (probe, generation) in [
+        (autoUpdateStatusCommand, autoUpdateWrapperGeneration),
+        (scheduledBackupStatusCommand, scheduledBackupWrapperGeneration),
+        (alertsStatusCommand, alertsWrapperGeneration),
+      ]) {
+        final lines = demoResponseFor(probe, pi: pi).trim().split('\n');
+        expect(lines.first, 'ENABLED enabled', reason: probe);
+        expect(lines.where((l) => l.startsWith('WRAPPER')),
+            ['WRAPPER $generation'],
+            reason: probe);
       }
     });
 

@@ -248,7 +248,7 @@ const String autoUpdateStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $autoUpdateUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "NEXT \$(systemctl list-timers --all $autoUpdateUnit.timer --no-legend 2>/dev/null | awk \'{print \$1, \$2, \$3}\')"; '
     'echo "STATUS \$(cat /var/lib/pi-tool/autoupdate.status 2>/dev/null)"; '
-    '$wrapperProbeHead$autoUpdateUnit$wrapperProbeMid$autoUpdateWrapperStamp$wrapperProbeTail; '
+    '$wrapperProbeHead$autoUpdateUnit$wrapperProbeTail; '
     '$onCalendarProbeHead$autoUpdateUnit$onCalendarProbeTail';
 
 /// Parsed auto-update status. [wrapperOutdated]: the wrapper on the Pi is from
@@ -284,7 +284,7 @@ AutoUpdateStatus parseAutoUpdateStatus(String out) {
     enabled: enabled,
     nextRun: nextRun,
     lastResult: lastResult,
-    wrapperOutdated: parseWrapperOutdated(out),
+    wrapperOutdated: parseWrapperOutdated(out, autoUpdateWrapperGeneration),
     schedule: autoUpdateScheduleOf(parseInstalledOnCalendar(out)),
   );
 }

@@ -22,6 +22,11 @@ import 'commands.dart'
         versionQuery;
 import 'evcc_api.dart';
 import 'evcc_updater.dart';
+import 'on_pi_wrapper.dart'
+    show
+        alertsWrapperGeneration,
+        autoUpdateWrapperGeneration,
+        scheduledBackupWrapperGeneration;
 import 'pi_job.dart';
 import 'scheduled_backup.dart' show scheduledBackupStatusCommand;
 import 'ssh_runner.dart';
@@ -142,17 +147,18 @@ String demoResponseFor(String command,
     if (marker != null) return '$marker\n';
   }
   if (c == autoUpdateStatusCommand) {
-    return _timerStatus(timers.autoUpdate, now);
+    return _timerStatus(timers.autoUpdate, autoUpdateWrapperGeneration, now);
   }
   if (c == scheduledBackupStatusCommand) {
-    return '${_timerStatus(timers.backup?.onCalendar, now)}'
-        'DROP ${timers.backup?.drop ?? ''}\n';
+    final status = _timerStatus(
+        timers.backup?.onCalendar, scheduledBackupWrapperGeneration, now);
+    return '${status}DROP ${timers.backup?.drop ?? ''}\n';
   }
   if (c == alertsStatusCommand) {
     // No LAST: the first check of alerts just switched on is still to come.
     return 'ENABLED ${timers.alerts ? 'enabled' : 'disabled'}\n'
         'LAST \n'
-        'WRAPPER ${timers.alerts ? 'current' : 'none'}\n';
+        'WRAPPER ${timers.alerts ? alertsWrapperGeneration : 'none'}\n';
   }
 
   // 7. Benign default: succeed quietly. NEVER emit a sudo-failure token
@@ -317,14 +323,15 @@ String? _timerScript(String script, DemoPi pi) {
 /// The answer of a status probe for a timer with the schedule [onCalendar]
 /// (null = the timer is off), as far as auto-update and backups share it:
 /// the next run, no last run (the timer was only just set up), this version's
-/// wrapper and the schedule in the unit.
-String _timerStatus(String? onCalendar, DateTime? now) => onCalendar == null
-    ? 'ENABLED disabled\nNEXT \nSTATUS \nWRAPPER none\nONCALENDAR \n'
-    : 'ENABLED enabled\n'
-        'NEXT ${_nextRun(onCalendar, now ?? DateTime.now())}\n'
-        'STATUS \n'
-        'WRAPPER current\n'
-        'ONCALENDAR $onCalendar\n';
+/// wrapper ([generation]) and the schedule in the unit.
+String _timerStatus(String? onCalendar, int generation, DateTime? now) =>
+    onCalendar == null
+        ? 'ENABLED disabled\nNEXT \nSTATUS \nWRAPPER none\nONCALENDAR \n'
+        : 'ENABLED enabled\n'
+            'NEXT ${_nextRun(onCalendar, now ?? DateTime.now())}\n'
+            'STATUS \n'
+            'WRAPPER $generation\n'
+            'ONCALENDAR $onCalendar\n';
 
 /// The next run of [onCalendar] after [now], in the three fields the status
 /// probes take from `systemctl list-timers` ("Sun 2026-10-11 04:00:00").

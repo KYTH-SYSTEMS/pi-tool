@@ -20,6 +20,35 @@ String _firstHeredoc(String installScript) {
   return installScript.substring(start, installScript.indexOf('\nWRAP', start));
 }
 
+/// The wrapper fragment of the status probes of v0.71.0, character for
+/// character (`git show v0.71.0:lib/src/on_pi_wrapper.dart`: wrapperProbeHead,
+/// the unit, wrapperProbeTail with its stamp line). Phones on that version go
+/// on sending it.
+String _probeV071(String unit) =>
+    'echo "WRAPPER \$(f=/usr/local/lib/$unit.sh; if [ -f "\$f" ]; then '
+    'grep -qxF \'# pi-tool-wrapper 2\' "\$f" && echo current || echo old; '
+    'else echo none; fi)"';
+
+/// What v0.71.0 makes of the answer (its parseWrapperOutdated).
+bool _outdatedV071(String statusOutput) =>
+    statusOutput.split('\n').any((line) => line.trim() == 'WRAPPER old');
+
+/// The first lines of the three wrappers v0.71.0 wrote (its install scripts,
+/// `git show v0.71.0:lib/src/…`), each cut short — no test runs them.
+const Map<String, String> _wrapperHeadV071 = {
+  scheduledBackupUnit: '#!/bin/sh\n'
+      '# pi-tool-wrapper 2\n'
+      'mkdir -p /var/lib/pi-tool /var/backups/pi-tool\n',
+  autoUpdateUnit: '#!/bin/bash\n'
+      '# pi-tool-wrapper 2\n'
+      'export DEBIAN_FRONTEND=noninteractive\n',
+  alertsUnit: '#!/bin/sh\n'
+      '# pi-tool-wrapper 2\n'
+      'mkdir -p /var/lib/pi-tool\n'
+      "URL='https://ntfy.sh'\n"
+      "TOPIC='pi-tool-abc'\n",
+};
+
 void main() {
   final wrappers = {
     scheduledBackupUnit: buildScheduledBackupInstallScript(
@@ -45,22 +74,37 @@ void main() {
     autoUpdateUnit: autoUpdateWrapperStamp,
     alertsUnit: alertsWrapperStamp,
   };
+  bool isStampLine(String line) => line.startsWith('# pi-tool-wrapper');
 
   group('wrapper stamp', () {
     test('every wrapper carries its own as its second line', () {
       for (final MapEntry(key: unit, value: script) in wrappers.entries) {
         final lines = _firstHeredoc(script).split('\n');
         expect(lines.first, startsWith('#!/bin/'), reason: unit);
-        expect(lines[1], stamps[unit], reason: unit);
-        expect(stamps[unit], '# pi-tool-wrapper ${generations[unit]}',
+        expect(lines[1], '# pi-tool-wrapper ${generations[unit]}',
+            reason: unit);
+        expect(stamps[unit]!.split('\n').first, lines[1], reason: unit);
+      }
+    });
+
+    // v0.71.0 accepts no other line. A wrapper of generation 2 has it as its
+    // own stamp, every later one right after its own.
+    test('every wrapper carries the stamp line of v0.71.0, once', () {
+      expect(wrapperStampOfV071, '# pi-tool-wrapper 2');
+      for (final MapEntry(key: unit, value: script) in wrappers.entries) {
+        final own = '# pi-tool-wrapper ${generations[unit]}';
+        expect(_firstHeredoc(script).split('\n').where(isStampLine).toList(),
+            {own, wrapperStampOfV071}.toList(),
+            reason: unit);
+        expect(stamps[unit]!.split('\n'), {own, wrapperStampOfV071}.toList(),
             reason: unit);
       }
     });
 
-    test('every status probe asks for its own wrapper and its own stamp', () {
+    test('every status probe asks for its own wrapper', () {
+      final asked = RegExp(r'echo "WRAPPER \$\(f=/usr/local/lib/([\w-]+)\.sh;');
       for (final MapEntry(key: unit, value: probe) in probes.entries) {
-        expect(probe, contains('f=/usr/local/lib/$unit.sh;'), reason: unit);
-        expect(probe, contains("grep -qxF '${stamps[unit]}'"), reason: unit);
+        expect(asked.allMatches(probe).map((m) => m[1]), [unit], reason: unit);
       }
     });
 
@@ -77,27 +121,47 @@ void main() {
   });
 
   group('parseWrapperOutdated', () {
-    test('only "old" counts', () {
-      expect(parseWrapperOutdated('ENABLED enabled\nWRAPPER old\n'), isTrue);
-      expect(parseWrapperOutdated('WRAPPER current\n'), isFalse);
+    test('only a generation below the app\'s own counts', () {
+      expect(parseWrapperOutdated('ENABLED enabled\nWRAPPER 2\n', 3), isTrue);
+      // A wrapper without a stamp.
+      expect(parseWrapperOutdated('WRAPPER 0\n', 2), isTrue);
+      expect(parseWrapperOutdated('WRAPPER 3\n', 3), isFalse);
+      expect(parseWrapperOutdated('WRAPPER 3\r\n', 3), isFalse);
+      // Written by a newer app: this one has nothing to renew it with.
+      expect(parseWrapperOutdated('WRAPPER 4\n', 3), isFalse);
+      expect(parseWrapperOutdated('WRAPPER 10\n', 9), isFalse);
+      expect(parseWrapperOutdated('WRAPPER 9\n', 10), isTrue);
       // No wrapper: nothing to renew.
-      expect(parseWrapperOutdated('WRAPPER none\n'), isFalse);
+      expect(parseWrapperOutdated('WRAPPER none\n', 3), isFalse);
       // A probe from before the line existed, or a cut-off answer.
-      expect(parseWrapperOutdated('ENABLED enabled\nNEXT \n'), isFalse);
-      expect(parseWrapperOutdated(''), isFalse);
-      // Only a whole line counts, not the word in a status text.
-      expect(parseWrapperOutdated('STATUS WRAPPER old stuff\n'), isFalse);
+      expect(parseWrapperOutdated('ENABLED enabled\nNEXT \n', 3), isFalse);
+      expect(parseWrapperOutdated('WRAPPER \n', 3), isFalse);
+      expect(parseWrapperOutdated('WRAPPER', 3), isFalse);
+      expect(parseWrapperOutdated('', 3), isFalse);
+      // Only a whole line with nothing but the number counts.
+      expect(parseWrapperOutdated('STATUS WRAPPER 2 stuff\n', 3), isFalse);
+      expect(parseWrapperOutdated('WRAPPER 2 x\n', 3), isFalse);
+      expect(parseWrapperOutdated('WRAPPER -1\n', 3), isFalse);
+      expect(parseWrapperOutdated('WRAPPER 2.5\n', 3), isFalse);
     });
 
-    test('all three status parsers pass it on', () {
-      const old = 'ENABLED enabled\nWRAPPER old\n';
-      const current = 'ENABLED enabled\nWRAPPER current\n';
-      expect(parseScheduledBackupStatus(old).wrapperOutdated, isTrue);
-      expect(parseScheduledBackupStatus(current).wrapperOutdated, isFalse);
-      expect(parseAutoUpdateStatus(old).wrapperOutdated, isTrue);
-      expect(parseAutoUpdateStatus(current).wrapperOutdated, isFalse);
-      expect(parseAlertsStatus(old).wrapperOutdated, isTrue);
-      expect(parseAlertsStatus(current).wrapperOutdated, isFalse);
+    test('all three status parsers compare with the generation of their own '
+        'wrapper', () {
+      String out(int generation) => 'ENABLED enabled\nWRAPPER $generation\n';
+      final parsers = <String, bool Function(String)>{
+        scheduledBackupUnit: (o) =>
+            parseScheduledBackupStatus(o).wrapperOutdated,
+        autoUpdateUnit: (o) => parseAutoUpdateStatus(o).wrapperOutdated,
+        alertsUnit: (o) => parseAlertsStatus(o).wrapperOutdated,
+      };
+      for (final MapEntry(key: unit, value: outdated) in parsers.entries) {
+        final own = generations[unit]!;
+        expect(outdated(out(own - 1)), isTrue, reason: unit);
+        expect(outdated(out(own)), isFalse, reason: unit);
+        expect(outdated(out(own + 1)), isFalse, reason: unit);
+        expect(outdated('ENABLED enabled\nWRAPPER none\n'), isFalse,
+            reason: unit);
+      }
     });
   });
 
@@ -115,64 +179,135 @@ void main() {
     });
     tearDown(() => tmp.deleteSync(recursive: true));
 
-    Future<String> probe(String unit) async {
+    /// The WRAPPER line [command] prints when its wrappers lie in [tmp].
+    Future<String> wrapperLine(String command) async {
       final r = await Process.run(_bash!, [
         '-c',
-        probes[unit]!.replaceAll('/usr/local/lib/', '$dir/'),
+        command.replaceAll('/usr/local/lib/', '$dir/'),
       ]);
       return (r.stdout as String)
           .split('\n')
-          .firstWhere((l) => l.startsWith('WRAPPER '), orElse: () => '');
+          .firstWhere((l) => l.startsWith('WRAPPER'), orElse: () => '');
     }
 
+    Future<String> probe(String unit) => wrapperLine(probes[unit]!);
+    Future<String> probeV071(String unit) => wrapperLine(_probeV071(unit));
+    void put(String unit, String wrapper) =>
+        File('${tmp.path}/$unit.sh').writeAsStringSync(wrapper);
+
     for (final unit in [scheduledBackupUnit, autoUpdateUnit, alertsUnit]) {
-      test('$unit: the freshly installed wrapper is current', () async {
-        File('${tmp.path}/$unit.sh')
-            .writeAsStringSync('${_firstHeredoc(wrappers[unit]!)}\n');
-        expect(await probe(unit), 'WRAPPER current');
-        expect(parseWrapperOutdated(await probe(unit)), isFalse);
+      final own = generations[unit]!;
+
+      test('$unit: the freshly installed wrapper has the app\'s generation',
+          () async {
+        put(unit, '${_firstHeredoc(wrappers[unit]!)}\n');
+        expect(await probe(unit), 'WRAPPER $own');
+        expect(parseWrapperOutdated(await probe(unit), own), isFalse);
       });
 
-      test('$unit: a wrapper without the stamp is old', () async {
-        File('${tmp.path}/$unit.sh')
-            .writeAsStringSync('#!/bin/sh\nmkdir -p /var/lib/pi-tool\n');
-        expect(await probe(unit), 'WRAPPER old');
+      test('$unit: a wrapper without the stamp is generation 0, outdated',
+          () async {
+        put(unit, '#!/bin/sh\nmkdir -p /var/lib/pi-tool\n');
+        expect(await probe(unit), 'WRAPPER 0');
+        expect(parseWrapperOutdated(await probe(unit), own), isTrue);
       });
 
-      test('$unit: every earlier generation is old', () async {
-        for (var g = 1; g < generations[unit]!; g++) {
-          File('${tmp.path}/$unit.sh')
-              .writeAsStringSync('#!/bin/sh\n# pi-tool-wrapper $g\n');
-          expect(await probe(unit), 'WRAPPER old', reason: 'generation $g');
+      test('$unit: every earlier generation is reported as it is, outdated',
+          () async {
+        for (var g = 1; g < own; g++) {
+          put(unit, '#!/bin/sh\n# pi-tool-wrapper $g\n');
+          expect(await probe(unit), 'WRAPPER $g');
+          expect(parseWrapperOutdated(await probe(unit), own), isTrue,
+              reason: 'generation $g');
         }
+      });
+
+      // The mistake behind the compatibility line: v0.71.0 asked for its own
+      // stamp and called everything else old — also what came after it.
+      test('$unit: a wrapper of a later generation is not outdated', () async {
+        put(unit,
+            '#!/bin/sh\n# pi-tool-wrapper ${own + 1}\n$wrapperStampOfV071\n');
+        expect(await probe(unit), 'WRAPPER ${own + 1}');
+        expect(parseWrapperOutdated(await probe(unit), own), isFalse);
+      });
+
+      test('$unit: the highest stamp counts, as a number and wherever it '
+          'stands', () async {
+        put(unit, '#!/bin/sh\n# pi-tool-wrapper 2\n# pi-tool-wrapper 10\n'
+            '# pi-tool-wrapper 9\nexit 0\n');
+        expect(await probe(unit), 'WRAPPER 10');
       });
 
       test('$unit: a stamp that is not the whole line does not count',
           () async {
-        final stamp = stamps[unit]!;
-        for (final line in ['${stamp}0', ' $stamp', '$stamp x', 'x$stamp']) {
-          File('${tmp.path}/$unit.sh').writeAsStringSync('#!/bin/sh\n$line\n');
-          expect(await probe(unit), 'WRAPPER old', reason: line);
+        const stamp = '# pi-tool-wrapper 7';
+        for (final line in [
+          ' $stamp',
+          '$stamp x',
+          '$stamp ',
+          'x$stamp',
+          '$stamp.1',
+          '# pi-tool-wrapper',
+          '# pi-tool-wrapper ',
+          '# pi-tool-wrapper x7',
+          '#pi-tool-wrapper 7',
+        ]) {
+          put(unit, '#!/bin/sh\n$line\n');
+          expect(await probe(unit), 'WRAPPER 0', reason: '"$line"');
         }
       });
 
       test('$unit: no wrapper at all', () async {
         expect(await probe(unit), 'WRAPPER none');
+        expect(parseWrapperOutdated(await probe(unit), own), isFalse);
       });
     }
 
-    // What v0.71.0 wrote into every wrapper.
-    for (final (unit, state) in [
-      (scheduledBackupUnit, 'current'),
-      (autoUpdateUnit, 'old'),
-      (alertsUnit, 'old'),
-    ]) {
-      test('$unit: the wrapper v0.71.0 installed (generation 2) is $state',
+    // ---- a phone still on v0.71.0 next to one on this version ----
+
+    // The premise: the probe of v0.71.0 as quoted above does tell wrappers
+    // apart, by exactly one line.
+    test('the probe of v0.71.0 knows its own stamp and nothing else', () async {
+      const unit = autoUpdateUnit;
+      expect(await probeV071(unit), 'WRAPPER none');
+      put(unit, _wrapperHeadV071[unit]!);
+      expect(await probeV071(unit), 'WRAPPER current');
+      for (final other in [
+        '#!/bin/sh\nmkdir -p /var/lib/pi-tool\n',
+        '#!/bin/bash\n# pi-tool-wrapper 3\n',
+        '#!/bin/bash\n# pi-tool-wrapper 20\n',
+      ]) {
+        put(unit, other);
+        expect(await probeV071(unit), 'WRAPPER old', reason: other);
+        expect(_outdatedV071(await probeV071(unit)), isTrue);
+      }
+    });
+
+    // Otherwise that phone shows its hint, and following it writes the
+    // wrapper of v0.71.0 back over this one.
+    for (final unit in [scheduledBackupUnit, autoUpdateUnit, alertsUnit]) {
+      test('$unit: v0.71.0 calls the wrapper this version installs current',
           () async {
-        File('${tmp.path}/$unit.sh')
-            .writeAsStringSync('#!/bin/sh\n# pi-tool-wrapper 2\n');
-        expect(await probe(unit), 'WRAPPER $state');
-        expect(parseWrapperOutdated(await probe(unit)), state == 'old');
+        put(unit, '${_firstHeredoc(wrappers[unit]!)}\n');
+        expect(await probeV071(unit), 'WRAPPER current');
+        expect(_outdatedV071(await probeV071(unit)), isFalse);
+      });
+    }
+
+    // What v0.71.0 wrote: generation 2 in all three.
+    for (final (unit, outdated) in [
+      (scheduledBackupUnit, false),
+      (autoUpdateUnit, true),
+      (alertsUnit, true),
+    ]) {
+      test('$unit: the wrapper v0.71.0 installed is generation 2 — '
+          '${outdated ? 'outdated' : 'the one of this version'}', () async {
+        put(unit, _wrapperHeadV071[unit]!);
+        expect(await probe(unit), 'WRAPPER 2');
+        expect(parseWrapperOutdated(await probe(unit), generations[unit]!),
+            outdated);
+        // And v0.71.0 itself has nothing to renew there.
+        expect(await probeV071(unit), 'WRAPPER current');
       });
     }
   }, skip: _bash == null ? 'needs bash (PITOOL_TEST_BASH on Windows)' : false);
@@ -187,7 +322,7 @@ void main() {
       ]) {
         expect(
             parseInstalledOnCalendar(
-                'ENABLED enabled\nONCALENDAR $onCalendar\nWRAPPER current\n'),
+                'ENABLED enabled\nONCALENDAR $onCalendar\nWRAPPER 3\n'),
             onCalendar);
       }
       // A unit file with DOS line ends.
@@ -333,7 +468,8 @@ exit 0''', log: false);
         expect(r.lines.last, t.installed);
 
         expect(await inode(), isNot(before));
-        expect(pi.read(wrapper).split('\n')[1], stamps[t.unit]);
+        expect(pi.read(wrapper).split('\n')[1],
+            '# pi-tool-wrapper ${generations[t.unit]}');
         expect(pi.exists('$wrapper.new'), isFalse);
         // Git Bash does not keep POSIX modes; the Linux run does.
         if (!Platform.isWindows) {
@@ -341,6 +477,30 @@ exit 0''', log: false);
           expect(await pi.mode('/etc/systemd/system/${t.unit}.timer'), '644');
           expect(await pi.mode('/etc/systemd/system/${t.unit}.service'), '644');
         }
+      });
+    }
+
+    // Two phones, one Pi. The whole way: the wrapper v0.71.0 left behind, the
+    // install script as this version sends it, then the probes as either
+    // phone sends them — plain commands, no sudo.
+    for (final t in timers) {
+      test('${t.unit}: set up over the wrapper of v0.71.0, neither this '
+          'version nor v0.71.0 has anything to renew', () async {
+        final own = generations[t.unit]!;
+        pi.put('/usr/local/lib/${t.unit}.sh', _wrapperHeadV071[t.unit]!);
+        var probe = await pi.run(probes[t.unit]!);
+        expect(probe.lines, contains('WRAPPER 2'));
+        expect(parseWrapperOutdated(probe.out, own), own > 2);
+
+        final r = await pi.run(t.install);
+        expect(r.lines.last, t.installed, reason: r.err);
+
+        probe = await pi.run(probes[t.unit]!);
+        expect(probe.lines, contains('WRAPPER $own'));
+        expect(parseWrapperOutdated(probe.out, own), isFalse);
+        final probeOfV071 = await pi.run(_probeV071(t.unit));
+        expect(probeOfV071.lines, ['WRAPPER current']);
+        expect(_outdatedV071(probeOfV071.out), isFalse);
       });
     }
 

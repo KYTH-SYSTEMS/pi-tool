@@ -641,7 +641,7 @@ void main() {
     });
     test('the installed schedule is handed on as the pickers show it', () {
       const head = 'ENABLED enabled\nNEXT Wed 2026-10-14 22:00:00\nSTATUS \n'
-          'WRAPPER old\n';
+          'WRAPPER 2\n';
       expect(
           parseAutoUpdateStatus('${head}ONCALENDAR Wed *-*-* 22:00:00\n')
               .schedule,
@@ -675,7 +675,7 @@ void main() {
       ]) {
         final st = parseAutoUpdateStatus(
             'ENABLED enabled\nNEXT Sun 2026-10-11 04:00:00\nSTATUS $line\n'
-            'WRAPPER old\n');
+            'WRAPPER 2\n');
         expect(st.lastResult, line);
         expect(st.enabled, isTrue);
       }

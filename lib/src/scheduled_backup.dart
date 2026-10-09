@@ -168,7 +168,7 @@ const String scheduledBackupStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $scheduledBackupUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "NEXT \$(systemctl list-timers --all $scheduledBackupUnit.timer --no-legend 2>/dev/null | awk \'{print \$1, \$2, \$3}\')"; '
     'echo "STATUS \$(cat /var/lib/pi-tool/backup.status 2>/dev/null)"; '
-    '$wrapperProbeHead$scheduledBackupUnit$wrapperProbeMid$scheduledBackupWrapperStamp$wrapperProbeTail; '
+    '$wrapperProbeHead$scheduledBackupUnit$wrapperProbeTail; '
     '$onCalendarProbeHead$scheduledBackupUnit$onCalendarProbeTail; '
     'echo "DROP \$(grep -m 1 \'sched-evcc-.*tail -n +[0-9]\' /usr/local/lib/$scheduledBackupUnit.sh 2>/dev/null | sed \'s/.*tail -n +//; s/[^0-9].*//\')"';
 
@@ -219,7 +219,8 @@ ScheduledBackupStatus parseScheduledBackupStatus(String out) {
     enabled: enabled,
     nextRun: nextRun,
     lastResult: lastResult,
-    wrapperOutdated: parseWrapperOutdated(out),
+    wrapperOutdated:
+        parseWrapperOutdated(out, scheduledBackupWrapperGeneration),
     hour: scheduledBackupHourOf(parseInstalledOnCalendar(out)),
     keep: keep,
   );

@@ -292,7 +292,7 @@ String buildTestAlertCommand({
 const String alertsStatusCommand =
     'echo "ENABLED \$(systemctl is-enabled $alertsUnit.timer 2>/dev/null || echo disabled)"; '
     'echo "LAST \$(cat /var/lib/pi-tool/alerts.status 2>/dev/null)"; '
-    '$wrapperProbeHead$alertsUnit$wrapperProbeMid$alertsWrapperStamp$wrapperProbeTail';
+    '$wrapperProbeHead$alertsUnit$wrapperProbeTail';
 
 /// [wrapperOutdated]: the wrapper on the Pi is from an older app release (see
 /// on_pi_wrapper.dart).
@@ -317,6 +317,6 @@ AlertsStatus parseAlertsStatus(String out) {
   return (
     enabled: enabled,
     lastCheck: lastCheck,
-    wrapperOutdated: parseWrapperOutdated(out),
+    wrapperOutdated: parseWrapperOutdated(out, alertsWrapperGeneration),
   );
 }

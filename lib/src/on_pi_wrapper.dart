@@ -4,8 +4,8 @@
 /// A wrapper is written to the Pi when its timer is set up and stays there: a
 /// fix made in the app does not reach a Pi until that timer is set up again.
 /// So every wrapper carries its stamp line as its second line, every status
-/// probe reports whether the installed file has it, and the sheet of a timer
-/// whose wrapper is older says so. Pure + Flutter-free.
+/// probe reports the generation of the installed file, and the sheet of a
+/// timer whose wrapper is older than the app's says so. Pure + Flutter-free.
 ///
 /// Each wrapper has a generation of its own. Raise the one of the wrapper
 /// whose behaviour changes — and only that one: the sheet's hint to set the
@@ -32,33 +32,59 @@ const int alertsWrapperGeneration = 3;
 
 const String _stampPrefix = '# pi-tool-wrapper ';
 
-/// Second line of each wrapper, right after the shebang.
+/// The stamp line of v0.71.0 — the only one that version accepts: its probe
+/// is `grep -qxF '# pi-tool-wrapper 2'`, and it calls every wrapper without
+/// exactly that line outdated, a later generation included. Several phones
+/// per Pi are common. On one still on v0.71.0 such a wrapper would show the
+/// hint to set the timer up again, and following it writes the wrapper of
+/// v0.71.0 back: the schedule as that sheet opens (daily 04:00), the ntfy
+/// topic in the world-readable wrapper — after which the newer phone asks.
+///
+/// So every wrapper past generation 2 carries this line too, right after its
+/// own stamp. It has to stay for as long as v0.71.0 is in the field. No later
+/// version needs a line like it: the probes since report the number they find
+/// ([wrapperProbeTail]).
+const String wrapperStampOfV071 = '${_stampPrefix}2';
+
+/// The first lines of each wrapper, right after the shebang: its own stamp
+/// and, past generation 2, [wrapperStampOfV071].
+///
+/// The backup wrapper is generation 2: its stamp is that line. Once raised it
+/// gets the second line like the other two (on_pi_wrapper_test.dart runs the
+/// probe of v0.71.0 against all three).
 const String scheduledBackupWrapperStamp =
     '$_stampPrefix$scheduledBackupWrapperGeneration';
 const String autoUpdateWrapperStamp =
-    '$_stampPrefix$autoUpdateWrapperGeneration';
-const String alertsWrapperStamp = '$_stampPrefix$alertsWrapperGeneration';
+    '$_stampPrefix$autoUpdateWrapperGeneration\n$wrapperStampOfV071';
+const String alertsWrapperStamp =
+    '$_stampPrefix$alertsWrapperGeneration\n$wrapperStampOfV071';
 
-/// The three parts of the status-probe fragment: the unit name goes between
-/// the first two, the stamp line of that unit's wrapper between the last two
-/// (kept as constants so the probes stay compile-time strings). Prints
-/// `WRAPPER current`, `WRAPPER old` or `WRAPPER none`. "old" is every file
-/// without exactly that line — one stamped with another number as well as one
-/// from before the stamps. No sudo: the wrappers are world-readable — which is
-/// why nothing secret may be written into one (the ntfy destination of the
-/// alerts wrapper has a file of its own).
+/// The two halves of the status-probe fragment, with the unit name between
+/// them (kept as constants so the probes stay compile-time strings). Prints
+/// `WRAPPER <n>`: the highest generation among the wrapper's stamp lines, 0
+/// for a file without one — a wrapper from before the stamps, or one the SSH
+/// user cannot read. `WRAPPER none` without a wrapper. The number, not a
+/// verdict: what counts as old is for [parseWrapperOutdated] to say, so that
+/// no app calls a wrapper outdated for carrying a stamp it does not know yet.
+/// No sudo: the wrappers are world-readable — which is why nothing secret may
+/// be written into one (the ntfy destination of the alerts wrapper has a file
+/// of its own).
 const String wrapperProbeHead = 'echo "WRAPPER \$(f=/usr/local/lib/';
-const String wrapperProbeMid = '.sh; if [ -f "\$f" ]; then grep -qxF \'';
-const String wrapperProbeTail = '\' "\$f" && echo current || echo old; '
-    'else echo none; fi)"';
+const String wrapperProbeTail = '.sh; if [ -f "\$f" ]; then '
+    'sed -n \'s/^$_stampPrefix\\([0-9][0-9]*\\)\$/\\1/p\' "\$f" 2>/dev/null | '
+    'sort -n | tail -n 1 | grep . || echo 0; else echo none; fi)"';
 
-/// Whether a status probe's output says the installed wrapper is from an
-/// older generation. A missing wrapper or a probe without the line (an
-/// unreadable file, a cut-off answer) is not "outdated" — there is nothing the
-/// user could renew, or nothing known.
-bool parseWrapperOutdated(String statusOutput) {
+final RegExp _wrapperLineRe = RegExp(r'^WRAPPER ([0-9]{1,9})$');
+
+/// Whether a status probe's output says the installed wrapper is of an older
+/// generation than [generation], the app's own for that wrapper. A newer one
+/// never is: an app that is behind has nothing to renew it with. Neither is a
+/// missing wrapper or a probe without the line (a cut-off answer) — there is
+/// nothing the user could renew, or nothing known.
+bool parseWrapperOutdated(String statusOutput, int generation) {
   for (final line in statusOutput.split('\n')) {
-    if (line.trim() == 'WRAPPER old') return true;
+    final m = _wrapperLineRe.firstMatch(line.trim());
+    if (m != null) return int.parse(m.group(1)!) < generation;
   }
   return false;
 }

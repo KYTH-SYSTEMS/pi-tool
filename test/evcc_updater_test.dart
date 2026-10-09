@@ -1852,11 +1852,11 @@ void main() {
       final runner = FakeSshRunner({
         autoUpdateStatusCommand: [
           _r('ENABLED enabled\nNEXT Wed 2026-10-14 22:00:00\nSTATUS \n'
-              'WRAPPER old\nONCALENDAR Wed *-*-* 22:00:00\n')
+              'WRAPPER 2\nONCALENDAR Wed *-*-* 22:00:00\n')
         ],
         scheduledBackupStatusCommand: [
           _r('ENABLED enabled\nNEXT Sat 2026-10-10 01:00:00\nSTATUS \n'
-              'WRAPPER current\nONCALENDAR *-*-* 01:00:00\nDROP 31\n')
+              'WRAPPER 2\nONCALENDAR *-*-* 01:00:00\nDROP 31\n')
         ],
       });
       final u = _updaterWith(runner);
