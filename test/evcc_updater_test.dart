@@ -2147,6 +2147,9 @@ void main() {
                   allOf(contains('über Tailscale'), contains('beim $what'),
                       contains('Heimnetz-Adresse'))));
           expect(runner.commandsRun, isEmpty);
+          // The address alone decides, before anything connects: the app
+          // answers the tap with this refusal and asks nothing first.
+          expect(runner.connected, isFalse);
         });
       }
 

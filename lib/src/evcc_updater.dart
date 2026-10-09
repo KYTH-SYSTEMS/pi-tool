@@ -1568,62 +1568,66 @@ class EvccUpdater {
 
   /// Disconnects (`tailscale down`) or logs out (`tailscale logout`). Root.
   /// Refused while the session itself runs over the tailnet — the same check
-  /// as in [uninstallService].
+  /// as in [uninstallService], and like there under a tailnet address before
+  /// anything connects.
   Future<void> tailscaleSet({
     required SshConfig config,
     required bool logout,
     required void Function(String line) onLog,
-  }) =>
-      _withConnection<void>(
-        config: config,
-        onLog: onLog,
-        body: (runner, log) async {
-          // A logout would cut this very session off and take the Pi out of
-          // the tailnet. `tailscale down` is turned down by the CLI itself
-          // then ("aborted, no changes made") — that arrived as "Exit 1".
-          final what = logout ? 'Abmelden' : 'Trennen';
-          if (isTailnetHost(config.host)) {
-            throw EvccUpdateException(
-                UpdateErrorKind.unknown,
-                'Die Verbindung läuft über Tailscale und würde beim $what '
-                'abreißen – bitte über die Heimnetz-Adresse verbinden.');
-          }
-          // Also under a home address, through the shared home network. Read
-          // without sudo: its env_reset hides SSH_CONNECTION.
-          final probe = await runner.run(tailscaleSessionProbe);
-          if (isTailnetClient(probe.stdout.trim())) {
-            throw EvccUpdateException(
-                UpdateErrorKind.unknown,
-                'Die Verbindung zum Pi läuft über Tailscale (auch unter der '
-                'Heimnetz-Adresse, wenn der Pi das Heimnetz freigibt) und '
-                'würde beim $what abreißen – bitte im Heimnetz mit '
-                'ausgeschaltetem Tailscale auf dem Handy erneut versuchen.');
-          }
-          log('\$ tailscale ${logout ? 'logout' : 'down'}');
-          final r = await runner.run(
-              logout ? tailscaleLogoutCommand : tailscaleDownCommand,
-              stdin: '${config.password}\n', onOutput: (c) {
-            final t = c.trimRight();
-            if (t.isNotEmpty) log(t);
-          });
-          final out = '${r.stdout}${r.stderr}'.trim();
-          if (isSudoPasswordFailure(out)) {
-            throw const EvccUpdateException(UpdateErrorKind.sudo,
-                'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
-          }
-          if (r.exitCode == null) {
-            throw const EvccUpdateException(
-                UpdateErrorKind.unknown, _resultUnknown);
-          }
-          if (r.exitCode != 0) {
-            throw EvccUpdateException(
-                UpdateErrorKind.unknown,
-                'tailscale ${logout ? 'logout' : 'down'} fehlgeschlagen '
-                '(Exit ${r.exitCode}). Details im Log.');
-          }
-          if (out.isNotEmpty) log(out);
-        },
-      );
+  }) {
+    // A logout would cut this very session off and take the Pi out of the
+    // tailnet. `tailscale down` is turned down by the CLI itself then
+    // ("aborted, no changes made") — that arrived as "Exit 1".
+    final what = logout ? 'Abmelden' : 'Trennen';
+    // Checked before connecting: the address alone says so, and the app
+    // answers the tap with this refusal instead of a question.
+    if (isTailnetHost(config.host)) {
+      return Future.error(EvccUpdateException(
+          UpdateErrorKind.unknown,
+          'Die Verbindung läuft über Tailscale und würde beim $what '
+          'abreißen – bitte über die Heimnetz-Adresse verbinden.'));
+    }
+    return _withConnection<void>(
+      config: config,
+      onLog: onLog,
+      body: (runner, log) async {
+        // Also under a home address, through the shared home network. Read
+        // without sudo: its env_reset hides SSH_CONNECTION.
+        final probe = await runner.run(tailscaleSessionProbe);
+        if (isTailnetClient(probe.stdout.trim())) {
+          throw EvccUpdateException(
+              UpdateErrorKind.unknown,
+              'Die Verbindung zum Pi läuft über Tailscale (auch unter der '
+              'Heimnetz-Adresse, wenn der Pi das Heimnetz freigibt) und '
+              'würde beim $what abreißen – bitte im Heimnetz mit '
+              'ausgeschaltetem Tailscale auf dem Handy erneut versuchen.');
+        }
+        log('\$ tailscale ${logout ? 'logout' : 'down'}');
+        final r = await runner.run(
+            logout ? tailscaleLogoutCommand : tailscaleDownCommand,
+            stdin: '${config.password}\n', onOutput: (c) {
+          final t = c.trimRight();
+          if (t.isNotEmpty) log(t);
+        });
+        final out = '${r.stdout}${r.stderr}'.trim();
+        if (isSudoPasswordFailure(out)) {
+          throw const EvccUpdateException(UpdateErrorKind.sudo,
+              'sudo hat das Passwort abgelehnt – stimmt das Pi-Passwort?');
+        }
+        if (r.exitCode == null) {
+          throw const EvccUpdateException(
+              UpdateErrorKind.unknown, _resultUnknown);
+        }
+        if (r.exitCode != 0) {
+          throw EvccUpdateException(
+              UpdateErrorKind.unknown,
+              'tailscale ${logout ? 'logout' : 'down'} fehlgeschlagen '
+              '(Exit ${r.exitCode}). Details im Log.');
+        }
+        if (out.isNotEmpty) log(out);
+      },
+    );
+  }
 
   /// Installs Raspberry Pi Connect (headless/lite) + enables linger. Root.
   Future<void> installPiConnect({

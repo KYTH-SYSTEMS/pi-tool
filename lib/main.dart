@@ -6295,9 +6295,13 @@ class _UpdaterPageState extends State<UpdaterPage>
       });
       await _refreshServices(config);
     },
-        backgroundMessage: logout
-            ? l10n.busyTailscaleSigningOut
-            : l10n.busyTailscaleDisconnecting);
+        // A refusal comes at once: no foreground service, and no bar that
+        // says a sign-out is running.
+        backgroundMessage: refused
+            ? null
+            : logout
+                ? l10n.busyTailscaleSigningOut
+                : l10n.busyTailscaleDisconnecting);
   }
 
   /// The services the "Dienst hinzufügen" picker lists as absent entries (the

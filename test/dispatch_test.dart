@@ -8739,8 +8739,10 @@ void main() {
         '„Von Tailscale abmelden" unter der Tailnet-Adresse $host: die '
         'Ablehnung kommt gleich, ohne Rückfrage davor', (tester) async {
       useTallScreen(tester);
+      final ka = _FakeKeepAlive();
       final u = FakeEvccUpdater()..services = const [tailscaleUp];
       await tester.pumpWidget(page(u,
+          keepAlive: ka,
           config: AppConfig(
             profiles: [Profile(name: 'S', host: host, password: 'pw')],
             activeIndex: 0,
@@ -8748,6 +8750,7 @@ void main() {
           )));
       await tester.pumpAndSettle();
       await detect(tester);
+      final began = ka.beginCount;
 
       await tapSignOut(tester);
 
@@ -8760,8 +8763,41 @@ void main() {
       expect(u.tailscaleSetCalls, 1);
       expect(u.tailscaleLoggedOut, isNull);
       expect(find.text('Tailscale abgemeldet.'), findsNothing);
+      // Nothing ran: no foreground service announcing a sign-out nobody was
+      // asked about.
+      expect(ka.beginCount, began);
     });
   }
+
+  testWidgets(
+      '„Trennen" unter einer Tailnet-Adresse: die Ablehnung kommt gleich, '
+      'ohne Vordergrunddienst', (tester) async {
+    useTallScreen(tester);
+    final ka = _FakeKeepAlive();
+    final u = FakeEvccUpdater()..services = const [tailscaleUp];
+    await tester.pumpWidget(page(u,
+        keepAlive: ka,
+        config: const AppConfig(
+          profiles: [Profile(name: 'S', host: '100.64.0.5', password: 'pw')],
+          activeIndex: 0,
+          disclaimerAccepted: true,
+        )));
+    await tester.pumpAndSettle();
+    await detect(tester);
+    final began = ka.beginCount;
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Trennen'));
+    await tester.pumpAndSettle();
+
+    expect(
+        find.text('Die Verbindung läuft über Tailscale und würde beim '
+            'Trennen abreißen – bitte über die Heimnetz-Adresse verbinden.'),
+        findsOneWidget);
+    expect(u.tailscaleSetCalls, 1);
+    expect(u.tailscaleLoggedOut, isNull);
+    expect(find.text('Tailscale getrennt.'), findsNothing);
+    expect(ka.beginCount, began);
+  });
 
   testWidgets(
       '„Von Tailscale abmelden" unter der Heimnetz-Adresse fragt weiter '
