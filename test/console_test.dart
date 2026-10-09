@@ -1,6 +1,8 @@
 import 'package:evcc_updater/src/commands.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'on_pi_sandbox.dart';
+
 void main() {
   group('interactiveCommandHint', () {
     test('flags htop/top and suggests a snapshot', () {
@@ -90,16 +92,46 @@ void main() {
       expect(sec['OS'], 'PRETTY_NAME="Debian 12"');
     });
 
-    test('round-trips: split(run(build)) recovers each probe output', () {
-      // Simulate the shell running the built script: echo blank, echo marker,
-      // then the command output.
-      final probes = [('A', 'x'), ('B', 'y')];
-      buildDetectBatch(probes); // (structure asserted above)
-      const simulated = '\n@@PT@@A@@PT@@\naaa\n\n@@PT@@B@@PT@@\nbbb line2\n';
-      final sec = splitDetectSections(simulated);
+    // The built script in a real bash, fed on stdin like detection does
+    // (`bash -s`); the probes are stubs in a PATH that holds nothing else.
+    test('round-trips: split(run(build)) recovers each probe output',
+        () async {
+      final pi = PiSandbox();
+      addTearDown(pi.dispose);
+      pi.stub('probe-a', 'echo aaa');
+      // Two lines, the last one without a line break.
+      pi.stub('probe-b', r'printf "bbb\nline2"');
+      // Writes to stderr and fails.
+      pi.stub('probe-e', 'echo "kaputt" >&2\nexit 3');
+      // Reads its stdin to the end — which must not be the rest of the script.
+      pi.stub('probe-in', 'cat\necho gelesen');
+
+      final script = buildDetectBatch([
+        ('A', 'probe-a'),
+        ('B', 'probe-b'),
+        ('ERR', 'probe-e'),
+        ('MISSING', 'probe-not-installed'),
+        ('STDIN', 'probe-in'),
+        ('LAST', 'probe-a'),
+      ]);
+      final r = await pi.run(script, rebase: false);
+      expect(r.code, 0, reason: r.err);
+      expect(r.err, isEmpty); // every probe's stderr is in its section
+
+      final sec = splitDetectSections(r.out);
+      expect(sec.keys.toList(),
+          ['A', 'B', 'ERR', 'MISSING', 'STDIN', 'LAST', detectEndKey]);
       expect(sec['A'], 'aaa');
-      expect(sec['B'], 'bbb line2');
-    });
+      expect(sec['B'], 'bbb\nline2');
+      expect(sec['ERR'], 'kaputt');
+      expect(sec['MISSING'], endsWith('probe-not-installed: command not found'));
+      expect(sec['STDIN'], 'gelesen');
+      expect(sec['LAST'], 'aaa');
+      expect(sec[detectEndKey], '');
+      // Each probe ran once, in the order given — a failing one stops nothing.
+      expect(pi.calls.map((c) => c.trim()),
+          ['probe-a', 'probe-b', 'probe-e', 'probe-in', 'probe-a']);
+    }, skip: needsBash);
 
     test('missing/empty section → empty string, not null lookup surprise', () {
       final sec = splitDetectSections('@@PT@@A@@PT@@\n');

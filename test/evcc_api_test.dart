@@ -20,6 +20,38 @@ Future<HttpServer> _evccServer({required bool stall}) async {
   return server;
 }
 
+/// A loopback server that answers every request with [status] and [body]
+/// (plus a `Location` header when [location] is given) and adds what was
+/// asked to [asked]: `METHOD path`, then the Accept header.
+Future<Uri> _evccAnswering(int status, String body,
+    {String? location, List<String>? asked}) async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  server.listen((req) async {
+    asked?.add('${req.method} ${req.uri.path} '
+        '${req.headers.value(HttpHeaders.acceptHeader)}');
+    req.response.statusCode = status;
+    if (location != null) {
+      req.response.headers.set(HttpHeaders.locationHeader, location);
+    }
+    req.response
+      ..headers.contentType = ContentType.json
+      ..write(body);
+    await req.response.close();
+  });
+  addTearDown(() => server.close(force: true));
+  return Uri.parse('http://127.0.0.1:${server.port}/api/state');
+}
+
+/// The message [evccGetJson] fails with for [url].
+Future<String> _evccFailure(Uri url) async {
+  try {
+    await evccGetJson(url);
+  } on EvccApiException catch (e) {
+    return e.message;
+  }
+  fail('evccGetJson($url) did not throw');
+}
+
 void main() {
   group('evccGetJson (HTTP adapter)', () {
     test('reads a complete answer', () async {
@@ -29,6 +61,67 @@ void main() {
       expect(state.version, '0.316.2');
       expect(state.gridPower, 120);
     });
+
+    test('the client asks GET /api/state for JSON, once', () async {
+      final asked = <String>[];
+      final url =
+          await _evccAnswering(200, '{"version":"0.316.2"}', asked: asked);
+      final state = await EvccApiClient()
+          .fetchState(scheme: 'http', host: '127.0.0.1', port: '${url.port}');
+      expect(state.version, '0.316.2');
+      expect(asked, ['GET /api/state application/json']);
+    });
+
+    test('401 and 403: evcc wants a login', () async {
+      for (final status in [401, 403]) {
+        expect(await _evccFailure(await _evccAnswering(status, '{}')),
+            'evcc verlangt eine Anmeldung – Live-Status nicht abrufbar.',
+            reason: '$status');
+      }
+    });
+
+    test('any other status is named', () async {
+      expect(await _evccFailure(await _evccAnswering(500, 'oops')),
+          'evcc-API antwortete mit HTTP 500.');
+      expect(await _evccFailure(await _evccAnswering(404, '{}')),
+          'evcc-API antwortete mit HTTP 404.');
+    });
+
+    test('a redirect is not followed', () async {
+      // Whatever answers on the port must not send this read elsewhere.
+      final elsewhere = <String>[];
+      final target =
+          await _evccAnswering(200, '{"version":"9.9.9"}', asked: elsewhere);
+      final asked = <String>[];
+      final url =
+          await _evccAnswering(302, '', location: '$target', asked: asked);
+      expect(await _evccFailure(url), 'evcc-API antwortete mit HTTP 302.');
+      expect(asked, hasLength(1));
+      expect(elsewhere, isEmpty);
+    });
+
+    test('JSON that is no object is not taken for a state', () async {
+      expect(await _evccFailure(await _evccAnswering(200, '[1,2,3]')),
+          'Unerwartete Antwort der evcc-API.');
+      expect(await _evccFailure(await _evccAnswering(200, '"0.316.2"')),
+          'Unerwartete Antwort der evcc-API.');
+    });
+
+    test('an answer that is not JSON (another web server on the port)',
+        () async {
+      expect(
+          await _evccFailure(
+              await _evccAnswering(200, '<html><body>nginx</body></html>')),
+          startsWith('Live-Status fehlgeschlagen: FormatException'));
+    });
+
+    test('nothing listens on the port: "nicht erreichbar"', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final url = Uri.parse('http://127.0.0.1:${server.port}/api/state');
+      await server.close(force: true);
+      expect(await _evccFailure(url),
+          'evcc nicht erreichbar – läuft die Oberfläche auf diesem Host/Port?');
+    }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('a body that stalls mid-way ends in a timeout, not a hang', () async {
       // Headers arrive (so the header limit passes), the body never finishes.
@@ -424,13 +517,22 @@ void main() {
       expect(evccCardLines(state()), isEmpty);
     });
 
-    test('several loadpoints: the charging one wins, count is shown', () {
+    test('several loadpoints: the charging one wins over a connected one '
+        'listed before it — the only one shown', () {
       final lines = evccCardLines(state(pv: 1, lps: [
         lp(title: 'A', connected: true),
         lp(title: 'B', charging: true, connected: true, power: 5000),
       ]));
-      expect(lines[1], contains('B'));
-      expect(lines[1], contains('5,0 kW'));
+      expect(lines[1], 'B: 5,0 kW');
+    });
+
+    test('several loadpoints, none charging: the first connected one', () {
+      final lines = evccCardLines(state(pv: 1, lps: [
+        lp(title: 'A'),
+        lp(title: 'B', connected: true),
+        lp(title: 'C', connected: true),
+      ]));
+      expect(lines[1], 'B: verbunden');
     });
   });
 }

@@ -193,6 +193,138 @@ void main() {
       expect(back.channel, 'unstable');
     });
 
+    // Every field, each with a value the parser would not put there by
+    // itself: one that toJson or fromJson leaves out comes back as that
+    // default and differs.
+    const everyProfileField = Profile(
+      name: 'Keller',
+      host: '192.168.178.64',
+      port: '2222',
+      username: 'stefan',
+      password: 'pw-äöü ß',
+      authMode: AuthMode.key,
+      privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END-----',
+      keyPassphrase: 'pass phrase',
+      fullUpgrade: true,
+      tailscaleIp: '100.64.1.5',
+      lanHost: '192.168.178.64',
+      lastGoodHost: '100.64.1.5',
+      remoteAccessProven: true,
+      autoConnect: true,
+      cachedServices: [
+        {'id': 'evcc', 'name': 'evcc', 'installed': true, 'version': '0.311.0'},
+      ],
+      alertsNtfyServer: 'https://ntfy.example.org',
+      alertsNtfyTopic: 'pi-tool-k7m2q9x4vb3dwz',
+    );
+    final everyConfigField = AppConfig(
+      profiles: const [everyProfileField, Profile(name: 'Eltern')],
+      activeIndex: 1,
+      uiScheme: 'https',
+      uiPort: '8080',
+      lockEnabled: true,
+      themeMode: 'dark',
+      languageMode: 'en',
+      channel: 'unstable',
+      backupBeforeUpdate: false,
+      disclaimerAccepted: true,
+      lastSeenVersion: '0.71.0',
+      consoleHistory: const ['df -h', 'docker ps'],
+      customCommands: const ['vcgencmd measure_temp'],
+      alertsNtfyServer: 'https://ntfy.example.net',
+      alertsNtfyTopic: 'app-weit-9999999999',
+      firstSeenVersionCode: 137,
+      everConnected: true,
+      remoteAccessDismissed: true,
+      reviewPrompt: ReviewPromptState.initial
+          .recordSuccess(DateTime(2026, 10, 1))
+          .recordAsk(DateTime(2026, 10, 9)),
+    );
+
+    test('the fixture above has no field left at its default', () {
+      // Otherwise the round trips below would prove nothing for that field.
+      final profile = everyProfileField.toJson();
+      final profileDefaults = Profile.fromJson(const {}).toJson();
+      for (final key in profile.keys) {
+        expect(profile[key], isNot(profileDefaults[key]), reason: key);
+      }
+      final config = everyConfigField.toJson();
+      final configDefaults = AppConfig.fromJson(const {}).toJson();
+      for (final key in config.keys) {
+        expect(config[key], isNot(configDefaults[key]), reason: key);
+      }
+    });
+
+    test('every Profile field survives the round trip', () {
+      final back = parseAppConfig(encodeAppConfig(everyConfigField)).profiles;
+      expect(back, hasLength(2));
+      final p = back.first;
+      expect(p.name, 'Keller');
+      expect(p.host, '192.168.178.64');
+      expect(p.port, '2222');
+      expect(p.username, 'stefan');
+      expect(p.password, 'pw-äöü ß');
+      expect(p.authMode, AuthMode.key);
+      expect(p.privateKey,
+          '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END-----');
+      expect(p.keyPassphrase, 'pass phrase');
+      expect(p.fullUpgrade, isTrue);
+      expect(p.tailscaleIp, '100.64.1.5');
+      expect(p.lanHost, '192.168.178.64');
+      expect(p.lastGoodHost, '100.64.1.5');
+      expect(p.remoteAccessProven, isTrue);
+      expect(p.autoConnect, isTrue);
+      expect(p.cachedServices, [
+        {'id': 'evcc', 'name': 'evcc', 'installed': true, 'version': '0.311.0'},
+      ]);
+      expect(p.alertsNtfyServer, 'https://ntfy.example.org');
+      expect(p.alertsNtfyTopic, 'pi-tool-k7m2q9x4vb3dwz');
+      // And whatever toJson knows beyond the list above.
+      expect(p.toJson(), everyProfileField.toJson());
+      expect(back.last.toJson(), const Profile(name: 'Eltern').toJson());
+    });
+
+    test('every AppConfig field survives the round trip', () {
+      final back = parseAppConfig(encodeAppConfig(everyConfigField));
+      expect(back.activeIndex, 1);
+      expect(back.active.name, 'Eltern');
+      expect(back.uiScheme, 'https');
+      expect(back.uiPort, '8080');
+      expect(back.lockEnabled, isTrue);
+      expect(back.themeMode, 'dark');
+      expect(back.languageMode, 'en');
+      expect(back.channel, 'unstable');
+      expect(back.backupBeforeUpdate, isFalse);
+      expect(back.disclaimerAccepted, isTrue);
+      expect(back.lastSeenVersion, '0.71.0');
+      expect(back.consoleHistory, ['df -h', 'docker ps']);
+      expect(back.customCommands, ['vcgencmd measure_temp']);
+      expect(back.alertsNtfyServer, 'https://ntfy.example.net');
+      expect(back.alertsNtfyTopic, 'app-weit-9999999999');
+      expect(back.firstSeenVersionCode, 137);
+      expect(back.everConnected, isTrue);
+      expect(back.remoteAccessDismissed, isTrue);
+      expect(back.reviewPrompt.successes, 1);
+      expect(back.reviewPrompt.firstSuccessAt, DateTime(2026, 10, 1));
+      expect(back.reviewPrompt.lastAskedAt, DateTime(2026, 10, 9));
+      expect(back.reviewPrompt.asks, 1);
+      expect(back.toJson(), everyConfigField.toJson());
+    });
+
+    test('copyWith without arguments keeps every field', () {
+      expect(everyProfileField.copyWith().toJson(), everyProfileField.toJson());
+      expect(everyConfigField.copyWith().toJson(), everyConfigField.toJson());
+    });
+
+    test('copyWith changes the named field and no other', () {
+      final renamed = everyProfileField.copyWith(name: 'Garage');
+      expect(renamed.toJson(),
+          {...everyProfileField.toJson(), 'name': 'Garage'});
+      final german = everyConfigField.copyWith(languageMode: 'de');
+      expect(german.toJson(),
+          {...everyConfigField.toJson(), 'languageMode': 'de'});
+    });
+
     test('parse tolerates junk and falls back to initial', () {
       expect(parseAppConfig('').profiles.single.name, 'Standard');
       expect(parseAppConfig('not json').profiles.single.name, 'Standard');

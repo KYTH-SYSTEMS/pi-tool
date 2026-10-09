@@ -115,7 +115,10 @@ void main() {
     test('the .timer heredoc is QUOTED (no install-time shell expansion)', () {
       expect(s, contains("<<'TMR'"));
     });
-    test('only alerts on a CHANGE (debounced via a state file, no spam)', () {
+    // Only where the last report is kept. That an unchanged problem is not
+    // pushed again is run in bash below ('the same problems twice are one
+    // push …').
+    test('keeps what it last reported in a state file', () {
       expect(s, contains('/var/lib/pi-tool/alerts.last'));
     });
     test('checks for dying-SD symptoms (ro root + kernel I/O errors)', () {

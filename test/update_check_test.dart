@@ -221,6 +221,43 @@ void main() {
           throwsA(isA<HttpException>()));
     });
 
+    test('the status of a refused request is in the error', () async {
+      await expectLater(
+          githubGetJson(await serve(status: 429)),
+          throwsA(isA<HttpException>()
+              .having((e) => e.message, 'message', 'GitHub API 429')));
+    });
+
+    test('asks with GET and the headers GitHub wants', () async {
+      final github = await _GitHub.start({
+        '/repos/o/r/releases/latest': (200, '{"tag_name":"v1.2.3"}'),
+      });
+      expect(await githubGetJson(github.url('/repos/o/r/releases/latest')),
+          {'tag_name': 'v1.2.3'});
+      expect(github.asked, ['GET /repos/o/r/releases/latest']);
+      // GitHub answers a request without a User-Agent with 403.
+      expect(github.headers.single['user-agent'], 'evcc-updater-app');
+      expect(github.headers.single['accept'], 'application/vnd.github+json');
+    });
+
+    test('an answer that is no JSON object is an error', () async {
+      final github = await _GitHub.start({
+        '/html': (200, '<html>rate limited</html>'),
+        '/list': (200, '[{"tag_name":"v1.2.3"}]'),
+      });
+      await expectLater(
+          githubGetJson(github.url('/html')), throwsA(isA<FormatException>()));
+      await expectLater(
+          githubGetJson(github.url('/list')), throwsA(isA<TypeError>()));
+    });
+
+    test('nothing listens on the port: an error, not a hang', () async {
+      final github = await _GitHub.start(const {});
+      final url = github.url('/releases/latest');
+      await github.stop();
+      await expectLater(githubGetJson(url), throwsA(isA<SocketException>()));
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
     test('a body that stalls mid-way ends in a timeout, not a hang', () async {
       // Only the wait for the headers was limited; the body read was not.
       final url = await serve(stall: true);
@@ -252,6 +289,130 @@ void main() {
       expect(limit, lessThanOrEqualTo(const Duration(seconds: 10)));
     });
   });
+
+  // The two fail-soft fetchers through the real adapter. Their URLs are fixed
+  // (https://api.github.com/…), so the getter handed to them notes the
+  // address and sends the same path to a loopback server instead — no request
+  // leaves the machine.
+  group('fetchEvccRelease / fetchLatestHomeAssistantVersion (loopback)', () {
+    const evccPath = '/repos/evcc-io/evcc/releases/latest';
+    const haPath = '/repos/home-assistant/core/releases/latest';
+
+    /// What the fetchers asked for, before it was sent to the loopback.
+    final wanted = <String>[];
+    setUp(wanted.clear);
+
+    HttpGetJson via(_GitHub github) => (Uri url) {
+          wanted.add('$url');
+          return githubGetJson(github.url(url.path));
+        };
+
+    test('evcc: tag and release notes of evcc-io/evcc', () async {
+      final github = await _GitHub.start({
+        evccPath: (
+          200,
+          '{"tag_name":"0.311.0","body":"## Changes\\n- Ladeplanung"}'
+        ),
+      });
+      final release = await fetchEvccRelease(getJson: via(github));
+      expect(release?.version, '0.311.0');
+      expect(release?.notes, '## Changes\n- Ladeplanung');
+      expect(wanted, ['https://api.github.com$evccPath']);
+      expect(github.asked, ['GET $evccPath']);
+    });
+
+    test('evcc: a release without notes still has its tag', () async {
+      final github =
+          await _GitHub.start({evccPath: (200, '{"tag_name":"0.311.0"}')});
+      final release = await fetchEvccRelease(getJson: via(github));
+      expect(release?.version, '0.311.0');
+      expect(release?.notes, isEmpty);
+    });
+
+    test('Home Assistant: the tag of home-assistant/core, trimmed', () async {
+      final github =
+          await _GitHub.start({haPath: (200, '{"tag_name":" 2026.10.1\\n"}')});
+      expect(await fetchLatestHomeAssistantVersion(getJson: via(github)),
+          '2026.10.1');
+      expect(wanted, ['https://api.github.com$haPath']);
+      expect(github.asked, ['GET $haPath']);
+    });
+
+    test('both are null on what GitHub answers when it does not deliver',
+        () async {
+      for (final (status, body) in [
+        (403, '{"message":"API rate limit exceeded"}'),
+        (404, '{"message":"Not Found"}'),
+        (200, '<html>'), // not JSON
+        (200, '[]'), // JSON, but no object
+        (200, '{}'), // no tag_name
+        (200, '{"tag_name":""}'),
+      ]) {
+        final github = await _GitHub.start(
+            {evccPath: (status, body), haPath: (status, body)});
+        expect(await fetchEvccRelease(getJson: via(github)), isNull,
+            reason: '$status $body');
+        expect(await fetchLatestHomeAssistantVersion(getJson: via(github)),
+            isNull,
+            reason: '$status $body');
+        // Asked once each — a failure is not retried.
+        expect(github.asked, ['GET $evccPath', 'GET $haPath']);
+        await github.stop();
+      }
+    });
+
+    test('both are null when nothing answers at all', () async {
+      final github = await _GitHub.start(const {});
+      await github.stop();
+      expect(await fetchEvccRelease(getJson: via(github)), isNull);
+      expect(
+          await fetchLatestHomeAssistantVersion(getJson: via(github)), isNull);
+      // Both got as far as the request.
+      expect(wanted, hasLength(2));
+    }, timeout: const Timeout(Duration(seconds: 30)));
+  });
+}
+
+/// A loopback server standing in for api.github.com: answers a path with the
+/// status and body given for it (404 without), and keeps what was asked.
+class _GitHub {
+  _GitHub._(this._server, this._answers) : _port = _server.port;
+
+  final HttpServer _server;
+  final int _port; // the server no longer tells once it is closed
+  final Map<String, (int, String)> _answers;
+
+  /// `METHOD path` of every request, in order …
+  final asked = <String>[];
+
+  /// … and its headers, by lower-case name.
+  final headers = <Map<String, String>>[];
+
+  static Future<_GitHub> start(Map<String, (int, String)> answers) async {
+    final github = _GitHub._(
+        await HttpServer.bind(InternetAddress.loopbackIPv4, 0), answers);
+    github._server.listen(github._answer);
+    addTearDown(github.stop);
+    return github;
+  }
+
+  Future<void> _answer(HttpRequest req) async {
+    asked.add('${req.method} ${req.uri.path}');
+    final seen = <String, String>{};
+    req.headers.forEach((name, values) => seen[name] = values.join(', '));
+    headers.add(seen);
+    final (status, body) =
+        _answers[req.uri.path] ?? (404, '{"message":"Not Found"}');
+    req.response
+      ..statusCode = status
+      ..headers.contentType = ContentType.json
+      ..write(body);
+    await req.response.close();
+  }
+
+  Uri url(String path) => Uri.parse('http://127.0.0.1:$_port$path');
+
+  Future<void> stop() => _server.close(force: true);
 }
 
 /// Hands out real clients and remembers them.

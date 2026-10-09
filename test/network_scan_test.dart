@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:evcc_updater/src/network_scan.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -42,10 +45,13 @@ void main() {
       expect(found, ['10.0.0.2', '10.0.0.5']);
     });
 
-    test('never exceeds the concurrency limit', () async {
+    test('probes in parallel, and never exceeds the concurrency limit',
+        () async {
       var active = 0;
       var peak = 0;
+      var probes = 0;
       Future<bool> probe(String ip) async {
+        probes++;
         active++;
         if (active > peak) peak = active;
         await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -59,6 +65,20 @@ void main() {
         concurrency: 4,
       );
       expect(peak, lessThanOrEqualTo(4));
+      // One after the other would pass the line above as well.
+      expect(peak, greaterThan(1));
+      expect(probes, 20);
+    });
+
+    test('fewer hosts than the limit: one probe each, no more', () async {
+      final probed = <String>[];
+      final found = await scanHosts(['10.0.0.1', '10.0.0.2'], (ip) async {
+        probed.add(ip);
+        return true;
+      }, concurrency: 8);
+      expect(found, ['10.0.0.1', '10.0.0.2']);
+      expect(probed, ['10.0.0.1', '10.0.0.2']);
+      expect(await scanHosts(const [], (_) async => true), isEmpty);
     });
 
     test('a probe that throws is treated as unreachable, not fatal', () async {
@@ -182,6 +202,60 @@ void main() {
       expect(probed, hasLength(506));
       expect(probed, contains('10.0.0.1'));
       expect(probed, contains('192.168.178.1'));
+    });
+  });
+
+  // The two functions that touch real I/O, on this machine alone: a listener
+  // on 127.0.0.1 and the list of local interfaces. Nothing is sent anywhere.
+  group('probeSshPort (loopback)', () {
+    test('a port that accepts is reported, and the connection is given up',
+        () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final accepted = Completer<Socket>();
+      server.listen(accepted.complete);
+
+      expect(
+          await probeSshPort('127.0.0.1',
+              port: server.port, timeout: const Duration(seconds: 5)),
+          isTrue);
+      // The probe only connects: it sends nothing and closes its end — the
+      // listener's read ends (a reset counts as closed) instead of timing out.
+      final peer = await accepted.future.timeout(const Duration(seconds: 5));
+      var received = 0;
+      try {
+        await for (final chunk in peer.timeout(const Duration(seconds: 5))) {
+          received += chunk.length;
+        }
+      } on SocketException {
+        // closed by reset
+      }
+      expect(received, 0);
+      peer.destroy();
+    });
+
+    test('a port nobody listens on is not reported, and nothing is thrown',
+        () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = server.port;
+      await server.close();
+      expect(
+          await probeSshPort('127.0.0.1',
+              port: port, timeout: const Duration(seconds: 5)),
+          isFalse);
+    });
+  });
+
+  group('localIPv4s', () {
+    test('lists IPv4 addresses with their interface, never the loopback',
+        () async {
+      // Which interfaces this machine has is not the test's business (it may
+      // have none) — only what the sweep relies on for each entry.
+      for (final a in await localIPv4s()) {
+        expect(a.interface, isNotEmpty);
+        expect(subnetBase(a.address), isNotNull, reason: a.address);
+        expect(a.address, isNot(startsWith('127.')));
+      }
     });
   });
 }

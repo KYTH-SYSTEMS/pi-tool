@@ -6,6 +6,8 @@ import 'package:evcc_updater/src/eol_sources.dart';
 import 'package:evcc_updater/src/pi_job.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'on_pi_sandbox.dart';
+
 const _id = '0123456789abcdef';
 const _other = 'fedcba9876543210';
 
@@ -638,11 +640,54 @@ void main() {
       expect(s.state, PiJobState.interrupted);
     });
 
-    test('probe is read-only and needs no sudo', () {
+    test('probe reads job.status and the boot id, without sudo', () {
       expect(jobStatusProbe, contains('cat /var/lib/pi-tool/job.status'));
       expect(jobStatusProbe, contains('/proc/sys/kernel/random/boot_id'));
       expect(jobStatusProbe, isNot(contains('sudo')));
     });
+
+    // The probe on a sandboxed Pi (on_pi_sandbox.dart): PATH holds the plain
+    // tools and a sudo that would be noted, nothing else.
+    group('probe in bash', () {
+      late PiSandbox pi;
+      const status = '/var/lib/pi-tool/job.status';
+
+      setUp(() {
+        pi = PiSandbox();
+        pi.stub('sudo', 'exit 1');
+        pi.put('/proc/sys/kernel/random/boot_id', '$boot\n');
+      });
+      tearDown(() => pi.dispose());
+
+      test('prints the status line and the boot id — read-only, no sudo',
+          () async {
+        const line = '$_id system-upgrade running - 1790000000 - $boot\n';
+        pi.put(status, line);
+        final before = pi.named('');
+
+        final r = await pi.run(jobStatusProbe);
+        expect(r.code, 0, reason: r.err);
+        expect(r.err, isEmpty);
+        expect(r.out, '${line}BOOT $boot\n');
+        final s = parseJobStatus(r.out)!;
+        expect(s.ref, const JobRef(id: _id, kind: 'system-upgrade'));
+        expect(s.state, PiJobState.running);
+        // Nothing asked of sudo, nothing created or removed, the file as it
+        // was.
+        expect(pi.calls, isEmpty);
+        expect(pi.named(''), before);
+        expect(pi.read(status), line);
+      });
+
+      test('no job yet: the boot line alone, and no error', () async {
+        final r = await pi.run(jobStatusProbe);
+        expect(r.code, 0, reason: r.err);
+        expect(r.err, isEmpty);
+        expect(r.out, 'BOOT $boot\n');
+        expect(parseJobStatus(r.out), isNull);
+        expect(pi.exists(status), isFalse);
+      });
+    }, skip: needsBash);
   });
 
   group('evaluateJob', () {
