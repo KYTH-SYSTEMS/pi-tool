@@ -1,0 +1,3 @@
+„Alles aktualisieren": Die System-Karte spielt jetzt alles ein, was ein Update hat – Systempakete, Pi-hole und alle laufenden Docker-Container (Home Assistant, evcc, Mosquitto, …). Ein evcc aus apt wird vorher gesichert.
+
+„Alle Pis"-Überblick: „Alles auf allen Pis aktualisieren" macht auf jedem erreichbaren Pi dasselbe, fragt vorher nach, schreibt die Ausgabe ins Log und nennt bei einem Fehler den Grund.

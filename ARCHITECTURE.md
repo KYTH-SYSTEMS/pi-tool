@@ -2297,6 +2297,16 @@ Ein Job ist kein Timer, sondern eine einmalige **transiente systemd-Unit**
   + `resolveSystemLocale` (Englisch-Fallback). Siehe „Sprache" im UI-Abschnitt.
 - **`l10n.dart`** — `context.l10n`-Extension auf die generierten
   `AppLocalizations` (Quellen: `lib/l10n/app_{de,en}.arb`; Generat gitignored).
+- **`full_update.dart`** — reine Planung von „Alles aktualisieren" (v0.73):
+  `planFullUpdate` sagt, welche Schritte nach dem apt full-upgrade anfallen
+  (Pi-hole bei Update oder unbekanntem Stand, Home Assistant und evcc bei
+  Update oder unbekanntem Stand — ein Container meldet nie einen Stand, der
+  Pull entscheidet), `fullUpdatePending` ob ein bekanntes Update ansteht
+  (Ampel im Multi-Pi-Überblick, aktiver Knopf der System-Karte),
+  `otherContainersToUpdate` welche laufenden Container danach der generische
+  `updateDockerContainer` übernimmt (ohne HA — per `parseHomeAssistant`
+  gefunden —, ohne den evcc-Container, ohne `-evccpitool-old`, ohne
+  gestoppte).
 - **`update_check.dart`** — Self-Update-Check (nur Sideload-Kanal) + evcc-/HA-
   Versionsproben. Der stille Check beim App-Start (`checkForUpdate`) und die
   beiden Versionsproben sind fail-soft (Fehler → null). Die **manuelle** Prüfung
@@ -2791,11 +2801,26 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Page (`_cancelled`), mit Refresh-Action. Eintrag im ⋮-Menü nur bei
   `_profiles.length > 1`, Pro-gated (über `_proGate`; `multiPi` in der
   `ProFeature`-Liste).
-  **Bulk-Update:** App-Leisten-Knopf „Alle aktualisieren" iteriert sequenziell
-  über die erreichbaren Pis MIT Updates (`update`-Callback = `_updatePiSystem` →
-  `upgradeSystem` pro Profil), **fail-soft** (ein Fehler stoppt die übrigen
-  nicht), Status pro Zeile, danach Re-Probe. Der Callback liefert
-  **`PiUpdateOutcome`** (`ok`, `note`) statt eines `bool`: Eine `JobException`
+  **Bulk-Update:** App-Leisten-Knopf „Alles auf allen Pis aktualisieren" fragt
+  erst (`confirmBulk` → `_confirm`) und iteriert dann sequenziell über **alle
+  erreichbaren** Pis — nicht nur die mit bekanntem Update, weil Container keinen
+  Stand melden. `update`-Callback = `_updatePiEverything`: frisches
+  `detectServices`, dann **`_updateEverything`** — derselbe Ablauf wie der Knopf
+  der System-Karte (`_upgradeSystem`): bei evcc-Bedarf `detectInstall` und für
+  ein apt-evcc das Backup (`_backupBeforeUpdate`), `upgradeSystem`, dann laut
+  `planFullUpdate` `updatePihole`, `updateHomeAssistant` und für ein
+  Docker-evcc `updateDocker`, zuletzt `dockerContainers` →
+  `otherContainersToUpdate` → `updateDockerContainer` je Container (ein
+  `unknown`/`serviceInactive`-Fehler hält die übrigen nicht auf, am Ende
+  `errorContainersNotUpdated`; Sitzungs-/sudo-Fehler beenden den Lauf); jeder
+  fertige Schritt geht in den Verlauf des
+  jeweiligen Profils (`_addHistory(profile:)`). Die Ausgabe landet im Log unter
+  `── <Profilname> ──`, zusätzlich mit dem Passwort dieses Profils geschwärzt
+  (`_appendLog` kennt nur das des aktiven). **Fail-soft** (ein Fehler stoppt die
+  übrigen nicht), Status pro Zeile, danach Re-Probe. Der Callback liefert
+  **`PiUpdateOutcome`** (`ok`, `note`, `error`) statt eines `bool`; `error` ist
+  der Grund eines Fehlschlags („Update fehlgeschlagen: …"), `note` ein Hinweis
+  (auch „Paketlisten unvollständig" nach einem Erfolg). Eine `JobException`
   (der Pi-Job läuft ohne die App weiter, oder der Pi ist mit einem anderen
   beschäftigt) ist weder Erfolg noch Fehlschlag — die Zeile zeigt dann amber
   den Satz aus `_jobExceptionText` in voller Länge (er endet mit der Anweisung,
@@ -2808,8 +2833,9 @@ Host-Key-Retry *diese* Aktion wiederholt) → SSH-Arbeit **in `_guard`** (das
   Benachrichtigungstext `busySystemUpgrade`) — nicht einer je Pi: Android 12+
   schränkt das Starten eines Vordergrunddienstes aus dem Hintergrund ein, ein
   Stopp zwischen zwei Pis könnte endgültig sein. `_updateAll` klammert und
-  probt danach neu, `_updateEach` ist die Schleife. Einen Bestätigungsdialog
-  hat der Sammellauf nicht.
+  probt danach neu, `_updateEach` ist die Schleife. Ein abgelöster Pi-Job wird
+  unter dem Schlüssel des Profils (`_piKeyOf`) in `_detachedJobs` vermerkt, so
+  dass „Mitlesen" ihn anbietet, sobald dieser Pi der aktive ist.
 - **Karten:** nicht-installierte Dienste (außer `system`) werden zu
   `_AddableService`-Picker-Einträgen, nie Karten. `_ServiceCard`-⋮ hat stabiles
   `ValueKey('menu-${id}')`. Pro-Aktionen zeigen Free-Nutzern ein Schloss, der Tap

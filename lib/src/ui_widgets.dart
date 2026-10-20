@@ -1131,10 +1131,11 @@ typedef PiSnapshot = ({
   String detail,
 });
 
-/// How a system update on one Pi ended in the multi-Pi overview. A [note]
-/// means neither success nor failure — the Pi-Job runs on without the app, or
-/// the Pi is busy with another one — and is shown as the row's text.
-typedef PiUpdateOutcome = ({bool ok, String? note});
+/// How „Alles aktualisieren" on one Pi ended in the multi-Pi overview. A
+/// [note] is shown as the row's text: neither success nor failure — the Pi-Job
+/// runs on without the app, or the Pi is busy with another one — or a success
+/// with a remark. [error] is a failure's reason, when there is one.
+typedef PiUpdateOutcome = ({bool ok, String? note, String? error});
 
 /// Multi-Pi overview: a traffic-light row per profile. Probes each Pi
 /// sequentially (fail-soft) so one unreachable Pi doesn't block the rest.
@@ -1143,15 +1144,19 @@ class _MultiPiDashboardPage extends StatefulWidget {
     required this.profiles,
     required this.probe,
     required this.update,
+    required this.confirmBulk,
     required this.onBulkStart,
     required this.onBulkEnd,
   });
   final List<Profile> profiles;
   final Future<PiSnapshot> Function(Profile) probe;
 
-  /// Runs a system update on one Pi and reports how it ended. Sequenced by the
-  /// page across all reachable Pis with pending updates (fail-soft).
+  /// Runs „Alles aktualisieren" on one Pi and reports how it ended. Sequenced
+  /// by the page across all reachable Pis (fail-soft).
   final Future<PiUpdateOutcome> Function(Profile) update;
+
+  /// Asks before a bulk update; false leaves every Pi as it is.
+  final Future<bool> Function() confirmBulk;
 
   /// Bracket a bulk update — before its first Pi, after its last, also when
   /// it ends early — so the app is kept alive for the whole run and the Pis
@@ -1169,6 +1174,7 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
   int _probing = -1;
   int _updating = -1;
   bool _bulkRunning = false;
+  bool _asking = false; // the bulk update's confirmation is open
   bool _cancelled = false;
 
   @override
@@ -1217,16 +1223,22 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
     return ctx.l10n.wStatusOk;
   }
 
-  /// Indices of reachable Pis that have pending updates.
+  /// Indices of reachable Pis. Every one of them takes part in a bulk update:
+  /// a Home Assistant or evcc container reports no update state, so only the
+  /// pull itself finds out whether a Pi without a known update has one.
   List<int> get _updatable => [
         for (var i = 0; i < widget.profiles.length; i++)
-          if ((_results[i]?.reachable ?? false) && (_results[i]?.updates ?? false))
-            i
+          if (_results[i]?.reachable ?? false) i
       ];
 
-  /// Sequentially updates every reachable Pi with pending updates. Fail-soft:
-  /// one Pi's failure doesn't stop the rest; cancellable by leaving the page.
+  /// Sequentially updates everything on every reachable Pi. Fail-soft: one
+  /// Pi's failure doesn't stop the rest; cancellable by leaving the page.
   Future<void> _updateAll() async {
+    if (_asking) return;
+    _asking = true;
+    final go = await widget.confirmBulk();
+    _asking = false;
+    if (!go || !mounted || _cancelled) return;
     setState(() {
       _bulkRunning = true;
       _updateResult.clear();
@@ -1252,7 +1264,7 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
       try {
         outcome = await widget.update(widget.profiles[i]);
       } catch (_) {
-        outcome = (ok: false, note: null);
+        outcome = (ok: false, note: null, error: null);
       }
       if (!mounted) return;
       setState(() {
@@ -1323,8 +1335,11 @@ class _MultiPiDashboardPageState extends State<_MultiPiDashboardPage> {
                 } else if (upd != null) {
                   leading = Icon(upd.ok ? Icons.check_circle : Icons.error,
                       color: upd.ok ? kGreen : cs.error);
-                  subtitle =
-                      upd.ok ? ctx.l10n.wUpdated : ctx.l10n.wUpdateFailed;
+                  subtitle = upd.ok
+                      ? ctx.l10n.wUpdated
+                      : upd.error != null
+                          ? ctx.l10n.wUpdateFailedReason(upd.error!)
+                          : ctx.l10n.wUpdateFailed;
                 } else if (snap == null) {
                   leading = i == _probing
                       ? spinner

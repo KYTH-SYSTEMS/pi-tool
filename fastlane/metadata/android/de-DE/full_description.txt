@@ -10,7 +10,7 @@ Dienste:
 * Tailscale – VPN/Mesh installieren, aktualisieren, per Login-Link verbinden; auf Wunsch das Heimnetz freigeben (Subnet Router). Fernzugriff per Tap: Tailnet-IP als Host, zurück zur Heim-IP
 * Docker-Container – ansehen, neustarten und aktualisieren (mit Rollback)
 * „Dienst hinzufügen" – alle noch nicht installierten Dienste an einer Stelle; Deinstallieren im Kartenmenü, Daten wahlweise behalten
-* System (ganzer Pi) – alle Pakete aktualisieren (apt full-upgrade), neu starten/herunterfahren, Gesundheits-Anzeige mit Speicher- und SD-Check
+* System (ganzer Pi) – alles aktualisieren (Pakete, Pi-hole, Container), neu starten/herunterfahren, Gesundheits-Anzeige mit Speicher- und SD-Check
 
 Funktionen:
 * Cockpit mit vier Tabs; der aktive Pi oben ist antippbar (umschalten/hinzufügen/umbenennen)

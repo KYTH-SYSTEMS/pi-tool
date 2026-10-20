@@ -29,6 +29,7 @@ import 'src/early_adopter.dart';
 import 'src/entitlement.dart';
 import 'src/file_pick.dart';
 import 'src/files.dart';
+import 'src/full_update.dart';
 import 'src/profile_transfer.dart';
 import 'src/review_prompt.dart';
 import 'src/scheduled_backup.dart';
@@ -1636,7 +1637,7 @@ class _UpdaterPageState extends State<UpdaterPage>
       }
       return (
         reachable: true,
-        updates: sys?.updateAvailable ?? false,
+        updates: fullUpdatePending(services),
         warning: sys?.healthWarning ?? false,
         detail: (sys?.health.isNotEmpty ?? false) ? sys!.health : l10n.probeReachable,
       );
@@ -1650,19 +1651,135 @@ class _UpdaterPageState extends State<UpdaterPage>
     }
   }
 
-  /// Runs a system update (apt full-upgrade) on one profile's Pi. Fail-soft:
-  /// never throws, so the multi-Pi bulk update can carry on.
-  Future<PiUpdateOutcome> _updatePiSystem(Profile p) async {
+  /// „Alles aktualisieren" on one profile's Pi — the same run as the System
+  /// card's button (see [_updateEverything]), its output in the log under the
+  /// profile's name. Fail-soft: never throws, so the multi-Pi bulk update can
+  /// carry on.
+  Future<PiUpdateOutcome> _updatePiEverything(Profile p) async {
+    final l10n = context.l10n;
+    final config = _configForProfile(p);
+    // _appendLog only knows the active profile's password.
+    void log(String line) => _appendLog(redactPassword(line, p.password));
+    log('── ${p.name} ──');
     try {
-      await _updater.upgradeSystem(config: _configForProfile(p), onLog: (_) {});
-      return (ok: true, note: null);
+      final services =
+          await _updater.detectServices(config: config, onLog: (_) {});
+      final result = await _updateEverything(config, services,
+          onLog: log, profile: p.name);
+      return (
+        ok: true,
+        note: result.listsIncomplete
+            ? l10n.statusSystemUpdatedListsIncomplete
+            : null,
+        error: null,
+      );
     } on JobException catch (e) {
       // The Pi-Job runs on, or the Pi is busy with another one: not a failure
-      // (see _guard) — the row gets the same sentence the banner would show.
-      return (ok: false, note: mounted ? _jobExceptionText(e) : null);
-    } catch (_) {
-      return (ok: false, note: null);
+      // (see _guard) — the row gets the same sentence the banner would show,
+      // and the job is followed once that Pi is the active one.
+      log(l10n.logJobNotice(e.message));
+      final ref = e.ref;
+      if (ref != null && mounted) {
+        setState(() => _detachedJobs[_piKeyOf(p.host, p.port, p.username)] =
+            _JobView(ref, since: e.since ?? DateTime.now()));
+      }
+      return (
+        ok: false,
+        note: mounted ? _jobExceptionText(e) : null,
+        error: null,
+      );
+    } on EvccUpdateException catch (e) {
+      final cancelled = e.kind == UpdateErrorKind.cancelled;
+      log(cancelled ? l10n.logCancelled : l10n.logError(e.message));
+      return (ok: false, note: null, error: cancelled ? null : e.message);
+    } catch (e) {
+      log(l10n.logError('$e'));
+      return (ok: false, note: null, error: null);
     }
+  }
+
+  /// „Alles aktualisieren" on one Pi — the System card's button and, per Pi,
+  /// the multi-Pi overview. The system packages first (apt full-upgrade, which
+  /// brings apt-installed evcc, Grafana, … along), then Pi-hole and the Home
+  /// Assistant and evcc containers (see [planFullUpdate]). Stops at the first
+  /// step that throws; every finished step goes into [profile]'s history.
+  Future<SystemUpgradeResult> _updateEverything(
+    SshConfig config,
+    List<ServiceStatus> services, {
+    required void Function(String line) onLog,
+    void Function(JobRef ref)? onJobStarted,
+    String? profile,
+  }) async {
+    final l10n = context.l10n;
+    // A finished Pi-Job is no longer the one the running bar follows.
+    void jobDone() {
+      if (onJobStarted != null && mounted) setState(() => _busyJob = null);
+    }
+
+    final plan = planFullUpdate(services);
+    InstallDetection? evcc;
+    if (plan.evcc) {
+      evcc = await _updater.detectInstall(config: config, onLog: onLog);
+      // The full-upgrade brings an apt evcc along — the backup an evcc update
+      // makes first is not skipped because of that.
+      if (evcc.kind == InstallKind.apt && _backupBeforeUpdate) {
+        await _updater.backup(config: config, onLog: onLog);
+      }
+    }
+    final result = await _updater.upgradeSystem(
+        config: config, onLog: onLog, onJobStarted: onJobStarted);
+    jobDone();
+    _addHistory(l10n.historySystemUpgraded, profile: profile);
+    if (plan.pihole) {
+      await _updater.updatePihole(
+          config: config, onLog: onLog, onJobStarted: onJobStarted);
+      jobDone();
+      _addHistory(l10n.statusPiholeUpdated, profile: profile);
+    }
+    if (plan.homeAssistant) {
+      final outcome =
+          await _updater.updateHomeAssistant(config: config, onLog: onLog);
+      if (_tagCurrentText(outcome) == null) {
+        _addHistory(l10n.statusHomeAssistantUpdated, profile: profile);
+      }
+    }
+    if (evcc != null && evcc.kind == InstallKind.docker) {
+      final outcome = await _updater.updateDocker(
+          config: config, detection: evcc, onLog: onLog);
+      if (_tagCurrentText(outcome) == null) {
+        _addHistory(l10n.historyEvccDockerUpdated, profile: profile);
+      }
+    }
+    // Every other running container (ring-mqtt, Mosquitto, …) through the
+    // generic container update. One it cannot update does not stop the
+    // others; the run names them at the end. A broken session or sudo does
+    // not get better with the next container — that ends the run.
+    final containers =
+        await _updater.dockerContainers(config: config, onLog: onLog);
+    final notUpdated = <String>[];
+    for (final name in otherContainersToUpdate(containers,
+        evccContainer: evcc?.container?.name)) {
+      try {
+        final outcome = await _updater.updateDockerContainer(
+            config: config, name: name, onLog: onLog);
+        if (_tagCurrentText(outcome) == null) {
+          _addHistory('${l10n.statusContainerUpdated} ($name)',
+              profile: profile);
+        }
+      } on EvccUpdateException catch (e) {
+        if (e.kind != UpdateErrorKind.unknown &&
+            e.kind != UpdateErrorKind.serviceInactive) {
+          rethrow;
+        }
+        onLog(l10n.logError(e.message));
+        notUpdated.add(name);
+      }
+    }
+    if (notUpdated.isNotEmpty) {
+      throw EvccUpdateException(UpdateErrorKind.unknown,
+          l10n.errorContainersNotUpdated(notUpdated.join(', ')));
+    }
+    return result;
   }
 
   void _showMultiPiDashboard() {
@@ -1677,7 +1794,10 @@ class _UpdaterPageState extends State<UpdaterPage>
       builder: (_) => _MultiPiDashboardPage(
           profiles: profiles,
           probe: _probePi,
-          update: _updatePiSystem,
+          update: _updatePiEverything,
+          confirmBulk: () => _confirm(
+              context.l10n.dialogUpdateAllPisTitle,
+              context.l10n.dialogUpdateAllPisBody),
           // One keep-alive around the whole bulk update, not one per Pi:
           // Android 12+ restricts starting a foreground service from the
           // background, so a stop between two Pis could be final.
@@ -1857,10 +1977,12 @@ class _UpdaterPageState extends State<UpdaterPage>
   }
 
   /// This Pi's key for [_detachedJobs]: the address and login the actions use.
-  String get _piKey {
-    final port = _port.text.trim().isEmpty ? '22' : _port.text.trim();
-    final user = _user.text.trim().isEmpty ? 'pi' : _user.text.trim();
-    return '${_host.text.trim()}:$port:$user';
+  String get _piKey => _piKeyOf(_host.text, _port.text, _user.text);
+
+  static String _piKeyOf(String host, String port, String user) {
+    final p = port.trim().isEmpty ? '22' : port.trim();
+    final u = user.trim().isEmpty ? 'pi' : user.trim();
+    return '${host.trim()}:$p:$u';
   }
 
   /// Called by a job-backed action once the Pi confirmed the job's start.
@@ -4355,8 +4477,8 @@ class _UpdaterPageState extends State<UpdaterPage>
     if (config == null) return;
     _lastAction = _upgradeSystem;
     await _guard(() async {
-      final result = await _updater.upgradeSystem(
-          config: config, onLog: _appendLog, onJobStarted: _onJobStarted);
+      final result = await _updateEverything(config, _services,
+          onLog: _appendLog, onJobStarted: _onJobStarted);
       if (!mounted) return;
       setState(() {
         _statusMessage = result.listsIncomplete
@@ -4364,7 +4486,6 @@ class _UpdaterPageState extends State<UpdaterPage>
             : context.l10n.statusSystemUpdated;
         _statusOk = true;
       });
-      _addHistory(context.l10n.historySystemUpgraded);
       await _refreshServices(config);
     }, backgroundMessage: l10n.busySystemUpgrade);
   }
@@ -4903,14 +5024,15 @@ class _UpdaterPageState extends State<UpdaterPage>
     return out;
   }
 
-  void _addHistory(String text) {
+  /// [profile]: the bulk update of the multi-Pi overview names its Pi; every
+  /// other action runs on the active one (switching is off meanwhile).
+  void _addHistory(String text, {String? profile}) {
     if (_demoMode) return; // a demo action is not part of this Pi's history
     _historyStore
         .add(HistoryEntry(
           when: formatTimestamp(DateTime.now()),
           text: text,
-          // Every action runs on the active Pi; switching is off meanwhile.
-          profile: _activeProfileName,
+          profile: profile ?? _activeProfileName,
         ))
         // The history is a convenience. An entry that cannot be stored (a
         // history that cannot be read is left as it is, see HistoryStore.add)
@@ -5964,6 +6086,14 @@ class _UpdaterPageState extends State<UpdaterPage>
             ],
           ));
         case 'system':
+          // „Alles aktualisieren" takes Pi-hole along: its update keeps the
+          // button active while the system packages are current.
+          final sys = s.updateKnown &&
+                  !s.updateAvailable &&
+                  fullUpdatePending(_services)
+              ? s.copyWith(updateAvailable: true)
+              : s;
+          final sysUpToDate = sys.updateKnown && !sys.updateAvailable;
           final lastJob = _lastJobLine(s.job);
           // Restart and shutdown need an explicit connection first, like the
           // same two entries of the app menu — a remembered card is no session.
@@ -5971,7 +6101,7 @@ class _UpdaterPageState extends State<UpdaterPage>
               _connected ? null : context.l10n.menuNeedsConnectionHint;
           cards.add(_ServiceCard(
             isPro: _unlocked,
-            status: s,
+            status: sys,
             icon: Icons.memory,
             enabled: !_busy,
             liveLines: [?lastJob],
@@ -5981,7 +6111,7 @@ class _UpdaterPageState extends State<UpdaterPage>
             actions: [
               _CardAction(
                   context.l10n.actionShowLogs, () => _showServiceLogs(s)),
-              if (upToDate)
+              if (sysUpToDate)
                 _CardAction(context.l10n.actionUpdateAnyway, _upgradeSystem),
               // The remedy for "Stand unbekannt": refresh the index the whole
               // update detection reads from, then re-read the cards.

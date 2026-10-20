@@ -1,0 +1,3 @@
+"Update everything": the System card now installs everything that has an update – system packages, Pi-hole and every running Docker container (Home Assistant, evcc, Mosquitto, …). An evcc from apt is backed up first.
+
+"All Pis" overview: "Update everything on all Pis" does the same on every reachable Pi, asks first, writes the output to the log and names the reason when a Pi fails.

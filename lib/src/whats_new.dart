@@ -18,6 +18,15 @@ List<String>? whatsNewFor(String version, [String languageCode = 'de']) =>
 
 /// English highlights (from v0.58.0 on). Older versions fall back to German.
 const Map<String, List<String>> _whatsNewEn = {
+  '0.73.0': [
+    '"Update everything": the button on the System card now installs '
+        'everything on the Pi that has an update: the system packages, '
+        'Pi-hole and every running Docker container (Home Assistant, evcc, '
+        'Mosquitto, …). An evcc from apt is backed up first, as before.',
+    '"All Pis" overview: "Update everything on all Pis" does the same as the '
+        'System card on every reachable Pi. It asks first, writes the output '
+        'to the log and shows the reason in the row when a Pi fails.',
+  ],
   '0.72.0': [
     'Bug fixes and security improvements.',
   ],
@@ -338,6 +347,16 @@ const Map<String, List<String>> _whatsNewEn = {
 };
 
 const Map<String, List<String>> _whatsNew = {
+  '0.73.0': [
+    '„Alles aktualisieren": Der Knopf auf der System-Karte spielt jetzt alles '
+        'ein, was auf dem Pi ein Update hat: die Systempakete, Pi-hole und '
+        'alle laufenden Docker-Container (Home Assistant, evcc, Mosquitto, …). '
+        'Ein evcc aus apt wird vorher wie gewohnt gesichert.',
+    '„Alle Pis"-Überblick: „Alles auf allen Pis aktualisieren" macht auf '
+        'jedem erreichbaren Pi dasselbe wie die System-Karte. Es fragt vorher '
+        'nach, schreibt die Ausgabe ins Log und zeigt bei einem Fehler den '
+        'Grund in der Zeile.',
+  ],
   '0.72.0': [
     'Fehlerbehebungen und Sicherheitsverbesserungen.',
   ],

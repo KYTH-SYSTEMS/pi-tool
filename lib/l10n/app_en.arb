@@ -156,7 +156,7 @@
   "wTest": "Test",
   "wUnlock": "Unlock",
   "wUpToDate": "Up to date",
-  "wUpdateAllWithUpdates": "Update all that have updates",
+  "wUpdateAllWithUpdates": "Update everything on all Pis",
   "wUpdateAvailableVersion": "Update {version} available",
   "@wUpdateAvailableVersion": {
     "placeholders": {
@@ -166,6 +166,24 @@
     }
   },
   "wUpdateFailed": "Update failed",
+  "wUpdateFailedReason": "Update failed: {reason}",
+  "@wUpdateFailedReason": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "errorContainersNotUpdated": "Not updated: {names} – details in the log.",
+  "@errorContainersNotUpdated": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "dialogUpdateAllPisTitle": "Update everything on all Pis?",
+  "dialogUpdateAllPisBody": "Installs everything that has an update on each reachable Pi in turn: all system packages (apt full-upgrade), Pi-hole and every running Docker container such as Home Assistant or evcc. The output is in the log.",
   "wUpdated": "Updated",
   "wUpdatesAvailable": "Updates available",
   "wUpdating": "Updating …",
@@ -854,11 +872,11 @@
   "statusPiholeInstalled": "Pi-hole installed – set it up in the browser at /admin.",
   "historyPiholeInstalled": "Pi-hole installed.",
   "busyInstallingPihole": "Installing Pi-hole …",
-  "dialogUpgradeSystemTitle": "Update the system?",
-  "dialogUpgradeSystemBody": "Updates ALL packages on the Pi (apt full-upgrade), not just a single service.",
-  "statusSystemUpdated": "System updated.",
+  "dialogUpgradeSystemTitle": "Update everything?",
+  "dialogUpgradeSystemBody": "Installs everything on the Pi that has an update: all system packages (apt full-upgrade), Pi-hole and every running Docker container such as Home Assistant or evcc.",
+  "statusSystemUpdated": "Everything updated.",
   "historySystemUpgraded": "System upgrade performed.",
-  "busySystemUpgrade": "System upgrade running …",
+  "busySystemUpgrade": "Updating everything …",
   "statusAptIndexRefreshed": "Package lists refreshed.",
   "busyRefreshingAptIndex": "Refreshing package lists …",
   "snackEnterHostFirst": "Please enter host/IP first.",
@@ -1086,7 +1104,7 @@
     }
   },
   "actionSignOutTailscale": "Sign out of Tailscale",
-  "actionInstallUpdates": "Install updates",
+  "actionInstallUpdates": "Update everything",
   "actionSetupRemoteAccess": "Set up remote access",
   "actionCheckRemoteAccess": "Check now",
   "actionGetTailscaleApp": "Open Tailscale",
@@ -1547,7 +1565,7 @@
     }
   },
   "statusAutoUpdateBusy": "The automatic updates are running on the Pi right now – please try again in a few minutes. Nothing was started. If the run has been stuck for hours: set the automatic updates up again in the “Automation” tab (“Change schedule”) – after that the Pi itself ends a run that takes longer than six hours – or run “sudo systemctl stop pi-tool-autoupdate.service” on the Pi.",
-  "statusSystemUpdatedListsIncomplete": "System updated – but not all package lists could be loaded (details in the log).",
+  "statusSystemUpdatedListsIncomplete": "Everything updated – but not all package lists could be loaded (details in the log).",
   "jobBarRunning": "Pi job “{label}” running (since {time})",
   "@jobBarRunning": {
     "placeholders": {

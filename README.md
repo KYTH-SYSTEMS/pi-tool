@@ -252,7 +252,13 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
   Interaktive Programme (htop, Editoren, `-f`)
   bekommen einen Hinweis mit Alternative statt eines kryptischen Fehlers. Auf
   eigene Gefahr — freie Befehle laufen mit deinen Rechten auf dem Pi.
-- **System** — alle Pakete aktualisieren (`apt full-upgrade`), Pi neustarten,
+- **System** — **„Alles aktualisieren"**: alle Pakete (`apt full-upgrade`, das
+  auch evcc, Grafana & Co. aus apt mitnimmt), danach Pi-hole (`pihole -up`,
+  wenn ein Update ansteht) und alle laufenden Docker-Container (Pull; ein
+  aktueller Container bleibt unberührt, ein gestoppter bleibt aus). Ein
+  Container, der sich nicht aktualisieren lässt (z. B. per Digest gepinnt),
+  hält die übrigen nicht auf und wird am Ende genannt. Ein evcc aus apt wird
+  vorher gesichert, wie beim evcc-Update. Außerdem Pi neustarten und
   Pi herunterfahren (mit Sicherheitsabfrage — der Pi bleibt danach aus).
   Neustart und Herunterfahren setzen eine bestehende Verbindung voraus; auf
   einer Karte mit dem „Stand von vorhin" sind beide Einträge ausgegraut.
@@ -426,13 +432,16 @@ Pi-Zugang eintragen, tippen, fertig. Verteilung über **Google Play** und als
 - **Updates im Hintergrund** — lange Aktionen (Update/Installation) laufen über
   einen Vordergrunddienst weiter, auch wenn du die App in den Hintergrund legst
   oder den Bildschirm ausschaltest (Benachrichtigung „Pi-Tool …"). Das gilt
-  auch für „Alle aktualisieren" im Überblick über mehrere Pis.
+  auch für „Alles auf allen Pis aktualisieren" im Überblick über mehrere Pis.
 - **Mehrere Pi-Profile** — pro Pi ein benanntes Profil, schnell umschaltbar.
 - **Alle Pis auf einen Blick** — „Alle Pis (Überblick)" im ⋮-Menü (ab zwei
   Profilen) prüft jeden Pi der Reihe nach und zeigt eine Ampel: grün (alles gut),
   amber (Updates/Warnung), rot (nicht erreichbar). Fail-soft — ein toter Pi
-  blockiert die anderen nicht. **Alle auf einmal aktualisieren** per Update-Knopf
-  (nacheinander, fail-soft, Fortschritt pro Zeile).
+  blockiert die anderen nicht. **Alles auf allen Pis aktualisieren** per
+  Update-Knopf: auf jedem erreichbaren Pi dasselbe wie „Alles aktualisieren" auf
+  der System-Karte, nach einer Rückfrage, nacheinander und fail-soft. Die
+  Ausgabe steht im Log unter dem Profilnamen, ein Fehler nennt seinen Grund in
+  der Zeile.
 - **Profil-Export/-Import** — alle Profile (inkl. Zugangsdaten) als
   **passphrase-verschlüsselte** Datei (AES-256-GCM) sichern und auf einem neuen
   Handy importieren. Für den Gerätewechsel. Die Passphrase braucht mindestens

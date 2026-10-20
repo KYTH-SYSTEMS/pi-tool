@@ -5206,7 +5206,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // Both reachable with updates → the bulk action appears; run it.
-    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await tester.tap(find.byTooltip('Alles auf allen Pis aktualisieren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
     await tester.pumpAndSettle();
     expect(u.systemUpgradeCalls, 2); // one per Pi, sequential + fail-soft
   });
@@ -5510,7 +5512,7 @@ void main() {
   // green ("Verbunden") while restart and shutdown stayed greyed out with
   // "connect first" right below it.
   testWidgets(
-      'gemerkte Karten, „Updates installieren" ohne Verbinden: der '
+      'gemerkte Karten, „Alles aktualisieren" ohne Verbinden: der '
       'Verbinden-Knopf behauptet danach keine Verbindung, solange „Pi neu '
       'starten" eine verlangt', (tester) async {
     useTallScreen(tester);
@@ -5543,13 +5545,13 @@ void main() {
     expect(connect, findsOneWidget);
 
     await tester
-        .tap(find.widgetWithText(OutlinedButton, 'Updates installieren'));
+        .tap(find.widgetWithText(OutlinedButton, 'Alles aktualisieren'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
     await tester.pumpAndSettle();
     expect(u.systemUpgradeCalls, 1);
     expect(u.detectCalls, 1, reason: 'die Karten wurden danach neu gelesen');
-    expect(find.text('System aktualisiert.'), findsOneWidget);
+    expect(find.text('Alles aktualisiert.'), findsOneWidget);
 
     // No session — and the button does not say there is one.
     expect(find.byKey(const Key('sessionConnected')), findsNothing);
@@ -9276,30 +9278,30 @@ void main() {
     // its confirmation. Called directly: a second tap in the same frame never
     // arrives — the Navigator absorbs pointers once a route was pushed — so
     // this pins _prepare()'s own check, not a path a finger can take.
-    final update = find.widgetWithText(OutlinedButton, 'Updates installieren');
+    final update = find.widgetWithText(OutlinedButton, 'Alles aktualisieren');
     final onPressed = tester.widget<OutlinedButton>(update).onPressed!;
     onPressed();
     onPressed();
     await tester.pumpAndSettle();
-    expect(find.text('System aktualisieren?'), findsNWidgets(2));
+    expect(find.text('Alles aktualisieren?'), findsNWidgets(2));
 
     // The upper one: the upgrade starts and stays busy on the gate.
     await tester.tap(find.widgetWithText(FilledButton, 'Weiter').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500)); // dialog is gone
     expect(u.systemUpgradeCalls, 1);
-    expect(find.text('System aktualisieren?'), findsOneWidget);
-    expect(find.text('System-Upgrade läuft …'), findsOneWidget);
+    expect(find.text('Alles aktualisieren?'), findsOneWidget);
+    expect(find.text('Alles wird aktualisiert …'), findsOneWidget);
 
     // The one underneath, confirmed while that upgrade is still running.
     await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('System aktualisieren?'), findsNothing);
+    expect(find.text('Alles aktualisieren?'), findsNothing);
     expect(u.systemUpgradeCalls, 1,
         reason: 'kein zweiter Lauf neben dem laufenden');
     // The running action is still the one on screen.
-    expect(find.text('System-Upgrade läuft …'), findsOneWidget);
+    expect(find.text('Alles wird aktualisiert …'), findsOneWidget);
 
     gate.complete();
     await tester.pumpAndSettle();
@@ -10924,6 +10926,202 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // The bulk button asks first; „Weiter" starts the run.
+  Future<void> startBulkUpdate(WidgetTester tester) async {
+    await tester.tap(find.byTooltip('Alles auf allen Pis aktualisieren'));
+    await tester.pumpAndSettle();
+    expect(find.text('Alles auf allen Pis aktualisieren?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pump();
+    await tester.pump();
+  }
+
+  testWidgets(
+      'Multi-Pi: „Alles auf allen Pis" fragt erst — abgelehnt bleibt jeder Pi '
+      'unberührt', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()..services = systemWithUpdates;
+    await tester.pumpWidget(page(u, config: twoPisWithUpdates));
+    await tester.pumpAndSettle();
+    await openMultiPi(tester);
+
+    await tester.tap(find.byTooltip('Alles auf allen Pis aktualisieren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Abbrechen'));
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 0);
+  });
+
+  testWidgets(
+      'System-Karte „Alles aktualisieren": Pi-hole mit Update und alle '
+      'laufenden Container kommen nach den Systempaketen mit', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..detection = const InstallDetection(
+          kind: InstallKind.docker,
+          container: EvccDocker(name: 'evcc', image: 'evcc/evcc:latest'))
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            updateKnown: true),
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            active: true,
+            updateAvailable: true,
+            updateKnown: true),
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            active: true),
+        ServiceStatus(id: 'evcc', name: 'evcc', installed: true, active: true),
+      ]
+      ..containers = const [
+        (
+          name: 'homeassistant',
+          state: 'running',
+          status: '',
+          image: 'ghcr.io/home-assistant/home-assistant:stable'
+        ),
+        (name: 'evcc', state: 'running', status: '', image: 'evcc/evcc:latest'),
+        (name: 'ring-mqtt', state: 'running', status: '', image: 'ring-mqtt'),
+        (name: 'old', state: 'exited', status: '', image: 'nginx:1'),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    // The system packages are current: Pi-hole's update keeps the button on.
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Alles aktualisieren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 1);
+    expect(u.piholeUpdateCalls, 1);
+    expect(u.haUpdateCalls, 1);
+    expect(u.dockerCalls, 1);
+    expect(u.backupCalls, 0, reason: 'ein Container-evcc kommt nicht über apt');
+    expect(u.updatedContainers, ['ring-mqtt'],
+        reason: 'HA und evcc über ihre eigenen Updates, der gestoppte bleibt aus');
+    expect(find.text('Alles aktualisiert.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'System-Karte „Alles aktualisieren": ein apt-evcc mit Update wird vorher '
+      'gesichert, ein aktueller Pi-hole bleibt unberührt', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            updateAvailable: true,
+            updateKnown: true),
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            active: true,
+            updateKnown: true),
+        ServiceStatus(
+            id: 'evcc',
+            name: 'evcc',
+            installed: true,
+            active: true,
+            updateAvailable: true,
+            updateKnown: true),
+      ];
+    await tester.pumpWidget(page(u));
+    await tester.pumpAndSettle();
+    await detect(tester);
+
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Alles aktualisieren'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Weiter'));
+    await tester.pumpAndSettle();
+    expect(u.backupCalls, 1);
+    expect(u.systemUpgradeCalls, 1);
+    expect(u.dockerCalls, 0);
+    expect(u.piholeUpdateCalls, 0);
+  });
+
+  testWidgets(
+      'Multi-Pi: jeder Pi bekommt dasselbe wie „Alles aktualisieren" auf der '
+      'System-Karte — Pi-hole und Home Assistant mit, auch ohne bekanntes '
+      'System-Update', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            updateKnown: true),
+        ServiceStatus(
+            id: 'pihole',
+            name: 'Pi-hole',
+            installed: true,
+            active: true,
+            updateAvailable: true,
+            updateKnown: true),
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            active: true),
+      ];
+    await tester.pumpWidget(page(u, config: twoPisWithUpdates));
+    await tester.pumpAndSettle();
+    await openMultiPi(tester);
+
+    await startBulkUpdate(tester);
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 2);
+    expect(u.piholeUpdateCalls, 2);
+    expect(u.haUpdateCalls, 2);
+    expect(find.text('Aktualisiert'), findsNWidgets(2));
+  });
+
+  testWidgets(
+      'Multi-Pi: ein Pi ohne bekanntes Update ist trotzdem dabei — die '
+      'Container prüft erst der Pull', (tester) async {
+    useTallScreen(tester);
+    final u = FakeEvccUpdater()
+      ..services = const [
+        ServiceStatus(
+            id: 'system',
+            name: 'System (Pi)',
+            installed: true,
+            active: true,
+            updateKnown: true),
+        ServiceStatus(
+            id: 'homeassistant',
+            name: 'Home Assistant',
+            installed: true,
+            active: true),
+      ];
+    await tester.pumpWidget(page(u, config: twoPisWithUpdates));
+    await tester.pumpAndSettle();
+    await openMultiPi(tester);
+    expect(find.textContaining('Updates verfügbar'), findsNothing,
+        reason: 'ein Container ohne Stand macht die Ampel nicht gelb');
+
+    await startBulkUpdate(tester);
+    await tester.pumpAndSettle();
+    expect(u.systemUpgradeCalls, 2);
+    expect(u.haUpdateCalls, 2);
+  });
+
   testWidgets(
       'Multi-Pi: reißt die Verbindung ab, läuft der Pi-Job weiter — die Zeile '
       'sagt das statt „Update fehlgeschlagen"; „Neu prüfen" räumt sie ab',
@@ -10941,7 +11139,7 @@ void main() {
     await tester.pumpAndSettle();
     await openMultiPi(tester);
 
-    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await startBulkUpdate(tester);
     await tester.pumpAndSettle();
 
     expect(u.systemUpgradeCalls, 2); // fail-soft: beide Pis kommen dran
@@ -10973,15 +11171,16 @@ void main() {
     await tester.pumpAndSettle();
     await openMultiPi(tester);
 
-    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await startBulkUpdate(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Update fehlgeschlagen'), findsNothing);
     expect(find.textContaining('automatischen Updates'), findsNWidgets(2));
   });
 
-  testWidgets('Multi-Pi: ein echter Fehler bleibt „Update fehlgeschlagen"',
-      (tester) async {
+  testWidgets(
+      'Multi-Pi: ein echter Fehler bleibt „Update fehlgeschlagen" — mit dem '
+      'Grund in der Zeile', (tester) async {
     useTallScreen(tester);
     final u = FakeEvccUpdater()
       ..services = systemWithUpdates
@@ -10991,10 +11190,10 @@ void main() {
     await tester.pumpAndSettle();
     await openMultiPi(tester);
 
-    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
+    await startBulkUpdate(tester);
     await tester.pumpAndSettle();
 
-    expect(find.text('Update fehlgeschlagen'), findsNWidgets(2));
+    expect(find.text('Update fehlgeschlagen: apt kaputt'), findsNWidgets(2));
   });
 
   testWidgets(
@@ -11012,8 +11211,7 @@ void main() {
     await openMultiPi(tester);
     expect(ka.beginCount, 0, reason: 'das Prüfen allein braucht keinen');
 
-    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
-    await tester.pump();
+    await startBulkUpdate(tester);
     // The first Pi's upgrade hangs on the gate: the service is up and stays.
     expect(u.systemUpgradeCalls, 1);
     expect(ka.beginCount, 1);
@@ -11043,8 +11241,7 @@ void main() {
     await tester.pumpAndSettle();
     await detect(tester);
     await openMultiPi(tester);
-    await tester.tap(find.byTooltip('Alle mit Updates aktualisieren'));
-    await tester.pump();
+    await startBulkUpdate(tester);
     expect(ka.beginCount, 1);
 
     // Back to the main view; the first Pi's upgrade is still under way.
@@ -11087,7 +11284,7 @@ void main() {
         ];
 
     Future<void> startSystemUpgrade(WidgetTester tester) async {
-      await tester.tap(find.text('Updates installieren'));
+      await tester.tap(find.text('Alles aktualisieren'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Weiter'));
       await tester.pump();
@@ -11112,7 +11309,7 @@ void main() {
       gate.complete();
       await tester.pumpAndSettle();
       expect(find.text('Nicht mehr mitlesen'), findsNothing);
-      expect(find.text('System aktualisiert.'), findsOneWidget);
+      expect(find.text('Alles aktualisiert.'), findsOneWidget);
     });
 
     // The test font is wider than a real one: at this width the label would
