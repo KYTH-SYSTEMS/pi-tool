@@ -213,7 +213,7 @@ jobs:
       # empty, so the clause is true and nothing changes there.
       - name: Publish Release (on tag)
         if: startsWith(github.ref, 'refs/tags/') && env.HAS_KEYSTORE == 'true' && !inputs.play_dry_run
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: build/app/outputs/flutter-apk/app-release.apk
           # Curated changelog first; the auto-generated commit list is appended
